@@ -42,7 +42,6 @@ class SimulatedMemoryManager(MemoryManager):
             task_scheduler=task_scheduler
             or SimulatedTaskScheduler(description=description),
             config=MemoryManager.MemoryConfig(
-                strict_contact_updates=False,
                 enable_callbacks=False,
             ),
         )

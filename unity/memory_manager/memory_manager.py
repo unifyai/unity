@@ -122,16 +122,11 @@ class MemoryManager(BaseMemoryManager):
     class MemoryConfig:
         """Configuration flags that control orchestration/runtime behaviour.
 
-        strict_contact_updates: When True, enforce guardrails on contact
-            creation/update (forbid 'bio', 'rolling_summary', 'custom_fields').
-            When False, expose the underlying manager methods directly.
-
         enable_callbacks: When True, register EventBus callbacks for message
             ingestion and manager-method tracking. When False, skip callback
             registration.
         """
 
-        strict_contact_updates: bool = True
         enable_callbacks: bool = True
 
     def __init__(
@@ -348,26 +343,14 @@ class MemoryManager(BaseMemoryManager):
         _prune_wrapper(_safe_update_contact, self._contact_manager._update_contact)
 
         # Base helpers -----------------------------------------------------------
-        # Always include contact_ask and merge_contacts; mutation helpers depend
-        # on configuration (strict vs non-strict).
+        # Always expose the same tools across real and simulated environments.
         tools: Dict[str, Callable[..., Any]] = {
             "contact_ask": self._contact_manager.ask,
+            "create_contact": _safe_create_contact,
+            "update_contact": _safe_update_contact,
             # Full-contact merge helper (no field restrictions)
             "merge_contacts": _safe_merge_contacts,
         }
-
-        if self._cfg.strict_contact_updates:
-            # Strict mode – expose guarded wrappers only
-            tools.update(
-                {
-                    "create_contact": _safe_create_contact,
-                    "update_contact": _safe_update_contact,
-                },
-            )
-        else:
-            # Non-strict simulated mode – expose the high-level public update method only
-            # so tests can observe an invocation of ContactManager.update.
-            tools.update({"contact_update": self._contact_manager.update})
 
         # ─ 2.  LLM client
         llm = unify.AsyncUnify(
@@ -464,19 +447,12 @@ class MemoryManager(BaseMemoryManager):
                 raise ValueError(
                     "contact_id is required but was not provided by the caller.",
                 )
-            if self._cfg.strict_contact_updates:
-                await asyncio.to_thread(
-                    self._contact_manager._update_contact,
-                    contact_id=final_id,
-                    bio=bio,
-                )
-                return f"Bio for contact with id {final_id} successfully updated"
-            # Non-strict simulated path – use public update (so tests can spy it)
-            handle = await self._contact_manager.update(
-                f"Please set the bio for contact id {final_id} as follows:\n{bio}",
+            await asyncio.to_thread(
+                self._contact_manager._update_contact,
+                contact_id=final_id,
+                bio=bio,
             )
-            res = await handle.result()
-            return res if isinstance(res, str) else str(res)
+            return f"Bio for contact with id {final_id} successfully updated"
 
         tools: Dict[str, Callable[..., Any]] = {
             "set_bio": set_bio,
@@ -572,18 +548,14 @@ class MemoryManager(BaseMemoryManager):
                 raise ValueError(
                     "contact_id is required but was not provided by the caller.",
                 )
-            if self._cfg.strict_contact_updates:
-                await asyncio.to_thread(
-                    self._contact_manager._update_contact,
-                    contact_id=final_id,
-                    rolling_summary=rolling_summary,
-                )
-                return f"Rolling summary for contact with id {final_id} successfully updated"
-            handle = await self._contact_manager.update(
-                f"Please set the rolling summary for contact id {final_id} as follows:\n{rolling_summary}",
+            await asyncio.to_thread(
+                self._contact_manager._update_contact,
+                contact_id=final_id,
+                rolling_summary=rolling_summary,
             )
-            res = await handle.result()
-            return res if isinstance(res, str) else str(res)
+            return (
+                f"Rolling summary for contact with id {final_id} successfully updated"
+            )
 
         tools: Dict[str, Callable[..., Any]] = {
             "set_rolling_summary": set_rolling_summary,
@@ -684,18 +656,14 @@ class MemoryManager(BaseMemoryManager):
                 raise ValueError(
                     "contact_id must be supplied either via the method argument or the tool call.",
                 )
-            if self._cfg.strict_contact_updates:
-                await asyncio.to_thread(
-                    self._contact_manager._update_contact,
-                    contact_id=final_id,
-                    response_policy=response_policy,
-                )
-                return f"Response policy for contact with id {final_id} successfully updated"
-            handle = await self._contact_manager.update(
-                f"Please set the response_policy for contact id {final_id} as follows:\n{response_policy}",
+            await asyncio.to_thread(
+                self._contact_manager._update_contact,
+                contact_id=final_id,
+                response_policy=response_policy,
             )
-            res = await handle.result()
-            return res if isinstance(res, str) else str(res)
+            return (
+                f"Response policy for contact with id {final_id} successfully updated"
+            )
 
         tools: Dict[str, Callable[..., Any]] = {
             "contact_ask": self._contact_manager.ask,
