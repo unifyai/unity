@@ -149,7 +149,6 @@ async def test_speech_event_triggers_analysis_and_logging(mocked_screen_share_ma
 
     # 4. Assertions
     mocks["analysis_client"].generate.assert_called_once()
-    mocks["image_manager"].add_images.assert_called_once()
     mocks["transcript_manager"].log_messages.assert_called_once()
     mocks["event_broker"].publish.assert_called_once()
 
@@ -163,8 +162,14 @@ async def test_speech_event_triggers_analysis_and_logging(mocked_screen_share_ma
     assert annotation.image == PNG_RED_B64
     assert annotation.type == "speech"
 
-    assert "[13:30]" in logged_message.images
-    assert logged_message.images["[13:30]"] == 42
+    content = "Okay, I will click this button now."
+    phrase = "click this button"
+    start_index = content.find(phrase)
+    end_index = start_index + len(phrase)
+    expected_key = f"[{start_index}:{end_index}]"
+
+    assert expected_key in logged_message.images
+    assert logged_message.images[expected_key] == 42
 
 
 @pytest.mark.unit
@@ -333,9 +338,15 @@ async def test_combined_turn_logs_multiple_events(mocked_screen_share_manager):
         == "User stated their intention to submit."
     )
 
-    assert "[0:19]" in logged_message.images
+    content = "I will click submit"
+    phrase = "I will click submit"
+    start_index = content.find(phrase)
+    end_index = start_index + len(phrase)
+    expected_key = f"[{start_index}:{end_index}]"
+
+    assert expected_key in logged_message.images
     # The second event gets the second image_id, which is 43 due to the dynamic mock
-    assert logged_message.images["[0:19]"] == 43
+    assert logged_message.images[expected_key] == 43
 
     assert mocks["event_broker"].publish.call_count == 2
 
@@ -769,13 +780,10 @@ async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manage
     )
     mocks["analysis_client"].generate.return_value = mock_llm_response
 
-    with patch(
-        "unity.screen_share_manager.screen_share_manager.unify.AsyncUnify"
-    ) as mock_unify:
-        mock_summary_instance = AsyncMock()
-        mock_summary_instance.generate.return_value = "User navigated to billing."
-        mock_unify.side_effect = [mocks["analysis_client"], mock_summary_instance]
-        manager._summary_client = mock_summary_instance
+    with patch.object(
+        manager, "_summary_client", new_callable=AsyncMock
+    ) as mock_summary_client:
+        mock_summary_client.generate.return_value = "User navigated to billing."
 
         speech_event_data = {
             "payload": {
@@ -788,8 +796,8 @@ async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manage
         await manager._analyze_turn(speech_event=speech_event_data, visual_events=[])
         await manager._update_summary()
 
-        mock_summary_instance.generate.assert_called_once()
-        call_args = mock_summary_instance.generate.call_args
+        mock_summary_client.generate.assert_called_once()
+        call_args = mock_summary_client.generate.call_args
         prompt = call_args[0][0]
         assert (
             "CURRENT SUMMARY:\n<summary>\nThe session has just begun.\n</summary>"

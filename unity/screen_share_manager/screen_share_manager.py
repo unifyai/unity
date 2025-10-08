@@ -148,6 +148,9 @@ class ScreenShareManager:
         self.SSIM_THRESHOLD = 0.80
         self.INACTIVITY_TIMEOUT_SEC = 10.0
         self.FRAME_BUFFER_SIZE = 100
+        self.MAX_FRAME_WORKERS = 4
+        self.FRAME_QUEUE_SIZE = 100
+        self.LOGGING_QUEUE_SIZE = 50
         self.VISUAL_EVENT_SAMPLING_THRESHOLD = 3
         self.BURST_DETECTION_THRESHOLD_SEC = 2.0
         self.MAX_CONCURRENT_LOGGING_TASKS = 5
@@ -164,6 +167,8 @@ class ScreenShareManager:
 
         # State Variables
         self._stop_event = asyncio.Event()
+        self._frame_queue = asyncio.Queue(maxsize=self.FRAME_QUEUE_SIZE)
+        self._frame_workers: List[asyncio.Task] = []
         self._frame_buffer: Deque[Tuple[float, str]] = deque(
             maxlen=self.FRAME_BUFFER_SIZE,
         )
@@ -175,7 +180,7 @@ class ScreenShareManager:
         self._last_activity_time: float = asyncio.get_event_loop().time()
         self._state_lock = asyncio.Lock()
         self._analyses_in_flight = 0
-        self._logging_queue = asyncio.Queue()
+        self._logging_queue = asyncio.Queue(maxsize=self.LOGGING_QUEUE_SIZE)
         self._logging_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_LOGGING_TASKS)
         self._dispatcher_task: Optional[asyncio.Task] = None
 
@@ -190,6 +195,10 @@ class ScreenShareManager:
         """Starts the main event listening and the logging dispatcher."""
         logger.info("ScreenShareManager started. Initializing background tasks...")
         self._dispatcher_task = asyncio.create_task(self._logging_dispatcher())
+        self._frame_workers = [
+            asyncio.create_task(self._frame_processing_worker())
+            for _ in range(self.MAX_FRAME_WORKERS)
+        ]
         await self._listen_for_events()
 
     def stop(self):
@@ -197,6 +206,9 @@ class ScreenShareManager:
         self._stop_event.set()
         if self._dispatcher_task and not self._dispatcher_task.done():
             self._dispatcher_task.cancel()
+        for worker in self._frame_workers:
+            if not worker.done():
+                worker.cancel()
         if self._summary_update_task and not self._summary_update_task.done():
             self._summary_update_task.cancel()
         logger.info("ScreenShareManager stopping...")
@@ -207,9 +219,11 @@ class ScreenShareManager:
             img_data = base64.b64decode(b64_string.split(",")[1])
             img = Image.open(io.BytesIO(img_data)).convert("L").resize((512, 288))
             return img
-        except Exception:
-            logger.warning("Failed to decode or process base64 image string.")
-            return None
+        except Exception as e:
+            logger.warning(
+                "Failed to decode or process base64 image string.", exc_info=True
+            )
+            raise ValueError("Invalid base64 image data") from e
 
     async def _listen_for_events(self):
         """The core loop that subscribes to Redis and dispatches events."""
@@ -229,7 +243,12 @@ class ScreenShareManager:
                         channel = message["channel"]
                         event_data = json.loads(message["data"])
                         if channel == "app:comms:screen_frame":
-                            asyncio.create_task(self._handle_frame_event(event_data))
+                            try:
+                                self._frame_queue.put_nowait(event_data)
+                            except asyncio.QueueFull:
+                                logger.warning(
+                                    "Frame queue is full. Dropping incoming frame to maintain stability."
+                                )
                         elif channel == "app:comms:phone_utterance":
                             await self._trigger_turn_analysis(speech_event=event_data)
 
@@ -239,6 +258,21 @@ class ScreenShareManager:
                 except Exception as e:
                     logger.error(f"Error in event listener loop: {e}", exc_info=True)
                     await asyncio.sleep(1)
+
+    async def _frame_processing_worker(self):
+        """Continuously processes frames from the queue."""
+        logger.info("Frame processing worker started.")
+        while not self._stop_event.is_set():
+            try:
+                event_data = await self._frame_queue.get()
+                await self._handle_frame_event(event_data)
+                self._frame_queue.task_done()
+            except asyncio.CancelledError:
+                logger.info("Frame processing worker cancelled.")
+                break
+            except Exception as e:
+                logger.error(f"Error in frame processing worker: {e}", exc_info=True)
+        logger.info("Frame processing worker stopped.")
 
     async def _logging_dispatcher(self):
         """
@@ -282,12 +316,18 @@ class ScreenShareManager:
             self._last_significant_frame_b64 = frame_b64
             return
 
-        current_img = self._b64_to_image(frame_b64)
-        last_img = self._b64_to_image(self._last_significant_frame_b64)
-        if current_img is None or last_img is None:
+        try:
+            current_img, last_img = await asyncio.gather(
+                asyncio.to_thread(self._b64_to_image, frame_b64),
+                asyncio.to_thread(self._b64_to_image, self._last_significant_frame_b64),
+            )
+        except ValueError:
+            logger.warning(
+                "Could not process one or more images for SSIM comparison. Skipping frame."
+            )
             return
 
-        score = ssim(np.array(last_img), np.array(current_img))
+        score = await asyncio.to_thread(ssim, np.array(last_img), np.array(current_img))
         if score < self.SSIM_THRESHOLD:
             logger.info(
                 f"Significant visual change detected at t={timestamp:.2f}s (SSIM: {score:.2f})"
@@ -427,7 +467,13 @@ class ScreenShareManager:
 
             if key_events or speech_event:
                 log_job = (speech_event, key_events, frame_map)
-                await self._logging_queue.put(log_job)
+                try:
+                    self._logging_queue.put_nowait(log_job)
+                except asyncio.QueueFull:
+                    logger.error(
+                        "Logging queue is full. Dropping latest analysis result. "
+                        "This indicates a bottleneck in logging to the backend."
+                    )
 
             for event in key_events:
                 await self._event_broker.publish(
@@ -446,7 +492,12 @@ class ScreenShareManager:
             )
             if speech_event:
                 log_job = (speech_event, [], {})
-                await self._logging_queue.put(log_job)
+                try:
+                    self._logging_queue.put_nowait(log_job)
+                except asyncio.QueueFull:
+                    logger.error(
+                        "Logging queue is full. Dropping error-fallback analysis result."
+                    )
         finally:
             async with self._state_lock:
                 self._analyses_in_flight -= 1
@@ -650,7 +701,9 @@ class ScreenShareManager:
                 )
                 event_to_image_map[event.timestamp] = len(images_to_add) - 1
 
-        logged_image_ids = self._image_manager.add_images(images_to_add)
+        logged_image_ids = await asyncio.to_thread(
+            self._image_manager.add_images, images_to_add
+        )
 
         timestamp_to_image_id = {}
         for ts, index in event_to_image_map.items():
