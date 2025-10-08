@@ -3,7 +3,6 @@ import unify
 import json
 import inspect
 import copy
-from datetime import timedelta
 
 from typing import Dict, Union, Callable, Tuple, Any, Set, Optional
 from contextlib import suppress
@@ -26,10 +25,10 @@ from .tools_utils import (
 from .images import (
     append_source_scoped_images,
     default_source_label,
-    extract_alignment_text_from_value,
     set_live_images_context,
     reset_live_images_context,
     align_images_for as _align_images_for,
+    build_live_image_tools,
     refresh_overview_doc_if_present,
 )
 from ..llm_helpers import method_to_schema, _dumps
@@ -364,291 +363,11 @@ async def async_tool_loop_inner(
     # Build live image helpers only when images were supplied and non-empty
     live_image_tools: Dict[str, Callable] = {}
     if images:
-        substring_from_span = None  # type: ignore[assignment]
-        with suppress(Exception):
-            from unity.image_manager.utils import substring_from_span  # type: ignore[assignment]  # local import
-
-        reference_text = extract_alignment_text_from_value(message)
-        # Build id → handle map and enriched listings
-        id_to_handle: dict[int, Any] = {}
-        listings: list[str] = []
-        for span_key, ih in list(images.items()):
-            img_id = -1
-            with suppress(Exception):
-                img_id = int(getattr(ih, "image_id", -1))
-            id_to_handle[img_id] = ih
-            substr = ""
-            if substring_from_span is not None:
-                substr = ""
-                with suppress(Exception):
-                    substr = substring_from_span(str(reference_text), str(span_key))
-            caption = None
-            with suppress(Exception):
-                caption = getattr(ih, "caption", None)
-            listings.append(
-                f"- id={img_id}, span={span_key}, substring={substr!r}, caption={caption!r}",
-            )
-
-        overview_doc = (
-            "Live images aligned to the current user_message (visible in this description; calling is optional).\n"
-            + "\n".join(listings or ["(none)"])
-            + "\n\n"
-            + "Arg-scoped image keys for inner tools\n"
-            + "-----------------------------------\n"
-            + "When calling an inner tool that accepts `images`, reference each image with an arg-scoped span key: `<arg>[start:end]`.\n"
-            + "- `<arg>` is the name of the tool's string parameter (e.g., `question`, `text`, `prompt`).\n"
-            + "- `[start:end]` uses Python-slice semantics over that parameter's text.\n"
-            + "- Values are image ids (or handles) that should align to that substring.\n\n"
-            + "Example (manual):\n"
-            + "  images = { 'question[10:23]': 42 }\n\n"
-            + "Example (recommended with helper):\n"
-            + "  align_images_for(\n"
-            + "    args={ 'question': 'Please compare the Cairo skyline images for clarity' },\n"
-            + "    hints=[ { 'arg': 'question', 'substring': 'Cairo skyline', 'image_id': 42 } ]\n"
-            + "  )  →  { 'images': { 'question[15:28]': 42 } }\n"
-            + "\n"
-            + "Source-scoped image keys for dynamic methods\n"
-            + "-------------------------------------------\n"
-            + "When sending images with dynamic methods (ask, interject, stop, clarify, notifications), use `<source>[start:end]` keys:\n"
-            + "- Supported sources: `this`, `user_message`, `interjectionN`, `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`.\n"
-            + "- `this[:]` is a shorthand that refers to the current outgoing payload (e.g., the very text of this interjection/ask/clarify/notify).\n"
-            + "- Values are image ids (or handles). These images are appended to the loop's live registry and reflected below.\n"
+        live_image_tools = build_live_image_tools(
+            reference_message=message,
+            images=images,
+            append_user_messages=_msg_dispatcher.append_msgs,
         )
-
-        async def live_images_overview() -> Dict[str, str]:
-            return {"status": "ok"}
-
-        # Overview enrichment handled elsewhere; base doc remains here
-        live_images_overview.__doc__ = overview_doc
-
-        # Keep a set of already-attached ids (idempotent attach)
-        attached_ids: set[int] = set()
-
-        async def ask_image(
-            *,
-            image_id: int,
-            question: str,
-            images: dict | None = None,
-        ) -> Any:
-            """
-            Ask a question about a live image by its unique id.
-
-            Parameters
-            ----------
-            image_id : int
-                The unique identifier of the live image (as listed in `live_images_overview`).
-            question : str
-                The question to ask about this image. Keep it concise and specific.
-            images : dict | None
-                Optional source‑scoped images mapping to append at the time of this question.
-                Keys use `<source>[start:end]`. Supported sources include: `this`, `user_message`,
-                `interjectionN`, `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`.
-                Use `this[:]` to associate images with the question text itself. Values are image ids
-                or live image handle objects.
-
-            Returns
-            -------
-            Any
-                The answer returned by the image handle. If the id is unknown, returns an
-                error object: `{ "error": "image_id <id> not found" }`.
-
-            Notes
-            -----
-            - Any provided `images` are appended to the live images log and reflected in
-              `live_images_overview` under a `source=ask` entry.
-            - The question is routed to the corresponding image handle's `ask` method.
-            """
-            ih = id_to_handle.get(int(image_id))
-            if ih is None:
-                return {"error": f"image_id {image_id} not found"}
-            # If incoming images are provided with source-scoped spans, append them
-            with suppress(Exception):
-                append_source_scoped_images(
-                    images,
-                    default_source_label("ask"),
-                )
-            try:
-                return await ih.ask(question)
-            except Exception as _exc:  # noqa: BLE001
-                return {"error": str(_exc)}
-
-        async def attach_image_raw(
-            *,
-            image_id: int,
-            note: str | None = None,
-        ) -> Dict[str, Any]:
-            """
-            Attach the selected image to the current chat as an `image_url` content block so the
-            model can see and reason over it on subsequent turns.
-
-            Parameters
-            ----------
-            image_id : int
-                The unique identifier of the live image (as listed in `live_images_overview`).
-            note : str | None
-                Optional short note to include alongside the attached image (as text content).
-
-            Returns
-            -------
-            Dict[str, Any]
-                A status object, e.g. `{ "status": "attached", "image_id": 42 }` or
-                `{ "status": "already_attached", "image_id": 42 }`. If the id is unknown,
-                returns `{ "error": "image_id <id> not found" }`.
-
-            Notes
-            -----
-            - Idempotent per `image_id`: re‑attaching the same id in a session is a no‑op.
-            - If the underlying image is a GCS object, a signed URL is generated; otherwise the
-              bytes are embedded as a `data:image/*;base64,...` URL.
-            - The attachment appears as a user message with a mixed content array that includes
-              the image block (and the optional note when provided).
-            """
-            iid = int(image_id)
-            if iid in attached_ids:
-                return {"status": "already_attached", "image_id": iid}
-            ih = id_to_handle.get(iid)
-            if ih is None:
-                return {"error": f"image_id {iid} not found"}
-            # Reuse ImageHandle.ask content block building logic inline
-            try:
-                data_str = ih._image.data  # type: ignore[attr-defined]
-                # GCS signed URL path mirrors ImageHandle.ask
-                is_gcs_url = isinstance(data_str, str) and (
-                    data_str.startswith("gs://")
-                    or data_str.startswith("https://storage.googleapis.com/")
-                )
-                content_block: dict
-                if is_gcs_url:
-                    try:
-                        from urllib.parse import urlparse as _urlparse
-
-                        parsed_url = _urlparse(data_str)
-                        bucket_name = ""
-                        object_path = ""
-                        if parsed_url.scheme == "gs":
-                            bucket_name = parsed_url.netloc
-                            object_path = parsed_url.path.lstrip("/")
-                        elif parsed_url.hostname == "storage.googleapis.com":
-                            parts = parsed_url.path.lstrip("/").split("/", 1)
-                            if len(parts) == 2:
-                                bucket_name, object_path = parts
-                        storage_client = ih._manager.storage_client  # type: ignore[attr-defined]
-                        bucket = storage_client.bucket(bucket_name)
-                        blob = bucket.blob(object_path)
-                        signed_url = blob.generate_signed_url(version="v4", expiration=timedelta(hours=1), method="GET")  # type: ignore[name-defined]
-                        content_block = {
-                            "type": "image_url",
-                            "image_url": {"url": signed_url},
-                        }
-                    except Exception:
-                        # fallback: try raw bytes
-                        raw = ih.raw()
-                        import base64 as _b64  # local import
-
-                        head = (
-                            bytes(raw[:10])
-                            if isinstance(raw, (bytes, bytearray))
-                            else b""
-                        )
-                        if head.startswith(b"\xff\xd8"):
-                            mime = "image/jpeg"
-                        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
-                            mime = "image/png"
-                        else:
-                            mime = "image/png"
-                        b64 = _b64.b64encode(raw).decode("ascii")
-                        content_block = {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{mime};base64,{b64}"},
-                        }
-                elif isinstance(data_str, str) and (
-                    data_str.startswith("http://")
-                    or data_str.startswith("https://")
-                    or data_str.startswith("data:image/")
-                ):
-                    content_block = {
-                        "type": "image_url",
-                        "image_url": {"url": data_str},
-                    }
-                else:
-                    raw = ih.raw()
-                    import base64 as _b64  # local import
-
-                    head = (
-                        bytes(raw[:10]) if isinstance(raw, (bytes, bytearray)) else b""
-                    )
-                    if head.startswith(b"\xff\xd8"):
-                        mime = "image/jpeg"
-                    elif head.startswith(b"\x89PNG\r\n\x1a\n"):
-                        mime = "image/png"
-                    else:
-                        mime = "image/png"
-                    b64 = _b64.b64encode(raw).decode("ascii")
-                    content_block = {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{b64}"},
-                    }
-
-                # Append as a user content block to current client messages via dispatcher (event bus + timer)
-                await _msg_dispatcher.append_msgs(
-                    [
-                        {
-                            "role": "user",
-                            "content": (
-                                [content_block]
-                                if note is None
-                                else [
-                                    {"type": "text", "text": note},
-                                    content_block,
-                                ]
-                            ),
-                        },
-                    ],
-                )
-                attached_ids.add(iid)
-                return {"status": "attached", "image_id": iid}
-            except Exception as _exc:  # noqa: BLE001
-                return {"error": str(_exc)}
-
-        # Docstrings: include the full overview in a single place; reference it
-        ask_image.__doc__ = (
-            "Ask a question about one of the live images by its numeric id.\n\n"
-            "Parameters\n"
-            "----------\n"
-            "image_id : int\n"
-            "    The unique id of the image (see overview).\n"
-            "question : str\n"
-            "    The question to ask about the image.\n"
-            "images : dict | None\n"
-            "    Optional source-scoped images mapping to append at the time of this call.\n"
-            "    Keys use `<source>[start:end]` (see overview). Use `this[:]` to associate images with the `question` text.\n\n"
-            "Behaviour\n"
-            "---------\n"
-            "- Resolves ids to handles, appends them to this loop's live registry, and surfaces them in the overview.\n"
-            "- Returns a nested handle; await its result for the answer."
-        )
-        attach_image_raw.__doc__ = (
-            "Attach an image (by id) into the current chat as vision context.\n\n"
-            "Parameters\n"
-            "----------\n"
-            "image_id : int\n"
-            "    The unique id of the image (see overview).\n"
-            "note : str | None\n"
-            "    Optional text note; if provided the note and image will be appended in one user message.\n"
-            "images : dict | None\n"
-            "    Optional source-scoped images mapping to append at the time of this call.\n"
-            "    Keys use `<source>[start:end]` (see overview). Use `this[:]` to associate images with `note` (or with an empty string when `note` is None).\n\n"
-            "Behaviour\n"
-            "---------\n"
-            "- Idempotent per image_id (re-attaching the same id is a no-op).\n"
-            "- Resolves ids to handles, appends them to this loop's live registry, and surfaces them in the overview."
-        )
-
-        live_image_tools = {
-            "live_images_overview": live_images_overview,
-            "ask_image": ask_image,
-            "attach_image_raw": attach_image_raw,
-        }
 
     # ── Helper to prepare arg-scoped images mapping for inner tool calls ─────
     align_images_for = _align_images_for
@@ -890,11 +609,6 @@ async def async_tool_loop_inner(
     try:
         while True:
             # ── 0-Ø. Immediate handover for passthrough delegates ─────────────
-            # If a base tool returned a SteerableToolHandle with __passthrough__
-            # set, the outer loop must stop doing any further work and simply
-            # await the delegate's result. This guarantees no extra assistant
-            # turns, tools, or events are emitted by the outer loop.
-            # Passthrough: nested handles run while the outer loop remains active.
 
             # ── 0-α-P. Global *pause* gate  ────────────────────────────
             # Keep handling tool completions & cancellation, but *never*
@@ -947,7 +661,7 @@ async def async_tool_loop_inner(
                                 "outer-loop cancelled",
                             )
                         raise asyncio.CancelledError
-                    # No graceful stop path without persist
+                    # No graceful stop path
                     continue  # remain paused: do not allow the LLM to speak while paused
                 else:
                     # nothing running – just idle until resumed or cancelled
@@ -1237,7 +951,7 @@ async def async_tool_loop_inner(
                             "outer-loop cancelled",
                         )
                     raise asyncio.CancelledError  # cancellation wins
-                # No graceful stop without persist
+                # No graceful stop path
 
                 # ── clarification request bubbled up from a child tool ──────────────
                 if done & clar_waiters.keys():
@@ -1294,7 +1008,7 @@ async def async_tool_loop_inner(
                 )
                 continue  # still waiting for other tool tasks
 
-            # Passthrough: no handover delegate; outer loop continues scheduling
+            # ── No passthrough delegate; outer loop continues scheduling ──────
 
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
@@ -1592,12 +1306,6 @@ async def async_tool_loop_inner(
             if log_steps:
                 with suppress(Exception):
                     logger.info(f"{json.dumps(msg, indent=4)}\n", prefix="🤖")
-                if not isinstance(msg, dict) or True:
-                    with suppress(Exception):
-                        logger.info(
-                            f"Assistant message appended (unserializable)",
-                            prefix="🤖",
-                        )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
             if timer.has_exceeded_time():
