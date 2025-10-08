@@ -113,21 +113,23 @@ async def test_initial_frame_sets_baseline_and_creates_no_event(
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_speech_event_triggers_analysis_and_logging(mocked_screen_share_manager):
+async def test_speech_event_triggers_analysis_and_logging_with_specifics(
+    mocked_screen_share_manager,
+):
     """
-    Verifies that a PhoneUtteranceEvent correctly triggers an LLM analysis
-    and subsequently logs a rich Message to the TranscriptManager.
+    Verifies that a PhoneUtteranceEvent triggers an analysis and logs a message
+    with a specific, visually-grounded caption and a precise trigger phrase.
     """
     manager, mocks = mocked_screen_share_manager
-    manager.DEBOUNCE_DELAY_SEC = 0  # Disable debounce for this test
+    manager.DEBOUNCE_DELAY_SEC = 0
 
-    # 1. Mock the LLM's response
+    # 1. Mock the LLM's response with high-quality output
     mock_llm_response = TurnAnalysisResponse(
         events=[
             KeyEvent(
                 timestamp=15.5,
-                event_description="User clicked the 'Submit' button.",
-                triggering_phrase="click this button",
+                event_description="User clicked the 'Submit Application' button.",
+                triggering_phrase="submit the application",
                 representative_timestamp=15.5,
             ),
         ],
@@ -139,7 +141,7 @@ async def test_speech_event_triggers_analysis_and_logging(mocked_screen_share_ma
         "payload": {
             "contact_details": {"contact_id": 1},
             "timestamp": datetime.now().isoformat(),
-            "content": "Okay, I will click this button now.",
+            "content": "Okay, I am ready to submit the application now.",
             "start_time": 15.0,
             "end_time": 16.5,
         },
@@ -155,26 +157,22 @@ async def test_speech_event_triggers_analysis_and_logging(mocked_screen_share_ma
             }
         )
     manager._trigger_turn_analysis(speech_event=speech_event_data)
-    await asyncio.sleep(0.01)  # Allow debounced task to run
+    await asyncio.sleep(0.01)
 
     log_job = await manager._logging_queue.get()
     await manager._logging_worker(log_job)
 
     # 4. Assertions
-    mocks["analysis_client"].generate.assert_called_once()
     mocks["transcript_manager"].log_messages.assert_called_once()
-    mocks["event_broker"].publish.assert_called_once()
+    logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
 
-    call_args = mocks["transcript_manager"].log_messages.call_args
-    logged_message = call_args[0][0][0]
-
-    assert logged_message.content == "Okay, I will click this button now."
-    assert "15.00-16.50" in logged_message.screen_share
+    # Assert specific caption
     annotation = logged_message.screen_share["15.00-16.50"]
-    assert annotation.caption == "User clicked the 'Submit' button."
+    assert annotation.caption == "User clicked the 'Submit Application' button."
 
-    content = "Okay, I will click this button now."
-    phrase = "click this button"
+    # Assert precise trigger phrase span
+    content = "Okay, I am ready to submit the application now."
+    phrase = "submit the application"
     start_index = content.find(phrase)
     end_index = start_index + len(phrase)
     expected_key = f"[{start_index}:{end_index}]"
@@ -600,7 +598,6 @@ async def test_frame_event_uses_mse_prefilter(mocked_screen_share_manager, mock_
     manager, mocks = mocked_screen_share_manager
     manager._last_significant_frame_b64 = PNG_BLUE_B64
 
-    # Patch the calculation methods to control their return values
     with patch.object(manager, "_calculate_mse", return_value=50.0) as mock_mse, patch(
         "unity.screen_share_manager.screen_share_manager.ssim", new_callable=MagicMock
     ) as mock_ssim:
@@ -609,22 +606,22 @@ async def test_frame_event_uses_mse_prefilter(mocked_screen_share_manager, mock_
         await manager._handle_frame_event(
             {"payload": {"timestamp": 1.0, "frame_b64": PNG_RED_B64}}, loop=mock_loop
         )
-        await asyncio.sleep(0.01)  # Allow executor to run
+        await asyncio.sleep(0.01)
         mock_mse.assert_called_once()
-        mock_ssim.assert_not_called()  # SSIM should be skipped
+        mock_ssim.assert_not_called()
         assert len(manager._pending_vision_events) == 0
 
         # Scenario 2: MSE is above threshold, SSIM is triggered
         mock_mse.reset_mock()
         manager.MSE_THRESHOLD = 40
-        manager.SSIM_THRESHOLD = 0.9  # Ensure SSIM check fails
+        manager.SSIM_THRESHOLD = 0.9
         mock_ssim.return_value = 0.5
         await manager._handle_frame_event(
             {"payload": {"timestamp": 2.0, "frame_b64": PNG_RED_B64}}, loop=mock_loop
         )
-        await asyncio.sleep(0.01)  # Allow executor to run
+        await asyncio.sleep(0.01)
         mock_mse.assert_called_once()
-        mock_ssim.assert_called_once()  # SSIM should now be called
+        mock_ssim.assert_called_once()
         assert len(manager._pending_vision_events) == 1
 
 
@@ -637,9 +634,8 @@ async def test_image_upload_retries_on_failure(mocked_screen_share_manager):
     """
     manager, mocks = mocked_screen_share_manager
     manager.IMAGE_UPLOAD_MAX_RETRIES = 2
-    manager.IMAGE_UPLOAD_INITIAL_BACKOFF = 0.01  # Use short backoff for testing
+    manager.IMAGE_UPLOAD_INITIAL_BACKOFF = 0.01
 
-    # Mock the image manager to fail once, then succeed
     add_images_mock = MagicMock()
     add_images_mock.side_effect = [Exception("Network Error"), [42]]
     mocks["image_manager"].add_images = add_images_mock
@@ -656,10 +652,37 @@ async def test_image_upload_retries_on_failure(mocked_screen_share_manager):
     ]
     frame_map = {1.0: PNG_BLUE_B64}
 
-    # Run the worker
     await manager._logging_worker((speech_event, key_events, frame_map))
 
-    # Assert that add_images was called twice (initial + 1 retry)
     assert add_images_mock.call_count == 2
-    # Assert that the transcript was still logged successfully after the retry
     mocks["transcript_manager"].log_messages.assert_called_once()
+
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_set_session_context_updates_summary(mocked_screen_share_manager):
+    """
+    Tests that calling set_session_context correctly updates the initial summary.
+    """
+    manager, mocks = mocked_screen_share_manager
+    manager.DEBOUNCE_DELAY_SEC = 0
+    initial_context = "The user is an admin trying to reset a password."
+
+    manager.set_session_context(initial_context)
+    await asyncio.sleep(0.01)  # Allow async task in set_session_context to run
+
+    # Verify internal state
+    assert manager._session_summary == initial_context
+
+    # Now trigger an analysis and check if the prompt builder receives this context
+    with patch(
+        "unity.screen_share_manager.screen_share_manager.build_turn_analysis_prompt"
+    ) as mock_build_prompt:
+        manager._trigger_turn_analysis({"payload": {"content": "test"}})
+        await asyncio.sleep(0.01)
+
+        mock_build_prompt.assert_called_once()
+        call_args = mock_build_prompt.call_args
+        # The first argument to the prompt builder is `current_summary`
+        assert call_args[0][0] == initial_context

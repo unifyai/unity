@@ -57,6 +57,7 @@ class ScreenShareManager:
        - This event triggers a "turn analysis," but not immediately. A short
          debounce window is used to group rapid, successive events (e.g.,
          multiple clicks while speaking) into a single analysis call.
+       - This reduces LLM costs and API calls, improving overall efficiency.
 
     3. Broader Context Tracking:
        - Each event analysis receives as extra context (a) a rolling summary of the session,
@@ -194,6 +195,30 @@ class ScreenShareManager:
         self._unsummarized_events: List[KeyEvent] = []
         self._summary_update_lock = asyncio.Lock()
         self._summary_update_task: Optional[asyncio.Task] = None
+
+    def set_session_context(self, context_text: str):
+        """
+        Sets the initial context for the screen share session. This should be
+        called before any events are processed to prime the analysis LLM.
+        """
+        if not context_text or not isinstance(context_text, str):
+            logger.warning("Invalid session context provided. Ignoring.")
+            return
+
+        logger.info(f"Setting initial session context to: '{context_text}'")
+
+        async def update_summary():
+            async with self._state_lock:
+                self._session_summary = context_text.strip()
+
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                asyncio.create_task(update_summary())
+            else:
+                loop.run_until_complete(update_summary())
+        except RuntimeError:
+            asyncio.run(update_summary())
 
     async def start(self):
         """Starts the main event listening and the logging dispatcher."""
