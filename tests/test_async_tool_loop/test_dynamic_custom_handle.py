@@ -20,35 +20,6 @@ from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
 
 
-@unify.traced
-async def _wait_for_assistant_call_prefix(
-    client: "unify.AsyncUnify",
-    prefix: str,
-    *,
-    timeout: float = 20.0,
-    poll: float = 0.05,
-) -> None:
-    """Wait until the assistant issues at least one visible tool-call whose
-    function name starts with `prefix` or until timeout.
-    """
-    import time as _time
-
-    start_ts = _time.perf_counter()
-    while _time.perf_counter() - start_ts < timeout:
-        msgs = client.messages or []
-        for m in msgs:
-            if m.get("role") != "assistant":
-                continue
-            for tc in m.get("tool_calls") or []:
-                fn = tc.get("function", {}).get("name", "")
-                if isinstance(fn, str) and fn.startswith(prefix):
-                    return
-        await asyncio.sleep(poll)
-    raise TimeoutError(
-        f"Timed out after {timeout}s waiting for assistant helper starting with {prefix!r}",
-    )
-
-
 class CustomArgsHandle(SteerableToolHandle):
     """A passthrough-disabled handle that records all steering calls with extra args."""
 
