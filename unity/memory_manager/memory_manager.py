@@ -899,7 +899,13 @@ class MemoryManager(BaseMemoryManager):
             },
         )
 
-        # Do not increment message counter for manager-method events
+        # Advance the counter for manager-method events as well so that
+        # passive chunks include explicit tool invocations without waiting
+        # for additional chat messages.
+        self._messages_since_update += 1
+
+        if self._messages_since_update >= self._CHUNK_SIZE:
+            await self._flush_recent_items()
 
     # ------------------------------------------------------------------
     async def _flush_recent_items(self) -> None:
