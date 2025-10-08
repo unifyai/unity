@@ -8,7 +8,7 @@ import random
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Deque, List, Optional, Tuple, Dict
+from typing import Deque, List, Optional, Tuple, Dict, Any
 
 import redis.asyncio as redis
 import unify
@@ -127,28 +127,31 @@ class ScreenShareManager:
 
     Architecture for Parallelism
     ----------------------------
-    This manager uses a highly concurrent, dynamic architecture to ensure
-    responsiveness under variable load.
+    To handle a high volume of frames concurrently without errors, this manager
+    uses a Sequencer Pattern, separating parallel computation from serial state updates.
 
-    1. State Protection with a Narrow Lock:
-       - A lock (`_state_lock`) protects shared lists that accumulate events
-         between turns. It is held only for the brief moment required to
-         atomically capture the current state.
+    1.  **Producer (Event Listener)**: The main `_listen_for_events` loop is the
+        producer. It receives raw frame data, tags it with a unique, monotonically
+        increasing `sequence_id`, and places `(sequence_id, event_data)` onto
+        the `_frame_queue`. It also implements adaptive frame dropping: if the queue
+        is over 75% full, it proactively drops frames to prevent being overwhelmed.
 
-    2. Lock-Free Parallel Analysis:
-       - The `_analyze_turn` method is stateless, allowing multiple analysis
-         tasks (slow LLM calls) to run concurrently without interference.
+    2.  **Concurrent Workers (Computation)**: A pool of `_frame_processing_worker`
+        tasks (size determined by `MAX_FRAME_WORKERS`) act as consumers. They pull
+        items from the `_frame_queue` and perform the slow, CPU-intensive image
+        analysis (MSE, SSIM, contours). Crucially, these workers are stateless;
+        they do not read or modify the shared screen state (`_last_significant_frame_b64`).
+        Once done, they place their result, tagged with the original `sequence_id`,
+        onto a second queue: `_results_queue`.
 
-    3. Dynamic Logging Worker Pool with a Semaphore:
-       - Instead of a fixed pool, workers are spawned on-demand.
-       - An `asyncio.Semaphore` limits the number of concurrent logging tasks
-         to a configured maximum (`MAX_CONCURRENT_LOGGING_TASKS`), preventing
-         system overload.
-       - A single `_logging_dispatcher` task waits for results from the analysis
-         phase. When a job arrives, it acquires the semaphore and spawns a
-         one-shot `_logging_worker` task to handle the slow I/O.
-       - This is highly resource-efficient, as no workers are active during
-         idle periods, but the system can instantly scale up to handle bursts.
+    3.  **Sequencer (State Management)**: A single, dedicated `_sequencer_task` is
+        the only part of the system authorized to modify the screen state. It reads
+        results from the `_results_queue`. Because workers may finish out of order,
+        the sequencer buffers incoming results and processes them only when it has
+        the next expected `sequence_id`. This guarantees that frames are compared
+        chronologically, eliminating race conditions and ensuring logical consistency.
+        It is this task that updates `_last_significant_frame_b64` and creates
+        `pending_vision_events`.
     """
 
     def __init__(self):
@@ -160,14 +163,16 @@ class ScreenShareManager:
         self.DEBOUNCE_DELAY_SEC = 0.5
         self.INACTIVITY_TIMEOUT_SEC = 10.0
         self.FRAME_BUFFER_SIZE = 100
-        self.MAX_FRAME_WORKERS = 4
+        self.MAX_FRAME_WORKERS = os.cpu_count() or 4
         self.FRAME_QUEUE_SIZE = 100
+        self.RESULTS_QUEUE_SIZE = 200
         self.LOGGING_QUEUE_SIZE = 50
         self.VISUAL_EVENT_SAMPLING_THRESHOLD = 3
         self.BURST_DETECTION_THRESHOLD_SEC = 2.0
         self.MAX_CONCURRENT_LOGGING_TASKS = 5
         self.IMAGE_UPLOAD_MAX_RETRIES = 3
         self.IMAGE_UPLOAD_INITIAL_BACKOFF = 1.0
+        self.ADAPTIVE_DROP_THRESHOLD = 0.75
 
         # Clients and Managers
         self._event_broker: redis.Redis = get_event_broker()
@@ -182,8 +187,11 @@ class ScreenShareManager:
 
         # State Variables
         self._stop_event = asyncio.Event()
+        self._frame_sequence_id = 0
         self._frame_queue = asyncio.Queue(maxsize=self.FRAME_QUEUE_SIZE)
+        self._results_queue = asyncio.Queue(maxsize=self.RESULTS_QUEUE_SIZE)
         self._frame_workers: List[asyncio.Task] = []
+        self._sequencer_task: Optional[asyncio.Task] = None
         self._frame_buffer: Deque[Tuple[float, str]] = deque(
             maxlen=self.FRAME_BUFFER_SIZE,
         )
@@ -239,6 +247,7 @@ class ScreenShareManager:
             asyncio.create_task(self._frame_processing_worker())
             for _ in range(self.MAX_FRAME_WORKERS)
         ]
+        self._sequencer_task = asyncio.create_task(self._sequencer())
         await self._listen_for_events()
 
     def stop(self):
@@ -246,6 +255,8 @@ class ScreenShareManager:
         self._stop_event.set()
         if self._dispatcher_task and not self._dispatcher_task.done():
             self._dispatcher_task.cancel()
+        if self._sequencer_task and not self._sequencer_task.done():
+            self._sequencer_task.cancel()
         for worker in self._frame_workers:
             if not worker.done():
                 worker.cancel()
@@ -328,8 +339,18 @@ class ScreenShareManager:
                         channel = message["channel"]
                         event_data = json.loads(message["data"])
                         if channel == "app:comms:screen_frame":
+                            if self._frame_queue.qsize() > (
+                                self.FRAME_QUEUE_SIZE * self.ADAPTIVE_DROP_THRESHOLD
+                            ):
+                                logger.info(
+                                    "Frame queue backlogged. Proactively dropping frame."
+                                )
+                                continue
                             try:
-                                self._frame_queue.put_nowait(event_data)
+                                self._frame_sequence_id += 1
+                                self._frame_queue.put_nowait(
+                                    (self._frame_sequence_id, event_data)
+                                )
                             except asyncio.QueueFull:
                                 logger.warning(
                                     "Frame queue is full. Dropping incoming frame to maintain stability."
@@ -345,13 +366,73 @@ class ScreenShareManager:
                     await asyncio.sleep(1)
 
     async def _frame_processing_worker(self):
-        """Continuously processes frames from the queue."""
+        """
+        Pulls a frame from the queue, performs CPU-intensive analysis, and
+        places the result onto the results queue for sequencing. This worker
+        is stateless.
+        """
         logger.info("Frame processing worker started.")
         loop = asyncio.get_running_loop()
         while not self._stop_event.is_set():
             try:
-                event_data = await self._frame_queue.get()
-                await self._handle_frame_event(event_data, loop)
+                seq_id, event_data = await self._frame_queue.get()
+
+                timestamp = event_data["payload"]["timestamp"]
+                frame_b64 = event_data["payload"]["frame_b64"]
+
+                # Find the most recent "last significant frame" from the buffer for comparison
+                async with self._state_lock:
+                    last_sig_frame_b64 = self._last_significant_frame_b64
+
+                # Buffer frame for context, even if it's not significant
+                self._frame_buffer.append((timestamp, frame_b64))
+
+                is_significant = False
+                if last_sig_frame_b64 is not None:
+                    try:
+                        current_img, last_img = await asyncio.gather(
+                            loop.run_in_executor(
+                                self._cpu_executor, self._b64_to_image, frame_b64
+                            ),
+                            loop.run_in_executor(
+                                self._cpu_executor,
+                                self._b64_to_image,
+                                last_sig_frame_b64,
+                            ),
+                        )
+                        mse = await loop.run_in_executor(
+                            self._cpu_executor,
+                            self._calculate_mse,
+                            current_img,
+                            last_img,
+                        )
+                        if mse > self.MSE_THRESHOLD:
+                            score = await loop.run_in_executor(
+                                self._cpu_executor,
+                                ssim,
+                                np.array(last_img),
+                                np.array(current_img),
+                            )
+                            if score < self.SSIM_THRESHOLD:
+                                is_significant = await loop.run_in_executor(
+                                    self._cpu_executor,
+                                    self._is_semantically_significant,
+                                    last_img,
+                                    current_img,
+                                )
+                    except ValueError:
+                        logger.warning(
+                            "Could not process images for comparison. Skipping frame."
+                        )
+
+                result = {
+                    "seq_id": seq_id,
+                    "is_significant": is_significant,
+                    "timestamp": timestamp,
+                    "frame_b64": frame_b64,
+                    "before_frame_b64": last_sig_frame_b64 or frame_b64,
+                }
+                await self._results_queue.put(result)
                 self._frame_queue.task_done()
             except asyncio.CancelledError:
                 logger.info("Frame processing worker cancelled.")
@@ -359,6 +440,58 @@ class ScreenShareManager:
             except Exception as e:
                 logger.error(f"Error in frame processing worker: {e}", exc_info=True)
         logger.info("Frame processing worker stopped.")
+
+    async def _sequencer(self):
+        """
+        Processes analysis results in strict order to prevent race conditions.
+        This is the only task that modifies `_last_significant_frame_b64` and
+        `_pending_vision_events`.
+        """
+        logger.info("Sequencer task started.")
+        next_seq_id = 1
+        results_buffer: Dict[int, Any] = {}
+
+        while not self._stop_event.is_set():
+            try:
+                if next_seq_id in results_buffer:
+                    result = results_buffer.pop(next_seq_id)
+                else:
+                    result = await self._results_queue.get()
+
+                if result["seq_id"] != next_seq_id:
+                    results_buffer[result["seq_id"]] = result
+                    continue
+
+                self._last_activity_time = asyncio.get_event_loop().time()
+
+                if self._last_significant_frame_b64 is None:
+                    async with self._state_lock:
+                        self._last_significant_frame_b64 = result["frame_b64"]
+
+                elif result["is_significant"]:
+                    logger.info(
+                        f"Sequencer: Significant visual event detected at t={result['timestamp']:.2f}s"
+                    )
+                    async with self._state_lock:
+                        self._pending_vision_events.append(
+                            {
+                                "timestamp": result["timestamp"],
+                                "before_frame_b64": result["before_frame_b64"],
+                                "after_frame_b64": result["frame_b64"],
+                            }
+                        )
+                        self._last_significant_frame_b64 = result["frame_b64"]
+
+                next_seq_id += 1
+                if self._results_queue.qsize() == 0:
+                    await asyncio.sleep(0.01)  # Yield if queue is empty
+
+            except asyncio.CancelledError:
+                logger.info("Sequencer task cancelled.")
+                break
+            except Exception as e:
+                logger.error(f"Error in sequencer: {e}", exc_info=True)
+        logger.info("Sequencer task stopped.")
 
     async def _logging_dispatcher(self):
         """
@@ -391,65 +524,6 @@ class ScreenShareManager:
         finally:
             self._logging_semaphore.release()
 
-    async def _handle_frame_event(
-        self, event_data: dict, loop: asyncio.AbstractEventLoop
-    ):
-        """Processes a single video frame event."""
-        self._last_activity_time = asyncio.get_event_loop().time()
-        timestamp = event_data["payload"]["timestamp"]
-        frame_b64 = event_data["payload"]["frame_b64"]
-        self._frame_buffer.append((timestamp, frame_b64))
-
-        if self._last_significant_frame_b64 is None:
-            self._last_significant_frame_b64 = frame_b64
-            return
-
-        try:
-            current_img, last_img = await asyncio.gather(
-                loop.run_in_executor(self._cpu_executor, self._b64_to_image, frame_b64),
-                loop.run_in_executor(
-                    self._cpu_executor,
-                    self._b64_to_image,
-                    self._last_significant_frame_b64,
-                ),
-            )
-        except ValueError:
-            logger.warning("Could not process images for comparison. Skipping frame.")
-            return
-
-        # Stage 1: Cheap MSE pre-filter
-        mse = await loop.run_in_executor(
-            self._cpu_executor, self._calculate_mse, current_img, last_img
-        )
-        if mse <= self.MSE_THRESHOLD:
-            return  # No significant pixel change
-
-        # Stage 2: Perceptual SSIM check
-        score = await loop.run_in_executor(
-            self._cpu_executor, ssim, np.array(last_img), np.array(current_img)
-        )
-        if score >= self.SSIM_THRESHOLD:
-            return  # Perceptually too similar
-
-        # Stage 3: Semantic contour analysis to filter noise
-        is_significant = await loop.run_in_executor(
-            self._cpu_executor, self._is_semantically_significant, last_img, current_img
-        )
-        if not is_significant:
-            return  # Change was likely noise (cursor, scrollbar, etc.)
-
-        logger.info(
-            f"Significant visual event detected at t={timestamp:.2f}s (MSE: {mse:.2f}, SSIM: {score:.2f})"
-        )
-        async with self._state_lock:
-            self._pending_vision_events.append(
-                {
-                    "timestamp": timestamp,
-                    "before_frame_b64": self._last_significant_frame_b64,
-                    "after_frame_b64": frame_b64,
-                }
-            )
-        self._last_significant_frame_b64 = frame_b64
 
     def _trigger_summary_update(self):
         """Schedules the summary update task, ensuring only one is running or scheduled (debouncing)."""
@@ -557,11 +631,15 @@ class ScreenShareManager:
 
         is_debouncing = self._debounce_task and not self._debounce_task.done()
 
+        has_pending_events = False
+        async with self._state_lock:
+            has_pending_events = bool(self._pending_vision_events)
+
         if (
             time_since_activity > self.INACTIVITY_TIMEOUT_SEC
             and self._analyses_in_flight == 0
             and not is_debouncing
-            and self._pending_vision_events
+            and has_pending_events
         ):
             logger.info("Inactivity timeout reached. Flushing pending vision events.")
             self._trigger_turn_analysis(speech_event=None)
@@ -637,12 +715,10 @@ class ScreenShareManager:
         """Constructs the prompt and calls the LLM to get turn analysis."""
         async with self._state_lock:
             current_summary = self._session_summary
-            recent_event_descriptions = [
-                event.event_description for event in self._recent_key_events
-            ]
+            recent_key_events_copy = self._recent_key_events.copy()
 
         system_prompt = build_turn_analysis_prompt(
-            current_summary, self._recent_key_events
+            current_summary, recent_key_events_copy
         )
         user_content = []
         timestamp_to_frame_map: Dict[float, str] = {}
@@ -801,8 +877,8 @@ class ScreenShareManager:
 
             combined_frame_map = self._stored_silent_frame_map.copy()
             self._stored_silent_frame_map.clear()
+            combined_frame_map.update(frame_map)
 
-        combined_frame_map.update(frame_map)
         speech_payload = speech_event["payload"]
         speech_start_time = speech_payload.get("start_time")
         speech_end_time = speech_payload.get("end_time")
