@@ -411,12 +411,12 @@ class ConversationManager:
         if medium == "phone_call":
             exchange_id = self.state.call_exchange_id
 
-        utterance_timestamp = ""
+        call_utterance_timestamp = ""
         call_url = ""
         if self.state.call_start_timestamp:
             delta = datetime.now() - self.state.call_start_timestamp
             minutes, seconds = divmod(int(delta.total_seconds()), 60)
-            utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
+            call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
         if "default-assistant" not in self.state.assistant_id:
             call_url = (
                 "https://storage.cloud.google.com/assistant-call-recordings/staging/"
@@ -431,7 +431,7 @@ class ConversationManager:
                 receiver_ids=receiver_ids,
                 content=content,
                 exchange_id=exchange_id,
-                utterance_timestamp=utterance_timestamp,
+                call_utterance_timestamp=call_utterance_timestamp,
                 call_url=call_url,
                 metadata=None,
             ).to_json(),

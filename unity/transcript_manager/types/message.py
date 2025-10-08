@@ -47,7 +47,7 @@ class Message(BaseModel):
             "Supports negative indices and open-ended ranges (e.g., '[6:]', '[:10]')."
         ),
     )
-    utterance_timestamp: str = Field(
+    call_utterance_timestamp: str = Field(
         default="",
         description="Timestamp of the utterance associated with calls",
     )
