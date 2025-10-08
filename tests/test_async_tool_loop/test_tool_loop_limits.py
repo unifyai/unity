@@ -9,33 +9,14 @@ from unity.common.tool_spec import ToolSpec
 from tests.helpers import SETTINGS
 
 
-class DummyAsyncUnify:
-    """Minimal stub to satisfy the loop in unit-tests."""
-
-    def __init__(self, *, delay: float = 0.0):
-        self.messages = []
-        self._delay = delay
-
-    def append_messages(self, msgs):
-        self.messages.extend(msgs)
-
-    async def generate(self, *a, **_):
-        if self._delay:
-            await asyncio.sleep(self._delay)
-        # The real LLM JSON always includes 'tool_calls'; we mirror that.
-        msg = {"role": "assistant", "content": "done", "tool_calls": []}
-        self.messages.append(msg)
-        return msg
-
-    @property
-    def system_message(self) -> str:
-        return ""
-
-
 # ── 1. max_steps safeguard ────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_max_steps_exceeded():
-    client = DummyAsyncUnify()
+    client = unify.AsyncUnify(
+        os.getenv("UNIFY_MODEL", "o4-mini@openai"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
     # The conversation will contain at least USER + ASSISTANT = 2 messages,
     # so max_steps=1 must raise.
     handle = start_async_tool_loop(
@@ -52,8 +33,20 @@ async def test_max_steps_exceeded():
 
 # ── 2. timeout safeguard ──────────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_timeout_exceeded():
-    client = DummyAsyncUnify(delay=0.2)  # ensure > timeout
+async def test_timeout_exceeded(monkeypatch):
+    client = unify.AsyncUnify(
+        os.getenv("UNIFY_MODEL", "o4-mini@openai"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    # Force generate to be slower than timeout using monkeypatch while still calling the real LLM.
+    orig_generate = client.generate
+
+    async def _slow_generate(**kwargs):
+        await asyncio.sleep(0.2)
+        return await orig_generate(**kwargs)
+
+    monkeypatch.setattr(client, "generate", _slow_generate, raising=True)
     handle = start_async_tool_loop(
         client,
         message="hi",
@@ -67,19 +60,18 @@ async def test_timeout_exceeded():
 
 
 # ── 3 & 4. graceful early-exit when limits hit (NO raise) ──────────────────
-class _ToolCallingUnify(DummyAsyncUnify):
-    """
-    On its first call the stub requests execution of `long_tool`, creating a
-    *pending* tool task in the outer loop.  Subsequent calls are inert.
-    """
+class _ToolCallingDriver:
+    """Monkeypatch driver that makes the first LLM turn request `long_tool`."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, client: unify.AsyncUnify):
         self._step = 0
+        self._client = client
+        self._orig = client.generate
 
-    async def generate(self, *a, **_):
+    async def __call__(self, **kwargs):
         if self._step == 0:
             self._step += 1
+            # Simulate model tool_calls by appending an assistant message directly
             msg = {
                 "role": "assistant",
                 "content": "running tool",
@@ -94,25 +86,19 @@ class _ToolCallingUnify(DummyAsyncUnify):
                     },
                 ],
             }
-        else:
-            self._step += 1
-            msg = {"role": "assistant", "content": "noop", "tool_calls": []}
-        self.messages.append(msg)
-        return msg
+            self._client.append_messages([msg])
+            return msg
+        return await self._orig(**kwargs)
 
 
 # ── 7. pruning over-quota tool calls (hidden quotas) ────────────────────────
-class _MultiCallUnify(DummyAsyncUnify):
-    """
-    First assistant turn requests the same base tool three times.
-    Subsequent calls are inert.
-    """
-
-    def __init__(self):
-        super().__init__()
+class _MultiCallDriver:
+    def __init__(self, client: unify.AsyncUnify):
         self._step = 0
+        self._client = client
+        self._orig = client.generate
 
-    async def generate(self, *a, **_):
+    async def __call__(self, **kwargs):
         if self._step == 0:
             self._step += 1
             msg = {
@@ -136,15 +122,13 @@ class _MultiCallUnify(DummyAsyncUnify):
                     },
                 ],
             }
-        else:
-            self._step += 1
-            msg = {"role": "assistant", "content": "done", "tool_calls": []}
-        self.messages.append(msg)
-        return msg
+            self._client.append_messages([msg])
+            return msg
+        return await self._orig(**kwargs)
 
 
 @pytest.mark.asyncio
-async def test_prunes_over_quota_tool_calls():
+async def test_prunes_over_quota_tool_calls(monkeypatch):
     """When `max_total_calls` is 2, only two calls are scheduled; extras are pruned."""
 
     counter = {"n": 0}
@@ -153,7 +137,14 @@ async def test_prunes_over_quota_tool_calls():
         counter["n"] += 1
         return "ok"
 
-    client = _MultiCallUnify()
+    client = unify.AsyncUnify(
+        os.getenv("UNIFY_MODEL", "o4-mini@openai"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    # Monkeypatch the real client to request three tool calls on first turn
+    driver = _MultiCallDriver(client)
+    monkeypatch.setattr(client, "generate", driver, raising=True)
 
     handle = start_async_tool_loop(
         client,
@@ -187,18 +178,14 @@ async def test_prunes_over_quota_tool_calls():
 
 
 # ── 8. pruning over-quota tool calls across serial turns ────────────────────
-class _SerialCallsUnify(DummyAsyncUnify):
-    """
-    Emits three consecutive assistant turns, each requesting one call to the
-    same base tool. After that, no tool calls.
-    """
-
-    def __init__(self):
-        super().__init__()
+class _SerialCallsDriver:
+    def __init__(self, client: unify.AsyncUnify):
         self._step = 0
+        self._client = client
+        self._orig = client.generate
 
-    async def generate(self, *a, **_):
-        if self._step < 3:
+    async def __call__(self, **kwargs):
+        if self._step < 2:
             self._step += 1
             msg = {
                 "role": "assistant",
@@ -211,15 +198,13 @@ class _SerialCallsUnify(DummyAsyncUnify):
                     },
                 ],
             }
-        else:
-            self._step += 1
-            msg = {"role": "assistant", "content": "done", "tool_calls": []}
-        self.messages.append(msg)
-        return msg
+            self._client.append_messages([msg])
+            return msg
+        return await self._orig(**kwargs)
 
 
 @pytest.mark.asyncio
-async def test_prunes_over_quota_serial_calls():
+async def test_prunes_over_quota_serial_calls(monkeypatch):
     """When three serial turns each request a call, quota=2 prunes the third."""
 
     counter = {"n": 0}
@@ -228,7 +213,18 @@ async def test_prunes_over_quota_serial_calls():
         counter["n"] += 1
         return "ok"
 
-    client = _SerialCallsUnify()
+    client = unify.AsyncUnify(
+        os.getenv("UNIFY_MODEL", "o4-mini@openai"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    # Instruct the model how to conclude after the allowed calls
+    client.set_system_message(
+        "You are part of an automated test. If tools are available, request the tool `short_tool` exactly once per turn. "
+        "After at most two such tool calls have been made, do not request any more tools and reply exactly with the word 'done'.",
+    )
+    driver = _SerialCallsDriver(client)
+    monkeypatch.setattr(client, "generate", driver, raising=True)
 
     handle = start_async_tool_loop(
         client,
@@ -268,10 +264,16 @@ def _make_long_tool(cancel_flag: dict):
 
 
 @pytest.mark.asyncio
-async def test_timeout_graceful_termination():
+async def test_timeout_graceful_termination(monkeypatch):
     """No exception; pending tool is cancelled when timeout hits."""
     cancel_flag = {}
-    client = _ToolCallingUnify()
+    client = unify.AsyncUnify(
+        os.getenv("UNIFY_MODEL", "o4-mini@openai"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    driver = _ToolCallingDriver(client)
+    monkeypatch.setattr(client, "generate", driver, raising=True)
     handle = start_async_tool_loop(
         client,
         message="go",
@@ -286,10 +288,16 @@ async def test_timeout_graceful_termination():
 
 
 @pytest.mark.asyncio
-async def test_max_steps_graceful_termination():
+async def test_max_steps_graceful_termination(monkeypatch):
     """No exception; pending tool is cancelled when max_steps is exceeded."""
     cancel_flag = {}
-    client = _ToolCallingUnify()
+    client = unify.AsyncUnify(
+        os.getenv("UNIFY_MODEL", "o4-mini@openai"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    driver = _ToolCallingDriver(client)
+    monkeypatch.setattr(client, "generate", driver, raising=True)
     handle = start_async_tool_loop(
         client,
         message="go",

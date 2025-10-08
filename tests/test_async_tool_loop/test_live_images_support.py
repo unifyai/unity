@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import base64
 import pytest
+import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, SETTINGS
 
 
 class _SpyClient:
@@ -82,20 +83,24 @@ async def test_live_images_helpers_exposed_with_alignment_description(
 
     tools_snapshots: list[list[dict]] = []
 
-    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):  # noqa: D401
-        tools = gen_kwargs.get("tools") or []
-        tools_snapshots.append(tools)
-        # Return a single assistant reply with no tool calls (finish early)
-        msg = {"role": "assistant", "content": "done", "tool_calls": []}
-        client.messages.append(msg)
-        return msg
-
-    # Spy at the callsite used by the loop
     from unity.common._async_tool import loop as _loop
 
-    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
+    orig_gwp = getattr(_loop, "generate_with_preprocess")
 
-    client = _SpyClient()
+    async def _spy_gwp(client, preprocess_msgs, **gen_kwargs):  # noqa: D401
+        tools = gen_kwargs.get("tools") or []
+        tools_snapshots.append(tools)
+        return await orig_gwp(client, preprocess_msgs, **gen_kwargs)
+
+    # Spy at the callsite used by the loop
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
+
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message("Reply exactly with the word 'done'.")
 
     # Message whose first 5 chars are 'Hello' – used to compute substring
     message_text = "Hello world – please reason over the image if needed."
@@ -141,36 +146,15 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
     the (dummy) image answer returned by the handle.
     """
 
-    step = {"n": 0}
-
-    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
-        if step["n"] == 0:
-            step["n"] += 1
-            # Request the dynamic helper on the first assistant turn
-            msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_IMG_1",
-                        "type": "function",
-                        "function": {
-                            "name": "ask_image",
-                            "arguments": '{"image_id": 42, "question": "What is the dominant color?"}',
-                        },
-                    },
-                ],
-            }
-        else:
-            msg = {"role": "assistant", "content": "final", "tool_calls": []}
-        client.messages.append(msg)
-        return msg
-
-    from unity.common._async_tool import loop as _loop
-
-    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
-
-    client = _SpyClient()
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "Call the dynamic helper `ask_image` once for image_id=42 with the question 'What is the dominant color?'. "
+        "Then provide a short final answer.",
+    )
     images = {
         "[0:5]": DummyImageHandle(
             image_id=42,
@@ -206,39 +190,15 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
     image_url content block (data URL) was appended to the transcript.
     """
 
-    step = {"n": 0}
-
-    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
-        if step["n"] == 0:
-            step["n"] += 1
-            # Request the attach helper on the first assistant turn
-            msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_IMG_2",
-                        "type": "function",
-                        "function": {
-                            "name": "attach_image_raw",
-                            "arguments": '{"image_id": 99, "note": "please inspect"}',
-                        },
-                    },
-                ],
-            }
-        else:
-            # After image is attached, the next assistant turn should be able to
-            # reason about the attached image. Simulate this by answering with the
-            # dominant colour of the solid PNG (red).
-            msg = {"role": "assistant", "content": "red", "tool_calls": []}
-        client.messages.append(msg)
-        return msg
-
-    from unity.common._async_tool import loop as _loop
-
-    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
-
-    client = _SpyClient()
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "Call the dynamic helper `attach_image_raw` for image_id=99 with note 'please inspect'. "
+        "Then reply with exactly 'red'.",
+    )
     images = {
         "[0:4]": DummyImageHandle(
             image_id=99,
@@ -293,47 +253,22 @@ async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
     """
 
     tools_snapshots: list[list[dict]] = []
-    step = {"n": 0}
-
-    # We'll set these after we compute the message spans
-    chosen_emily_id = {"id": None}
-
-    async def _fake_gwp(client, preprocess_msgs, **gen_kwargs):
-        tools = gen_kwargs.get("tools") or []
-        tools_snapshots.append(tools)
-
-        if step["n"] == 0:
-            step["n"] += 1
-            # On the first turn, request ask_image on the Emily-aligned image id
-            msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_IMG_EMILY",
-                        "type": "function",
-                        "function": {
-                            "name": "ask_image",
-                            "arguments": (
-                                "{"
-                                + f"\"image_id\": {int(chosen_emily_id['id'])}, \"question\": \"What colour is this?\""
-                                + "}"
-                            ),
-                        },
-                    },
-                ],
-            }
-        else:
-            # Final answer (from image reasoning)
-            msg = {"role": "assistant", "content": "blue", "tool_calls": []}
-        client.messages.append(msg)
-        return msg
-
     from unity.common._async_tool import loop as _loop
 
-    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
+    orig_gwp2 = getattr(_loop, "generate_with_preprocess")
 
-    client = _SpyClient()
+    async def _spy_gwp2(client, preprocess_msgs, **gen_kwargs):
+        tools = gen_kwargs.get("tools") or []
+        tools_snapshots.append(tools)
+        return await orig_gwp2(client, preprocess_msgs, **gen_kwargs)
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp2, raising=True)
+
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
 
     # Message with two "this colour" segments
     message_text = (
@@ -361,7 +296,11 @@ async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
             raw_bytes=_solid_png_bytes(),
         ),
     }
-    chosen_emily_id["id"] = emily_id
+    # Instruct model to call ask_image for Emily's span and then answer 'blue'.
+    client.set_system_message(
+        "First, call the dynamic helper `ask_image` on the image aligned to Emily's 'this colour' span. "
+        "Then reply with 'blue'.",
+    )
 
     handle = start_async_tool_loop(
         client=client,

@@ -3,9 +3,10 @@ from __future__ import annotations
 import base64
 import json
 import pytest
+import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, SETTINGS
 
 
 class _SpyClient:
@@ -118,7 +119,11 @@ async def test_align_images_for_helper_builds_arg_scoped_mapping(monkeypatch) ->
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
 
-    client = _SpyClient()
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
     images = {
         "[0:5]": DummyImageHandle(
             image_id=42,
@@ -203,7 +208,11 @@ async def test_inner_tool_receives_and_resolves_arg_scoped_images(monkeypatch) -
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
 
-    client = _SpyClient()
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
     images = {
         "[0:5]": DummyImageHandle(
             image_id=42,
@@ -280,7 +289,11 @@ async def test_invalid_arg_or_span_entries_are_dropped(monkeypatch) -> None:
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
 
-    client = _SpyClient()
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
     images = {
         "[0:5]": DummyImageHandle(
             image_id=42,
@@ -342,7 +355,11 @@ async def test_no_implicit_images_pass_when_omitted(monkeypatch) -> None:
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
 
-    client = _SpyClient()
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
     images = {
         "[0:5]": DummyImageHandle(
             image_id=42,
@@ -407,7 +424,11 @@ async def test_images_value_may_be_handle_objects(monkeypatch) -> None:
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
 
-    client = _SpyClient()
+    client = unify.AsyncUnify(
+        "o4-mini@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
 
     handle_obj = DummyImageHandle(
         image_id=99,
