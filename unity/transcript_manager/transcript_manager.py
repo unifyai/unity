@@ -43,6 +43,8 @@ import json as _json
 from ..events.event_bus import EVENT_BUS, Event
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..image_manager.utils import substring_from_span
+from ..common.tool_spec import read_only
+from ..constants import is_semantic_cache_enabled
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -71,6 +73,7 @@ class TranscriptManager(BaseTranscriptManager):
         # participant contacts followed by the list of messages, avoiding
         # repeating long bios per message. Direct method calls (e.g., tests)
         # retain their original return types for backward-compat.
+        @read_only
         def _filter_messages(*, filter: Optional[str] = None, offset: int = 0, limit: int = 100) -> str:  # type: ignore[override]
             return self._filter_messages(  # type: ignore[misc]
                 filter=filter,
@@ -79,6 +82,7 @@ class TranscriptManager(BaseTranscriptManager):
                 return_with_contacts_table=True,
             )  # type: ignore[return-value]
 
+        @read_only
         def _search_messages(*, references: Optional[Dict[str, str]] = None, k: int = 10) -> str:  # type: ignore[override]
             return self._search_messages(  # type: ignore[misc]
                 references=references,
@@ -287,6 +291,10 @@ class TranscriptManager(BaseTranscriptManager):
         else:
             effective_tool_policy = tool_policy
 
+        use_semantic_cache = is_semantic_cache_enabled()
+        # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
+        effective_tool_policy = None if use_semantic_cache else effective_tool_policy
+
         # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_loop(
             client,
@@ -297,6 +305,7 @@ class TranscriptManager(BaseTranscriptManager):
             parent_chat_context=parent_chat_context,
             preprocess_msgs=inject_broader_context,
             tool_policy=effective_tool_policy,
+            semantic_cache=use_semantic_cache,
         )
 
         # ── 4.  Optional reasoning exposure  ───────────────────────────────
@@ -1332,6 +1341,7 @@ class TranscriptManager(BaseTranscriptManager):
     # Image helpers (parallel to GuidanceManager image tools)
     # ────────────────────────────────────────────────────────────────────
 
+    @read_only
     def _get_images_for_message(self, *, message_id: int) -> List[Dict[str, Any]]:
         """Return image metadata (no raw data) for images referenced by a message.
 
@@ -1382,6 +1392,7 @@ class TranscriptManager(BaseTranscriptManager):
             )
         return out
 
+    @read_only
     @functools.wraps(ImageHandle.ask, assigned=("__doc__",), updated=())
     async def _ask_image(self, *, image_id: int, question: str) -> str:
         handles = self._image_manager.get_images([int(image_id)])
