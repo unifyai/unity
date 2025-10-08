@@ -64,7 +64,11 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
     monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
 
     # --- run the method ----------------------------------------------------
-    mm = SimulatedMemoryManager("CRM enrichment demo.")
+    mm = SimulatedMemoryManager(
+        "TEST SCENARIO: CRM enrichment demo. The inner simulated managers should behave"
+        " deterministically, avoid external I/O, and accept straightforward updates so"
+        " that the real MemoryManager can decide which inner tools to call.",
+    )
     transcript = _build_transcript(
         "FYI: New contact – Dana Fox, dana.fox@example.com, phone +14155550123.",
     )
@@ -95,7 +99,10 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
     monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
 
     # run --------------------------------------------------------------------
-    mm = SimulatedMemoryManager("Bio refresh demo.")
+    mm = SimulatedMemoryManager(
+        "TEST SCENARIO: Bio refresh demo. The inner simulated managers should accept"
+        " simple updates deterministically with concise outputs.",
+    )
     transcript = _build_transcript("BTW – Dana just moved to Berlin.")
     new_bio = await mm.update_contact_bio(
         transcript,
@@ -127,7 +134,10 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
     monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
 
     # run --------------------------------------------------------------------
-    mm = SimulatedMemoryManager("Rolling-summary refresh demo.")
+    mm = SimulatedMemoryManager(
+        "TEST SCENARIO: Rolling-summary refresh demo. The inner simulated managers should"
+        " accept simple updates deterministically with concise outputs.",
+    )
     transcript = _build_transcript(
         "Action items: finalise KPI dashboard by Friday and schedule follow-up.",
     )
@@ -166,7 +176,9 @@ async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
     )
 
     mm = SimulatedMemoryManager(
-        "You have no prior knowledge on any topic. The knowledge base is *empty*!",
+        "TEST SCENARIO: Knowledge update. Assume the knowledge base is EMPTY unless an"
+        " explicit KnowledgeManager.update manager-method in the transcript proves"
+        " otherwise; answer ask/retrieve as 'not found' so the flow proceeds to update.",
     )
     transcript = _build_transcript(
         "Fun fact: The company standardised on Kubernetes for all deployments back in 2021.",
@@ -202,7 +214,10 @@ async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
         raising=True,
     )
 
-    mm = SimulatedMemoryManager("Task list update demo.")
+    mm = SimulatedMemoryManager(
+        "TEST SCENARIO: Task list update demo. The inner simulated TaskScheduler should"
+        " accept straightforward updates deterministically and respond concisely.",
+    )
     transcript = _build_transcript(
         "Please create a task to organise the quarterly review meeting next Monday.",
     )
@@ -232,7 +247,10 @@ async def test_mm_update_contact_response_policy_invocations(monkeypatch):
 
     monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
 
-    mm = SimulatedMemoryManager("response policy helper demo")
+    mm = SimulatedMemoryManager(
+        "TEST SCENARIO: Response policy helper. Inner simulated managers should allow"
+        " deterministic, minimal updates without external I/O.",
+    )
     transcript = _build_transcript("Please be more formal when replying to Jane.")
 
     await mm.update_contact_response_policy(transcript, contact_id=1)

@@ -112,10 +112,31 @@ async def test_update_contacts_triggers_followups(monkeypatch):
 
     # Instantiate MemoryManager with simulated sub-managers so no I/O occurs
     mm = MemoryManager(
-        contact_manager=SimulatedContactManager(description="follow-up-test"),
-        transcript_manager=SimulatedTranscriptManager(description="follow-up-test"),
-        knowledge_manager=SimulatedKnowledgeManager(description="follow-up-test"),
-        task_scheduler=SimulatedTaskScheduler(description="follow-up-test"),
+        contact_manager=SimulatedContactManager(
+            description=(
+                "TEST SCENARIO: Update contacts follow-ups. As a simulated ContactManager,"
+                " deterministically allow creation and updates; expose predictable ids so"
+                " the MemoryManager can trigger follow-up updates."
+            ),
+        ),
+        transcript_manager=SimulatedTranscriptManager(
+            description=(
+                "TEST SCENARIO: Update contacts follow-ups. Provide straightforward transcript"
+                " answers; no external dependencies."
+            ),
+        ),
+        knowledge_manager=SimulatedKnowledgeManager(
+            description=(
+                "TEST SCENARIO: Update contacts follow-ups. Keep behaviour lightweight and"
+                " side-effect free."
+            ),
+        ),
+        task_scheduler=SimulatedTaskScheduler(
+            description=(
+                "TEST SCENARIO: Update contacts follow-ups. Accept simple updates with minimal"
+                " responses; no I/O."
+            ),
+        ),
     )
 
     # Run the method under test
@@ -165,10 +186,31 @@ async def test_update_contacts_respects_flags(monkeypatch):
     _patch_start_async_tool_loop(monkeypatch)
 
     mm = MemoryManager(
-        contact_manager=SimulatedContactManager(description="flag-test"),
-        transcript_manager=SimulatedTranscriptManager(description="flag-test"),
-        knowledge_manager=SimulatedKnowledgeManager(description="flag-test"),
-        task_scheduler=SimulatedTaskScheduler(description="flag-test"),
+        contact_manager=SimulatedContactManager(
+            description=(
+                "TEST SCENARIO: Update contacts flags. As a simulated ContactManager, support"
+                " deterministic updates; MemoryManager may or may not call follow-ups based"
+                " on flags."
+            ),
+        ),
+        transcript_manager=SimulatedTranscriptManager(
+            description=(
+                "TEST SCENARIO: Update contacts flags. Provide straightforward transcript"
+                " answers only."
+            ),
+        ),
+        knowledge_manager=SimulatedKnowledgeManager(
+            description=(
+                "TEST SCENARIO: Update contacts flags. Lightweight behaviour without external"
+                " I/O."
+            ),
+        ),
+        task_scheduler=SimulatedTaskScheduler(
+            description=(
+                "TEST SCENARIO: Update contacts flags. Accept simple updates with minimal"
+                " responses; no I/O."
+            ),
+        ),
     )
 
     # Both follow-ups explicitly disabled

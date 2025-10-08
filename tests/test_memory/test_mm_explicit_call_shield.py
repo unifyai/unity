@@ -68,10 +68,32 @@ async def test_explicit_conversation_manager_calls_are_visible_in_passive_chunk(
     #     test runs quickly.
     # ---------------------------------------------------------------
     mm = MemoryManager(
-        contact_manager=SimulatedContactManager(description="shield-test"),
-        transcript_manager=SimulatedTranscriptManager(description="shield-test"),
-        knowledge_manager=SimulatedKnowledgeManager(description="shield-test"),
-        task_scheduler=SimulatedTaskScheduler(description="shield-test"),
+        contact_manager=SimulatedContactManager(
+            description=(
+                "TEST SCENARIO: Explicit ConversationManager calls are present. As a"
+                " simulated ContactManager, act deterministically, accept updates, and"
+                " avoid external I/O."
+            ),
+        ),
+        transcript_manager=SimulatedTranscriptManager(
+            description=(
+                "TEST SCENARIO: Explicit ConversationManager calls are present. Return"
+                " straightforward results for transcript queries."
+            ),
+        ),
+        knowledge_manager=SimulatedKnowledgeManager(
+            description=(
+                "TEST SCENARIO: Explicit ConversationManager calls are present. If the"
+                " transcript contains an explicit KnowledgeManager.update manager-method,"
+                " treat the fact as already stored; otherwise behave as if absent."
+            ),
+        ),
+        task_scheduler=SimulatedTaskScheduler(
+            description=(
+                "TEST SCENARIO: Explicit ConversationManager calls are present. Accept simple"
+                " task updates deterministically and keep responses minimal."
+            ),
+        ),
     )
     mm._CHUNK_SIZE = 3  # type: ignore[attr-defined]
 
