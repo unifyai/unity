@@ -256,3 +256,4 @@ class NotificationInjectedEvent(Event):
 
     content: str
     source: str
+    target_conversation_id: str
