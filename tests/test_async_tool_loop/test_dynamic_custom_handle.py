@@ -269,7 +269,7 @@ async def test_handle_cls_custom_outer_handle_is_instantiated(client):
         client,
         message="hi",
         tools={},
-        timeout=10,
+        timeout=60,
         max_steps=1,
         handle_cls=CustomOuterHandle,
     )

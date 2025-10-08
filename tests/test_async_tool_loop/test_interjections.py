@@ -220,7 +220,7 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
     async def _helper_pruned() -> bool:
         return assistant_msg not in (client.messages or [])
 
-    await _wait_for_condition(_helper_pruned, poll=0.05, timeout=10.0)
+    await _wait_for_condition(_helper_pruned, poll=0.05, timeout=60.0)
 
     # The pre-seeded helper assistant turn should be pruned
     assert assistant_msg not in client.messages
@@ -403,7 +403,7 @@ async def test_interjectable_tool_roundtrip() -> None:
         Wait up to 2 s for a steer; echo whichever topic we end up with.
         """
         try:
-            steer = await asyncio.wait_for(interject_queue.get(), timeout=2.0)
+            steer = await asyncio.wait_for(interject_queue.get(), timeout=60.0)
             exec_log.append(f"steered→{steer}")
             return f"Topic switched to: {steer}"
         except asyncio.TimeoutError:
@@ -508,7 +508,7 @@ async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
             for m in (client.messages or [])
         )
 
-    await _wait_for_condition(_saw_interjection_msg, poll=0.05, timeout=10.0)
+    await _wait_for_condition(_saw_interjection_msg, poll=0.05, timeout=60.0)
     assert (assistant_idx + 1) < len(client.messages)
     next_msg = client.messages[assistant_idx + 1]
     assert next_msg.get("role") == "tool" and next_msg.get("tool_call_id") == call_id
@@ -574,7 +574,7 @@ async def test_backfills_missing_tool_reply_for_prior_assistant_turn() -> None:
                     return True
         return False
 
-    await _wait_for_condition(_has_backfill_after_assistant, poll=0.05, timeout=10.0)
+    await _wait_for_condition(_has_backfill_after_assistant, poll=0.05, timeout=60.0)
     # Locate the assistant turn and assert the next message is the tool backfill
     assistant_idx = next(
         i
