@@ -22,16 +22,20 @@ from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
     ToolCallMetadata,
     create_tool_call_message,
+)
+from .images import (
     append_source_scoped_images,
     default_source_label,
     extract_alignment_text_from_value,
+    set_live_images_context,
+    reset_live_images_context,
+    align_images_for as _align_images_for,
+    refresh_overview_doc_if_present,
 )
 from ..llm_helpers import method_to_schema, _dumps
 from .loop_config import (
     LoopConfig,
     TOOL_LOOP_LINEAGE,
-    LIVE_IMAGES_REGISTRY,
-    LIVE_IMAGES_LOG,
 )
 from .timeout_timer import TimeoutTimer
 from .messages import (
@@ -257,21 +261,7 @@ async def async_tool_loop_inner(
     # If live images are provided, set the registry for this loop's scope
     try:
         if images:
-            id_map: dict[int, Any] = {}
-            for _k, _ih in images.items():
-                with suppress(Exception):
-                    _iid = int(getattr(_ih, "image_id", -1))
-                    if _iid >= 0:
-                        id_map[_iid] = _ih
-            _img_token = LIVE_IMAGES_REGISTRY.set(id_map)
-            # Seed the overview log with user_message sourced images
-            seed_log: list[str] = []
-            with suppress(Exception):
-                for _k, _ih in images.items():
-                    with suppress(Exception):
-                        _iid = int(getattr(_ih, "image_id", -1))
-                    seed_log.append(f"user_message:{_iid}:{_k}")
-            _imglog_token = LIVE_IMAGES_LOG.set(seed_log)
+            _img_token, _imglog_token = set_live_images_context(images, message)
     except Exception:
         _img_token = None
         _imglog_token = None
@@ -422,34 +412,13 @@ async def async_tool_loop_inner(
             + "When sending images with dynamic methods (ask, interject, stop, clarify, notifications), use `<source>[start:end]` keys:\n"
             + "- Supported sources: `this`, `user_message`, `interjectionN`, `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`.\n"
             + "- `this[:]` is a shorthand that refers to the current outgoing payload (e.g., the very text of this interjection/ask/clarify/notify).\n"
-            + "- Values are image ids (or handles). These images are appended to the loop’s live registry and reflected below.\n"
+            + "- Values are image ids (or handles). These images are appended to the loop's live registry and reflected below.\n"
         )
 
         async def live_images_overview() -> Dict[str, str]:
             return {"status": "ok"}
 
-        # Merge previously appended images (if any)
-        prior = []
-        with suppress(Exception):
-            prior = LIVE_IMAGES_LOG.get()
-        if prior:
-            # Enrich prior entries for display (best-effort; do not re-fetch substrings)
-            prior_lines = []
-            for rec in prior:
-                with suppress(Exception):
-                    src, iid_s, span_key = rec.split(":", 2)
-                    prior_lines.append(
-                        f"- source={src}, id={int(iid_s)}, span={span_key}",
-                    )
-            if prior_lines:
-                overview_doc = (
-                    overview_doc
-                    + "\n\nAppended images (this session):\n"
-                    + "\n".join(
-                        prior_lines,
-                    )
-                )
-
+        # Overview enrichment handled elsewhere; base doc remains here
         live_images_overview.__doc__ = overview_doc
 
         # Keep a set of already-attached ids (idempotent attach)
@@ -655,7 +624,7 @@ async def async_tool_loop_inner(
             "    Keys use `<source>[start:end]` (see overview). Use `this[:]` to associate images with the `question` text.\n\n"
             "Behaviour\n"
             "---------\n"
-            "- Resolves ids to handles, appends them to this loop’s live registry, and surfaces them in the overview.\n"
+            "- Resolves ids to handles, appends them to this loop's live registry, and surfaces them in the overview.\n"
             "- Returns a nested handle; await its result for the answer."
         )
         attach_image_raw.__doc__ = (
@@ -672,7 +641,7 @@ async def async_tool_loop_inner(
             "Behaviour\n"
             "---------\n"
             "- Idempotent per image_id (re-attaching the same id is a no-op).\n"
-            "- Resolves ids to handles, appends them to this loop’s live registry, and surfaces them in the overview."
+            "- Resolves ids to handles, appends them to this loop's live registry, and surfaces them in the overview."
         )
 
         live_image_tools = {
@@ -682,91 +651,7 @@ async def async_tool_loop_inner(
         }
 
     # ── Helper to prepare arg-scoped images mapping for inner tool calls ─────
-    async def align_images_for(
-        *,
-        args: dict,
-        hints: list[dict],
-    ) -> dict:
-        """
-        Prepare arg‑scoped `images` for an upcoming inner tool call, without manual counting.
-
-        Purpose
-        -------
-        Convert human-friendly substring hints into arg-scoped span keys of the form
-        `<arg>[start:end]`, which inner tools that accept `images` can consume directly.
-
-        Parameters
-        ----------
-        args : dict
-            Mapping of argument names to the target text to align against.
-            Example: {"question": "Please compare the Cairo skyline images for clarity"}.
-        hints : list[dict]
-            Each item can be one of the following shapes (synonyms accepted):
-              - {"arg": <arg_name>, "substring": <text>, "image_id": <int>}
-              - {"arg": <arg_name>, "text": <text>, "id": <int>}
-              - {"arg_name": <arg_name>, "span_text": <text>, "imageId": <int>}
-
-        Returns
-        -------
-        dict
-            {"images": {"arg[start:end]": image_id, ...}}
-
-        Usage
-        -----
-        - Use the returned dict directly as the `images` argument in the next tool call that
-          accepts `images` (with arg-scoped keys). This avoids manual index counting.
-        - If a substring does not occur in the specified arg text, it is skipped.
-        - Only include image ids relevant to the inner call (subset control stays explicit).
-        """
-        out: dict[str, int] = {}
-        try:
-            arg_texts = {str(k): str(v) for k, v in dict(args or {}).items()}
-        except Exception:
-            arg_texts = {}
-
-        def _extract_id(obj: dict) -> int | None:
-            for k in ("image_id", "imageId", "id"):
-                if k in obj:
-                    try:
-                        return int(obj[k])
-                    except Exception:
-                        return None
-            return None
-
-        def _extract_arg(obj: dict) -> str | None:
-            for k in ("arg", "argument", "arg_name", "name"):
-                if k in obj:
-                    return str(obj[k])
-            return None
-
-        def _extract_substring(obj: dict) -> str | None:
-            for k in ("substring", "text", "span_text"):
-                if k in obj:
-                    return str(obj[k])
-            return None
-
-        for item in list(hints or []):
-            if not isinstance(item, dict):
-                continue
-            iid = _extract_id(item)
-            arg_name = _extract_arg(item)
-            sub = _extract_substring(item)
-            if iid is None or not arg_name or sub is None:
-                continue
-            base = arg_texts.get(arg_name)
-            if not isinstance(base, str):
-                continue
-            try:
-                start = base.find(sub)
-                if start < 0:
-                    continue
-                end = start + len(sub)
-                key = f"{arg_name}[{start}:{end}]"
-                out[key] = iid
-            except Exception:
-                continue
-
-        return {"images": out}
+    align_images_for = _align_images_for
 
     # Only add align_images_for when images are actually provided
     general_helpers = {"align_images_for": align_images_for} if images else {}
@@ -1449,33 +1334,8 @@ async def async_tool_loop_inner(
 
             # Refresh live-images overview with the latest appended images
             try:
-                if images and "live_images_overview" in tools_data.normalized:
-                    from unity.common._async_tool.loop_config import (
-                        LIVE_IMAGES_LOG as _LOG,
-                    )
-
-                    fn = tools_data.normalized["live_images_overview"].fn
-                    base_doc = getattr(fn, "__doc__", "") or ""
-                    sep = "\n\nAppended images (this session):\n"
-                    if sep in base_doc:
-                        base_doc = base_doc.split(sep, 1)[0]
-
-                    prior_lines = []
-                    try:
-                        for rec in _LOG.get() or []:
-                            try:
-                                src, iid_s, span_key = rec.split(":", 2)
-                                prior_lines.append(
-                                    f"- source={src}, id={int(iid_s)}, span={span_key}",
-                                )
-                            except Exception:
-                                continue
-                    except Exception:
-                        prior_lines = []
-
-                    fn.__doc__ = base_doc + (
-                        sep + "\n".join(prior_lines) if prior_lines else ""
-                    )
+                if images:
+                    refresh_overview_doc_if_present(tools_data.normalized)
             except Exception:
                 pass
 
@@ -2365,12 +2225,7 @@ async def async_tool_loop_inner(
     finally:
         with suppress(Exception):
             TOOL_LOOP_LINEAGE.reset(_token)
-        with suppress(Exception):
-            if _img_token is not None:
-                LIVE_IMAGES_REGISTRY.reset(_img_token)
-        with suppress(Exception):
-            if _imglog_token is not None:
-                LIVE_IMAGES_LOG.reset(_imglog_token)
+        reset_live_images_context(_img_token, _imglog_token)
 
         if semantic_cache:
             sc.save_semantic_cache(

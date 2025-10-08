@@ -9,10 +9,7 @@ from contextlib import suppress
 from .tools_data import ToolsData
 from .messages import forward_handle_call
 from .tools_utils import ToolCallMetadata
-from .tools_utils import (
-    append_source_scoped_images,
-    default_source_label,
-)
+from .images import append_source_scoped_images, default_source_label
 from .utils import maybe_await
 
 
