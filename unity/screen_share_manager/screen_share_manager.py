@@ -524,7 +524,6 @@ class ScreenShareManager:
         finally:
             self._logging_semaphore.release()
 
-
     def _trigger_summary_update(self):
         """Schedules the summary update task, ensuring only one is running or scheduled (debouncing)."""
         if self._summary_update_task and not self._summary_update_task.done():
