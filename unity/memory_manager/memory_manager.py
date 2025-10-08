@@ -586,7 +586,6 @@ class MemoryManager(BaseMemoryManager):
             return res if isinstance(res, str) else str(res)
 
         tools: Dict[str, Callable[..., Any]] = {
-            "contact_ask": self._contact_manager.ask,
             "set_rolling_summary": set_rolling_summary,
         }
 
