@@ -47,9 +47,11 @@ class SimulatedMemoryManager(BaseMemoryManager):
 
         # One shared, stateful LLM that orchestrates tool-use loops
         self._llm = unify.AsyncUnify(
-            "o4-mini@openai",
+            "gpt-5@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            reasoning_effort="high",
+            service_tier="priority",
             stateful=True,
         )
 
