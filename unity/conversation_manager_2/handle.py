@@ -76,7 +76,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
     async def _tool_get_latest_user_messages(
         self,
         delay: float = 2.0,
-        max_messages: int = 5,
+        max_messages: int = 20,
         since_ts: float | None = None,
     ) -> dict:
         """
@@ -86,8 +86,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             await asyncio.sleep(delay)
 
         clauses = [f"sender_id != 0"]  # 0 is the assistant id
-        if since_ts is not None:
-            clauses.append(f"timestamp >= '{_to_iso(since_ts)}'")
+        # if since_ts is not None:
+        #     clauses.append(f"timestamp >= '{_to_iso(since_ts)}'")
 
         filter_expr = " and ".join(clauses)
         logger.info(f'TOOL: Polling transcript with filter: "{filter_expr}"')
