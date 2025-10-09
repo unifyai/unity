@@ -367,8 +367,6 @@ class MemoryManager(BaseMemoryManager):
             transcript,
             tools,
             loop_id="MemoryManager.update_contacts",
-            # Align with simulated policy: require tool use for the first two steps
-            tool_policy=lambda i, t: ("required", t) if i < 2 else ("auto", t),
         )
 
         result_str = await handle.result()  # plain str returned by LLM
@@ -512,7 +510,6 @@ class MemoryManager(BaseMemoryManager):
             user_blob,
             tools,
             loop_id="MemoryManager.update_contact_bio",
-            tool_policy=lambda i, t: ("required", t) if i < 1 else ("auto", t),
         )
 
         return await handle.result()
@@ -620,7 +617,6 @@ class MemoryManager(BaseMemoryManager):
             user_blob,
             tools,
             loop_id="MemoryManager.update_contact_rolling_summary",
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         return await handle.result()
@@ -728,7 +724,6 @@ class MemoryManager(BaseMemoryManager):
             user_blob,
             tools,
             loop_id="MemoryManager.update_contact_response_policy",
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
         )
 
         return await handle.result()
@@ -775,7 +770,6 @@ class MemoryManager(BaseMemoryManager):
             transcript,
             tools,
             loop_id="MemoryManager.update_knowledge",
-            tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
         )
 
         return await handle.result()
@@ -821,7 +815,6 @@ class MemoryManager(BaseMemoryManager):
             transcript,
             tools,
             loop_id="MemoryManager.update_tasks",
-            tool_policy=lambda i, _: ("required", _) if i < 2 else ("auto", _),
         )
 
         return await handle.result()
