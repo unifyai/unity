@@ -232,15 +232,15 @@ class MemoryManager(BaseMemoryManager):
                     "MemoryManager.update_contacts – creation of custom columns is not allowed.",
                 )
 
-            # ── Pass through all user-provided fields (built-in + custom columns),
-            #    but strip known internal helper parameters if they are present.
-            internal_keys = {
-                "parent_chat_context",
-                "clarification_up_q",
-                "clarification_down_q",
-                "rolling_summary_in_prompts",
-            }
-            cleaned_kwargs = {k: v for k, v in kwargs.items() if k not in internal_keys}
+            # Strictly filter to parameters accepted by the underlying
+            # _create_contact implementation to drop any tool-loop control
+            # kwargs (e.g. pause_event, interject_queue, ...).
+            import inspect  # local import
+
+            allowed = set(
+                inspect.signature(self._contact_manager._create_contact).parameters,
+            )
+            cleaned_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
 
             outcome = await asyncio.to_thread(
                 self._contact_manager._create_contact,
