@@ -1,6 +1,11 @@
 import json
 from typing import List, Deque
 from unity.screen_share_manager.types import KeyEvent, TurnAnalysisResponse
+from ..common.prompt_helpers import now_utc_str
+
+
+def _now() -> str:
+    return now_utc_str()
 
 
 def build_turn_analysis_prompt(
@@ -92,17 +97,19 @@ CRITICAL RULES:
 SCHEMA FOR YOUR RESPONSE:```json
 {json.dumps(schema, indent=2)}```
 """
-    return prompt
+    # Append current time to stabilize cache keys in tests
+    return prompt + f"\n\nCurrent UTC time is {_now()}."
 
 
 def build_summary_update_prompt(
-    current_summary: str, new_events: List[KeyEvent]
+    current_summary: str,
+    new_events: List[KeyEvent],
 ) -> str:
     """
     Builds the system prompt for the summary update LLM.
     """
     new_events_formatted = "\n".join(
-        [f"- At t={evt.timestamp:.2f}s: {evt.event_description}" for evt in new_events]
+        [f"- At t={evt.timestamp:.2f}s: {evt.event_description}" for evt in new_events],
     )
 
     prompt = f"""
@@ -125,4 +132,4 @@ YOUR TASK:
 - Do not simply append the new events. Re-write the summary to naturally include them.
 - Your response must be ONLY the new summary text, with no preamble or other text.
 """
-    return prompt
+    return prompt + f"\n\nCurrent UTC time is {_now()}."

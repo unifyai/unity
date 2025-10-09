@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from ..common.prompt_helpers import now_utc_str
+
+
+def _now() -> str:
+    return now_utc_str()
+
+
 import textwrap
 
 
@@ -18,7 +25,7 @@ def build_image_ask_prompt(*, caption: str | None, timestamp: datetime | None) -
     ts = timestamp.isoformat() if timestamp else "unknown-time"
     cap = caption or "(no caption provided)"
 
-    return textwrap.dedent(
+    msg = textwrap.dedent(
         f"""
         You are a helpful vision assistant. An image will be provided in the next user message.
 
@@ -35,3 +42,6 @@ def build_image_ask_prompt(*, caption: str | None, timestamp: datetime | None) -
         • If uncertain, state the uncertainty and what would resolve it.
         """,
     ).strip()
+    # Append current time for reproducibility
+    msg = f"{msg}\n\nCurrent UTC time is {_now()}."
+    return msg

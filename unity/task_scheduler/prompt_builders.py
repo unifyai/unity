@@ -554,6 +554,8 @@ def build_execute_prompt(
         "• Execution returns an ActiveQueue handle. Include the executed task id(s) in your final response.",
     ]
 
+    # Append current time for determinism and cache friendliness
+    lines.extend(["", f"Current UTC time is {_now()}."])
     return "\n".join(lines)
 
 
