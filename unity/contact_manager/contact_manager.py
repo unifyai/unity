@@ -1692,6 +1692,12 @@ class ContactManager(BaseContactManager):
             limit=eff_limit,
             from_fields=from_fields,
         )
+        # Write-through to local DataStore mirror
+        try:
+            for lg in logs:
+                self._data_store.put(lg.entries)
+        except Exception:
+            pass
         return [Contact(**lg.entries) for lg in logs]
 
     # ------------------------------------------------------------------ #

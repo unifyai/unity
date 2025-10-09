@@ -65,3 +65,26 @@ def test_data_store_deleted_after_delete():
     # Verify removal from DataStore
     with pytest.raises(KeyError):
         _ = ds[cid]
+
+
+@pytest.mark.unit
+@_handle_project
+def test_filter_contacts_repopulates_data_store():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Seed a user contact
+    out = cm._create_contact(first_name="CacheTest", surname="Filter")
+    cid = out["details"]["contact_id"]
+
+    # Clear DataStore manually (simulate empty cache)
+    ds.clear()
+
+    # Read via filter_contacts and ensure cache is repopulated
+    rows = cm._filter_contacts(filter=f"contact_id == {cid}")
+    assert rows and rows[0].contact_id == cid
+
+    row = ds[cid]
+    assert row["contact_id"] == cid
+    assert row.get("first_name") == "CacheTest"
