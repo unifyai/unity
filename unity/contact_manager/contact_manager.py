@@ -1447,6 +1447,7 @@ class ContactManager(BaseContactManager):
             context=self._ctx,
             filter=f"contact_id in [{contact_id_1}, {contact_id_2}]",
             limit=2,
+            from_fields=self._allowed_fields(),
         )
         if not rows or len(rows) < 2:
             # Disambiguate which id is missing
