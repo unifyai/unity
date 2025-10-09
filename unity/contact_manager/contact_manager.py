@@ -312,7 +312,7 @@ class ContactManager(BaseContactManager):
             # Use the standard helper which will assign contact_id == 0 when
             # inserting the first contact into an empty table.  If the table
             # already had contacts, fall back to a direct log with explicit id.
-            if not unify.get_logs(context=self._ctx):
+            if not unify.get_logs(context=self._ctx, limit=1, return_ids_only=True):
                 self._create_contact(**base_fields)
             else:
                 # Direct log insertion with explicit contact_id 0
