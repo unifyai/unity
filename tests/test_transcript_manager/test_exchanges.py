@@ -34,6 +34,7 @@ def test_exchanges_row_created_for_explicit_exchange_id():
     )
     assert rows and rows[0].entries.get("exchange_id") == ex_id
     assert isinstance(rows[0].entries.get("metadata"), dict)
+    assert rows[0].entries.get("medium") == "email"
 
 
 @pytest.mark.unit
@@ -65,3 +66,4 @@ def test_exchanges_row_created_for_auto_assigned_exchange_id():
     )
     assert rows and int(rows[0].entries.get("exchange_id")) == ex_id
     assert isinstance(rows[0].entries.get("metadata"), dict)
+    assert rows[0].entries.get("medium") == "sms_message"
