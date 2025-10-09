@@ -294,11 +294,17 @@ class ContactManager(BaseContactManager):
             context=self._ctx,
             filter="contact_id == 0",
             limit=1,
+            from_fields=self._allowed_fields(),
         )
 
         # If the assistant contact already exists **leave it untouched** – never
         # overwrite any backend-curated fields on initialisation.
         if existing_logs:
+            # Keep local DataStore in sync for existing assistant contact
+            try:
+                self._data_store.put(existing_logs[0].entries)
+            except Exception:
+                pass
             return  # Contact is present – nothing to sync.
 
         if not existing_logs:
@@ -310,13 +316,17 @@ class ContactManager(BaseContactManager):
                 self._create_contact(**base_fields)
             else:
                 # Direct log insertion with explicit contact_id 0
-                unify.log(
+                log = unify.log(
                     context=self._ctx,
                     contact_id=0,
                     **base_fields,
                     new=True,
                     mutable=True,
                 )
+                try:
+                    self._data_store.put(log.entries)
+                except Exception:
+                    pass
             return  # nothing further to do
 
     # ------------------------------------------------------------------
@@ -428,11 +438,17 @@ class ContactManager(BaseContactManager):
             context=self._ctx,
             filter="contact_id == 1",
             limit=1,
+            from_fields=self._allowed_fields(),
         )
 
         # If the user contact already exists **leave it untouched** – protect all
         # backend data from accidental resets during ContactManager construction.
         if existing_logs:
+            # Keep local DataStore in sync for existing user contact
+            try:
+                self._data_store.put(existing_logs[0].entries)
+            except Exception:
+                pass
             return  # Contact is present – nothing to sync.
 
         if not existing_logs:
