@@ -15,6 +15,7 @@ from ..common.tool_spec import read_only
 import unify
 from .types.contact import Contact
 from .base import BaseContactManager
+from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     inject_broader_context,
@@ -90,6 +91,9 @@ class ContactManager(BaseContactManager):
             fields=model_to_fields(Contact),
         )
         self._store.ensure_context()
+
+        # Local DataStore mirror (write-through only; never read from it)
+        self._data_store = DataStore.for_context(self._ctx, key_fields=("contact_id",))
 
         # ── immutable built-in columns ───────────────────────────────────
         # Derive the required/built-in columns directly from the Contact model so
@@ -1072,6 +1076,12 @@ class ContactManager(BaseContactManager):
             new=True,
             mutable=True,
         )
+        # Write-through to local DataStore mirror
+        try:
+            self._data_store.put(log.entries)
+        except Exception:
+            # Never fail the API call due to local cache sync issues
+            pass
         return {
             "outcome": "contact created successfully",
             "details": {"contact_id": log.entries["contact_id"]},
