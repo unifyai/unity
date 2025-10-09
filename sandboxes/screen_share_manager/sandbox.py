@@ -7,11 +7,17 @@ voice or text input to simulate a user turn. It then fetches and displays the
 richly annotated transcript message created by the ScreenShareManager.
 
 Prerequisites:
-- `pip install mss redis numpy Pillow`
+- `pip install mss redis numpy Pillow opencv-python`
 
 Example Usage (after getting coordinates):
 ------------------------------------------
-python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --voice
+python -m sandboxes.screen_share_manager.sandbox \
+    --x 100 \
+    --y 150 \
+    --width 1280 \
+    --height 720 \
+    --voice \
+    --context "The user is Jane Doe, an administrator trying to reset a client's password."
 """
 
 from __future__ import annotations
@@ -199,6 +205,12 @@ async def _main_async() -> None:
     parser.add_argument(
         "--fps", type=int, default=5, help="Frames per second for screen capture."
     )
+    parser.add_argument(
+        "--context",
+        type=str,
+        default=None,
+        help="Optional pre-conversation context about the user or their goal.",
+    )
     args = parser.parse_args()
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
@@ -226,6 +238,10 @@ async def _main_async() -> None:
 
     try:
         screen_manager = ScreenShareManager()
+        if args.context:
+            screen_manager.set_session_context(args.context)
+            LG.info(f"Initial session context set from CLI: '{args.context}'")
+
         transcript_manager = TranscriptManager()
         redis_client = redis.asyncio.Redis(
             host=os.getenv("REDIS_HOST", "localhost"),
@@ -293,7 +309,6 @@ async def _main_async() -> None:
                     continue
 
                 # --- Publish Utterance for Background Processing ---
-                # FIX: Correctly calculate relative start and end times for the turn
                 relative_start_time = turn_start_time - session_start_time
                 relative_end_time = turn_end_time - session_start_time
 
