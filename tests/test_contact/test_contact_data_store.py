@@ -124,3 +124,27 @@ def test_system_contacts_present_in_data_store_after_init():
     u = ds.get(1)
     assert a is not None and a.get("respond_to") is True
     assert u is not None and u.get("respond_to") is True
+
+
+@pytest.mark.unit
+@_handle_project
+def test_data_store_hygiene_after_custom_column_delete():
+    cm = ContactManager()
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create a custom column and a contact that uses it
+    cm._create_custom_column(column_name="department", column_type="str")
+    cid = cm._create_contact(first_name="Jane", department="Engineering")["details"][
+        "contact_id"
+    ]
+
+    # Ensure cache has the field
+    row = ds[cid]
+    assert row.get("department") == "Engineering"
+
+    # Delete the custom column
+    cm._delete_custom_column(column_name="department")
+
+    # The cache should be scrubbed of the deleted key
+    row2 = ds[cid]
+    assert "department" not in row2
