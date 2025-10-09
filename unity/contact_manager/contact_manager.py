@@ -1336,6 +1336,11 @@ class ContactManager(BaseContactManager):
             context=self._ctx,
             logs=resolved_id,
         )
+        # Remove from local DataStore mirror (best-effort)
+        try:
+            self._data_store.delete(contact_id)
+        except Exception:
+            pass
         return {
             "outcome": "contact deleted",
             "details": {"contact_id": contact_id},
