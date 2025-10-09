@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Callable, Any, Tuple
+from typing import List, Dict, Optional, Callable, Any, Tuple, Union
 import asyncio
 import json
 import functools
@@ -914,6 +914,67 @@ class ContactManager(BaseContactManager):
         if getattr(self, "_known_custom_fields", None):
             fields.extend(sorted(self._known_custom_fields))
         return fields
+
+    # Public non-tool method
+    def get_contact_info(
+        self,
+        contact_id: int,
+        fields: Optional[Union[str, List[str]]] = None,
+        search_local_storage: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Return a mapping of requested fields for a single contact.
+
+        Behaviour
+        ---------
+        - When search_local_storage is True, look in the local DataStore first.
+          If not found, fall back to a backend read and resync the DataStore.
+        - When fields is None or "all", include all allowed fields.
+        - Vector/private fields are never loaded.
+
+        Returns
+        -------
+        dict | None
+            Selected field→value mapping, or None if the contact doesn't exist.
+        """
+        allowed = set(self._allowed_fields())
+
+        # Normalise requested fields
+        if fields is None or (isinstance(fields, str) and fields.lower() == "all"):
+            requested: List[str] = list(allowed)
+        elif isinstance(fields, str):
+            requested = [fields]
+        else:
+            requested = list(fields or [])
+
+        # Intersect with allowed set to avoid accidental vector/private columns
+        requested = [f for f in requested if f in allowed]
+        if not requested:
+            requested = list(allowed)
+
+        # 1) Try local cache
+        if search_local_storage:
+            try:
+                row = self._data_store[contact_id]
+                return {k: v for k, v in row.items() if k in requested}
+            except KeyError:
+                pass
+
+        # 2) Backend read with allowed-field superset; write-through to cache
+        rows = unify.get_logs(
+            context=self._ctx,
+            filter=f"contact_id == {contact_id}",
+            limit=1,
+            from_fields=list(allowed),
+        )
+        if not rows:
+            return None
+        backend_row = rows[0].entries
+        try:
+            self._data_store.put(backend_row)
+        except Exception:
+            pass
+        return {k: backend_row.get(k) for k in requested}
 
     def _num_contacts(
         self,

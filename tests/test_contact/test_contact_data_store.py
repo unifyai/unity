@@ -193,3 +193,31 @@ def test_data_store_never_contains_vector_columns():
     snap = ds.snapshot()
     for _key, row in snap.items():
         assert all(not str(k).endswith("_emb") for k in row.keys())
+
+
+@pytest.mark.unit
+@_handle_project
+def test_get_contact_info_prefers_cache_and_falls_back_to_backend():
+    cm = ContactManager()
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create a contact to query
+    out = cm._create_contact(first_name="Instant", surname="Read")
+    cid = out["details"]["contact_id"]
+
+    # 1) Cache hit path: ensure present in cache (creation write-through)
+    info = cm.get_contact_info(
+        cid,
+        fields=["first_name", "surname"],
+        search_local_storage=True,
+    )
+    assert info == {"first_name": "Instant", "surname": "Read"}
+
+    # 2) Cache miss path: clear the cache and then call again
+    ds.clear()
+    info2 = cm.get_contact_info(cid, fields=["first_name"], search_local_storage=True)
+    assert info2 == {"first_name": "Instant"}
+
+    # After miss, cache should be repopulated
+    row = ds[cid]
+    assert row.get("first_name") == "Instant"
