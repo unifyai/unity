@@ -93,15 +93,20 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
 async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
     counts = {"cm_update": 0}
 
-    # --- patch SimulatedContactManager.update ------------------------------
-    orig_cm_upd = SimulatedContactManager.update
+    # --- patch SimulatedContactManager._update_contact ---------------------
+    orig_cm_upd = SimulatedContactManager._update_contact
 
     @functools.wraps(orig_cm_upd)
-    async def spy_cm_upd(self, text: str, **kw):
+    def spy_cm_upd(self, **kw):
         counts["cm_update"] += 1
-        return await orig_cm_upd(self, text, **kw)
+        return orig_cm_upd(self, **kw)
 
-    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "_update_contact",
+        spy_cm_upd,
+        raising=True,
+    )
 
     # run --------------------------------------------------------------------
     mm = SimulatedMemoryManager(
@@ -129,15 +134,20 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
 async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
     counts = {"cm_update": 0}
 
-    # --- patch SimulatedContactManager.update ------------------------------
-    orig_cm_upd = SimulatedContactManager.update
+    # --- patch SimulatedContactManager._update_contact ---------------------
+    orig_cm_upd = SimulatedContactManager._update_contact
 
     @functools.wraps(orig_cm_upd)
-    async def spy_cm_upd(self, text: str, **kw):
+    def spy_cm_upd(self, **kw):
         counts["cm_update"] += 1
-        return await orig_cm_upd(self, text, **kw)
+        return orig_cm_upd(self, **kw)
 
-    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "_update_contact",
+        spy_cm_upd,
+        raising=True,
+    )
 
     # run --------------------------------------------------------------------
     mm = SimulatedMemoryManager(
@@ -156,8 +166,10 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 
     # check ------------------------------------------------------------------
     assert isinstance(new_summary, str) and new_summary.strip()
-    # At least one call to update contacts
-    assert counts["cm_update"] >= 1
+    # At least one call to ContactManager._update_contact
+    assert (
+        counts["cm_update"] >= 1
+    ), "ContactManager._update_contact should be called at least once for rolling summary"
 
 
 # --------------------------------------------------------------------------- #
@@ -166,16 +178,21 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_mm_update_contact_response_policy_invocations(monkeypatch):
-    orig_cm_upd = SimulatedContactManager.update
+    orig_cm_upd = SimulatedContactManager._update_contact
 
     calls = {"cm_update": 0}
 
     @functools.wraps(orig_cm_upd)
-    async def spy_cm_upd(self, text: str, **kw):  # noqa: D401 – imperative helper
+    def spy_cm_upd(self, **kw):  # noqa: D401 – imperative helper
         calls["cm_update"] += 1
-        return await orig_cm_upd(self, text, **kw)
+        return orig_cm_upd(self, **kw)
 
-    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "_update_contact",
+        spy_cm_upd,
+        raising=True,
+    )
 
     mm = SimulatedMemoryManager(
         "TEST SCENARIO: Response policy update. SimulatedContactManager MUST accept a single deterministic"
@@ -186,10 +203,10 @@ async def test_mm_update_contact_response_policy_invocations(monkeypatch):
 
     await mm.update_contact_response_policy(transcript, contact_id=1)
 
-    # One invocation of ContactManager.update expected
+    # One invocation of ContactManager._update_contact expected
     assert (
         calls["cm_update"] >= 1
-    ), "ContactManager.update should be called at least once for response policy"
+    ), "ContactManager._update_contact should be called at least once for response policy"
 
 
 # --------------------------------------------------------------------------- #
