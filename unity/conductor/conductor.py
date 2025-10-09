@@ -21,19 +21,19 @@ from ..common.async_tool_loop import start_async_tool_loop
 from .prompt_builders import build_ask_prompt, build_request_prompt
 from .base import BaseConductor
 from ..contact_manager.base import BaseContactManager
-from ..contact_manager.simulated import SimulatedContactManager
+from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.base import BaseTranscriptManager
-from ..transcript_manager.simulated import SimulatedTranscriptManager
+from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.base import BaseKnowledgeManager
-from ..knowledge_manager.simulated import SimulatedKnowledgeManager
+from ..knowledge_manager.knowledge_manager import KnowledgeManager
 from ..skill_manager.base import BaseSkillManager
-from ..task_scheduler.simulated import SimulatedTaskScheduler
+from ..skill_manager.skill_manager import SkillManager
 from ..task_scheduler.base import BaseTaskScheduler
+from ..task_scheduler.task_scheduler import TaskScheduler
 from ..web_searcher.base import BaseWebSearcher
-from ..web_searcher.simulated import SimulatedWebSearcher
+from ..web_searcher.web_searcher import WebSearcher
 from ..actor.base import BaseActor
-from ..actor.simulated import SimulatedActor
-from ..skill_manager.simulated import SimulatedSkillManager
+from ..actor.hierarchical_actor import HierarchicalActor
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
@@ -77,81 +77,51 @@ class Conductor:
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
-        # ── Managers – use provided instances or default to simulated back-ends ──
+        # ── Managers – use provided instances or default to REAL back-ends ──
+
+        # Actor – real executor for free-form activities
+        self._actor = actor if actor is not None else HierarchicalActor()
+
+        # Contact manager
         self._contact_manager = (
             contact_manager
             if contact_manager is not None
-            else SimulatedContactManager(
-                description=description,
-                log_events=log_events,
+            else ContactManager(
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
-                simulation_guidance=simulation_guidance,
             )
         )
 
         self._transcript_manager = (
             transcript_manager
             if transcript_manager is not None
-            else SimulatedTranscriptManager(
-                description=description,
-                log_events=log_events,
+            else TranscriptManager(
+                contact_manager=self._contact_manager,
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
-                simulation_guidance=simulation_guidance,
             )
         )
 
         self._knowledge_manager = (
             knowledge_manager
             if knowledge_manager is not None
-            else SimulatedKnowledgeManager(
-                description=description,
-                log_events=log_events,
+            else KnowledgeManager(
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
-                simulation_guidance=simulation_guidance,
             )
         )
 
         self._skill_manager = (
-            skill_manager
-            if skill_manager is not None
-            else SimulatedSkillManager(
-                description=description,
-                log_events=log_events,
-                rolling_summary_in_prompts=rolling_summary_in_prompts,
-                simulation_guidance=simulation_guidance,
-            )
+            skill_manager if skill_manager is not None else SkillManager()
         )
 
         self._task_scheduler = (
             task_scheduler
             if task_scheduler is not None
-            else SimulatedTaskScheduler(
-                description=description,
-                log_events=log_events,
+            else TaskScheduler(
+                actor=self._actor,
                 rolling_summary_in_prompts=rolling_summary_in_prompts,
-                simulation_guidance=simulation_guidance,
             )
         )
 
-        self._web_searcher = (
-            web_searcher
-            if web_searcher is not None
-            else SimulatedWebSearcher(
-                description=description,
-                log_events=log_events,
-            )
-        )
-
-        # Actor – simulation-only executor for free-form activities
-        self._actor = (
-            actor
-            if actor is not None
-            else SimulatedActor(
-                steps=0,
-                duration=None,
-                simulation_guidance=simulation_guidance,
-            )
-        )
+        self._web_searcher = web_searcher if web_searcher is not None else WebSearcher()
 
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore
