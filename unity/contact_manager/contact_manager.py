@@ -872,6 +872,18 @@ class ContactManager(BaseContactManager):
     # Helpers #
     # --------#
 
+    def _allowed_fields(self) -> list[str]:
+        """
+        Return the list of columns safe to fetch into the client.
+
+        Includes built-in fields and any known custom fields, excluding
+        private/vector columns implicitly by construction.
+        """
+        fields = list(self._BUILTIN_FIELDS)
+        if getattr(self, "_known_custom_fields", None):
+            fields.extend(sorted(self._known_custom_fields))
+        return fields
+
     def _num_contacts(
         self,
     ) -> int:
@@ -1244,6 +1256,18 @@ class ContactManager(BaseContactManager):
             entries=updates_dict,
             overwrite=True,
         )
+        # Refresh from backend with an allowed-fields read and write-through
+        try:
+            rows = unify.get_logs(
+                context=self._ctx,
+                filter=f"contact_id == {contact_id}",
+                limit=1,
+                from_fields=self._allowed_fields(),
+            )
+            if rows:
+                self._data_store.put(rows[0].entries)
+        except Exception:
+            pass
         return {
             "outcome": "contact updated",
             "details": {"contact_id": contact_id},
