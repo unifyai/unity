@@ -153,6 +153,10 @@ class TranscriptManager(BaseTranscriptManager):
                     "type": "dict",
                     "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
                 },
+                "medium": {
+                    "type": "string",
+                    "description": "Communication medium for the exchange (same semantics as Message.medium)",
+                },
             },
         )
         self._exchanges_store.ensure_context()
@@ -614,16 +618,22 @@ class TranscriptManager(BaseTranscriptManager):
         # ── 5. Ensure Exchanges rows exist for any newly seen exchange_ids ──
         try:
             eids: set[int] = set()
+            eid_to_medium: Dict[int, str] = {}
             for m in created_messages:
                 try:
                     if getattr(m, "exchange_id", UNASSIGNED) is not None:
                         exid = int(getattr(m, "exchange_id", UNASSIGNED))
                         if exid != UNASSIGNED and exid >= 0:
                             eids.add(exid)
+                            if exid not in eid_to_medium:
+                                try:
+                                    eid_to_medium[exid] = str(getattr(m, "medium"))
+                                except Exception:
+                                    pass
                 except Exception:
                     continue
             if eids:
-                self._ensure_exchanges_records(eids)
+                self._ensure_exchanges_records(eids, eid_to_medium=eid_to_medium)
         except Exception:
             # Non-fatal: do not break message logging if exchanges upsert fails
             pass
@@ -1617,7 +1627,12 @@ class TranscriptManager(BaseTranscriptManager):
     # ------------------------------------------------------------------ #
     #  Exchanges helper                                                   #
     # ------------------------------------------------------------------ #
-    def _ensure_exchanges_records(self, exchange_ids: set[int]) -> None:
+    def _ensure_exchanges_records(
+        self,
+        exchange_ids: set[int],
+        *,
+        eid_to_medium: Optional[Dict[int, str]] = None,
+    ) -> None:
         """Idempotently create rows in the Exchanges context for given ids.
 
         Creates a blank metadata row for each ``exchange_id`` that does not yet
@@ -1650,6 +1665,7 @@ class TranscriptManager(BaseTranscriptManager):
                         context=self._exchanges_ctx,
                         exchange_id=int(eid),
                         metadata={},
+                        medium=(eid_to_medium or {}).get(int(eid), ""),
                         new=True,
                         mutable=True,
                         params={},
