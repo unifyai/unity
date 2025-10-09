@@ -148,3 +148,32 @@ def test_data_store_hygiene_after_custom_column_delete():
     # The cache should be scrubbed of the deleted key
     row2 = ds[cid]
     assert "department" not in row2
+
+
+@pytest.mark.unit
+@_handle_project
+def test_data_store_after_merge_contacts():
+    cm = ContactManager()
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create two contacts and ensure both cached via writes
+    cid1 = cm._create_contact(first_name="John", surname="Doe")["details"]["contact_id"]
+    cid2 = cm._create_contact(first_name="Johnny", surname="Roe")["details"][
+        "contact_id"
+    ]
+
+    # Merge: keep cid1, take surname from cid2
+    cm._merge_contacts(
+        contact_id_1=cid1,
+        contact_id_2=cid2,
+        overrides={"contact_id": 1, "surname": 2},
+    )
+
+    # Kept contact should be present and updated
+    kept_row = ds[cid1]
+    assert kept_row["first_name"] == "John"
+    assert kept_row.get("surname") == "Roe"
+
+    # Deleted contact should be absent from DataStore
+    with pytest.raises(KeyError):
+        _ = ds[cid2]
