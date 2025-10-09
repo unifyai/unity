@@ -1609,6 +1609,12 @@ class ContactManager(BaseContactManager):
             unique_id_field="contact_id",
             allowed_fields=allowed_fields,
         )
+        # Write-through to local DataStore mirror
+        try:
+            for r in filled:
+                self._data_store.put(r)
+        except Exception:
+            pass
         return [Contact(**r) for r in filled]
 
     @read_only

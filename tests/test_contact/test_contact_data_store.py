@@ -88,3 +88,25 @@ def test_filter_contacts_repopulates_data_store():
     row = ds[cid]
     assert row["contact_id"] == cid
     assert row.get("first_name") == "CacheTest"
+
+
+@pytest.mark.unit
+@_handle_project
+def test_search_contacts_repopulates_data_store():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Seed
+    out = cm._create_contact(first_name="CacheTest", bio="emails and texts")
+    cid = out["details"]["contact_id"]
+
+    ds.clear()
+
+    # Trigger semantic path (references provided) which writes-through filled rows
+    results = cm._search_contacts(references={"bio": "emails"}, k=1)
+    assert results and results[0].contact_id == cid
+
+    row = ds[cid]
+    assert row["contact_id"] == cid
+    assert row.get("first_name") == "CacheTest"
