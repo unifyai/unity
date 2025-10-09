@@ -44,3 +44,24 @@ def test_data_store_updated_after_update():
     assert row["contact_id"] == cid
     assert row.get("first_name") == "CacheTest"
     assert row.get("surname") == "Updated"
+
+
+@pytest.mark.unit
+@_handle_project
+def test_data_store_deleted_after_delete():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create then delete
+    out = cm._create_contact(first_name="CacheTest", surname="DeleteMe")
+    cid = out["details"]["contact_id"]
+
+    # Ensure present first
+    _ = ds[cid]
+
+    cm._delete_contact(contact_id=cid)
+
+    # Verify removal from DataStore
+    with pytest.raises(KeyError):
+        _ = ds[cid]
