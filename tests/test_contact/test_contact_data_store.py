@@ -24,3 +24,23 @@ def test_data_store_updated_after_create():
     assert row["contact_id"] == cid
     assert row.get("first_name") == "CacheTest"
     assert row.get("surname") == "One"
+
+
+@pytest.mark.unit
+@_handle_project
+def test_data_store_updated_after_update():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create then update
+    out = cm._create_contact(first_name="CacheTest", surname="Two")
+    cid = out["details"]["contact_id"]
+
+    cm._update_contact(contact_id=cid, surname="Updated")
+
+    # Verify DataStore reflects updated surname
+    row = ds[cid]
+    assert row["contact_id"] == cid
+    assert row.get("first_name") == "CacheTest"
+    assert row.get("surname") == "Updated"
