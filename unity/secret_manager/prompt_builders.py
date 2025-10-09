@@ -6,7 +6,12 @@ from typing import Dict, Callable
 from ..common.prompt_helpers import (
     sig_dict,
     clarification_guidance,
+    now_utc_str,
 )
+
+
+def _now() -> str:
+    return now_utc_str()
 
 
 def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
@@ -41,6 +46,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     # Clarification guidance (only shown when request_clarification is present)
     lines += ["", clarification_guidance(tools)]
 
+    lines += ["", f"Current UTC time is {_now()}."]
     return "\n".join(lines)
 
 
@@ -91,4 +97,5 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
     # Clarification guidance (only shown when request_clarification is present)
     lines += ["", clarification_guidance(tools)]
 
+    lines += ["", f"Current UTC time is {_now()}."]
     return "\n".join(lines)

@@ -132,6 +132,44 @@ def stub_controller_deps(monkeypatch):
     monkeypatch.setattr("unity.conductor.prompt_builders._now", _static_now)
     monkeypatch.setattr("unity.task_scheduler.prompt_builders._now", _static_now)
     monkeypatch.setattr("unity.transcript_manager.prompt_builders._now", _static_now)
+    # Additional managers to ensure deterministic prompts across the suite
+    monkeypatch.setattr("unity.memory_manager.prompt_builders._now", _static_now)
+    monkeypatch.setattr("unity.file_manager.prompt_builders._now", _static_now)
+    monkeypatch.setattr(
+        "unity.web_searcher.prompt_builders._now",
+        _static_now,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "unity.guidance_manager.prompt_builders._now",
+        _static_now,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "unity.secret_manager.prompt_builders._now",
+        _static_now,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "unity.skill_manager.prompt_builders._now",
+        _static_now,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "unity.screen_share_manager.prompt_builders._now",
+        _static_now,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "unity.image_manager.prompt_builders._now",
+        _static_now,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "unity.conversation_manager.prompt_builders._now",
+        _static_now,
+        raising=False,
+    )
 
 
 # --------------------------------------------------------------------------- #
