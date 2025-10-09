@@ -110,3 +110,17 @@ def test_search_contacts_repopulates_data_store():
     row = ds[cid]
     assert row["contact_id"] == cid
     assert row.get("first_name") == "CacheTest"
+
+
+@pytest.mark.unit
+@_handle_project
+def test_system_contacts_present_in_data_store_after_init():
+    cm = ContactManager()
+
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Assistant and default user should be cached
+    a = ds.get(0)
+    u = ds.get(1)
+    assert a is not None and a.get("respond_to") is True
+    assert u is not None and u.get("respond_to") is True
