@@ -635,6 +635,21 @@ class ContactManager(BaseContactManager):
         except Exception:
             pass
 
+        # Proactively remove the deleted column from cached rows in DataStore
+        try:
+            snap = self._data_store.snapshot()
+            for _k, row in snap.items():
+                if column_name in row:
+                    new_row = dict(row)
+                    del new_row[column_name]
+                    self._data_store.put(new_row)
+        except Exception:
+            # As a last resort keep cache usable; do not fail the API call
+            try:
+                self._data_store.clear()
+            except Exception:
+                pass
+
         return response
 
     # ------------------------------------------------------------------ #
