@@ -13,7 +13,8 @@ class Medium(StrEnum):
     WHATSAPP_MSG = "whatsapp_message"
     PHONE_CALL = "phone_call"
     WHATSAPP_CALL = "whatsapp_call"
-    UNIFY_CHAT = "unify_chat"
+    UNIFY_MESSAGE = "unify_message"
+    UNIFY_CALL = "unify_call"
 
 
 class ScreenShareAnnotation(BaseModel):

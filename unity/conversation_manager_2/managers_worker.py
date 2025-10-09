@@ -186,7 +186,7 @@ class ManagersWorker:
 
         try:
             print(f"[ManagersWorker] Logging message: {event.to_dict()}")
-            medium = event.medium or "unify_chat"
+            medium = event.medium or "unify_message"
             sender_id = int(event.sender_id)
             receiver_ids = [int(r) for r in (event.receiver_ids or [])]
             content = event.content

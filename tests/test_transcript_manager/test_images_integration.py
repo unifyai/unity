@@ -200,7 +200,7 @@ async def test_ask_boot_option_and_fourth_item_tm():
     # Log the walkthrough message with images mapped to spans
     tm.log_messages(
         Message(
-            medium="unify_chat",
+            medium="unify_message",
             sender_id=10,
             receiver_ids=[20],
             timestamp=datetime.now(timezone.utc),
@@ -282,7 +282,7 @@ async def test_compare_two_screens_requires_raw_context_tm():
     # Log the walkthrough message with images mapped to spans
     tm.log_messages(
         Message(
-            medium="unify_chat",
+            medium="unify_message",
             sender_id=10,
             receiver_ids=[20],
             timestamp=datetime.now(timezone.utc),
