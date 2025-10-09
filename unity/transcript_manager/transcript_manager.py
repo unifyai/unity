@@ -11,7 +11,7 @@ import unify
 from ..common.embed_utils import ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
-from .types.message import Message
+from .types.message import Message, UNASSIGNED
 
 # New: allow Contact objects to appear in messages
 from ..contact_manager.types.contact import Contact
@@ -134,6 +134,28 @@ class TranscriptManager(BaseTranscriptManager):
             fields=model_to_fields(Message),
         )
         self._store.ensure_context()
+
+        # Exchanges context: one row per exchange_id with optional metadata
+        if read_ctx:
+            self._exchanges_ctx = f"{read_ctx}/Exchanges"
+        else:
+            self._exchanges_ctx = "Exchanges"
+        self._exchanges_store = TableStore(
+            self._exchanges_ctx,
+            unique_keys={"exchange_id": "int"},
+            description="One row per conversation exchange/thread with optional metadata.",
+            fields={
+                "exchange_id": {
+                    "type": "int",
+                    "description": "Unique identifier for the exchange/thread",
+                },
+                "metadata": {
+                    "type": "dict",
+                    "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
+                },
+            },
+        )
+        self._exchanges_store.ensure_context()
 
         # Ensure a private `_metadata` column exists (dict, mutable) irrespective of context creation path
         try:
@@ -588,6 +610,23 @@ class TranscriptManager(BaseTranscriptManager):
             except RuntimeError:
                 # … otherwise create a *temporary* loop so the event isn't lost.
                 asyncio.run(_publish_message(created_msg))
+
+        # ── 5. Ensure Exchanges rows exist for any newly seen exchange_ids ──
+        try:
+            eids: set[int] = set()
+            for m in created_messages:
+                try:
+                    if getattr(m, "exchange_id", UNASSIGNED) is not None:
+                        exid = int(getattr(m, "exchange_id", UNASSIGNED))
+                        if exid != UNASSIGNED and exid >= 0:
+                            eids.add(exid)
+                except Exception:
+                    continue
+            if eids:
+                self._ensure_exchanges_records(eids)
+        except Exception:
+            # Non-fatal: do not break message logging if exchanges upsert fails
+            pass
 
         return created_messages
 
@@ -1574,6 +1613,53 @@ class TranscriptManager(BaseTranscriptManager):
         if ret is None:
             return 0
         return int(ret)
+
+    # ------------------------------------------------------------------ #
+    #  Exchanges helper                                                   #
+    # ------------------------------------------------------------------ #
+    def _ensure_exchanges_records(self, exchange_ids: set[int]) -> None:
+        """Idempotently create rows in the Exchanges context for given ids.
+
+        Creates a blank metadata row for each ``exchange_id`` that does not yet
+        exist. Safe to call repeatedly; uniqueness is enforced at the context level.
+        """
+        if not exchange_ids:
+            return
+        try:
+            ids_expr = ", ".join(str(i) for i in sorted(exchange_ids))
+            existing: set[int] = set()
+            try:
+                rows = unify.get_logs(
+                    context=self._exchanges_ctx,
+                    filter=f"exchange_id in [{ids_expr}]",
+                    from_fields=["exchange_id"],
+                    limit=len(exchange_ids),
+                )
+                for lg in rows or []:
+                    try:
+                        existing.add(int(lg.entries.get("exchange_id")))
+                    except Exception:
+                        continue
+            except Exception:
+                existing = set()
+
+            missing = [eid for eid in exchange_ids if eid not in existing]
+            for eid in missing:
+                try:
+                    unify.log(
+                        context=self._exchanges_ctx,
+                        exchange_id=int(eid),
+                        metadata={},
+                        new=True,
+                        mutable=True,
+                        params={},
+                    )
+                except Exception:
+                    # Ignore duplicates or backend races
+                    pass
+        except Exception:
+            # Defensive: never propagate to caller
+            pass
 
     # ------------------------------------------------------------------ #
     #  Formatting helper: single contacts table + messages                #
