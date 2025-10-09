@@ -16,13 +16,7 @@ from ..knowledge_manager.knowledge_manager import KnowledgeManager
 from ..task_scheduler.task_scheduler import TaskScheduler
 from ..common.llm_helpers import methods_to_tool_dict
 from ..common.async_tool_loop import start_async_tool_loop
-from .prompt_builders import (
-    build_contact_update_prompt,
-    build_bio_prompt,
-    build_rolling_prompt,
-    build_knowledge_prompt,
-    build_response_policy_prompt,
-)
+from . import prompt_builders as pb
 from .base import BaseMemoryManager
 from ..events.event_bus import EVENT_BUS, Event
 
@@ -360,7 +354,7 @@ class MemoryManager(BaseMemoryManager):
             reasoning_effort="high",
             service_tier="priority",
         )
-        llm.set_system_message(build_contact_update_prompt(tools, guidance))
+        llm.set_system_message(pb.build_contact_update_prompt(tools, guidance))
 
         # ─ 3.  Kick off *single* tool-use loop
         handle = start_async_tool_loop(
@@ -476,7 +470,7 @@ class MemoryManager(BaseMemoryManager):
             " ".join(p for p in [c0.first_name, c0.surname] if p).strip() or None
         )
         llm.set_system_message(
-            build_bio_prompt(
+            pb.build_bio_prompt(
                 f"{contact_name_val} (id {contact_id})",
                 tools,
                 guidance=combined_guidance,
@@ -597,7 +591,7 @@ class MemoryManager(BaseMemoryManager):
             else f"id {contact_id}"
         )
         llm.set_system_message(
-            build_rolling_prompt(
+            pb.build_rolling_prompt(
                 contact_label,
                 tools,
                 guidance=combined_guidance,
@@ -705,7 +699,7 @@ class MemoryManager(BaseMemoryManager):
             else f"id {contact_id}"
         )
         llm.set_system_message(
-            build_response_policy_prompt(
+            pb.build_response_policy_prompt(
                 contact_label,
                 tools,
                 guidance=combined_guidance,
@@ -764,7 +758,7 @@ class MemoryManager(BaseMemoryManager):
             reasoning_effort="high",
             service_tier="priority",
         )
-        llm.set_system_message(build_knowledge_prompt(tools, guidance))
+        llm.set_system_message(pb.build_knowledge_prompt(tools, guidance))
 
         handle = start_async_tool_loop(
             llm,
@@ -805,9 +799,7 @@ class MemoryManager(BaseMemoryManager):
             service_tier="priority",
         )
 
-        from .prompt_builders import build_task_prompt  # local import to avoid cycles
-
-        llm.set_system_message(build_task_prompt(tools, guidance))
+        llm.set_system_message(pb.build_task_prompt(tools, guidance))
 
         handle = start_async_tool_loop(
             llm,
