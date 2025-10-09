@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import os
 import redis.asyncio as redis
 from pydantic import BaseModel
-
+from enum import Enum
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 from unity.transcript_manager.transcript_manager import TranscriptManager
@@ -18,7 +18,7 @@ from .base import BaseConversationManagerHandle
 from .new_events import NotificationInjectedEvent
 import logging
 
-T = TypeVar("T", bound=BaseModel)
+T = TypeVar("T", bound=[BaseModel, Enum])
 
 logger = logging.getLogger(__name__)
 
@@ -61,17 +61,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
     # ────────────────────────────────────────────────────────────────────
     # Non-Blocking Tools for LLM-Orchestrated Polling
     # ────────────────────────────────────────────────────────────────────
-
-    async def _tool_interject_conversation(self, text: str) -> dict:
-        """
-        Tool to inject a notification into the live conversation. Returns immediately.
-        """
-        await self.interject(text)
-        logger.info(f"TOOL: Interjected '{text}'.")
-        return {
-            "status": "ok",
-            "message": f"Successfully sent '{text}'. Use _tool_get_latest_user_messages to check for a reply.",
-        }
 
     async def _tool_get_latest_user_messages(
         self,
@@ -163,7 +152,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
     # Standard SteerableToolHandle Methods
     # ─────────────────────────────────────────────────────────────
 
-    def ask(
+    async def ask(
         self,
         question: str,
         *,
@@ -178,7 +167,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
         ask_start_ts = time.time()
         llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "claude-4-sonnet@anthropic",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
         )
@@ -197,25 +186,45 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         YOUR MISSION: Get the user's answer to: '{question}'
         {schema_requirement}
         YOUR TOOLS:
-        1. `_tool_interject_conversation(text: str)` -> Sends a message to the user. Returns instantly.
+        1. `_tool_interject_conversation(text: str)` -> Sends a message to the user. Returns a dictionary with the timestamp of when the message was sent.
         2. `_tool_get_latest_user_messages(delay: float, since_ts: float)` -> Waits, then checks for new user messages from the transcript.
 
         YOUR WORKFLOW (LLM-Orchestrated Polling):
-        1. Start by calling `_tool_interject_conversation` to ask the main question.
-        2. Call `_tool_get_latest_user_messages`, providing a `delay` (e.g., 3.0s) and `since_ts` (the timestamp when the 'ask' began: {ask_start_ts}) to check for a reply.
-        3. Analyze the result:
-           - If you get a message that answers your question -> STOP using tools and respond {'with a JSON object conforming to the schema above' if response_format else 'with the answer'}. MISSION COMPLETE.
-           - If the list of messages is empty -> call `_tool_get_latest_user_messages` again to continue waiting.
-           - If the user is confused -> `_tool_interject_conversation` to clarify, then resume polling.
+        ### Your Strategy:
+        1.  **Analyze the existing conversation first.** Use `_tool_get_latest_user_messages` to see if the user has already provided the answer in their recent messages.
+        2.  **If you find a clear answer, or you are highly confident you can infer the answer, your task is complete.** Do not use any more tools. Simply provide the answer in the correct format.
+        3.  **If the answer is not in the transcript and you cannot infer it with high confidence**, you must then ask the user the question directly using `_tool_interject_conversation`.
+        4.  **After you have asked the question**, you must patiently wait for a response by repeatedly calling `_tool_get_latest_user_messages` with a delay until a new message appears that answers your question.
 
-        CRITICAL:
+        **CRITICAL**: As soon as you have a confident answer, either from the initial analysis or from the user's direct reply, you must stop using tools and provide the final answer.
         - You are in control of the polling loop. Be patient and persistent.
         {'- Once you have the user\'s answer, your final response MUST be a JSON object that strictly conforms to the provided Pydantic model schema. Do not add any extra keys or commentary.' if response_format else '- Once you have the user\'s answer, respond with a clear and concise summary of what they said.'}
+
+        ### Additional Considerations:
+        1.  **Timing is crucial.** Do not use tools unless you are absolutely sure the user hasn't already answered your question.
+        2.  **Stay focused.** As soon as you have an answer, provide it and stop using tools.
+        3.  **Be respectful.** If the user is confused, use `_tool_interject_conversation` to ask follow-up questions to help them understand.
+        4.  **Follow the schema.** If a Pydantic model is provided, your final response MUST be a JSON object that strictly conforms to the schema.
+        Do not add any extra keys or commentary.
         """
         llm.set_system_message(system_prompt)
+
+        async def _tool_interject_conversation(text: str) -> dict:
+            """
+            Tool to inject a notification into the live conversation. Returns immediately.
+            """
+            interject_ts = time.time()
+            await self.interject(text)
+            logger.info(f"TOOL: Interjected '{text}' at {interject_ts}.")
+            return {
+                "status": "ok",
+                "message": f"Successfully sent '{text}'. Use _tool_get_latest_user_messages to check for a reply.",
+                "timestamp": interject_ts,
+            }
+
         tools = {
             "_tool_interject_conversation": ToolSpec(
-                fn=self._tool_interject_conversation,
+                fn=_tool_interject_conversation,
             ),
             "_tool_get_latest_user_messages": ToolSpec(
                 fn=self._tool_get_latest_user_messages,
@@ -235,30 +244,60 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             try:
                 async with asyncio.timeout(overall_timeout):
                     final_result_str = await original_result()
-                    logger.info("INFO: Tool loop finished, parsing final result.")
+                    logger.info(
+                        f"INFO: Tool loop finished, parsing final result. Final result: {final_result_str}",
+                    )
 
                     if response_format:
-                        # If the result is already the correct model, return it directly
-                        if isinstance(final_result_str, response_format):
-                            return final_result_str
+                        cleaned_str = final_result_str.strip()
+                        if cleaned_str.startswith("```json"):
+                            cleaned_str = cleaned_str[7:].strip()
+                        if cleaned_str.startswith("```"):
+                            cleaned_str = cleaned_str[3:].strip()
+                        if cleaned_str.endswith("```"):
+                            cleaned_str = cleaned_str[:-3].strip()
 
-                        # Otherwise, try to parse it as JSON
                         try:
-                            validated_model = response_format.model_validate_json(
-                                final_result_str,
-                            )
-                            logger.info(
-                                f"INFO: Successfully validated response as {response_format.__name__}",
-                            )
-                            return validated_model
-                        except Exception as e:
+                            final_payload = json.loads(cleaned_str)
+
+                            # Handle Pydantic Models
+                            if issubclass(response_format, BaseModel):
+                                validated_model = response_format.model_validate(
+                                    final_payload,
+                                )
+                                logger.info(
+                                    f"INFO: Successfully validated response as {response_format.__name__}",
+                                )
+                                return validated_model
+
+                            # Handle Enums
+                            elif issubclass(response_format, Enum):
+                                if (
+                                    isinstance(final_payload, dict)
+                                    and "value" in final_payload
+                                ):
+                                    enum_member = response_format(
+                                        final_payload["value"],
+                                    )
+                                else:
+                                    enum_member = response_format(final_payload)
+
+                                logger.info(
+                                    f"INFO: Successfully validated response as {response_format.__name__}",
+                                )
+                                return enum_member
+
+                        except (
+                            json.JSONDecodeError,
+                            TypeError,
+                            KeyError,
+                            ValueError,
+                        ) as e:
                             logger.warning(
-                                f"WARN: Could not parse final result into model: {e}",
+                                f"WARN: Could not parse final result into model after cleaning: {e}",
                             )
-                            # Fall back to returning the raw string
-                            return final_result_str
+                            raise e
                     else:
-                        # No validation needed
                         return final_result_str
 
             except asyncio.TimeoutError:
