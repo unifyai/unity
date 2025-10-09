@@ -8,15 +8,15 @@ UNASSIGNED = -1
 
 
 class Medium(StrEnum):
-    SMS_MESSAGE = "sms_message"
-    EMAIL = "email"
-    WHATSAPP_MSG = "whatsapp_message"
-    PHONE_CALL = "phone_call"
-    WHATSAPP_CALL = "whatsapp_call"
     UNIFY_MESSAGE = "unify_message"
     UNIFY_CALL = "unify_call"
-    GOOGLE_MEET = "google_meet"
     UNIFY_MEET = "unify_meet"
+    EMAIL = "email"
+    SMS_MESSAGE = "sms_message"
+    PHONE_CALL = "phone_call"
+    WHATSAPP_MSG = "whatsapp_message"
+    WHATSAPP_CALL = "whatsapp_call"
+    GOOGLE_MEET = "google_meet"
 
 
 class ScreenShareAnnotation(BaseModel):
