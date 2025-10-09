@@ -197,27 +197,49 @@ def test_data_store_never_contains_vector_columns():
 
 @pytest.mark.unit
 @_handle_project
-def test_get_contact_info_prefers_cache_and_falls_back_to_backend():
+def test_get_contact_info_prefers_cache_and_falls_back_to_backend_single_and_multi():
     cm = ContactManager()
     ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
 
-    # Create a contact to query
-    out = cm._create_contact(first_name="Instant", surname="Read")
-    cid = out["details"]["contact_id"]
+    # Create contacts to query
+    out1 = cm._create_contact(first_name="Instant", surname="Read")
+    cid1 = out1["details"]["contact_id"]
+    out2 = cm._create_contact(first_name="Second", surname="Record")
+    cid2 = out2["details"]["contact_id"]
 
     # 1) Cache hit path: ensure present in cache (creation write-through)
-    info = cm.get_contact_info(
-        cid,
+    info_single = cm.get_contact_info(
+        cid1,
         fields=["first_name", "surname"],
         search_local_storage=True,
     )
-    assert info == {"first_name": "Instant", "surname": "Read"}
+    assert info_single == {cid1: {"first_name": "Instant", "surname": "Read"}}
 
     # 2) Cache miss path: clear the cache and then call again
     ds.clear()
-    info2 = cm.get_contact_info(cid, fields=["first_name"], search_local_storage=True)
-    assert info2 == {"first_name": "Instant"}
+    info2_single = cm.get_contact_info(
+        cid1,
+        fields=["first_name"],
+        search_local_storage=True,
+    )
+    assert info2_single == {cid1: {"first_name": "Instant"}}
 
     # After miss, cache should be repopulated
-    row = ds[cid]
+    row = ds[cid1]
     assert row.get("first_name") == "Instant"
+
+    # 3) Multi-id query: mix of hit and miss
+    # Ensure cid1 is cached and cid2 forces a backend read
+    _ = ds[cid1]
+    try:
+        _ = ds[cid2]
+        ds.delete(cid2)
+    except KeyError:
+        pass
+    info_multi = cm.get_contact_info(
+        [cid1, cid2],
+        fields=["surname"],
+        search_local_storage=True,
+    )
+    assert info_multi[cid1] == {"surname": "Read"}
+    assert info_multi[cid2] == {"surname": "Record"}

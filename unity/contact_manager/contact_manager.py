@@ -918,10 +918,10 @@ class ContactManager(BaseContactManager):
     # Public non-tool method
     def get_contact_info(
         self,
-        contact_id: int,
+        contact_id: Union[int, List[int]],
         fields: Optional[Union[str, List[str]]] = None,
         search_local_storage: bool = True,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Dict[int, Dict[str, Any]]:
         """
         Return a mapping of requested fields for a single contact.
 
@@ -934,8 +934,8 @@ class ContactManager(BaseContactManager):
 
         Returns
         -------
-        dict | None
-            Selected field→value mapping, or None if the contact doesn't exist.
+        dict[int, dict]
+            Mapping of contact_id → selected field→value. Missing ids are omitted.
         """
         allowed = set(self._allowed_fields())
 
@@ -952,29 +952,51 @@ class ContactManager(BaseContactManager):
         if not requested:
             requested = list(allowed)
 
+        # Normalise ids list
+        if isinstance(contact_id, list):
+            ids: List[int] = [int(x) for x in contact_id]
+        else:
+            ids = [int(contact_id)]
+
+        results: Dict[int, Dict[str, Any]] = {}
+        misses: List[int] = []
+
         # 1) Try local cache
         if search_local_storage:
-            try:
-                row = self._data_store[contact_id]
-                return {k: v for k, v in row.items() if k in requested}
-            except KeyError:
-                pass
+            for cid in ids:
+                try:
+                    row = self._data_store[cid]
+                    results[cid] = {k: v for k, v in row.items() if k in requested}
+                except KeyError:
+                    misses.append(cid)
+        else:
+            misses = list(ids)
 
-        # 2) Backend read with allowed-field superset; write-through to cache
-        rows = unify.get_logs(
-            context=self._ctx,
-            filter=f"contact_id == {contact_id}",
-            limit=1,
-            from_fields=list(allowed),
-        )
-        if not rows:
-            return None
-        backend_row = rows[0].entries
-        try:
-            self._data_store.put(backend_row)
-        except Exception:
-            pass
-        return {k: backend_row.get(k) for k in requested}
+        # 2) Backend read for misses (allowed-field superset); write-through to cache
+        if misses:
+            if len(misses) == 1:
+                filt = f"contact_id == {misses[0]}"
+            else:
+                filt = f"contact_id in [{', '.join(str(x) for x in misses)}]"
+            rows = unify.get_logs(
+                context=self._ctx,
+                filter=filt,
+                limit=len(misses),
+                from_fields=list(allowed),
+            )
+            for lg in rows:
+                try:
+                    backend_row = lg.entries
+                    cid_val = int(backend_row.get("contact_id"))
+                except Exception:
+                    continue
+                try:
+                    self._data_store.put(backend_row)
+                except Exception:
+                    pass
+                results[cid_val] = {k: backend_row.get(k) for k in requested}
+
+        return results
 
     def _num_contacts(
         self,
