@@ -12,7 +12,6 @@ import unity
 from unity.contact_manager.contact_manager import ContactManager
 from unity.events.event_bus import EVENT_BUS
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import UNASSIGNED
 from unity.conversation_manager_2.new_events import (
     CreateContactInput,
     Event,
@@ -242,16 +241,7 @@ class ManagersWorker:
         try:
             # Get all contacts from ContactManager and convert to dict
             rows = self._contact_manager._filter_contacts()
-            contacts = [
-                {
-                    "id": str(c.contact_id),
-                    "first_name": c.first_name or "".strip(),
-                    "last_name": c.surname or "",
-                    "phone_number": c.phone_number,
-                    "email": c.email_address,
-                }
-                for c in rows
-            ]
+            contacts = [c.model_dump() for c in rows]
 
             # Publish reply as Event envelope
             await self._event_broker.publish(
@@ -275,9 +265,9 @@ class ManagersWorker:
         try:
             await self._contact_manager._create_contact(
                 first_name=contact["first_name"],
-                last_name=contact["last_name"],
+                surname=contact["surname"],
                 phone_number=contact["phone_number"],
-                email=contact["email"],
+                email_address=contact["email_address"],
             )
             print(f"[ManagersWorker] Created contact: {contact}")
 

@@ -214,8 +214,8 @@ class GetContactsInput(Event):
 @dataclass
 class CreateContactInput(Event):
     first_name: str
-    last_name: str
-    email: str
+    surname: str
+    email_address: str
     phone_number: str
 
 

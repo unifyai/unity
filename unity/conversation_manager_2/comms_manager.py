@@ -39,20 +39,6 @@ events_map: dict[str, Event] = {
 }
 
 
-# Helper function to get contacts in the new format
-def _get_contacts(contacts: list[dict]) -> list[dict]:
-    return [
-        {
-            "id": c["contact_id"],
-            "first_name": c["first_name"],
-            "last_name": c["surname"],
-            "phone_number": c["phone_number"],
-            "email": c["email_address"],
-        }
-        for c in contacts
-    ]
-
-
 class CommsManager:
     def __init__(self, event_broker):
         self.subscribers = {}
@@ -121,7 +107,7 @@ class CommsManager:
                 )
             elif thread in events_map:
                 # Publish contacts
-                contacts = _get_contacts(event.get("contacts", []))
+                contacts = event.get("contacts", [])
                 asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
                         f"app:comms:contacts",
@@ -180,7 +166,7 @@ class CommsManager:
             elif "call" in thread:
                 try:
                     # Publish contacts
-                    contacts = _get_contacts(event.get("contacts", []))
+                    contacts = event.get("contacts", [])
                     asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:contacts",

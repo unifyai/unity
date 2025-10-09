@@ -8,10 +8,8 @@ import asyncio
 
 from dotenv import load_dotenv
 
-from livekit import agents, rtc, api
-from livekit.agents import utils, tokenize, tts, stt
+from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
-from livekit.agents.log import logger
 from livekit.plugins import (
     openai,
     cartesia,
@@ -27,7 +25,7 @@ from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
 
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
-from typing import AsyncIterable, get_args
+from typing import AsyncIterable
 
 from unity.conversation_manager_2.event_broker import get_event_broker
 
@@ -35,10 +33,7 @@ from unity.conversation_manager_2.event_broker import get_event_broker
 load_dotenv()
 
 from unity.conversation_manager_2.new_events import *
-from unity.conversation_manager.utils import (
-    dispatch_agent,
-    publish_event,
-)
+from unity.conversation_manager_2.utils import dispatch_agent
 
 event_broker = get_event_broker()
 chunk_queue = asyncio.Queue()
