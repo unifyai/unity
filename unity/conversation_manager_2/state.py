@@ -452,7 +452,7 @@ class ConversationManagerState:
             rolling_summary=rolling_summary,
             respond_to=respond_to,
             response_policy=response_policy,
-            is_boss=contact_id == "1",
+            is_boss=contact_id == 1,
         )
         self.inverted_contacts_map[contact_id] = contact
         if email_address:

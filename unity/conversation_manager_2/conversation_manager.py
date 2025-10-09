@@ -401,7 +401,7 @@ class ConversationManager:
             **self.state.phone_contacts_map,
         }
         if event.contact in contacts_map:
-            contact_id = contacts_map[event.contact].id
+            contact_id = contacts_map[event.contact].contact_id
         if role == "Assistant":
             sender_id, receiver_ids = 0, [contact_id]
         else:
