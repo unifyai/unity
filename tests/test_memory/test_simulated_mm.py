@@ -51,17 +51,21 @@ def _build_transcript(useful_line: str) -> str:
 @pytest.mark.asyncio
 @_handle_project
 async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
-    counts = {"cm_update": 0}
+    counts = {"cm_create": 0}
 
-    # --- patch SimulatedContactManager.update ------------------------------
-    orig_cm_upd = SimulatedContactManager.update
+    # --- patch SimulatedContactManager._create_contact ---------------------
+    orig_cm_create = SimulatedContactManager._create_contact
 
-    @functools.wraps(orig_cm_upd)
-    async def spy_cm_upd(self, text: str, **kw):
-        counts["cm_update"] += 1
-        return await orig_cm_upd(self, text, **kw)
+    def spy_cm_create(self, **kw):  # synchronous private helper
+        counts["cm_create"] += 1
+        return orig_cm_create(self, **kw)
 
-    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "_create_contact",
+        spy_cm_create,
+        raising=True,
+    )
 
     # --- run the method ----------------------------------------------------
     mm = SimulatedMemoryManager(
@@ -77,8 +81,8 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
 
     # --- expectations ------------------------------------------------------
     assert isinstance(answer, str) and answer.strip(), "Return should be non-empty"
-    # At least one call to update contacts
-    assert counts["cm_update"] >= 1
+    # At least one contact creation should be invoked
+    assert counts["cm_create"] >= 1
 
 
 # --------------------------------------------------------------------------- #
