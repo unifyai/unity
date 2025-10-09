@@ -398,7 +398,13 @@ def method_to_schema(
     """Convert a bound method into an OpenAI-compatible function-tool schema."""
 
     sig = inspect.signature(bound_method)
-    hints = get_type_hints(bound_method)
+    # Be robust to unresolved forward references or missing symbols in
+    # annotations. If type-hint evaluation fails, fall back to an empty
+    # mapping and infer JSON schema types from defaults.
+    try:
+        hints = get_type_hints(bound_method)
+    except Exception:
+        hints = {}
 
     import inspect as _inspect
 
