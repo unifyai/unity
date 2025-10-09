@@ -3,6 +3,10 @@ Screen Share Manager Sandbox
 
 This sandbox lets you experiment with the `ScreenShareManager` in isolation by streaming a window from your screen, providing voice or text input to simulate user turns, and logging the captioned detected events in a Unify project. Details on how the manager works can be found in the base class that lives in `unity/screen_share_manager/screen_share_manager.py`
 
+Demo:
+-----
+Link to a [loom video](https://www.loom.com/share/9040bec558804ef49ea0ba40dd7d5b9a?sid=19767836-0226-434a-bc9b-a465ea0eb974) walking through a sample run
+
 Running the sandbox
 -------------------
 
