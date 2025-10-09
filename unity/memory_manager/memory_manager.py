@@ -354,7 +354,12 @@ class MemoryManager(BaseMemoryManager):
             reasoning_effort="high",
             service_tier="priority",
         )
-        llm.set_system_message(pb.build_contact_update_prompt(tools, guidance))
+        llm.set_system_message(
+            pb.build_contact_update_prompt(
+                tools,
+                guidance=guidance,
+            ),
+        )
 
         # ─ 3.  Kick off *single* tool-use loop
         handle = start_async_tool_loop(
@@ -758,7 +763,12 @@ class MemoryManager(BaseMemoryManager):
             reasoning_effort="high",
             service_tier="priority",
         )
-        llm.set_system_message(pb.build_knowledge_prompt(tools, guidance))
+        llm.set_system_message(
+            pb.build_knowledge_prompt(
+                tools,
+                guidance=guidance,
+            ),
+        )
 
         handle = start_async_tool_loop(
             llm,
@@ -799,7 +809,12 @@ class MemoryManager(BaseMemoryManager):
             service_tier="priority",
         )
 
-        llm.set_system_message(pb.build_task_prompt(tools, guidance))
+        llm.set_system_message(
+            pb.build_task_prompt(
+                tools,
+                guidance=guidance,
+            ),
+        )
 
         handle = start_async_tool_loop(
             llm,
