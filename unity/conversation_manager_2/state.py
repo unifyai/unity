@@ -1,33 +1,28 @@
 from datetime import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import os
 from typing import Literal, Optional
 from collections import deque
 
+from pydantic import Field
 from unity.conversation_manager_2.new_events import *
+from unity.contact_manager.types.contact import Contact as ContactType
 from unity.transcript_manager.types.message import UNASSIGNED
 
 
-@dataclass
-class Contact:
-    id: str = "-1"
-    first_name: str = None
-    last_name: str = None
+class Contact(ContactType):
     is_boss: bool = False
-    phone_number: str = None
-    email: str = None
-
-    threads: dict[str, deque] = field(
+    threads: dict[str, deque] = Field(
         default_factory=lambda: {
             "sms": deque(maxlen=5),
             "email": deque(maxlen=5),
             "phone": deque(maxlen=5),
-        },
+        }
     )
 
     @property
     def full_name(self):
-        name = self.first_name + " " + self.last_name if self.last_name else ""
+        name = self.first_name + " " + self.surname if self.surname else ""
         return name.strip()
 
 
@@ -95,7 +90,9 @@ class ConversationManagerState:
             # )
         }
 
-        self.inverted_contacts_map = {v.id: v for v in self.phone_contacts_map.values()}
+        self.inverted_contacts_map = {
+            v.contact_id: v for v in self.phone_contacts_map.values()
+        }
 
         self.active_conversations: dict[str, Contact] = {}
 
@@ -319,13 +316,7 @@ class ConversationManagerState:
 
             case GetContactsOutput() as e:
                 for c in e.contacts:
-                    self.create_new_contact(
-                        c["id"],
-                        c["first_name"],
-                        c["last_name"],
-                        c["email"],
-                        c["phone_number"],
-                    )
+                    self.create_new_contact(**c)
 
             case LogMessageOutput() as e:
                 # ToDo: Get this working for email and whatsapp as well
@@ -404,9 +395,9 @@ class ConversationManagerState:
         thread: Literal["sms", "email", "phone"],
         message: Message | EmailMessage,
     ):
-        if contact.id not in self.active_conversations:
-            self.active_conversations[contact.id] = contact
-        self.active_conversations[contact.id].threads[thread].append(message)
+        if contact.contact_id not in self.active_conversations:
+            self.active_conversations[contact.contact_id] = contact
+        self.active_conversations[contact.contact_id].threads[thread].append(message)
 
     def push_notif(self, notif: Notification):
         self.notifs.append(notif)
@@ -414,17 +405,17 @@ class ConversationManagerState:
     # contacts helpers
     def get_contact(
         self,
-        id: Optional[str] = None,
+        contact_id: Optional[str] = None,
         phone_number: Optional[str] = None,
-        email: Optional[str] = None,
+        email_address: Optional[str] = None,
     ) -> Contact:
         """returns the new contact and whether they were newly created or not."""
-        if not (id or phone_number or email):
+        if not (contact_id or phone_number or email_address):
             raise Exception(
-                "at least one id, phone number or email must be provided to infer contact",
+                "at least one contact_id, phone number or email_address must be provided to infer contact",
             )
-        if id:
-            contact = self.inverted_contacts_map.get(id)
+        if contact_id:
+            contact = self.inverted_contacts_map.get(contact_id)
             if contact:
                 return contact
 
@@ -433,59 +424,99 @@ class ConversationManagerState:
             if contact:
                 return contact
         else:
-            contact = self.email_contacts_map.get(email)
+            contact = self.email_contacts_map.get(email_address)
             if contact:
                 return contact
 
     def create_new_contact(
         self,
-        id: str,
+        contact_id: str,
         first_name: str,
-        last_name: Optional[str] = None,
-        email: Optional[str] = None,
+        surname: Optional[str] = None,
+        email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
+        bio: Optional[str] = None,
+        rolling_summary: Optional[str] = None,
+        respond_to: bool = False,
+        response_policy: Optional[str] = None,
     ):
-        contact = Contact(id, first_name, last_name, id == "1", phone_number, email)
-        self.inverted_contacts_map[id] = contact
-        if email:
-            self.email_contacts_map[email] = contact
+        contact = Contact(
+            contact_id=contact_id,
+            first_name=first_name,
+            surname=surname,
+            email_address=email_address,
+            phone_number=phone_number,
+            whatsapp_number=whatsapp_number,
+            bio=bio,
+            rolling_summary=rolling_summary,
+            respond_to=respond_to,
+            response_policy=response_policy,
+            is_boss=contact_id == "1",
+        )
+        self.inverted_contacts_map[contact_id] = contact
+        if email_address:
+            self.email_contacts_map[email_address] = contact
         if phone_number:
             self.phone_contacts_map[phone_number] = contact
         return contact
 
     def update_or_create_new_contact(
         self,
-        id: str,
+        contact_id: str,
         first_name: str,
-        last_name: Optional[str] = None,
-        email: Optional[str] = None,
+        surname: Optional[str] = None,
+        email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
+        bio: Optional[str] = None,
+        rolling_summary: Optional[str] = None,
+        respond_to: bool = False,
+        response_policy: Optional[str] = None,
     ):
         contact = None
         print("curernt contacts", self.inverted_contacts_map)
-        if id != "-1":  # update branch
-            contact = self.get_contact(id, phone_number, email)
+        if contact_id != "-1":  # update branch
+            contact = self.get_contact(
+                contact_id, phone_number, email_address=email_address
+            )
             if contact:
                 # TODO: pop old emails or phone numbers if they exist
                 if phone_number and (contact.phone_number != phone_number):
                     contact.phone_number = phone_number
                     self.phone_contacts_map[phone_number] = contact
 
-                if email and (contact.email != email):
-                    contact.email = email
-                    self.email_contacts_map[email] = contact
+                if email_address and (contact.email_address != email_address):
+                    contact.email_address = email_address
+                    self.email_contacts_map[email_address] = contact
             else:
-                self.create_new_contact(id, first_name, last_name, email, phone_number)
+                self.create_new_contact(
+                    contact_id,
+                    first_name,
+                    surname,
+                    email_address,
+                    phone_number,
+                    whatsapp_number,
+                    bio,
+                    rolling_summary,
+                    respond_to,
+                    response_policy,
+                )
         else:
             new_contact = self.create_new_contact(
                 # must make sure ids are aligned with the database here actually..
                 str(len(self.phone_contacts_map) + 1),
                 first_name,
-                last_name,
-                email,
+                surname,
+                email_address,
                 phone_number,
+                whatsapp_number,
+                bio,
+                rolling_summary,
+                respond_to,
+                response_policy,
             )
-            self.active_conversations[new_contact.id] = new_contact
+            self.active_conversations[new_contact.contact_id] = new_contact
             contact = new_contact
         # self.push_message("comms", f"Adding {contact.full_name} to active conversations.")
         return contact
@@ -499,7 +530,7 @@ class ConversationManagerState:
                 threads.append(self._render_thread(t_name, t))
         threads = "\n\n".join(threads)
         return f"""
-<contact id="{contact.id}" first_name="{contact.first_name}" last_name="{contact.last_name}" is_boss="{contact.is_boss}" phone_number="{contact.phone_number or ""}" email="{contact.email or ""}" on_phone="{on_phone}">
+<contact contact_id="{contact.contact_id}" first_name="{contact.first_name}" surname="{contact.surname}" is_boss="{contact.is_boss}" phone_number="{contact.phone_number or ""}" email_address="{contact.email_address or ""}" on_phone="{on_phone}">
 {self._add_spaces(threads)}
 </contact>""".strip()
 

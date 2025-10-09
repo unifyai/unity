@@ -31,8 +31,8 @@ class SendEmail(BaseModel):
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
     first_name: str
-    last_name: Optional[str]
-    email: str
+    surname: Optional[str]
+    email_address: str
     subject: str
     body: str
 
@@ -46,8 +46,8 @@ class SendSMS(BaseModel):
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
     first_name: str
-    last_name: Optional[str]
-    number: str
+    surname: Optional[str]
+    phone_number: str
     message: str
 
 
@@ -60,8 +60,8 @@ class MakeCall(BaseModel):
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
     first_name: Optional[str]
-    last_name: Optional[str]
-    number: str
+    surname: Optional[str]
+    phone_number: str
 
 
 actions = Union[WaitForNextEvent, SendSMS, SendEmail, MakeCall]

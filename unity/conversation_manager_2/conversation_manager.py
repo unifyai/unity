@@ -134,11 +134,11 @@ class ConversationManager:
             c for c in self.state.inverted_contacts_map.values() if c.is_boss
         )
         system_message = Template(SYS).render(
-            contact_id=boss_contact.id,
+            contact_id=boss_contact.contact_id,
             first_name=boss_contact.first_name,
-            last_name=boss_contact.last_name,
+            surname=boss_contact.surname,
             phone_number=boss_contact.phone_number,
-            email=boss_contact.email,
+            email_address=boss_contact.email_address,
         )
         print(system_message)
         if self.state.mode in ["call", "gmeet"]:
@@ -198,8 +198,8 @@ class ConversationManager:
                     contact = self.state.update_or_create_new_contact(
                         action["contact_id"],
                         action["first_name"],
-                        action["last_name"],
-                        phone_number=action["number"],
+                        action["surname"],
+                        phone_number=action["phone_number"],
                     )
                     res = await _send_sms_message_via_number(
                         contact.phone_number,
@@ -229,17 +229,17 @@ class ConversationManager:
                     contact = self.state.update_or_create_new_contact(
                         action["contact_id"],
                         action["first_name"],
-                        action["last_name"],
-                        email=action["email"],
+                        action["surname"],
+                        email_address=action["email_address"],
                     )
                     await _send_email_via_address(
-                        contact.email,
+                        contact.email_address,
                         action["subject"],
                         action["body"],
                         action.get("messge_id"),
                     )
                     event = EmailSent(
-                        contact=contact.email,
+                        contact=contact.email_address,
                         subject=action["subject"],
                         body=action["body"],
                         message_id=action.get("message_id"),
@@ -254,8 +254,8 @@ class ConversationManager:
                     contact = self.state.update_or_create_new_contact(
                         action["contact_id"],
                         action["first_name"],
-                        action["last_name"],
-                        phone_number=action["number"],
+                        action["surname"],
+                        phone_number=action["phone_number"],
                     )
                     print("contact found=", contact)
                     if self.state.mode == "call":
