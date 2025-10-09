@@ -20,11 +20,18 @@ from ..common.llm_helpers import (
 from ..common.async_tool_loop import start_async_tool_loop
 from .prompt_builders import build_ask_prompt, build_request_prompt
 from .base import BaseConductor
+from ..contact_manager.base import BaseContactManager
 from ..contact_manager.simulated import SimulatedContactManager
+from ..transcript_manager.base import BaseTranscriptManager
 from ..transcript_manager.simulated import SimulatedTranscriptManager
+from ..knowledge_manager.base import BaseKnowledgeManager
 from ..knowledge_manager.simulated import SimulatedKnowledgeManager
+from ..skill_manager.base import BaseSkillManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
+from ..task_scheduler.base import BaseTaskScheduler
+from ..web_searcher.base import BaseWebSearcher
 from ..web_searcher.simulated import SimulatedWebSearcher
+from ..actor.base import BaseActor
 from ..actor.simulated import SimulatedActor
 from ..skill_manager.simulated import SimulatedSkillManager
 from ..events.manager_event_logging import (
@@ -52,6 +59,14 @@ class SimulatedConductor:
         log_events: bool = False,
         rolling_summary_in_prompts: bool = True,
         simulation_guidance: Optional[str] = None,
+        # Optional manager overrides – fall back to simulated defaults
+        contact_manager: Optional[BaseContactManager] = None,
+        transcript_manager: Optional[BaseTranscriptManager] = None,
+        knowledge_manager: Optional[BaseKnowledgeManager] = None,
+        skill_manager: Optional[BaseSkillManager] = None,
+        task_scheduler: Optional[BaseTaskScheduler] = None,
+        web_searcher: Optional[BaseWebSearcher] = None,
+        actor: Optional[BaseActor] = None,
     ) -> None:
         """
         Args:
@@ -62,47 +77,80 @@ class SimulatedConductor:
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
-        # ── Simulated façade (pure-LLM back-ends) ────────────────────
-        self._contact_manager = SimulatedContactManager(
-            description=description,
-            log_events=log_events,
-            rolling_summary_in_prompts=rolling_summary_in_prompts,
-            simulation_guidance=simulation_guidance,
+        # ── Managers – use provided instances or default to simulated back-ends ──
+        self._contact_manager = (
+            contact_manager
+            if contact_manager is not None
+            else SimulatedContactManager(
+                description=description,
+                log_events=log_events,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+                simulation_guidance=simulation_guidance,
+            )
         )
-        self._transcript_manager = SimulatedTranscriptManager(
-            description=description,
-            log_events=log_events,
-            rolling_summary_in_prompts=rolling_summary_in_prompts,
-            simulation_guidance=simulation_guidance,
+
+        self._transcript_manager = (
+            transcript_manager
+            if transcript_manager is not None
+            else SimulatedTranscriptManager(
+                description=description,
+                log_events=log_events,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+                simulation_guidance=simulation_guidance,
+            )
         )
-        self._knowledge_manager = SimulatedKnowledgeManager(
-            description=description,
-            log_events=log_events,
-            rolling_summary_in_prompts=rolling_summary_in_prompts,
-            simulation_guidance=simulation_guidance,
+
+        self._knowledge_manager = (
+            knowledge_manager
+            if knowledge_manager is not None
+            else SimulatedKnowledgeManager(
+                description=description,
+                log_events=log_events,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+                simulation_guidance=simulation_guidance,
+            )
         )
-        self._skill_manager = SimulatedSkillManager(
-            description=description,
-            log_events=log_events,
-            rolling_summary_in_prompts=rolling_summary_in_prompts,
-            simulation_guidance=simulation_guidance,
+
+        self._skill_manager = (
+            skill_manager
+            if skill_manager is not None
+            else SimulatedSkillManager(
+                description=description,
+                log_events=log_events,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+                simulation_guidance=simulation_guidance,
+            )
         )
-        self._task_scheduler = SimulatedTaskScheduler(
-            description=description,
-            log_events=log_events,
-            rolling_summary_in_prompts=rolling_summary_in_prompts,
-            simulation_guidance=simulation_guidance,
+
+        self._task_scheduler = (
+            task_scheduler
+            if task_scheduler is not None
+            else SimulatedTaskScheduler(
+                description=description,
+                log_events=log_events,
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+                simulation_guidance=simulation_guidance,
+            )
         )
-        self._web_searcher = SimulatedWebSearcher(
-            description=description,
-            log_events=log_events,
+
+        self._web_searcher = (
+            web_searcher
+            if web_searcher is not None
+            else SimulatedWebSearcher(
+                description=description,
+                log_events=log_events,
+            )
         )
 
         # Actor – simulation-only executor for free-form activities
-        self._actor = SimulatedActor(
-            steps=0,
-            duration=None,
-            simulation_guidance=simulation_guidance,
+        self._actor = (
+            actor
+            if actor is not None
+            else SimulatedActor(
+                steps=0,
+                duration=None,
+                simulation_guidance=simulation_guidance,
+            )
         )
 
         #  Run-time state & tool-dict helpers
