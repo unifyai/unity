@@ -15,6 +15,8 @@ class Medium(StrEnum):
     WHATSAPP_CALL = "whatsapp_call"
     UNIFY_MESSAGE = "unify_message"
     UNIFY_CALL = "unify_call"
+    GOOGLE_MEET = "google_meet"
+    UNIFY_MEET = "unify_meet"
 
 
 class ScreenShareAnnotation(BaseModel):
