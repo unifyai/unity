@@ -81,12 +81,13 @@ RULES FOR `triggering_phrase`:
         - **Imprecise Phrase:** "click the red button to continue"
         - **Precise Phrase:** "click the red button"
 
-FORMATTING RULES:
------------------
+CRITICAL RULES:
+---------------
 1.  **Representative Timestamp is Mandatory:** For every event, the `representative_timestamp` field must contain the exact timestamp of the corresponding 'AFTER' frame from the input. Do NOT invent timestamps.
 2.  **Timestamp Format:** All `timestamp` values must be floating-point numbers representing seconds relative to the start of the media stream (e.g., `12.34`). Do NOT use Unix epoch timestamps.
 3.  **Chronological Order:** The final list of events in your response MUST be sorted by timestamp.
 4.  **JSON ONLY:** Your entire response must be a single, valid JSON object that strictly conforms to the provided schema. Do not include any other text, notes, or markdown.
+5.  **Speech Intent:** Always create an event for the user's primary spoken intent, timestamped at the beginning of their speech. For speech events, the `representative_timestamp` should be the timestamp of the visual frame that best shows the screen state *while they were speaking*.
 
 SCHEMA FOR YOUR RESPONSE:```json
 {json.dumps(schema, indent=2)}```
