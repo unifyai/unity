@@ -161,7 +161,39 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# 4. update_knowledge – should call KnowledgeManager.update at least once     #
+# 4. update_contact_response_policy – restricted column write                 #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_mm_update_contact_response_policy_invocations(monkeypatch):
+    orig_cm_upd = SimulatedContactManager.update
+
+    calls = {"cm_update": 0}
+
+    @functools.wraps(orig_cm_upd)
+    async def spy_cm_upd(self, text: str, **kw):  # noqa: D401 – imperative helper
+        calls["cm_update"] += 1
+        return await orig_cm_upd(self, text, **kw)
+
+    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
+
+    mm = SimulatedMemoryManager(
+        "TEST SCENARIO: Response policy update. SimulatedContactManager MUST accept a single deterministic"
+        " update to 'response_policy' for the target contact; do NOT claim it is already set."
+        " SimulatedTranscriptManager answers simply. No external I/O.",
+    )
+    transcript = _build_transcript("Please be more formal when replying to Jane.")
+
+    await mm.update_contact_response_policy(transcript, contact_id=1)
+
+    # One invocation of ContactManager.update expected
+    assert (
+        calls["cm_update"] >= 1
+    ), "ContactManager.update should be called at least once for response policy"
+
+
+# --------------------------------------------------------------------------- #
+# 5. update_knowledge – should call KnowledgeManager.update at least once     #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
@@ -200,7 +232,7 @@ async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# 5. update_tasks – should call TaskScheduler.update at least once            #
+# 6. update_tasks – should call TaskScheduler.update at least once            #
 # --------------------------------------------------------------------------- #
 
 
@@ -236,37 +268,3 @@ async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
 
     assert isinstance(result, str) and result.strip()
     assert counts["ts_update"] >= 1, "TaskScheduler.update should be invoked"
-
-
-# ---------------------------------------------------------------------------
-# Response policy helper
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_mm_update_contact_response_policy_invocations(monkeypatch):
-    orig_cm_upd = SimulatedContactManager.update
-
-    calls = {"cm_update": 0}
-
-    @functools.wraps(orig_cm_upd)
-    async def spy_cm_upd(self, text: str, **kw):  # noqa: D401 – imperative helper
-        calls["cm_update"] += 1
-        return await orig_cm_upd(self, text, **kw)
-
-    monkeypatch.setattr(SimulatedContactManager, "update", spy_cm_upd, raising=True)
-
-    mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Response policy update. SimulatedContactManager MUST accept a single deterministic"
-        " update to 'response_policy' for the target contact; do NOT claim it is already set."
-        " SimulatedTranscriptManager answers simply. No external I/O.",
-    )
-    transcript = _build_transcript("Please be more formal when replying to Jane.")
-
-    await mm.update_contact_response_policy(transcript, contact_id=1)
-
-    # One invocation of ContactManager.update expected
-    assert (
-        calls["cm_update"] >= 1
-    ), "ContactManager.update should be called at least once for response policy"
