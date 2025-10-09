@@ -177,3 +177,19 @@ def test_data_store_after_merge_contacts():
     # Deleted contact should be absent from DataStore
     with pytest.raises(KeyError):
         _ = ds[cid2]
+
+
+@pytest.mark.unit
+@_handle_project
+def test_data_store_never_contains_vector_columns():
+    cm = ContactManager()
+    ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
+
+    # Create a contact and drive semantic path to create vectors server-side
+    cm._create_contact(first_name="VecTest", bio="likes vectors")
+    _ = cm._search_contacts(references={"bio": "vectors"}, k=1)
+
+    # Scan snapshot and assert no *_emb keys exist in cached rows
+    snap = ds.snapshot()
+    for _key, row in snap.items():
+        assert all(not str(k).endswith("_emb") for k in row.keys())
