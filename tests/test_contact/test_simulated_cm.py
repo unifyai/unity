@@ -152,7 +152,7 @@ async def test_handle_requests_clarification():
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
     h = await cm.ask(
-        "Please update my client list.",
+        "What is David's phone number?",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
         _requests_clarification=True,
