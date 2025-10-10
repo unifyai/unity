@@ -53,9 +53,6 @@ class WebSearcher(BaseWebSearcher):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        """
-        Ask a web question. Uses an async tool-use loop with web tools.
-        """
         client = self._new_llm_client("gpt-5@openai")
 
         tools = dict(self._ask_tools)
@@ -155,15 +152,8 @@ class WebSearcher(BaseWebSearcher):
             # Best-effort only; callers operate without caches if needed
             pass
 
+    @functools.wraps(BaseWebSearcher.clear, updated=())
     def clear(self) -> None:
-        """
-        Reset internal state/caches and re-initialise storage/context.
-
-        Behaviour
-        ---------
-        - Flushes process-local caches used by this manager.
-        - Re-provisions storage via `_provision_storage`.
-        """
         # Best-effort cache flush
         try:
             self._last_results = []

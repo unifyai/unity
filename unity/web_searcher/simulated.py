@@ -228,13 +228,8 @@ class SimulatedWebSearcher(BaseWebSearcher):
 
         return handle
 
+    @functools.wraps(BaseWebSearcher.clear, updated=())
     def clear(self) -> None:
-        """
-        Reset simulated state by re-running the constructor in place.
-
-        Mirrors the pattern used in other simulated managers where a fresh
-        stateful LLM and prompts are established by re-initialising.
-        """
         type(self).__init__(
             self,
             description=getattr(
