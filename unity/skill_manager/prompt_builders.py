@@ -11,6 +11,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
+from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 
 def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
@@ -161,6 +162,9 @@ def build_ask_prompt(
             usage_examples,
             "",
             clar_section,
+            "",
+            "",
+            read_only_ask_mutation_exit_block(),
             "",
             f"Current UTC time is {_now()}.",
         ],

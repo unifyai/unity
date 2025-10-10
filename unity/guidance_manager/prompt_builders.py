@@ -12,6 +12,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
+from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 
 def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
@@ -190,6 +191,9 @@ def build_ask_prompt(
                 else ""
             ),
             clar_sentence,
+            "",
+            read_only_ask_mutation_exit_block(),
+            "",
             f"There are currently {num_items} guidance entries stored with the following columns:",
             json.dumps(columns, indent=4),
             "",

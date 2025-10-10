@@ -10,6 +10,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
+from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -200,6 +201,9 @@ Anti‑patterns to avoid
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
             clar_sentence,
+            "",
+            read_only_ask_mutation_exit_block(),
+            "",
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
             "Use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
             "Please always mention the relevant filename(s) in your response.",
