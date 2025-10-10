@@ -1968,7 +1968,7 @@ def build_initial_plan_prompt(
 
 def build_dynamic_implement_prompt(
     goal: str,
-    full_plan_source: str,
+    scoped_context: str,
     call_stack: list[str],
     function_name: str,
     function_sig: inspect.Signature,
@@ -1995,7 +1995,7 @@ def build_dynamic_implement_prompt(
         ---
         ### Existing Functions Library
         You may find these pre-existing functions useful. You can either call them directly
-        (if their source code is already in the 'Full Plan Source Code' below) or
+        (if their source code is already in the 'Source Code' below) or
         copy and adapt their implementation.
 
         {formatted_functions}
@@ -2101,16 +2101,14 @@ def build_dynamic_implement_prompt(
     context_section = textwrap.dedent(
         f"""
     ---
-    ### Full Plan Analysis
-    You have access to the entire plan and the current call stack for complete strategic context.
+    ### Scoped Plan Analysis & Call Stack
+    You are being provided a scoped view of the plan's source code, centered on the current point of execution.
+    Use the `Parent Source`, `Current Function Source`, and `Children Source` to understand the local context and make your decision.
 
     **Current Call Stack:**
     `{call_stack_str}`
 
-    **Full Plan Source Code:**
-    ```python
-    {full_plan_source}
-    ```
+    {scoped_context}
     ---
     """,
     )
@@ -2493,7 +2491,7 @@ def build_trace_summary_prompt(
 def build_interjection_prompt(
     interjection: str,
     parent_chat_context: list[dict] | None,
-    plan_source_code: str,
+    scoped_context: str,
     call_stack: list[str],
     action_log: list[str],
     goal: str,
@@ -2528,10 +2526,8 @@ def build_interjection_prompt(
     - **User's Interjection:** "{interjection}"
     - **Current Goal (Source of Truth):** "{goal or 'None (This is a teaching session)'}"
     - **Full Conversation History:** {chat_history}
-    - **Current Plan Source Code (`plan_source_code`):**
-      ```python
-      {plan_source_code}
-      ```
+    - **Scoped Source Code Context:**
+      {scoped_context}
     - **Current Execution Point (Call Stack):** `{call_stack_str}`
     - **Most Recent Plan Actions:**
       {recent_actions}
