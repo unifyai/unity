@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Iterable, Optional, List
+import shutil
+
+from unity.file_manager.fs_adapters.base import BaseFileSystemAdapter
+from unity.file_manager.types.filesystem import FileSystemCapabilities, FileReference
+
+
+class LocalFileSystemAdapter(BaseFileSystemAdapter):
+    """Adapter for a local directory tree (read + rename/move)."""
+
+    def __init__(self, root: str):
+        self._root = Path(root).expanduser().resolve()
+        self._caps = FileSystemCapabilities(
+            can_read=True,
+            can_rename=True,
+            can_move=True,
+            can_delete=True,
+        )
+
+    @property
+    def name(self) -> str:
+        return f"Local[{self._root}]"
+
+    @property
+    def capabilities(self) -> FileSystemCapabilities:
+        return self._caps
+
+    def _abspath(self, p: str) -> Path:
+        # Support both absolute and root-relative inputs
+        q = Path(p)
+        if not q.is_absolute():
+            q = (self._root / p.lstrip("/")).resolve()
+        else:
+            q = q.resolve()
+        # Prevent path escape
+        if self._root not in q.parents and q != self._root:
+            raise PermissionError("Path escapes configured root")
+        return q
+
+    def iter_files(self, root: Optional[str] = None) -> Iterable[FileReference]:
+        base = self._abspath(root or ".")
+        if not base.exists():
+            return []
+        for p in base.rglob("*"):
+            if p.is_file():
+                rel = str(p.relative_to(self._root)).replace("\\", "/")
+                yield FileReference(
+                    path=("/" + rel if not rel.startswith("/") else rel),
+                    name=p.name,
+                    size_bytes=p.stat().st_size,
+                    modified_at=None,
+                    mime_type=None,
+                )
+
+    def get_file(self, path: str) -> FileReference:
+        p = self._abspath(path.lstrip("/"))
+        if not p.exists() or not p.is_file():
+            raise FileNotFoundError(path)
+        rel = str(p.relative_to(self._root)).replace("\\", "/")
+        return FileReference(
+            path=("/" + rel if not rel.startswith("/") else rel),
+            name=p.name,
+            size_bytes=p.stat().st_size,
+            modified_at=None,
+            mime_type=None,
+        )
+
+    def exists(self, path: str) -> bool:
+        """Check if a file exists (optimized for local filesystem)."""
+        try:
+            p = self._abspath(path.lstrip("/"))
+            return p.exists() and p.is_file()
+        except (PermissionError, FileNotFoundError):
+            return False
+        except Exception:
+            return False
+
+    def list(self, root: Optional[str] = None) -> List[str]:
+        """List all file paths in the local filesystem."""
+        try:
+            return [ref.path.lstrip("/") for ref in self.iter_files(root)]
+        except Exception:
+            return []
+
+    def open_bytes(self, path: str) -> bytes:
+        p = self._abspath(path.lstrip("/"))
+        return p.read_bytes()
+
+    def export_file(self, path: str, destination_dir: str) -> str:
+        """Export (copy) a file from local filesystem to destination directory."""
+        source_path = self._abspath(path.lstrip("/"))
+        if not source_path.exists() or not source_path.is_file():
+            raise FileNotFoundError(f"File not found: {path}")
+
+        dest_dir = Path(destination_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # Preserve the original filename
+        dest_path = dest_dir / path.lstrip("/")
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Copy file preserving metadata
+        import shutil
+
+        shutil.copy2(source_path, dest_path)
+
+        return str(dest_path)
+
+    def export_directory(self, path: str, destination_dir: str) -> List[str]:
+        """Export (copy) all files from a directory to destination directory."""
+        exported: List[str] = []
+        try:
+            for file_ref in self.iter_files(path):
+                try:
+                    exported_path = self.export_file(file_ref.path, destination_dir)
+                    exported.append(exported_path)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return exported
+
+    def rename(self, path: str, new_name: str) -> FileReference:
+        if not self._caps.can_rename:
+            raise PermissionError("Rename not permitted by backend policy")
+        p = self._abspath(path.lstrip("/"))
+        dest = p.with_name(new_name)
+        p.rename(dest)
+        rel = str(dest.relative_to(self._root)).replace("\\", "/")
+        return FileReference(
+            path=("/" + rel if not rel.startswith("/") else rel),
+            name=dest.name,
+        )
+
+    def move(self, path: str, new_parent_path: str) -> FileReference:
+        if not self._caps.can_move:
+            raise PermissionError("Move not permitted by backend policy")
+        p = self._abspath(path.lstrip("/"))
+        new_parent = self._abspath(new_parent_path.lstrip("/"))
+        new_parent.mkdir(parents=True, exist_ok=True)
+        dest = new_parent / p.name
+        p.rename(dest)
+        rel = str(dest.relative_to(self._root)).replace("\\", "/")
+        return FileReference(
+            path=("/" + rel if not rel.startswith("/") else rel),
+            name=dest.name,
+        )
+
+    def delete(self, path: str) -> None:
+        if not self._caps.can_delete:
+            raise PermissionError("Delete not permitted by backend policy")
+        p = self._abspath(path.lstrip("/"))
+        if not p.exists():
+            raise FileNotFoundError(path)
+        if not p.is_file():
+            raise ValueError(f"Path is not a file: {path}")
+        p.unlink()
+
+    # ------------------------- High-level import APIs ------------------------- #
+    @staticmethod
+    def _unique_name(existing: set[str], desired: str) -> str:
+        base = Path(desired).stem
+        ext = Path(desired).suffix
+        name = f"{base}{ext}"
+        if name not in existing:
+            return name
+        i = 1
+        while True:
+            candidate = f"{base} ({i}){ext}"
+            if candidate not in existing:
+                return candidate
+            i += 1
+
+    def import_file(self, source_path: str) -> str:
+        src = Path(source_path).expanduser().resolve()
+        if not src.exists() or not src.is_file():
+            raise FileNotFoundError(str(src))
+        # Copy into root with unique name
+        try:
+            existing = {p.name for p in self._root.iterdir() if p.is_file()}
+        except Exception:
+            existing = set()
+        desired = src.name
+        unique = self._unique_name(existing, desired)
+        dest = (self._root / unique).resolve()
+        shutil.copy2(src, dest)
+        return unique
+
+    def import_directory(self, directory: str) -> List[str]:
+        p = Path(directory).expanduser().resolve()
+        if not p.exists() or not p.is_dir():
+            raise NotADirectoryError(str(directory))
+        added: List[str] = []
+        for child in sorted(p.iterdir()):
+            if child.is_file():
+                try:
+                    added.append(self.import_file(str(child)))
+                except Exception:
+                    continue
+        return added
+
+    def register_existing_file(
+        self,
+        path: str,
+        *,
+        display_name: Optional[str] = None,
+        protected: bool = False,
+    ) -> str:
+        p = Path(path).expanduser().resolve()
+        if not p.exists() or not p.is_file():
+            raise FileNotFoundError(str(p))
+        name = display_name or p.name
+        try:
+            existing = {x.name for x in self._root.iterdir() if x.is_file()}
+        except Exception:
+            existing = set()
+        if name in existing and (self._root / name).resolve() != p:
+            name = self._unique_name(existing, name)
+        # If file is already under root with the same name, don't copy
+        dest = (self._root / name).resolve()
+        if dest != p:
+            try:
+                shutil.copy2(p, dest)
+            except Exception:
+                # As best-effort registration, if copy fails and file already exists under dest, accept
+                if not dest.exists():
+                    raise
+        # protected flag is advisory for this adapter; higher layers enforce
+        return name
+
+    def is_protected(self, display_name: str) -> bool:
+        # Local adapter does not persist protection flags; always False
+        return False
+
+    def save_file_to_downloads(self, filename: str, contents: bytes) -> str:
+        downloads_dir = (self._root / "Downloads").resolve()
+        try:
+            downloads_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        desired = Path(filename).name or "downloaded_file"
+        try:
+            existing = {p.name for p in downloads_dir.iterdir() if p.is_file()}
+        except Exception:
+            existing = set()
+        unique = self._unique_name(existing, desired)
+        target_path = downloads_dir / unique
+        with open(target_path, "wb") as f:
+            f.write(contents)
+        return f"Downloads/{unique}"
+
+    def resolve_display_name(self, display_name: str) -> Optional[str]:
+        candidate = (self._root / display_name).expanduser().resolve()
+        if candidate.exists():
+            return str(candidate)
+        # Check Downloads namespace
+        dl = (self._root / "Downloads" / Path(display_name).name).resolve()
+        if dl.exists():
+            return str(dl)
+        return None
