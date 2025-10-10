@@ -3180,6 +3180,8 @@ class HierarchicalActor(BaseActor):
         browser_mode: str = "magnitude",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
+        *,
+        connect_now: bool = False,
     ):
         """
         Initializes the HierarchicalActor.
@@ -3195,6 +3197,7 @@ class HierarchicalActor(BaseActor):
             browser_mode: The browser mode to use. Can be "legacy" or "magnitude".
             agent_mode: The agent mode to use. Can be "browser" or "desktop".
             agent_server_url: The URL of the agent server to use. Can be used to connect to a remote client.
+            connect_now: When False (default), defer any browser/agent connections until first use.
         """
         # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
@@ -3205,6 +3208,7 @@ class HierarchicalActor(BaseActor):
             browser_mode=browser_mode,
             agent_mode=agent_mode,
             agent_server_url=agent_server_url,
+            connect_now=connect_now,
         )
         self.tools = {}
         for name in dir(self.action_provider):
