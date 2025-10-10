@@ -197,3 +197,56 @@ async def test_ask_forwards_parent_context_and_preprocess(monkeypatch):
     assert {"search", "extract", "crawl", "map"}.issubset(
         captured.get("tool_names", set()),
     )
+
+
+@pytest.mark.unit
+def test_web_searcher_clear_initialises_and_resets_caches():
+    """
+    Ensure WebSearcher.clear flushes internal caches and keeps them provisioned.
+    Mirrors the ContactManager clear test style by verifying state before/after.
+    """
+    ws = WebSearcher()
+
+    # Sanity: caches exist after construction
+    assert hasattr(ws, "_last_results")
+    assert hasattr(ws, "_last_extractions")
+    assert hasattr(ws, "_last_crawls")
+    assert hasattr(ws, "_last_maps")
+
+    # Seed caches with dummy content
+    ws._last_results = [{"k": "v"}]
+    ws._last_extractions = {"u": "x"}
+    ws._last_crawls = {"a": 1}
+    ws._last_maps = {"b": 2}
+
+    # Execute clear
+    ws.clear()
+
+    # After clear: caches should exist and be reset
+    assert hasattr(ws, "_last_results") and ws._last_results == []
+    assert hasattr(ws, "_last_extractions") and ws._last_extractions == {}
+    assert hasattr(ws, "_last_crawls") and ws._last_crawls == {}
+    assert hasattr(ws, "_last_maps") and ws._last_maps == {}
+
+    # Tools should still be provisioned
+    assert {"search", "extract", "crawl", "map"}.issubset(set(ws._ask_tools.keys()))
+
+
+@pytest.mark.unit
+def test_simulated_web_searcher_clear_reinitialises():
+    """
+    Ensure SimulatedWebSearcher.clear re-runs the constructor (fresh stateful LLM
+    and tools mapping stays provisioned).
+    """
+    from unity.web_searcher.simulated import SimulatedWebSearcher
+
+    sim = SimulatedWebSearcher()
+    old_llm = getattr(sim, "_llm", None)
+    assert old_llm is not None
+    assert isinstance(sim._ask_tools, dict) and sim._ask_tools
+
+    sim.clear()
+
+    # After clear, llm handle should be replaced and tools still present
+    assert getattr(sim, "_llm", None) is not None and sim._llm is not old_llm
+    assert isinstance(sim._ask_tools, dict) and sim._ask_tools
