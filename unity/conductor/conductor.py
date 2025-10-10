@@ -357,8 +357,19 @@ class Conductor:
             base=CLEAR_METHOD_DOCSTRING,
         )
 
+        # Accept either an Enum member or its string value for robustness at runtime
+        if isinstance(target, StateManager):
+            key = target.value
+        elif isinstance(target, str):
+            try:
+                key = StateManager(target).value
+            except Exception:
+                key = target
+        else:
+            raise TypeError("Invalid type for 'target'; expected StateManager or str.")
+
         # Map enum value to attribute name on this instance (prefixed underscore)
-        attr_name = f"_{target.value}"
+        attr_name = f"_{key}"
         manager = getattr(self, attr_name, None)
         if manager is None:
             raise ValueError(
