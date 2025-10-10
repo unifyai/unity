@@ -27,6 +27,7 @@ from unity.memory_manager.simulated import SimulatedMemoryManager
 from unity.contact_manager.simulated import SimulatedContactManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
+from unity.contact_manager.types.contact import Contact
 
 # shared helper used throughout the test-suite – isolates each test run
 from tests.helpers import _handle_project
@@ -105,6 +106,25 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
         SimulatedContactManager,
         "_update_contact",
         spy_cm_upd,
+        raising=True,
+    )
+
+    # --- align names: ensure contact_id==1 refers to Dana -----------------
+    def _fake_filter_contacts(self, *, filter=None, offset=0, limit=1):
+        # Deterministic single result matching the transcript's person
+        return [
+            Contact(
+                contact_id=1,
+                first_name="Dana",
+                surname="Fox",
+                bio="Lead Project Manager at Tech Solutions, specializing in software development.",
+            ),
+        ]
+
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "_filter_contacts",
+        _fake_filter_contacts,
         raising=True,
     )
 
