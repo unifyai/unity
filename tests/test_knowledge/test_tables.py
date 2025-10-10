@@ -171,3 +171,26 @@ def test_rename_table():
     tables = knowledge_manager._tables_overview()
     assert len(tables) == 2
     assert "MyNewTable" in tables
+
+
+@pytest.mark.unit
+@_handle_project
+def test_knowledge_manager_clear():
+    km = KnowledgeManager()
+
+    # Seed a couple of knowledge tables
+    km._create_table(name="Alpha")
+    km._create_table(name="Beta")
+
+    # Sanity: tables present before clear
+    tabs_before = km._tables_overview()
+    assert set(tabs_before.keys()) == {"Contacts", "Alpha", "Beta"}
+
+    # Execute clear
+    km.clear()
+
+    # After clear: Contacts linkage should be present again, other tables gone
+    tabs_after = km._tables_overview()
+    assert set(tabs_after.keys()) == {"Contacts"}
+    assert "Alpha" not in tabs_after
+    assert "Beta" not in tabs_after
