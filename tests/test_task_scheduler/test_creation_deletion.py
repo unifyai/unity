@@ -149,3 +149,32 @@ def test_create_tasks_multi_queues_with_start_times():
     assert q1[0].schedule.start_at.isoformat() == "2036-01-02T10:00:00+00:00"
     row1 = ts._filter_tasks(filter="task_id == 1", limit=1)[0]
     assert row1["status"] == "scheduled"
+
+
+@_handle_project
+@pytest.mark.unit
+def test_task_scheduler_clear():
+    ts = TaskScheduler()
+
+    # Seed a couple of tasks
+    out1 = ts._create_task(name="Alpha", description="alpha desc")
+    out2 = ts._create_task(name="Beta", description="beta desc")
+    id1 = out1["details"]["task_id"]
+    id2 = out2["details"]["task_id"]
+    # Fresh contexts start from 0 and increment
+    assert id1 == 0 and id2 == 1
+
+    # Sanity: tasks present before clear
+    before = ts._filter_tasks()
+    assert before and len(before) == 2
+
+    # Execute clear
+    ts.clear()
+
+    # After clear: no tasks
+    after = ts._filter_tasks()
+    assert after == []
+
+    # Creating again should work and ids should restart from 0
+    out3 = ts._create_task(name="Gamma", description="gamma desc")
+    assert out3["details"]["task_id"] == 0
