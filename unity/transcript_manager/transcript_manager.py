@@ -1680,6 +1680,134 @@ class TranscriptManager(BaseTranscriptManager):
             return 0
         return int(ret)
 
+    def clear(self) -> None:
+        """
+        Remove all transcripts and exchanges, then re-initialise contexts.
+
+        Behaviour
+        ---------
+        - Deletes the underlying Transcripts and Exchanges contexts (best-effort).
+        - Resets cached column metadata for this manager instance.
+        - Re-provisions the table schemas and re-creates required helper columns
+          (e.g., the private "_metadata" column on Transcripts).
+        """
+
+        # Best-effort deletion of both contexts
+        try:
+            unify.delete_context(self._transcripts_ctx)
+        except Exception:
+            pass
+        try:
+            unify.delete_context(self._exchanges_ctx)
+        except Exception:
+            pass
+
+        # Reset local cached state
+        try:
+            self._columns_cache_all = {}
+        except Exception:
+            pass
+
+        # Recreate contexts & fields explicitly (avoid relying on ensure memo)
+        try:
+            from ..common.context_store import TableStore as _TS  # local import
+
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._transcripts_ctx))
+            except Exception:
+                pass
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._exchanges_ctx))
+            except Exception:
+                pass
+
+            # Transcripts context
+            unify.create_context(
+                self._transcripts_ctx,
+                unique_keys={"message_id": "int"},
+                auto_counting={"message_id": None, "exchange_id": None},
+                description=(
+                    "List of *all* timestamped messages sent between *all* contacts across *all* mediums."
+                ),
+            )
+            unify.create_fields(model_to_fields(Message), context=self._transcripts_ctx)
+
+            # Ensure private helper column exists
+            try:
+                existing_fields = unify.get_fields(context=self._transcripts_ctx)
+                if "_metadata" not in existing_fields:
+                    unify.create_fields(
+                        {
+                            "_metadata": {
+                                "type": "dict",
+                                "mutable": True,
+                                "description": "Internal, non user-facing metadata for infrastructure.",
+                            },
+                        },
+                        context=self._transcripts_ctx,
+                    )
+            except Exception:
+                pass
+
+            # Exchanges context
+            unify.create_context(
+                self._exchanges_ctx,
+                unique_keys={"exchange_id": "int"},
+                description="One row per conversation exchange/thread with optional metadata.",
+            )
+            unify.create_fields(
+                {
+                    "exchange_id": {
+                        "type": "int",
+                        "description": "Unique identifier for the exchange/thread",
+                    },
+                    "metadata": {
+                        "type": "dict",
+                        "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
+                    },
+                    "medium": {
+                        "type": "string",
+                        "description": "Communication medium for the exchange (same semantics as Message.medium)",
+                    },
+                },
+                context=self._exchanges_ctx,
+            )
+        except Exception:
+            # Fall back to ensure_context if explicit creation fails
+            try:
+                self._store.ensure_context()
+            except Exception:
+                pass
+            try:
+                self._exchanges_store.ensure_context()
+            except Exception:
+                pass
+
+        # Verify both contexts become visible before returning
+        try:
+            import time as _time  # local import
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._transcripts_ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
+        try:
+            import time as _time  # local import
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._exchanges_ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------ #
     #  Exchanges helper                                                   #
     # ------------------------------------------------------------------ #
