@@ -15,6 +15,8 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.common.llm_helpers import methods_to_tool_dict
 from unity.secret_manager.secret_manager import SecretManager
+from unity.conversation_manager_2.event_broker import get_event_broker
+from unity.conversation_manager_2.handle import ConversationManagerHandle
 
 
 class ActionProvider:
@@ -27,7 +29,7 @@ class ActionProvider:
         self,
         session_connect_url: str | None = None,
         headless: bool = False,
-        browser_mode: str = "legacy",
+        browser_mode: str = "magnitude",
         controller_mode: str = "hybrid",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
@@ -58,6 +60,7 @@ class ActionProvider:
         self._transcript_manager = None
         self._knowledge_manager = None
         self._task_scheduler = None
+        self._conversation_manager = None
 
     @property
     def contact_manager(self):
@@ -97,6 +100,24 @@ class ActionProvider:
         if self._secret_manager is None:
             self._secret_manager = SecretManager()
         return self._secret_manager
+
+    @property
+    def conversation_manager(self) -> ConversationManagerHandle:
+        """Lazily initialize and return the ConversationManagerHandle."""
+        if self._conversation_manager is None:
+            event_broker = get_event_broker()
+            assistant_id = os.environ.get("ASSISTANT_ID")
+            if not assistant_id:
+                raise RuntimeError(
+                    "ASSISTANT_ID environment variable is not set. "
+                    "Cannot create ConversationManagerHandle.",
+                )
+            self._conversation_manager = ConversationManagerHandle(
+                event_broker=event_broker,
+                conversation_id=assistant_id,
+                contact_id=1,
+            )
+        return self._conversation_manager
 
     def _setup_browser_methods(self):
         """Dynamically create tool methods and assign backend docstrings."""
