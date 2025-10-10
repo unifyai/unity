@@ -81,13 +81,13 @@ class BrowserUsePlan(BaseActiveTask):
         self._plan_client = AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         self._ask_client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         if not self._main_event_loop:
@@ -502,7 +502,7 @@ class BrowserUseActor(BaseActor):
         self._extraction_llm = unify.AsyncUnify(
             "o4-mini@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
         self._tools_cache: Optional[Dict[str, Callable[..., Awaitable[Any]]]] = None
         try:

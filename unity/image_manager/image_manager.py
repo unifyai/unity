@@ -113,7 +113,7 @@ class ImageHandle:
         client = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         # Build a succinct system message tailored to image Q&A

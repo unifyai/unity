@@ -333,7 +333,7 @@ class SimulatedActor(BaseActor):
         self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             stateful=True,
         )
         # Compose a system message that preserves default behaviour while

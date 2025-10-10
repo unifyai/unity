@@ -169,7 +169,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         llm = unify.AsyncUnify(
             "claude-4-sonnet@anthropic",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         # Build the schema requirement section only if response_format is provided
