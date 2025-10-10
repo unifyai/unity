@@ -127,59 +127,10 @@ class TranscriptManager(BaseTranscriptManager):
             self._transcripts_ctx = f"{read_ctx}/Transcripts"
         else:
             self._transcripts_ctx = "Transcripts"
-        # Ensure transcripts context and fields deterministically
-        self._store = TableStore(
-            self._transcripts_ctx,
-            unique_keys={"message_id": "int"},
-            auto_counting={"message_id": None, "exchange_id": None},
-            description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
-            fields=model_to_fields(Message),
-        )
-        self._store.ensure_context()
-
-        # Exchanges context: one row per exchange_id with optional metadata
         if read_ctx:
             self._exchanges_ctx = f"{read_ctx}/Exchanges"
         else:
             self._exchanges_ctx = "Exchanges"
-        self._exchanges_store = TableStore(
-            self._exchanges_ctx,
-            unique_keys={"exchange_id": "int"},
-            description="One row per conversation exchange/thread with optional metadata.",
-            fields={
-                "exchange_id": {
-                    "type": "int",
-                    "description": "Unique identifier for the exchange/thread",
-                },
-                "metadata": {
-                    "type": "dict",
-                    "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
-                },
-                "medium": {
-                    "type": "string",
-                    "description": "Communication medium for the exchange (same semantics as Message.medium)",
-                },
-            },
-        )
-        self._exchanges_store.ensure_context()
-
-        # Ensure a private `_metadata` column exists (dict, mutable) irrespective of context creation path
-        try:
-            existing_fields = unify.get_fields(context=self._transcripts_ctx)
-            if "_metadata" not in existing_fields:
-                unify.create_fields(
-                    {
-                        "_metadata": {
-                            "type": "dict",
-                            "mutable": True,
-                            "description": "Internal, non user-facing metadata for infrastructure.",
-                        },
-                    },
-                    context=self._transcripts_ctx,
-                )
-        except Exception:
-            # Non-fatal; logging will still work without the helper if backend creates implicitly
-            pass
 
         # Image support: lazy-safe image manager and image-aware tools
         self._image_manager: ImageManager = ImageManager()
@@ -198,16 +149,9 @@ class TranscriptManager(BaseTranscriptManager):
         # leaving the actual network I/O to an internal worker thread.
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
-        # Cache transcript columns for this singleton instance to avoid repeat
-        # backend reads during tools like `_list_columns`. This cache is
-        # populated lazily on first use, but we attempt a best-effort prefetch
-        # here so the first tool call does not pay the network cost.
+        # Initialise cache then provision storage (contexts, fields, columns)
         self._columns_cache_all: Dict[str, str] = {}
-        try:
-            self._columns_cache_all = dict(self._store.get_columns())
-        except Exception:
-            # Defer to lazy population if prefetch fails
-            self._columns_cache_all = {}
+        self._provision_storage()
 
     @classmethod
     def _get_logger(cls) -> unify.AsyncLoggerManager:
@@ -1708,7 +1652,7 @@ class TranscriptManager(BaseTranscriptManager):
         except Exception:
             pass
 
-        # Recreate contexts & fields explicitly (avoid relying on ensure memo)
+        # Drop ensure memo then re-provision via shared helper
         try:
             from ..common.context_store import TableStore as _TS  # local import
 
@@ -1720,68 +1664,11 @@ class TranscriptManager(BaseTranscriptManager):
                 _TS._ENSURED.discard((unify.active_project(), self._exchanges_ctx))
             except Exception:
                 pass
-
-            # Transcripts context
-            unify.create_context(
-                self._transcripts_ctx,
-                unique_keys={"message_id": "int"},
-                auto_counting={"message_id": None, "exchange_id": None},
-                description=(
-                    "List of *all* timestamped messages sent between *all* contacts across *all* mediums."
-                ),
-            )
-            unify.create_fields(model_to_fields(Message), context=self._transcripts_ctx)
-
-            # Ensure private helper column exists
-            try:
-                existing_fields = unify.get_fields(context=self._transcripts_ctx)
-                if "_metadata" not in existing_fields:
-                    unify.create_fields(
-                        {
-                            "_metadata": {
-                                "type": "dict",
-                                "mutable": True,
-                                "description": "Internal, non user-facing metadata for infrastructure.",
-                            },
-                        },
-                        context=self._transcripts_ctx,
-                    )
-            except Exception:
-                pass
-
-            # Exchanges context
-            unify.create_context(
-                self._exchanges_ctx,
-                unique_keys={"exchange_id": "int"},
-                description="One row per conversation exchange/thread with optional metadata.",
-            )
-            unify.create_fields(
-                {
-                    "exchange_id": {
-                        "type": "int",
-                        "description": "Unique identifier for the exchange/thread",
-                    },
-                    "metadata": {
-                        "type": "dict",
-                        "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
-                    },
-                    "medium": {
-                        "type": "string",
-                        "description": "Communication medium for the exchange (same semantics as Message.medium)",
-                    },
-                },
-                context=self._exchanges_ctx,
-            )
         except Exception:
-            # Fall back to ensure_context if explicit creation fails
-            try:
-                self._store.ensure_context()
-            except Exception:
-                pass
-            try:
-                self._exchanges_store.ensure_context()
-            except Exception:
-                pass
+            pass
+
+        # Recreate contexts and required columns via shared helper
+        self._provision_storage()
 
         # Verify both contexts become visible before returning
         try:
@@ -1807,6 +1694,69 @@ class TranscriptManager(BaseTranscriptManager):
                     _time.sleep(0.05)
         except Exception:
             pass
+
+    # ------------------------------------------------------------------ #
+    #  Internal provisioning helper                                      #
+    # ------------------------------------------------------------------ #
+    def _provision_storage(self) -> None:
+        """Ensure contexts, fields, helper columns and local caches exist."""
+        # Ensure transcripts context and fields deterministically
+        self._store = TableStore(
+            self._transcripts_ctx,
+            unique_keys={"message_id": "int"},
+            auto_counting={"message_id": None, "exchange_id": None},
+            description=(
+                "List of *all* timestamped messages sent between *all* contacts across *all* mediums."
+            ),
+            fields=model_to_fields(Message),
+        )
+        self._store.ensure_context()
+
+        # Exchanges context: one row per exchange_id with optional metadata
+        self._exchanges_store = TableStore(
+            self._exchanges_ctx,
+            unique_keys={"exchange_id": "int"},
+            description="One row per conversation exchange/thread with optional metadata.",
+            fields={
+                "exchange_id": {
+                    "type": "int",
+                    "description": "Unique identifier for the exchange/thread",
+                },
+                "metadata": {
+                    "type": "dict",
+                    "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
+                },
+                "medium": {
+                    "type": "string",
+                    "description": "Communication medium for the exchange (same semantics as Message.medium)",
+                },
+            },
+        )
+        self._exchanges_store.ensure_context()
+
+        # Ensure a private `_metadata` column exists (dict, mutable)
+        try:
+            existing_fields = unify.get_fields(context=self._transcripts_ctx)
+            if "_metadata" not in existing_fields:
+                unify.create_fields(
+                    {
+                        "_metadata": {
+                            "type": "dict",
+                            "mutable": True,
+                            "description": "Internal, non user-facing metadata for infrastructure.",
+                        },
+                    },
+                    context=self._transcripts_ctx,
+                )
+        except Exception:
+            # Non-fatal; logging will still work without the helper if backend creates implicitly
+            pass
+
+        # Update columns cache best-effort
+        try:
+            self._columns_cache_all = dict(self._store.get_columns())
+        except Exception:
+            self._columns_cache_all = {}
 
     # ------------------------------------------------------------------ #
     #  Exchanges helper                                                   #

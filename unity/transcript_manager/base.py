@@ -88,3 +88,17 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
             steer the interaction via ``pause()``, ``resume()``, ``interject()``
             or ``stop()``.
         """
+
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        Remove all transcripts and re-initialise the manager's storage.
+
+        Implementations must delete the underlying storage/contexts for
+        transcripts (and related exchanges metadata) and recreate any required
+        schema so that subsequent reads/writes operate against a clean slate.
+
+        The method is synchronous to allow safe use inside thread offloads in
+        async flows.
+        """
+        raise NotImplementedError
