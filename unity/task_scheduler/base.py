@@ -290,3 +290,15 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         ValueError
             When no matching task could be identified.
         """
+
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        Remove all tasks and re‑initialise the scheduler's storage/context.
+
+        Implementations must delete any underlying storage/context for tasks and
+        recreate the required schema so subsequent reads/writes operate against a
+        clean slate. The method is synchronous to allow safe use inside thread
+        offloads in async flows.
+        """
+        raise NotImplementedError

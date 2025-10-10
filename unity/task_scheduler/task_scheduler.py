@@ -258,24 +258,7 @@ class TaskScheduler(BaseTaskScheduler):
         self._ctx = f"{read_ctx}/Tasks" if read_ctx else "Tasks"
 
         # Install storage adapter and ensure context/fields exist
-        self._store = TasksStore(self._ctx)
-        self._store.ensure_context(
-            unique_keys={"task_id": "int", "instance_id": "int"},
-            auto_counting={
-                "task_id": None,
-                "instance_id": "task_id",
-            },
-            description=(
-                "List of all tasks with their name, description, status, "
-                "schedule, deadline, repeat pattern, priority **and** "
-                "`instance_id` which tracks multiple executions of the "
-                "same logical task."
-            ),
-            fields=model_to_fields(Task),
-        )
-
-        # Centralised local view for queue membership, allocator and light caching.
-        self._view = LocalTaskView(self._store)
+        self._provision_storage()
 
         # `_num_tasks()` will lazily populate and maintain the cached count.
 
@@ -311,6 +294,59 @@ class TaskScheduler(BaseTaskScheduler):
         # Because this scheduler is a singleton and all mutations flow through it,
         # this cache remains coherent without extra backend reads between tool calls.
         self._num_tasks_cached: Optional[int] = None
+
+    # ------------------------------ Provisioning ----------------------------- #
+    def _provision_storage(self) -> None:
+        """Ensure Tasks context, schema and local view exist (idempotent)."""
+        # Install storage adapter and ensure context/fields exist
+        self._store = TasksStore(self._ctx)
+        self._store.ensure_context(
+            unique_keys={"task_id": "int", "instance_id": "int"},
+            auto_counting={
+                "task_id": None,
+                "instance_id": "task_id",
+            },
+            description=(
+                "List of all tasks with their name, description, status, "
+                "schedule, deadline, repeat pattern, priority **and** "
+                "`instance_id` which tracks multiple executions of the "
+                "same logical task."
+            ),
+            fields=model_to_fields(Task),
+        )
+
+        # Centralised local view for queue membership, allocator and light caching.
+        self._view = LocalTaskView(self._store)
+
+    def clear(self) -> None:
+        """
+        Remove all tasks and re-initialise the Tasks context.
+
+        Behaviour
+        ---------
+        - Deletes the underlying Tasks context (best-effort).
+        - Resets any in-memory indexes, caches and checkpoints.
+        - Re-provisions the table schema for a clean slate.
+        """
+        try:
+            # Drop the entire tasks table for this active assistant context
+            unify.delete_context(self._ctx)
+        except Exception:
+            # Proceed even if deletion fails (context may already be absent)
+            pass
+
+        # Reset local/cached state so subsequent operations see a clean slate
+        try:
+            self._queue_checkpoints.clear()
+        except Exception:
+            pass
+        self._active_task = None
+        self._primed_task = None
+        self._reintegration_plans = {}
+        self._num_tasks_cached = None
+
+        # Re-provision storage (schema, local view)
+        self._provision_storage()
 
     # ------------------------------ Small helpers ------------------------------ #
     def _tid_to_log_id_map(self, task_ids: List[int]) -> Dict[int, int]:
