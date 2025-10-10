@@ -34,6 +34,8 @@ from ..common.semantic_search import (
     backfill_rows,
 )
 from ..constants import is_semantic_cache_enabled
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 class ContactManager(BaseContactManager):
@@ -798,6 +800,9 @@ class ContactManager(BaseContactManager):
             tool_policy=tool_policy_fn,
             preprocess_msgs=inject_broader_context,
             semantic_cache=use_semantic_cache,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         if _return_reasoning_steps:
