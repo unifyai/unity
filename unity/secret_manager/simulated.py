@@ -213,15 +213,8 @@ class SimulatedSecretManager(BaseSecretManager):
             ),
         )
 
+    @functools.wraps(BaseSecretManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Reset simulated state for secrets.
-
-        There is no persistent backend context to delete. The simplest and
-        most reliable way to reset the simulated manager is to re-run its
-        constructor in-place, which creates a fresh stateful LLM and rebuilds
-        tool exposure and prompts.
-        """
         type(self).__init__(
             self,
             description=getattr(

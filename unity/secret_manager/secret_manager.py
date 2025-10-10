@@ -110,15 +110,8 @@ class SecretManager(BaseSecretManager):
         except Exception:
             pass
 
+    @functools.wraps(BaseSecretManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Remove all secrets and re-initialise the Secrets context.
-
-        Behaviour
-        ---------
-        - Deletes the underlying Secrets context (best-effort).
-        - Re-provisions the table schema and vector columns.
-        """
         try:
             unify.delete_context(self._ctx)
         except Exception:
