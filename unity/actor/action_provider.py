@@ -15,6 +15,8 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.common.llm_helpers import methods_to_tool_dict
 from unity.secret_manager.secret_manager import SecretManager
+from unity.conversation_manager_2.event_broker import get_event_broker
+from unity.conversation_manager_2.handle import ConversationManagerHandle
 
 
 class ActionProvider:
@@ -27,7 +29,7 @@ class ActionProvider:
         self,
         session_connect_url: str | None = None,
         headless: bool = False,
-        browser_mode: str = "legacy",
+        browser_mode: str = "magnitude",
         controller_mode: str = "hybrid",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
@@ -58,6 +60,7 @@ class ActionProvider:
         self._transcript_manager = None
         self._knowledge_manager = None
         self._task_scheduler = None
+        self._conversation_manager = None
 
     @property
     def contact_manager(self):
@@ -97,6 +100,24 @@ class ActionProvider:
         if self._secret_manager is None:
             self._secret_manager = SecretManager()
         return self._secret_manager
+
+    @property
+    def conversation_manager(self) -> ConversationManagerHandle:
+        """Lazily initialize and return the ConversationManagerHandle."""
+        if self._conversation_manager is None:
+            event_broker = get_event_broker()
+            assistant_id = os.environ.get("ASSISTANT_ID")
+            if not assistant_id:
+                raise RuntimeError(
+                    "ASSISTANT_ID environment variable is not set. "
+                    "Cannot create ConversationManagerHandle.",
+                )
+            self._conversation_manager = ConversationManagerHandle(
+                event_broker=event_broker,
+                conversation_id=assistant_id,
+                contact_id=1,
+            )
+        return self._conversation_manager
 
     def _setup_browser_methods(self):
         """Dynamically create tool methods and assign backend docstrings."""
@@ -223,23 +244,122 @@ class ActionProvider:
         response_format: Any = str,
     ) -> Any:
         """
-        Performs general-purpose reasoning or analysis on provided text.
-        This tool is for stateless tasks like summarizing, translating, classifying, or extracting information from the given context.
+        Performs general-purpose reasoning with automatic access to the live call stack.
+
+        This powerful tool is designed for complex, stateless tasks like analysis,
+        classification, strategic decision-making, and data transformation. It is
+        automatically provided with a "scoped context" of the running plan, including the
+        source code of the parent, current, and potential child functions, enabling it
+        to make highly informed decisions.
+
+        ### Example 1: Strategic Decision-Making (Look-Ahead)
+        Use `reason` to analyze an ambiguous situation and decide which function to call next.
+        It can "look ahead" by inspecting the code of potential child functions.
+
+        ```python
+        from pydantic import BaseModel, Field
+        from typing import Literal
+
+        class SupportCategory(BaseModel):
+            category: Literal["technical", "billing", "account"]
+            justification: str = Field(description="A brief explanation for the chosen category.")
+
+        SupportCategory.model_rebuild()
+
+        user_message = "I can't access my dashboard and my last payment didn't go through."
+
+        # The proxy automatically provides the source for `handle_technical_support`, etc.
+        decision = await action_provider.reason(
+            request=(
+                "Based on the user's message, I need to choose the correct support category. "
+                "Analyze the available child functions in the provided call stack context "
+                "to determine the most appropriate category."
+            ),
+            context=f"User's message: '{user_message}'",
+            response_format=SupportCategory
+        )
+
+        if decision.category == "technical":
+            await handle_technical_support()
+        elif decision.category == "billing":
+            await handle_billing_inquiry()
+        else:
+            await handle_account_management()
+        ```
+
+        ### Example 2: Data Transformation and Structuring
+        Use `reason` to parse unstructured text into a clean, Pydantic model.
+
+        ```python
+        from pydantic import BaseModel, Field
+
+        class UserDetails(BaseModel):
+            first_name: str
+            last_name: str
+            user_id: int = Field(description="The user's numerical ID.")
+
+        UserDetails.model_rebuild()
+
+        raw_text = "The user is Jane Doe, ID number 4815162342."
+
+        structured_data = await action_provider.reason(
+            request="Parse the user's first name, last name, and ID from the text.",
+            context=raw_text,
+            response_format=UserDetails
+        )
+
+        print(f"Welcome, {structured_data.first_name}! Your ID is {structured_data.user_id}.")
+        # Expected Output: Welcome, Jane! Your ID is 4815162342.
+        ```
+
+        ### Example 3: Intelligent Question Formulation (Composition)
+        Use `reason` to formulate a high-quality, disambiguating question for a user,
+        then pass that question to a communication tool like `action_provider.conversation_manager.ask`.
+
+        ```python
+        user_request = "I need help with my account."
+
+        # Use `reason` to generate the best question based on its look-ahead context.
+        clarifying_question = await action_provider.reason(
+            request=(
+                "The user's request is ambiguous. Based on the child functions available "
+                "in my context (e.g., `reset_password`, `update_billing`, `close_account`), "
+                "formulate a single, clear question to ask the user to determine "
+                "which path to take."
+            ),
+            context=f"User's request: '{user_request}'"
+        )
+
+        # clarifying_question might be:
+        # "I can help with that! Are you looking to reset your password, update your billing "
+        # "information, or close your account?"
+
+        # Now, use the generated question to get the required information.
+        handle = await action_provider.conversation_manager.ask(clarifying_question)
+        user_answer = await handle.wait()
+        ```
 
         Args:
-            request: The core instruction for the LLM (e.g., "Summarize this text.", "Classify the sentiment.").
-            context: The text content to be analyzed.
-            response_format: Optional. A Pydantic model to structure the output.
+            request: The core instruction for the LLM (e.g., "Analyze the user's intent.").
+            context: The primary text content to be analyzed. The call stack context is
+                     automatically prepended to this by the actor.
+            response_format: Optional. A Pydantic model to structure the output. Highly recommended.
 
         Returns:
             The processed text or a Pydantic object, depending on `response_format`.
         """
-        client = unify.AsyncUnify(os.environ.get("UNIFY_MODEL", "gpt-4o-mini@openai"))
-        client.set_system_message(request)
+        client = unify.AsyncUnify("gemini-2.5-pro@vertex-ai")
+        system_message = (
+            f"{request}\n\n"
+            "### CONTEXT\n"
+            "Use the following context, including the provided call stack information, to inform your reasoning.\n\n"
+            f"{context}"
+        )
+        client.set_system_message(system_message)
 
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             client.set_response_format(response_format)
-            raw_response = await client.generate(context)
+            raw_response = await client.generate("")
             return response_format.model_validate_json(raw_response)
         else:
-            return await client.generate(context)
+            return await client.generate("")
