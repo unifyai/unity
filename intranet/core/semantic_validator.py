@@ -83,7 +83,7 @@ class SemanticValidator:
         self.client = unify.AsyncUnify(
             model_name,
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         # Set up extensible prompt system

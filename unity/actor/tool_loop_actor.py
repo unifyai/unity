@@ -232,13 +232,13 @@ class ToolLoopPlan(BaseActiveTask):
         self._plan_client = AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         self._ask_client = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         if not self._main_event_loop:
