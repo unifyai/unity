@@ -10,6 +10,8 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
+from unity.constants import is_readonly_ask_guard_enabled
+from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.common.llm_helpers import (
     inject_broader_context,
     methods_to_tool_dict,
@@ -106,6 +108,9 @@ class WebSearcher(BaseWebSearcher):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             preprocess_msgs=inject_broader_context,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         # If the caller requests reasoning steps, wrap the handle's result

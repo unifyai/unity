@@ -18,6 +18,8 @@ from ..common.llm_helpers import (
     ToolSpec,
 )
 from ..common.async_tool_loop import start_async_tool_loop
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from .prompt_builders import build_ask_prompt, build_request_prompt
 from .base import BaseConductor
 from ..contact_manager.base import BaseContactManager
@@ -312,6 +314,9 @@ class Conductor:
             log_steps=_log_tool_steps,
             # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
             tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         if should_log and call_id is not None:
