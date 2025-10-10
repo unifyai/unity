@@ -3,21 +3,23 @@ from dataclasses import dataclass
 import os
 from typing import Literal, Optional
 from collections import deque
+import asyncio
 
 from pydantic import Field
 from unity.conversation_manager_2.actions import build_dynamic_response_models
 from unity.conversation_manager_2.new_events import *
 from unity.contact_manager.types.contact import Contact as ContactType
 from unity.transcript_manager.types.message import UNASSIGNED
+from unity.conversation_manager_2.event_broker import get_event_broker
 
 
 class Contact(ContactType):
     is_boss: bool = False
     threads: dict[str, deque] = Field(
         default_factory=lambda: {
-            "sms": deque(maxlen=5),
-            "email": deque(maxlen=5),
-            "phone": deque(maxlen=5),
+            "sms": deque(maxlen=50),
+            "email": deque(maxlen=50),
+            "phone": deque(maxlen=50),
         }
     )
 
@@ -130,6 +132,10 @@ class ConversationManagerState:
 
         # initialization state
         self.initialized: bool = False
+        self.chat_history = []
+        self.event_broker = get_event_broker()
+
+        self.summarizing = False
 
         # dynamic response models
         self.dynamic_response_models = None
@@ -150,6 +156,20 @@ class ConversationManagerState:
             case StartupEvent() as e:
                 payload = e.to_dict()["payload"]
                 self.set_details(payload)
+
+            case GetBusEventsOutput() as e:
+                for ev in reversed(e.events):
+                    if ev["event_name"] == "LLMInput":
+                        print("found history")
+                        self.chat_history = ev["payload"]["content"]
+                        break
+
+            case UpdateContactRollingSummaryResponse() as e:
+                print("clearing context...")
+                for cid, rolling_summary in e.rolling_summaries:
+                    self.active_conversations[cid].rolling_summary = rolling_summary
+                self.chat_history = []
+                self.summarizing = False
 
             # Handle steering notifications from external handles
             case NotificationInjectedEvent() as e:
@@ -419,6 +439,18 @@ class ConversationManagerState:
         if contact.contact_id not in self.active_conversations:
             self.active_conversations[contact.contact_id] = contact
         self.active_conversations[contact.contact_id].threads[thread].append(message)
+        # hardcoded for now
+        # if self.get_total_messages(contact) >= MAX_MSGS_PER_CONTACT:
+        #     # asyncio.create_task(...)
+        #     print("SHOULD UPDATE ROLLING SUMMARY!!!")
+        #     event = UpdateContactRollingSummary(
+        #         contact_id=int(contact.contact_id),
+        #         transcripts=self._render_contact_threads(contact)
+        #     )
+        #     asyncio.create_task(self.event_broker.publish("app:managers:input", event.to_json()))
+
+    def get_total_messages(self, contact: Contact):
+        return sum(len(t) for t in contact.threads.values())
 
     def push_notif(self, notif: Notification):
         self.notifs.append(notif)
@@ -546,12 +578,26 @@ class ConversationManagerState:
     def _render_contact(self, contact: Contact):
         threads = []
         on_phone = self.phone_contact is contact
+        details = f"""
+<bio>
+{self._add_spaces(contact.bio or "")}
+</bio>
+
+<response_policy>
+{self._add_spaces(contact.response_policy or "")}
+</response_policy>
+
+<rolling_summary>
+{self._add_spaces(contact.rolling_summary or "")}
+</rolling_summary>""".strip()
         for t_name, t in contact.threads.items():
             if t:
                 threads.append(self._render_thread(t_name, t))
         threads = "\n\n".join(threads)
         return f"""
 <contact contact_id="{contact.contact_id}" first_name="{contact.first_name}" surname="{contact.surname}" is_boss="{contact.is_boss}" phone_number="{contact.phone_number or ""}" email_address="{contact.email_address or ""}" on_phone="{on_phone}">
+{self._add_spaces(details)}
+
 {self._add_spaces(threads)}
 </contact>""".strip()
 
@@ -567,7 +613,9 @@ Body:
         return f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]: {message.content}"""
 
     def _render_thread(self, thread_name, thread: list[dict]):
-        thread_content = "\n".join(self._render_thread_message(m) for m in thread)
+        thread_content = "\n".join(
+            self._render_thread_message(m) for m in list(thread)[-5:]
+        )
         # thread_content = thread_content.strip()
         return f"""
 <{thread_name}>
@@ -582,6 +630,14 @@ Body:
                 if n.timestamp > self.last_snapshot_time
             ],
         )
+
+    def _render_contact_threads(self, contact: Contact):
+        threads = []
+        for t_name, t in contact.threads.items():
+            if t:
+                threads.append(self._render_thread(t_name, t))
+        threads = "\n\n".join(threads)
+        return threads
 
     def _add_spaces(self, string: str, num_spaces: int = 4):
         ls = string.split("\n")
