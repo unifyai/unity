@@ -1006,18 +1006,8 @@ class ContactManager(BaseContactManager):
             return 0
         return int(ret)
 
+    @functools.wraps(BaseContactManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Remove all contacts and re-initialise the Contacts context.
-
-        Behaviour
-        ---------
-        - Deletes the underlying Contacts context (best-effort).
-        - Clears the process-local DataStore cache for this context.
-        - Resets any known custom-field bookkeeping.
-        - Re-provisions the table schema and re-creates system contacts
-          (assistant id==0 and default user id==1).
-        """
         try:
             # Drop the entire contacts table for this active assistant context
             unify.delete_context(self._ctx)
