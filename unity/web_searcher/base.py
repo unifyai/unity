@@ -85,3 +85,17 @@ class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
             exposes steering operations (pause, resume, interject, stop).
         """
         raise NotImplementedError
+
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        Reset any internal state/caches and re-initialise storage/context.
+
+        Implementations should delete/flush any underlying storage or cached
+        state used by the web-search manager (best-effort), then recreate any
+        required context so subsequent calls operate against a clean slate.
+
+        The method is synchronous to allow safe use inside thread offloads in
+        async flows.
+        """
+        raise NotImplementedError

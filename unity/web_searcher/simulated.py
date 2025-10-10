@@ -227,3 +227,20 @@ class SimulatedWebSearcher(BaseWebSearcher):
             handle = wrap_handle_with_logging(handle, call_id, "WebSearcher", "ask")
 
         return handle
+
+    def clear(self) -> None:
+        """
+        Reset simulated state by re-running the constructor in place.
+
+        Mirrors the pattern used in other simulated managers where a fresh
+        stateful LLM and prompts are established by re-initialising.
+        """
+        type(self).__init__(
+            self,
+            description=getattr(
+                self,
+                "_description",
+                "simulate sensible web research answers",
+            ),
+            log_events=getattr(self, "_log_events", False),
+        )
