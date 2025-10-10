@@ -2165,7 +2165,7 @@ def build_verification_prompt(
     goal: str,
     function_name: str,
     function_docstring: str | None,
-    function_source_code: str | None,
+    scoped_context: str,
     interactions: list,
     has_browser_screenshot: bool,
     function_return_value: Any | None,
@@ -2181,7 +2181,7 @@ def build_verification_prompt(
         goal: The overall user goal.
         function_name: The name of the function being verified.
         function_docstring: The docstring of the function.
-        function_source_code: The source code of the function.
+        scoped_context: The scoped context of the function (parent, current, and child function source code).
         interactions: A log of tool interactions made.
         has_browser_screenshot: Whether a screenshot of the browser is provided.
         clarification_question: An optional question that was previously asked.
@@ -2241,10 +2241,12 @@ def build_verification_prompt(
 
     source_code_section = f"""
 ---
-### ⚙️ Function Implementation
-```python
-{function_source_code or "Source code not available."}
-```
+### ⚙️ Scoped Source Code Context
+This provides the parent, current, and child function source code to give you complete context
+for understanding the current execution context.
+
+{scoped_context}
+---
 """
 
     transcript_section = ""
