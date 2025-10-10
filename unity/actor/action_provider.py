@@ -1,4 +1,3 @@
-import functools
 import os
 import unify
 from typing import Any, Dict
@@ -33,8 +32,11 @@ class ActionProvider:
         controller_mode: str = "hybrid",
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
+        *,
+        connect_now: bool = False,
     ):
 
+        # Cache browser configuration for lazy initialization
         browser_kwargs = {
             "legacy": {
                 "session_connect_url": session_connect_url,
@@ -49,11 +51,16 @@ class ActionProvider:
         }
 
         self._secret_manager = None
-        self.browser = Browser(
-            mode=browser_mode,
-            secret_manager=self.secret_manager,
-            **browser_kwargs[browser_mode],
-        )
+        self._browser = None
+        self._browser_mode = browser_mode
+        self._browser_kwargs_map = browser_kwargs
+        # Lazily create the Browser (and thus avoid connecting to agent-service) unless requested
+        if connect_now:
+            self._browser = Browser(
+                mode=self._browser_mode,
+                secret_manager=self.secret_manager,
+                **self._browser_kwargs_map[self._browser_mode],
+            )
         self._setup_browser_methods()
 
         self._contact_manager = None
@@ -120,23 +127,71 @@ class ActionProvider:
         return self._conversation_manager
 
     def _setup_browser_methods(self):
-        """Dynamically create tool methods and assign backend docstrings."""
-        methods_to_proxy = {
-            "act": self.browser.backend.act,
-            "observe": self.browser.backend.observe,
-            "query": self.browser.backend.query,
-            "navigate": self.browser.backend.navigate,
-        }
+        """Dynamically create tool methods without forcing an early backend connection."""
 
-        for method_name, backend_method in methods_to_proxy.items():
-            # Create a simple wrapper that preserves the backend method's behavior and docstring
-            @functools.wraps(backend_method)
-            async def wrapper(*args, _backend_method=backend_method, **kwargs):
-                return await _backend_method(*args, **kwargs)
+        def _make_lazy_wrapper(method_name: str, doc: str | None = None):
+            async def wrapper(*args, **kwargs):
+                # Initialize browser lazily on first actual call
+                backend_method = getattr(self.browser.backend, method_name)
+                return await backend_method(*args, **kwargs)
 
-            # Preserve the original docstring
-            wrapper.__doc__ = backend_method.__doc__
-            setattr(self, method_name, wrapper)
+            wrapper.__name__ = method_name
+            wrapper.__qualname__ = method_name
+            if doc:
+                wrapper.__doc__ = doc
+            return wrapper
+
+        setattr(
+            self,
+            "act",
+            _make_lazy_wrapper(
+                "act",
+                doc=(
+                    "Performs a single high-level action in the browser (lazy-inits backend on first use)."
+                ),
+            ),
+        )
+        setattr(
+            self,
+            "observe",
+            _make_lazy_wrapper(
+                "observe",
+                doc=(
+                    "Observes/queries the current page visually (lazy-inits backend on first use)."
+                ),
+            ),
+        )
+        setattr(
+            self,
+            "query",
+            _make_lazy_wrapper(
+                "query",
+                doc=(
+                    "Queries agent memory/action history (lazy-inits backend on first use)."
+                ),
+            ),
+        )
+        setattr(
+            self,
+            "navigate",
+            _make_lazy_wrapper(
+                "navigate",
+                doc=(
+                    "Navigates to a URL in the browser (lazy-inits backend on first use)."
+                ),
+            ),
+        )
+
+    @property
+    def browser(self) -> Browser:
+        """Lazily initialize and return the Browser instance."""
+        if self._browser is None:
+            self._browser = Browser(
+                mode=self._browser_mode,
+                secret_manager=self.secret_manager,
+                **self._browser_kwargs_map[self._browser_mode],
+            )
+        return self._browser
 
     # --- Communication Actions ---
 
