@@ -984,6 +984,32 @@ class _ActionProviderProxy:
             return real_attr
 
         async def async_wrapper(*args, **kwargs):
+            if name == "reason":
+                try:
+                    scoped_context_dict = (
+                        self._plan.actor._get_scoped_context_from_plan_state(self._plan)
+                    )
+                    scoped_context_str = (
+                        self._plan.actor._format_scoped_context_for_prompt(
+                            scoped_context_dict,
+                        )
+                    )
+
+                    user_provided_context = kwargs.get("context", "")
+
+                    kwargs["context"] = (
+                        "###CALL STACK CONTEXT\n"
+                        "The following is a scoped view of the plan's source code, centered on the current point of execution.\n"
+                        "Use this to understand the local context and make your decision.\n\n"
+                        f"{scoped_context_str}\n\n---\n\n"
+                        "### USER-PROVIDED CONTEXT\n"
+                        f"{user_provided_context}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to inject scoped context into 'reason' tool: {e}",
+                    )
+
             wait = kwargs.pop("wait", True)
             ctx_run_id = current_run_id_var.get()
             plan_run_id = self._plan.run_id
