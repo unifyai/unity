@@ -11,7 +11,7 @@ import time
 import logging
 
 from unity.file_manager.base import BaseFileManager
-from unity.file_manager.file_manager import FileManager
+from unity.file_manager.managers.local import LocalFileManager as FileManager
 from unity.common.token_utils import count_tokens_per_utf_byte
 from unity.common import token_utils as _tok
 from unity.common.grouping_helpers import build_grouped_dump_payload
