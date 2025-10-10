@@ -20,6 +20,8 @@ from ..common.llm_helpers import (
 from ..common.async_tool_loop import start_async_tool_loop
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from .types import StateManager
 from .prompt_builders import build_ask_prompt, build_request_prompt
 from .base import BaseConductor
 from ..contact_manager.base import BaseContactManager
@@ -337,6 +339,38 @@ class Conductor:
             handle.result = _wrapped_result
 
         return handle
+
+    # ------------------------------------------------------------------ #
+    #  clear – irreversible state wipe for a selected manager            #
+    # ------------------------------------------------------------------ #
+    def clear(self, target: StateManager) -> None:
+        """
+        {base}
+
+        Parameters
+        ----------
+        target : StateManager
+            Which manager to clear. Options include: CONTACTS, TRANSCRIPTS, KNOWLEDGE,
+            TASKS, WEB_SEARCH, and forward-compat entries FUNCTIONS, GUIDANCE, IMAGES, SECRETS.
+        """.format(
+            base=CLEAR_METHOD_DOCSTRING,
+        )
+
+        # Map enum value to attribute name on this instance (prefixed underscore)
+        attr_name = f"_{target.value}"
+        manager = getattr(self, attr_name, None)
+        if manager is None:
+            raise ValueError(
+                f"State manager '{target.name}' is not available on this Conductor instance.",
+            )
+
+        clear_fn = getattr(manager, "clear", None)
+        if clear_fn is None or not callable(clear_fn):
+            raise TypeError(
+                f"State manager '{target.name}' does not expose a callable clear() method.",
+            )
+
+        clear_fn()
 
     # ------------------------------------------------------------------ #
     #  request  (write-capable)                                          #
