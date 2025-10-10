@@ -40,11 +40,15 @@ chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
 
 # Pre-load STT, LLM and VAD so that we don't initialize inside entrypoint
-print("Pre-loading STT, LLM and VAD...")
-STT = deepgram.STT(model="nova-3", language="en-GB")
-LLM = openai.LLM(model="gpt-4o")
-VAD = silero.VAD.load(min_speech_duration=0.15)
-print("Pre-loading complete")
+try:
+    print("Pre-loading STT, LLM and VAD...")
+    STT = deepgram.STT(model="nova-3", language="en-GB")
+    LLM = openai.LLM(model="gpt-4o")
+    VAD = silero.VAD.load(min_speech_duration=0.15)
+    print("Pre-loading complete")
+except:
+    print("Pre-loading failed")
+    STT, LLM, VAD = None, None, None
 
 
 class Assistant(Agent):
@@ -107,6 +111,8 @@ class Assistant(Agent):
 
 
 async def entrypoint(ctx: agents.JobContext):
+    global STT, LLM, VAD
+
     print("Connecting to room...")
     await ctx.connect()
     print("Connected to room")
@@ -120,6 +126,12 @@ async def entrypoint(ctx: agents.JobContext):
 
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
+
+    # fallback for whenever pre-loading fails
+    if STT is None:
+        STT = deepgram.STT(model="nova-3", language="en-GB")
+        LLM = openai.LLM(model="gpt-4o")
+        VAD = silero.VAD.load(min_speech_duration=0.15)
 
     session = AgentSession(
         stt=STT,
