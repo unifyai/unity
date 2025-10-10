@@ -193,6 +193,21 @@ Anti‑patterns to avoid
         """,
     ).strip()
 
+    # Early exit policy for mutation-intent requests reaching ask()
+    mutation_exit_block = textwrap.dedent(
+        """
+        Early exit on mutation requests
+        ------------------------------
+        • If the incoming request asks to create, update, delete, merge, set a field, change values, or otherwise mutate state, EXIT IMMEDIATELY.
+        • Do not call any tools. Do not propose steps. Do not ask questions.
+        • Return exactly ONE short sentence that:
+          - clearly states this ask channel is read‑only and cannot make changes;
+          - avoids naming specific mutation tools or methods;
+          - may generically note that a separate mutation/write request is required;
+          - may optionally add that you can answer questions about existing data only.
+        """,
+    ).strip()
+
     return "\n".join(
         [
             activity_block,
@@ -200,6 +215,7 @@ Anti‑patterns to avoid
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
             clar_sentence,
+            mutation_exit_block,
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
             "use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
             "",
