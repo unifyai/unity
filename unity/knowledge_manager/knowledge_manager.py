@@ -38,6 +38,8 @@ from ..events.event_bus import EVENT_BUS, Event
 from ..common.grouping_helpers import maybe_group_rows
 from ..common.tool_spec import read_only
 from ..constants import is_semantic_cache_enabled
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -654,6 +656,9 @@ class KnowledgeManager(BaseKnowledgeManager):
             preprocess_msgs=inject_broader_context,
             response_format=response_format,
             semantic_cache=use_semantic_cache,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         # Optionally wrap .result() to expose reasoning
