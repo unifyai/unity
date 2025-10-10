@@ -318,16 +318,8 @@ class TaskScheduler(BaseTaskScheduler):
         # Centralised local view for queue membership, allocator and light caching.
         self._view = LocalTaskView(self._store)
 
+    @functools.wraps(BaseTaskScheduler.clear, updated=())
     def clear(self) -> None:
-        """
-        Remove all tasks and re-initialise the Tasks context.
-
-        Behaviour
-        ---------
-        - Deletes the underlying Tasks context (best-effort).
-        - Resets any in-memory indexes, caches and checkpoints.
-        - Re-provisions the table schema for a clean slate.
-        """
         try:
             # Drop the entire tasks table for this active assistant context
             unify.delete_context(self._ctx)

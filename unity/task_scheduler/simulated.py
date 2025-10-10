@@ -264,14 +264,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             f"Back-story: {self._description}",
         )
 
+    @functools.wraps(BaseTaskScheduler.clear, updated=())
     def clear(self) -> None:
-        """
-        Reset simulated scheduler state.
-
-        Since this simulated scheduler has no backing storage, clearing simply
-        resets the shared LLM state and re-applies the system message so future
-        interactions start from a clean slate.
-        """
         try:
             # Reset the LLM's internal state (best-effort)
             self._llm.reset_state()
@@ -365,12 +359,6 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         return handle
 
-    # Preserve base doc-string (from wraps) and append a brief simulated note
-    ask.__doc__ = (ask.__doc__ or "").rstrip() + (
-        "\n\nSimulated scheduler note: returns a steerable handle backed by a shared, "
-        "stateful LLM; no real storage is read or written."
-    )
-
     # ------------------------------------------------------------------ #
     #  update                                                            #
     # ------------------------------------------------------------------ #
@@ -425,12 +413,6 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             )
 
         return handle
-
-    # Preserve base doc-string (from wraps) and append a brief simulated note
-    update.__doc__ = (update.__doc__ or "").rstrip() + (
-        "\n\nSimulated scheduler note: returns a steerable handle; no real storage is "
-        "touched and replies may include invented task ids."
-    )
 
     # ------------------------------------------------------------------ #
     #  execute_task – delegate to SimulatedActor.act                     #
