@@ -168,6 +168,7 @@ class Conductor:
                 self._task_scheduler.update,
                 self._actor.act,
                 ToolSpec(self._task_scheduler.execute, max_concurrent=1),
+                self.clear,
                 include_class_name=True,
             ),
         }
