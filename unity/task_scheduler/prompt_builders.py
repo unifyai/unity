@@ -446,6 +446,7 @@ def build_update_prompt(
         "Tools (name → argspec):",
         sig_json,
         "",
+        # Padding around mutation-exit is only for ask() prompts; update() does not include it
         usage_examples,
         "",
         "Parallelism and single‑call preference",

@@ -8,6 +8,7 @@ from ..common.prompt_helpers import (
     clarification_guidance,
     now_utc_str,
 )
+from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 
 def _now() -> str:
@@ -42,6 +43,9 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "- If you just observed new creations in this conversation, prefer listing via `_list_secret_keys` and, if needed, confirm specific names with `_filter_secrets`.",
         "- All writes must keep raw values out of messages – only tool I/O may carry them internally.",
     ]
+
+    # Early exit policy for mutation-intent requests reaching ask()
+    lines += ["", read_only_ask_mutation_exit_block()]
 
     # Clarification guidance (only shown when request_clarification is present)
     lines += ["", clarification_guidance(tools)]

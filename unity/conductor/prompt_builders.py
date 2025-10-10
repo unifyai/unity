@@ -11,6 +11,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
+from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 # ───────────────────────────────────── helpers ─────────────────────────────────────
 
@@ -155,6 +156,9 @@ def build_ask_prompt(
             json.dumps(Task.model_json_schema(), indent=4),
             "",
             usage_examples,
+            "",
+            "",
+            read_only_ask_mutation_exit_block(),
             "",
             f"Current UTC time is {_now()}.",
             clar_section,
