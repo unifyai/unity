@@ -300,16 +300,8 @@ class GuidanceManager(BaseGuidanceManager):
             return 0
         return int(ret)
 
+    @functools.wraps(BaseGuidanceManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Remove all guidance entries and re-initialise the Guidance context.
-
-        Behaviour
-        ---------
-        - Deletes the underlying Guidance context (best-effort).
-        - Resets any known custom-field bookkeeping for this manager instance.
-        - Re-provisions the table schema so subsequent reads/writes operate against a clean slate.
-        """
         try:
             # Drop the entire guidance table for this active assistant context
             unify.delete_context(self._ctx)
