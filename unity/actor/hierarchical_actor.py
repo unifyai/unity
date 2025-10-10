@@ -250,6 +250,10 @@ class VerificationAssessment(BaseModel):
         None,
         description="The specific question to ask the user if status is 'request_clarification'.",
     )
+    refinements: Optional[List["FunctionPatch"]] = Field(
+        None,
+        description="Optional list of functions (self or children) to refine. Use this to suggest improvements to docstrings or implementation based on an inefficient execution trajectory, even if the overall status is 'ok'.",
+    )
 
 
 class CourseCorrectionDecision(BaseModel):
@@ -980,6 +984,32 @@ class _ActionProviderProxy:
             return real_attr
 
         async def async_wrapper(*args, **kwargs):
+            if name == "reason":
+                try:
+                    scoped_context_dict = (
+                        self._plan.actor._get_scoped_context_from_plan_state(self._plan)
+                    )
+                    scoped_context_str = (
+                        self._plan.actor._format_scoped_context_for_prompt(
+                            scoped_context_dict,
+                        )
+                    )
+
+                    user_provided_context = kwargs.get("context", "")
+
+                    kwargs["context"] = (
+                        "###CALL STACK CONTEXT\n"
+                        "The following is a scoped view of the plan's source code, centered on the current point of execution.\n"
+                        "Use this to understand the local context and make your decision.\n\n"
+                        f"{scoped_context_str}\n\n---\n\n"
+                        "### USER-PROVIDED CONTEXT\n"
+                        f"{user_provided_context}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to inject scoped context into 'reason' tool: {e}",
+                    )
+
             wait = kwargs.pop("wait", True)
             ctx_run_id = current_run_id_var.get()
             plan_run_id = self._plan.run_id
@@ -1881,6 +1911,27 @@ class HierarchicalPlan(BaseActiveTask):
                 else:
                     await self._on_verification_failure(item, assessment)
 
+                if assessment.refinements:
+                    logger.info(
+                        f"Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
+                    )
+                    self.action_log.append(
+                        f"SELF-IMPROVEMENT: Applying {len(assessment.refinements)} refinement(s) to child functions.",
+                    )
+
+                    async with self._interject_lock:
+                        if self._execution_task and not self._execution_task.done():
+                            self._execution_task.cancel()
+
+                        for patch in assessment.refinements:
+                            self._update_plan_with_new_code(
+                                patch.function_name,
+                                patch.new_code,
+                            )
+
+                        old_run_id = self.run_id
+                        self._restart_execution_loop(old_run_id)
+
             except asyncio.CancelledError:
                 logger.warning(
                     f"[V-TASK-{item.ordinal}] Verification for '{item.function_name}' was cancelled.",
@@ -2254,6 +2305,7 @@ class HierarchicalPlan(BaseActiveTask):
             f"RESTART: Restarting execution loop (old_run_id={old_run_id} → new_run_id={self.run_id}).",
         )
 
+        asyncio.create_task(self._cancel_all_background_tasks())
         if self._execution_task and not self._execution_task.done():
             self._execution_task.cancel()
 
@@ -2386,16 +2438,15 @@ class HierarchicalPlan(BaseActiveTask):
             await self.pause()
             decision = None
             try:
-                clean_plan_source_for_prompt = "\n\n".join(
-                    self.clean_function_source_map.get(func_name, "")
-                    for func_name in self.function_source_map
-                    if func_name in self.clean_function_source_map
+                context_dict = self.actor._get_scoped_context_from_plan_state(self)
+                scoped_context_str = self.actor._format_scoped_context_for_prompt(
+                    context_dict,
                 )
 
                 prompt = prompt_builders.build_interjection_prompt(
                     interjection=message,
                     parent_chat_context=self.parent_chat_context,
-                    plan_source_code=clean_plan_source_for_prompt,
+                    scoped_context=scoped_context_str,
                     call_stack=self.call_stack,
                     action_log=self.action_log[-10:],
                     goal=self.goal,
@@ -3145,7 +3196,7 @@ class HierarchicalActor(BaseActor):
             agent_mode: The agent mode to use. Can be "browser" or "desktop".
             agent_server_url: The URL of the agent server to use. Can be used to connect to a remote client.
         """
-        # todo: enable auto fetch desktop_url later
+        # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
         self.function_manager = function_manager or FunctionManager()
         self.action_provider = ActionProvider(
@@ -3169,6 +3220,107 @@ class HierarchicalActor(BaseActor):
         self.timeout = timeout
         self._plan_handles: weakref.WeakSet = weakref.WeakSet()
 
+    def _format_scoped_context_for_prompt(self, context: Dict[str, Any]) -> str:
+        """
+        Formats the dictionary from _get_scoped_context into a string for an LLM prompt.
+        """
+        prompt_parts = []
+
+        if context.get("parent_source"):
+            prompt_parts.append(
+                "### Parent Source (Caller)\n"
+                "This is the function that called the current one.\n"
+                "```python\n"
+                f"{context['parent_source']}\n"
+                "```",
+            )
+
+        if context.get("current_source"):
+            prompt_parts.append(
+                "### Current Function Source\n"
+                "This is the function currently being executed or implemented.\n"
+                "```python\n"
+                f"{context['current_source']}\n"
+                "```",
+            )
+
+        if context.get("children_source"):
+            children_str = []
+            for name, source in context["children_source"].items():
+                children_str.append(
+                    f"# Child Function: {name}\n" f"{source}",
+                )
+            prompt_parts.append(
+                "### Children Source (Functions it may call)\n"
+                "This is the source code of other plan functions that the current function might call. "
+                "```python\n"
+                f"{chr(10).join(children_str)}\n"
+                "```",
+            )
+
+        return f"\n\n{'-' * 3}\n\n".join(prompt_parts)
+
+    def _get_scoped_context_from_plan_state(
+        self,
+        plan: "HierarchicalPlan",
+    ) -> Dict[str, Any]:
+        """
+        Builds a scoped context dictionary using the plan's current call stack
+        and source maps, without needing a live frame object.
+        """
+        context = {
+            "parent_source": None,
+            "current_source": None,
+            "children_source": {},
+        }
+
+        if not plan.call_stack:
+            return context
+        try:
+            current_func_name = plan.call_stack[-1]
+            context["current_source"] = plan.clean_function_source_map.get(
+                current_func_name,
+            )
+
+            if len(plan.call_stack) > 1:
+                parent_func_name = plan.call_stack[-2]
+                context["parent_source"] = plan.clean_function_source_map.get(
+                    parent_func_name,
+                )
+        except IndexError:
+            pass
+
+        if context["current_source"]:
+
+            class CallVisitor(ast.NodeVisitor):
+                def __init__(self, plan_functions):
+                    self.plan_functions = plan_functions
+                    self.called_functions = set()
+
+                def visit_Call(self, node: ast.Call):
+                    if isinstance(node.func, ast.Name):
+                        if node.func.id in self.plan_functions:
+                            self.called_functions.add(node.func.id)
+                    self.generic_visit(node)
+
+            try:
+                tree = ast.parse(context["current_source"])
+                plan_function_names = set(plan.clean_function_source_map.keys())
+                visitor = CallVisitor(plan_function_names)
+                visitor.visit(tree)
+
+                for child_name in visitor.called_functions:
+                    if child_name in plan.clean_function_source_map:
+                        context["children_source"][child_name] = (
+                            plan.clean_function_source_map[child_name]
+                        )
+            except (SyntaxError, KeyError) as e:
+                logger.warning(
+                    f"Could not parse AST for child detection from plan state: {e}",
+                )
+
+        return context
+
     def _get_desktop_url(self, agent_server_url: str) -> str:
         """
         Resolve desktop_url from the orchestrator by assistant full name.
@@ -3187,9 +3339,8 @@ class HierarchicalActor(BaseActor):
         if not orchestra_url or not unify_key or not assistant_name:
             return agent_server_url
 
-        # Build request
         try:
-            import requests  # local import to avoid hard dependency at module import time
+            import requests
 
             url = f"{orchestra_url.rstrip('/')}/assistant"
             headers = {"Authorization": f"Bearer {unify_key}"}
@@ -3201,7 +3352,6 @@ class HierarchicalActor(BaseActor):
             except Exception:
                 return agent_server_url
 
-            # Normalize list
             assistants = []
             if isinstance(payload, list):
                 assistants = payload
@@ -3210,7 +3360,6 @@ class HierarchicalActor(BaseActor):
             else:
                 return agent_server_url
 
-            # Find by full name
             for a in assistants:
                 try:
                     first = (a.get("first_name") or a.get("first") or "").strip()
@@ -4400,13 +4549,8 @@ class HierarchicalActor(BaseActor):
                         f"Could not retrieve functions from FunctionManager for dynamic_implement: {e}",
                     )
 
-            clean_full_plan_source = (
-                "\n\n".join(
-                    plan.clean_function_source_map.values(),
-                )
-                if plan.clean_function_source_map
-                else ""
-            )
+            context_dict = self._get_scoped_context_from_plan_state(plan)
+            scoped_context_str = self._format_scoped_context_for_prompt(context_dict)
 
             recent_transcript = None
             try:
@@ -4431,7 +4575,7 @@ class HierarchicalActor(BaseActor):
 
             prompt = prompt_builders.build_dynamic_implement_prompt(
                 goal=plan.goal,
-                full_plan_source=clean_full_plan_source,
+                scoped_context=scoped_context_str,
                 call_stack=plan.call_stack,
                 function_name=function_name,
                 function_sig=func_sig,

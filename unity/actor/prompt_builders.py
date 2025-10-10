@@ -1968,7 +1968,7 @@ def build_initial_plan_prompt(
 
 def build_dynamic_implement_prompt(
     goal: str,
-    full_plan_source: str,
+    scoped_context: str,
     call_stack: list[str],
     function_name: str,
     function_sig: inspect.Signature,
@@ -1995,7 +1995,7 @@ def build_dynamic_implement_prompt(
         ---
         ### Existing Functions Library
         You may find these pre-existing functions useful. You can either call them directly
-        (if their source code is already in the 'Full Plan Source Code' below) or
+        (if their source code is already in the 'Source Code' below) or
         copy and adapt their implementation.
 
         {formatted_functions}
@@ -2101,16 +2101,14 @@ def build_dynamic_implement_prompt(
     context_section = textwrap.dedent(
         f"""
     ---
-    ### Full Plan Analysis
-    You have access to the entire plan and the current call stack for complete strategic context.
+    ### Scoped Plan Analysis & Call Stack
+    You are being provided a scoped view of the plan's source code, centered on the current point of execution.
+    Use the `Parent Source`, `Current Function Source`, and `Children Source` to understand the local context and make your decision.
 
     **Current Call Stack:**
     `{call_stack_str}`
 
-    **Full Plan Source Code:**
-    ```python
-    {full_plan_source}
-    ```
+    {scoped_context}
     ---
     """,
     )
@@ -2325,6 +2323,7 @@ def build_verification_prompt(
         - **Is the outcome definitively correct and does it advance the goal?**
           - The **Agent Trace** shows sound reasoning, the **Screenshot** confirms the final state, and the **Return Value** is correct.
           - Choose **`ok`**.
+          - **CRITICAL: Even for 'ok' status, analyze for inefficiencies.** Look at the **Interactions Log**. Did the function try one action, fail or go back, then try a different action that succeeded? If yes, you MUST provide a `refinement` to prevent this inefficient path in future runs. A good refinement updates a child function's docstring or implementation to provide clearer guidance.
 
         - **Is the outcome definitively wrong?**
           - The **Agent Trace** shows the agent made a mistake (e.g., clicked the wrong button, extracted wrong text). The **Screenshot** or **Return Value** confirms the error.
@@ -2400,6 +2399,51 @@ def build_verification_prompt(
             "status": "reimplement_local",
             "reason": "A tactical error occurred. The Agent Trace confirms the steps (typing, clicking) were executed as intended. However, the Screenshot provides definitive evidence of failure through the 'Please provide a corporate email address' error message. The function's logic needs to be re-run, likely after obtaining a valid email from the user."
         }}
+        ```
+
+        ---
+
+        **Example 4: Success with Self-Improvement Refinement (`ok` + `refinements`)**
+        - **Goal**: "Add a red t-shirt to cart"
+        - **Function**: `select_product_by_color(color: str)`
+        - **Function Source**:
+        ```python
+        async def select_product_by_color(color: str):
+            \"\"\"Selects a product from the product grid based on the specified color.\"\"\"
+            # First tries to find the color in the main options
+            result = await try_primary_color_filter(color)
+            if not result:
+                result = await try_expanded_color_options(color)
+            return result
+        ```
+        - **Agent Trace**:
+        - `◆ [act] Select the red color filter from the available options.`
+        - `REASONING: I need to find and click the red color filter. Looking at the page, I see a row of color options. I'll try clicking on the red color filter.`
+        - `⊙ click 'Red' color filter button`
+        - `✗ Element not found. The red color is not in the currently visible color options.`
+        - `REASONING: The red color isn't in the main filter options. I notice there's a 'Show More Colors' button. I should click that to expand the color choices.`
+        - `⊙ click 'Show More Colors' button`
+        - `✓ done`
+        - `REASONING: Now I can see additional color options including red. I'll click on the red color filter.`
+        - `⊙ click 'Red' color filter button`
+        - `✓ done`
+        - **Return Value**: `"Product selected successfully"`
+        - **Screenshot**: Shows the shopping cart with a red t-shirt added.
+        - **Correct Assessment**:
+        ```json
+        {{
+            "status": "ok",
+            "reason": "The function successfully added the red t-shirt to the cart. The Screenshot confirms the product is in the cart, and the Return Value indicates success.",
+            "refinements": [
+                {{
+                    "function_name": "try_primary_color_filter",
+                    "new_code": "async def try_primary_color_filter(color: str):\\n    \\\"\\\"\\\"Attempts to find a product using the primary color filters.\\n    \\n    NOTE: Only handles basic colors (black, white, blue, gray). For other colors like red, green, or yellow, use try_expanded_color_options() instead.\\n    \\\"\\\"\\\"\\n    basic_colors = ['black', 'white', 'blue', 'gray']\\n    if color.lower() not in basic_colors:\\n        return None\\n    return await action_provider.act(f'Click the {{color}} color filter')"
+                }}
+            ]
+        }}
+        ```
+        **Explanation**: The Agent Trace reveals an inefficient path: the function first tried to click the red color filter directly, got an "Element not found" error, then clicked "Show More Colors" to expand the options, and finally succeeded. The refinement adds explicit guidance to `try_primary_color_filter()` docstring and implementation to check if the color is in the basic set first, so future executions will skip directly to the expanded options for colors like red.
+
         ---
         Now, provide your assessment based on all the evidence and the decision framework. Respond with ONLY the JSON object.
         """,
@@ -2493,7 +2537,7 @@ def build_trace_summary_prompt(
 def build_interjection_prompt(
     interjection: str,
     parent_chat_context: list[dict] | None,
-    plan_source_code: str,
+    scoped_context: str,
     call_stack: list[str],
     action_log: list[str],
     goal: str,
@@ -2528,10 +2572,8 @@ def build_interjection_prompt(
     - **User's Interjection:** "{interjection}"
     - **Current Goal (Source of Truth):** "{goal or 'None (This is a teaching session)'}"
     - **Full Conversation History:** {chat_history}
-    - **Current Plan Source Code (`plan_source_code`):**
-      ```python
-      {plan_source_code}
-      ```
+    - **Scoped Source Code Context:**
+      {scoped_context}
     - **Current Execution Point (Call Stack):** `{call_stack_str}`
     - **Most Recent Plan Actions:**
       {recent_actions}
