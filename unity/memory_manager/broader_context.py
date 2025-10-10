@@ -81,8 +81,8 @@ def get_broader_context(
         user_bio = u.bio if u.bio else ""
 
         # ------------------------------------------------------------------
-        # 2.  Retrieve recent activity (may be empty) -----------------------
-        recent_activity = MemoryManager.get_rolling_activity()
+        # 2.  Retrieve rolling activity (may be empty) ---------------------
+        rolling_activity = MemoryManager.get_rolling_activity()
 
         # ------------------------------------------------------------------
         # 3.  Build Markdown snippet ---------------------------------------
@@ -97,7 +97,7 @@ def get_broader_context(
             parts.append(f"\nA bit about {user_name}, who you assist:")
             parts.append(user_bio)
 
-        if recent_activity:
+        if rolling_activity:
             parts.append(
                 f"\nYour activity logs explain broadly what you've been working on and how you've been assisting {user_name}.",
             )
@@ -109,7 +109,7 @@ def get_broader_context(
             )
             parts.append("")
             parts.append("# Activity Logs")
-            parts.append(recent_activity)
+            parts.append(rolling_activity)
 
         _BROADER_CONTEXT = "\n".join(parts).strip()
         return _BROADER_CONTEXT
