@@ -4681,11 +4681,15 @@ class HierarchicalActor(BaseActor):
             pass
         except Exception as e:
             logger.warning(f"Could not fetch recent transcript: {e}")
+
+        context_dict = self._get_scoped_context_from_plan_state(plan)
+        scoped_context_str = self._format_scoped_context_for_prompt(context_dict)
+
         prompt = prompt_builders.build_verification_prompt(
             goal=plan.goal,
             function_name=function_name,
             function_docstring=function_docstring,
-            function_source_code=function_source_code,
+            scoped_context=scoped_context_str,
             interactions=interactions,
             has_browser_screenshot=screenshot is not None,
             function_return_value=function_return_value,

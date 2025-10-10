@@ -336,7 +336,7 @@ class ActionProvider:
 
         # Now, use the generated question to get the required information.
         handle = await action_provider.conversation_manager.ask(clarifying_question)
-        user_answer = await handle.wait()
+        user_answer = await handle.result()
         ```
 
         Args:
