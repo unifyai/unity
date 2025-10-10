@@ -1040,5 +1040,5 @@ class MemoryManager(BaseMemoryManager):
     # ───────────────────────────  HELPERS  ────────────────────────────
     @classmethod
     def get_rolling_activity(cls, mode: str = "time") -> str:
-        """Rolling activity has been removed; return an empty string."""
+        """Rolling activity has been temporarily removed; return an empty string."""
         return ""
