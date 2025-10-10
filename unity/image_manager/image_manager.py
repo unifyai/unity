@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import os
 import json
+import functools
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
@@ -440,16 +441,8 @@ class ImageManager(BaseImageManager):
         return updated
 
     # ------------------------------ Maintenance ---------------------------
+    @functools.wraps(BaseImageManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Remove all images and re-initialise the Images context.
-
-        Behaviour
-        ---------
-        - Deletes the underlying Images context (best-effort).
-        - Re-provisions the table schema so subsequent operations work against
-          a clean slate.
-        """
         try:
             # Drop the entire images table for this active assistant context
             unify.delete_context(self._ctx)
