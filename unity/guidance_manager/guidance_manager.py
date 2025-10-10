@@ -32,7 +32,7 @@ from ..common.semantic_search import (
 )
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
-from ..image_manager.image_manager import ImageManager, ImageHandle
+from ..image_manager.image_manager import ImageManager
 from ..image_manager.utils import substring_from_span
 from ..common.embed_utils import list_private_fields
 
@@ -425,8 +425,31 @@ class GuidanceManager(BaseGuidanceManager):
             )
         return out
 
-    @functools.wraps(ImageHandle.ask, assigned=("__doc__",), updated=())
     async def _ask_image(self, *, image_id: int, question: str) -> str:
+        """Ask a one‑off question about a specific stored image.
+
+        Mirrors :pyfunc:`ImageHandle.ask` behaviour but requires an explicit
+        ``image_id`` so the correct image is resolved first. Sends the image to
+        a vision‑capable model as an image block and returns a textual answer only.
+
+        Parameters
+        ----------
+        image_id : int
+            Identifier of the image to analyse. If the underlying ``data`` is a
+            Google Cloud Storage URL, a short‑lived signed URL is generated to
+            grant access to the model; otherwise base64 is delivered via a
+            ``data:image/...;base64,`` URL.
+        question : str
+            Natural‑language question to ask about the image.
+
+        Returns
+        -------
+        str
+            Text answer from the vision model. This does not persist visual
+            context across turns; use ``attach_image_to_context`` or
+            ``attach_guidance_images_to_context`` when follow‑ups should keep
+            seeing the image(s).
+        """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
@@ -437,13 +460,33 @@ class GuidanceManager(BaseGuidanceManager):
             answer = str(answer)
         return answer
 
-    @functools.wraps(ImageHandle.raw, assigned=("__doc__",), updated=())
     def _attach_image_to_context(
         self,
         *,
         image_id: int,
         note: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Attach a single image (by id) as raw base64 for persistent context.
+
+        Behaviour mirrors :pyfunc:`ImageHandle.raw` for source resolution:
+        - If the stored ``data`` is a GCS URL (``gs://`` or
+          ``https://storage.googleapis.com/...``), bytes are downloaded
+          (raising if inaccessible).
+        - Otherwise, ``data`` is expected to be base64 and is decoded to bytes.
+
+        Parameters
+        ----------
+        image_id : int
+            Identifier of the image to attach.
+        note : str | None
+            Optional note describing why the image is attached.
+
+        Returns
+        -------
+        dict
+            {"note": str, "image": base64_string} where ``image`` contains the
+            raw image bytes encoded as base64 (PNG or JPEG).
+        """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
@@ -483,6 +526,9 @@ class GuidanceManager(BaseGuidanceManager):
         -------
         dict
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
+            Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, the
+            list of ``spans`` that referenced this image in the guidance text, and
+            derived ``substrings`` from the guidance content for alignment.
         """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
