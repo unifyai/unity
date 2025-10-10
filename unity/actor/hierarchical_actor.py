@@ -250,6 +250,10 @@ class VerificationAssessment(BaseModel):
         None,
         description="The specific question to ask the user if status is 'request_clarification'.",
     )
+    refinements: Optional[List["FunctionPatch"]] = Field(
+        None,
+        description="Optional list of functions (self or children) to refine. Use this to suggest improvements to docstrings or implementation based on an inefficient execution trajectory, even if the overall status is 'ok'.",
+    )
 
 
 class CourseCorrectionDecision(BaseModel):
@@ -1881,6 +1885,27 @@ class HierarchicalPlan(BaseActiveTask):
                 else:
                     await self._on_verification_failure(item, assessment)
 
+                if assessment.refinements:
+                    logger.info(
+                        f"Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
+                    )
+                    self.action_log.append(
+                        f"SELF-IMPROVEMENT: Applying {len(assessment.refinements)} refinement(s) to child functions.",
+                    )
+
+                    async with self._interject_lock:
+                        if self._execution_task and not self._execution_task.done():
+                            self._execution_task.cancel()
+
+                        for patch in assessment.refinements:
+                            self._update_plan_with_new_code(
+                                patch.function_name,
+                                patch.new_code,
+                            )
+
+                        old_run_id = self.run_id
+                        self._restart_execution_loop(old_run_id)
+
             except asyncio.CancelledError:
                 logger.warning(
                     f"[V-TASK-{item.ordinal}] Verification for '{item.function_name}' was cancelled.",
@@ -2254,6 +2279,7 @@ class HierarchicalPlan(BaseActiveTask):
             f"RESTART: Restarting execution loop (old_run_id={old_run_id} → new_run_id={self.run_id}).",
         )
 
+        asyncio.create_task(self._cancel_all_background_tasks())
         if self._execution_task and not self._execution_task.done():
             self._execution_task.cancel()
 
