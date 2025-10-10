@@ -13,7 +13,7 @@ from .types.function import Function
 from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
-from ..file_manager.file_manager import FileManager
+from ..file_manager.managers.local import LocalFileManager as FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
 
