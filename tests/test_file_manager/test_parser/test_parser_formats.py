@@ -146,6 +146,313 @@ async def test_parse_docx_file(parser):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
+async def test_parse_csv_file(parser):
+    """Test parsing CSV file from sample directory."""
+    from pathlib import Path
+
+    # Use the actual CSV file from sample directory
+    sample_dir = Path(__file__).parent.parent / "sample"
+    csv_file = sample_dir / "employee_records.csv"
+
+    if not csv_file.exists():
+        pytest.skip("CSV sample file not found")
+
+    doc = parser.parse(csv_file)
+
+    # Check metadata
+    assert doc.metadata.file_type == "text/csv"
+    assert doc.metadata.file_name == "employee_records.csv"
+    assert doc.metadata.file_size > 0
+    assert doc.processing_status == "completed"
+
+    # Check content extraction - verify key data from CSV
+    full_text = doc.to_plain_text()
+    assert len(full_text.strip()) > 0, "CSV should contain extractable text"
+
+    # Verify specific employee records are present
+    assert "Alice Johnson" in full_text, "Should contain Alice Johnson record"
+    assert "Bob Smith" in full_text, "Should contain Bob Smith record"
+    assert "Charlie Davis" in full_text, "Should contain Charlie Davis record"
+    assert "Diana Green" in full_text, "Should contain Diana Green record"
+    assert "Ethan Brown" in full_text, "Should contain Ethan Brown record"
+    assert "Fiona White" in full_text, "Should contain Fiona White record"
+
+    # Verify departments are present
+    assert "Engineering" in full_text, "Should contain Engineering department"
+    assert "Marketing" in full_text, "Should contain Marketing department"
+    assert "Sales" in full_text, "Should contain Sales department"
+    assert "Finance" in full_text, "Should contain Finance department"
+    assert "HR" in full_text, "Should contain HR department"
+
+    # Verify salary data is present (at least some values)
+    assert (
+        "85000" in full_text or "85,000" in full_text
+    ), "Should contain Alice's salary"
+    assert "72000" in full_text or "72,000" in full_text, "Should contain Bob's salary"
+
+    # Verify column headers are preserved
+    assert (
+        "EmployeeID" in full_text or "Employee" in full_text
+    ), "Should contain EmployeeID header"
+    assert "Name" in full_text, "Should contain Name header"
+    assert "Department" in full_text, "Should contain Department header"
+    assert "Salary" in full_text, "Should contain Salary header"
+
+    # Check structure - CSV should produce at least one section
+    assert len(doc.sections) >= 1, "CSV should produce at least one section"
+
+    # Check statistics
+    assert doc.metadata.total_characters > 0
+    assert doc.metadata.total_words > 0
+    assert doc.metadata.total_sections >= 1
+
+    # Validate table extraction with pandas HTML comparison (if pandas available)
+    try:
+        import pandas as pd
+
+        # Check that tables were extracted
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from CSV"
+
+        # Load the CSV with pandas for ground truth comparison
+        df_expected = pd.read_csv(csv_file)
+        expected_html = df_expected.to_html(index=False)
+
+        # Get the extracted table HTML from Docling
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        # Normalize both HTML strings for comparison (remove extra whitespace)
+        import re
+
+        def normalize_html(html_str):
+            # Remove extra whitespace, newlines, and normalize spacing
+            html_str = re.sub(r"\s+", " ", html_str.strip())
+            html_str = re.sub(r">\s+<", "><", html_str)
+            return html_str.lower()
+
+        normalized_expected = normalize_html(expected_html)
+        normalized_docling = normalize_html(docling_table_html)
+
+        # Check that key data elements are present in extracted HTML
+        for employee in [
+            "Alice Johnson",
+            "Bob Smith",
+            "Charlie Davis",
+            "Diana Green",
+            "Ethan Brown",
+            "Fiona White",
+        ]:
+            assert (
+                employee.lower() in normalized_docling
+            ), f"Table HTML should contain {employee}"
+
+        # Verify departments in HTML
+        for dept in ["Engineering", "Marketing", "Sales", "Finance", "HR"]:
+            assert (
+                dept.lower() in normalized_docling
+            ), f"Table HTML should contain department {dept}"
+
+        # Check that column headers are in the table HTML
+        assert "employeeid" in normalized_docling or "employee" in normalized_docling
+        assert "name" in normalized_docling
+        assert "department" in normalized_docling
+        assert "salary" in normalized_docling
+
+    except ImportError:
+        # If pandas is not available, we still pass the test since core assertions passed
+        print(f"Skipping pandas verification for test_parse_xlsx_file")
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_parse_xlsx_file(parser):
+    """Test parsing XLSX file from sample directory."""
+    from pathlib import Path
+
+    # Use the actual XLSX file from sample directory
+    sample_dir = Path(__file__).parent.parent / "sample"
+    xlsx_file = sample_dir / "project_status.xlsx"
+
+    if not xlsx_file.exists():
+        pytest.skip("XLSX sample file not found")
+
+    doc = parser.parse(xlsx_file)
+
+    # Check metadata
+    assert (
+        "xlsx" in doc.metadata.file_type.lower()
+        or "spreadsheet" in doc.metadata.file_type.lower()
+        or "openxmlformats" in doc.metadata.file_type.lower()
+    ), f"Expected XLSX file type, got: {doc.metadata.file_type}"
+    assert doc.metadata.file_name == "project_status.xlsx"
+    assert doc.metadata.file_size > 0
+    assert doc.processing_status == "completed"
+
+    # Check content extraction - verify key data from XLSX
+    full_text = doc.to_plain_text()
+    assert len(full_text.strip()) > 0, "XLSX should contain extractable text"
+
+    # Verify project IDs are present (PRJ-001 through PRJ-005)
+    assert (
+        "PRJ-001" in full_text or "PRJ 001" in full_text
+    ), "Should contain project PRJ-001"
+    assert (
+        "PRJ-002" in full_text or "PRJ 002" in full_text
+    ), "Should contain project PRJ-002"
+    assert (
+        "PRJ-003" in full_text or "PRJ 003" in full_text
+    ), "Should contain project PRJ-003"
+    assert (
+        "PRJ-004" in full_text or "PRJ 004" in full_text
+    ), "Should contain project PRJ-004"
+    assert (
+        "PRJ-005" in full_text or "PRJ 005" in full_text
+    ), "Should contain project PRJ-005"
+
+    # Verify project names are present
+    assert (
+        "AI Chatbot" in full_text or "Chatbot" in full_text
+    ), "Should contain AI Chatbot project"
+    assert "Website" in full_text, "Should contain Website project"
+    assert "Mobile" in full_text, "Should contain Mobile project"
+    assert (
+        "Data Migration" in full_text or "Migration" in full_text
+    ), "Should contain Data Migration project"
+    assert "Security" in full_text, "Should contain Security project"
+
+    # Verify manager names
+    assert (
+        "Alice" in full_text or "Johnson" in full_text
+    ), "Should contain Alice Johnson as manager"
+    assert (
+        "Bob" in full_text or "Smith" in full_text
+    ), "Should contain Bob Smith as manager"
+    assert (
+        "Charlie" in full_text or "Davis" in full_text
+    ), "Should contain Charlie Davis as manager"
+    assert (
+        "Diana" in full_text or "Green" in full_text
+    ), "Should contain Diana Green as manager"
+    assert (
+        "Ethan" in full_text or "Brown" in full_text
+    ), "Should contain Ethan Brown as manager"
+
+    # Verify project statuses
+    assert "Completed" in full_text, "Should contain Completed status"
+    assert (
+        "In Progress" in full_text or "Progress" in full_text
+    ), "Should contain In Progress status"
+    assert "Delayed" in full_text, "Should contain Delayed status"
+    assert "Planning" in full_text, "Should contain Planning status"
+
+    # Verify budget data (at least some values)
+    assert (
+        "50000" in full_text or "50,000" in full_text
+    ), "Should contain budget value 50000"
+    assert (
+        "75000" in full_text or "75,000" in full_text
+    ), "Should contain budget value 75000"
+    assert (
+        "120000" in full_text or "120,000" in full_text
+    ), "Should contain budget value 120000"
+
+    # Verify column headers
+    assert "Project" in full_text, "Should contain Project-related header"
+    assert "Manager" in full_text, "Should contain Manager header"
+    assert "Status" in full_text, "Should contain Status header"
+    assert "Budget" in full_text, "Should contain Budget header"
+
+    # Check structure - XLSX should produce at least one section
+    assert len(doc.sections) >= 1, "XLSX should produce at least one section"
+
+    # Check statistics
+    assert doc.metadata.total_characters > 0
+    assert doc.metadata.total_words > 0
+    assert doc.metadata.total_sections >= 1
+
+    # Validate table extraction with pandas HTML comparison (if pandas available)
+    try:
+        import pandas as pd
+
+        # Check that tables were extracted
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from XLSX"
+
+        # Load the XLSX with pandas for ground truth comparison
+        df_expected = pd.read_excel(xlsx_file)
+        expected_html = df_expected.to_html(index=False)
+
+        # Get the extracted table HTML from Docling
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        # Normalize both HTML strings for comparison (remove extra whitespace)
+        import re
+
+        def normalize_html(html_str):
+            # Remove extra whitespace, newlines, and normalize spacing
+            html_str = re.sub(r"\s+", " ", html_str.strip())
+            html_str = re.sub(r">\s+<", "><", html_str)
+            return html_str.lower()
+
+        normalized_expected = normalize_html(expected_html)
+        normalized_docling = normalize_html(docling_table_html)
+
+        # Check that key project data is present in extracted HTML
+        project_ids = ["prj-001", "prj-002", "prj-003", "prj-004", "prj-005"]
+        for proj_id in project_ids:
+            # Be flexible with formatting (PRJ-001, PRJ 001, prj001, etc.)
+            assert (
+                proj_id.replace("-", "")
+                in normalized_docling.replace("-", "").replace(" ", "")
+                or proj_id in normalized_docling
+            ), f"Table HTML should contain project {proj_id}"
+
+        # Verify project names in HTML
+        project_names = ["chatbot", "website", "mobile", "migration", "security"]
+        for name in project_names:
+            assert (
+                name in normalized_docling
+            ), f"Table HTML should contain project name {name}"
+
+        # Verify manager names in HTML
+        managers = ["alice", "bob", "charlie", "diana", "ethan"]
+        for manager in managers:
+            assert (
+                manager in normalized_docling
+            ), f"Table HTML should contain manager {manager}"
+
+        # Verify statuses in HTML
+        statuses = ["completed", "progress", "delayed", "planning"]
+        for status in statuses:
+            assert (
+                status in normalized_docling
+            ), f"Table HTML should contain status {status}"
+
+        # Check that column headers are in the table HTML
+        assert (
+            "project" in normalized_docling
+        ), "Should have ProjectID or ProjectName column"
+        assert "manager" in normalized_docling, "Should have Manager column"
+        assert "status" in normalized_docling, "Should have Status column"
+        assert "budget" in normalized_docling, "Should have Budget column"
+
+        # Verify budget values in HTML
+        budgets = ["50000", "75000", "120000", "90000", "110000"]
+        for budget in budgets:
+            assert budget in normalized_docling.replace(",", "").replace(
+                ".",
+                "",
+            ), f"Table HTML should contain budget {budget}"
+
+    except ImportError:
+        # If pandas is not available, we still pass the test since core assertions passed
+        print(f"Skipping pandas verification for test_parse_xlsx_file")
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
 async def test_parse_empty_txt_file(parser, supported_format_files):
     """Test parsing an empty text file."""
     txt_files = supported_format_files[".txt"]["files"]
@@ -412,9 +719,18 @@ async def test_content_preservation_across_formats(parser, supported_format_file
             if variant == "simple" and format_info["validation_patterns"]:
                 # For simple variant, check the validation patterns
                 for pattern in format_info["validation_patterns"]:
-                    assert (
-                        pattern.lower() in full_text.lower()
-                    ), f"Pattern '{pattern}' not preserved in {fmt} {variant}"
+                    # For CSV files, patterns are transformed (e.g., "Name,Age,City" becomes table format)
+                    # So we check for individual words instead of exact comma-separated patterns
+                    if fmt == ".csv":
+                        # For CSV, check that individual column names exist (without commas)
+                        words = pattern.replace(",", " ").split()
+                        assert all(
+                            word.lower() in full_text.lower() for word in words
+                        ), f"CSV should contain all column names from pattern '{pattern}' in {fmt} {variant}"
+                    else:
+                        assert (
+                            pattern.lower() in full_text.lower()
+                        ), f"Pattern '{pattern}' not preserved in {fmt} {variant}"
             elif variant == "multi_paragraph":
                 # For multi-paragraph, check for paragraph structure
                 assert (
@@ -508,3 +824,402 @@ async def test_large_files_performance(
         # Validate parsing succeeded
         assert doc.processing_status == "completed"
         assert len(doc.to_plain_text().strip()) > 100  # Should have substantial content
+
+
+# ============================================================================
+# CSV and Excel Format Tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_parse_csv_simple(parser, supported_format_files):
+    """Test parsing simple CSV file with Docling's native support."""
+    csv_files = supported_format_files[".csv"]["files"]
+    csv_file = csv_files["simple"]
+    doc = parser.parse(csv_file)
+
+    # Check metadata
+    assert doc.metadata.file_type == "text/csv"
+    assert doc.metadata.file_name.endswith(".csv")
+    assert doc.processing_status == "completed"
+
+    # Check content is preserved - Docling should extract table data
+    full_text = doc.to_plain_text()
+    assert "John Doe" in full_text
+    assert "Jane Smith" in full_text
+    assert "New York" in full_text or "USA" in full_text
+
+    # Should have structure (Docling extracts tables)
+    assert len(doc.sections) >= 1, "CSV should produce at least one section"
+
+    # Check basic statistics
+    assert doc.metadata.total_characters > 0
+    assert doc.metadata.total_words > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_parse_csv_complex(parser, supported_format_files):
+    """Test parsing complex CSV with quotes and special characters."""
+    csv_files = supported_format_files[".csv"]["files"]
+    csv_file = csv_files["complex"]
+    doc = parser.parse(csv_file)
+
+    # Check metadata
+    assert doc.metadata.file_type == "text/csv"
+    assert doc.processing_status == "completed"
+
+    # Check content preservation with quotes
+    full_text = doc.to_plain_text()
+    assert "john.doe@company.com" in full_text.lower() or "Engineering" in full_text
+    assert "Department" in full_text or "Salary" in full_text
+
+    # Validate structure - CSV files have sections but not necessarily paragraphs
+    assert len(doc.sections) >= 1
+    # CSV files store data in tables, not paragraphs
+    assert doc.metadata.total_characters > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_csv_semicolon_delimiter(parser, tmp_path):
+    """Test CSV with semicolon delimiter (Docling supports multiple delimiters)."""
+    csv_file = tmp_path / "test_semicolon.csv"
+    csv_content = """Name;Age;City
+Alice;30;Paris
+Bob;25;Berlin
+Charlie;35;Madrid"""
+    csv_file.write_text(csv_content)
+
+    doc = parser.parse(str(csv_file))
+
+    # Docling should auto-detect semicolon delimiter
+    assert doc.processing_status == "completed"
+
+    full_text = doc.to_plain_text()
+    assert "Alice" in full_text
+    assert "Paris" in full_text
+    assert "Berlin" in full_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_csv_pipe_delimiter(parser, tmp_path):
+    """Test CSV with pipe delimiter (Docling supports |, ;, comma, tab)."""
+    csv_file = tmp_path / "test_pipe.csv"
+    csv_content = """Name|Department|Salary
+John|Engineering|95000
+Mary|Sales|75000
+Steve|HR|65000"""
+    csv_file.write_text(csv_content)
+
+    doc = parser.parse(str(csv_file))
+
+    # Docling should auto-detect pipe delimiter
+    assert doc.processing_status == "completed"
+
+    full_text = doc.to_plain_text()
+    assert "John" in full_text
+    assert "Engineering" in full_text
+    assert "95000" in full_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_csv_with_unicode(parser, tmp_path):
+    """Test CSV with Unicode characters."""
+    csv_file = tmp_path / "test_unicode.csv"
+    csv_content = """Name,City,Greeting
+José,São Paulo,Olá
+François,Montréal,Bonjour
+李明,北京,你好"""
+    csv_file.write_text(csv_content, encoding="utf-8")
+
+    doc = parser.parse(str(csv_file))
+
+    assert doc.processing_status == "completed"
+
+    full_text = doc.to_plain_text()
+    # Check for Unicode preservation
+    assert "José" in full_text or "São Paulo" in full_text
+    assert "François" in full_text or "Montréal" in full_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_csv_empty_cells(parser, tmp_path):
+    """Test CSV with empty cells and sparse data."""
+    csv_file = tmp_path / "test_empty.csv"
+    csv_content = """Name,Age,City,Country
+John,30,,USA
+Jane,,London,
+Bob,35,Sydney,Australia
+,28,Toronto,Canada"""
+    csv_file.write_text(csv_content)
+
+    doc = parser.parse(str(csv_file))
+
+    # Should handle empty cells gracefully
+    assert doc.processing_status == "completed"
+
+    full_text = doc.to_plain_text()
+    assert "John" in full_text
+    assert "London" in full_text
+    assert "Australia" in full_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_csv_large_file_performance(parser, tmp_path):
+    """Test parsing performance on larger CSV files."""
+    import time
+
+    csv_file = tmp_path / "large.csv"
+
+    # Create a CSV with 1000 rows
+    lines = ["ID,Name,Value,Category"]
+    for i in range(1000):
+        lines.append(f"{i},Item_{i},{i * 10.5},Category_{i % 10}")
+
+    csv_file.write_text("\n".join(lines))
+
+    start_time = time.time()
+    doc = parser.parse(str(csv_file))
+    parse_time = time.time() - start_time
+
+    # Should complete in reasonable time (under 10 seconds)
+    assert parse_time < 10.0, f"CSV parsing took {parse_time:.2f}s, too slow"
+    assert doc.processing_status == "completed"
+
+    # Verify content
+    full_text = doc.to_plain_text()
+    assert "Item_0" in full_text
+    assert "Category" in full_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_csv_to_schema_rows(parser, tmp_path):
+    """Test that CSV documents can be converted to schema rows."""
+    csv_file = tmp_path / "test_schema.csv"
+    csv_content = """Employee,Department,Salary
+Alice,Engineering,95000
+Bob,Sales,75000"""
+    csv_file.write_text(csv_content)
+
+    doc = parser.parse(str(csv_file))
+
+    # Convert to schema rows
+    rows = doc.to_schema_rows(document_index=0)
+
+    # Should have document, section, paragraph, and sentence rows
+    assert len(rows) > 0
+
+    # Check row types
+    row_types = [r["content_type"] for r in rows]
+    assert "document" in row_types
+    assert "section" in row_types or "paragraph" in row_types
+
+    # Check that content is present
+    all_content = " ".join(r.get("content_text", "") for r in rows)
+    assert "Alice" in all_content or "Engineering" in all_content
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_csv_metadata_extraction(parser, tmp_path):
+    """Test that CSV files have proper metadata extracted."""
+    csv_file = tmp_path / "metadata_test.csv"
+    csv_content = """Name,Value
+Test,123
+Data,456"""
+    csv_file.write_text(csv_content)
+
+    doc = parser.parse(str(csv_file))
+
+    # Check metadata fields
+    assert doc.metadata.file_name == "metadata_test.csv"
+    assert doc.metadata.file_type == "text/csv"
+    assert doc.metadata.file_size > 0
+    assert doc.metadata.total_characters > 0
+    assert doc.metadata.total_words > 0
+    assert doc.metadata.total_sections >= 1
+    assert doc.metadata.parser_name == "DoclingParser"
+
+    # Check timestamps are set
+    assert doc.metadata.processed_at is not None
+    assert doc.metadata.processing_time is not None
+    assert doc.metadata.processing_time >= 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_csv_document_structure(parser, tmp_path):
+    """Test the hierarchical structure of parsed CSV documents."""
+    csv_file = tmp_path / "structure_test.csv"
+    csv_content = """Product,Price,Stock
+Widget,19.99,100
+Gadget,29.99,50
+Gizmo,39.99,75"""
+    csv_file.write_text(csv_content)
+
+    doc = parser.parse(str(csv_file))
+
+    # Check document structure
+    assert doc.document_id is not None
+    assert len(doc.document_id) > 0
+
+    # Should have sections
+    assert len(doc.sections) >= 1
+
+    # For CSV files, validate document has content and table metadata
+    assert doc.metadata.total_characters > 0
+    assert len(doc.to_plain_text()) > 0
+
+    # CSV files should have table metadata
+    assert len(doc.metadata.tables) > 0, "CSV should produce table metadata"
+
+    # Sections should have valid IDs
+    for section in doc.sections:
+        assert section.section_id is not None
+        assert section.document_id == doc.document_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_xlsx_multiple_sheets(parser, tmp_path):
+    """Test XLSX with multiple sheets."""
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        pytest.skip("openpyxl not available")
+
+    xlsx_file = tmp_path / "multi_sheet.xlsx"
+
+    wb = Workbook()
+
+    # Sheet 1: Sales
+    ws1 = wb.active
+    ws1.title = "Q1 Sales"
+    ws1["A1"] = "Product"
+    ws1["B1"] = "Revenue"
+    ws1["A2"] = "Widget"
+    ws1["B2"] = 50000
+    ws1["A3"] = "Gadget"
+    ws1["B3"] = 75000
+
+    # Sheet 2: Expenses
+    ws2 = wb.create_sheet("Q1 Expenses")
+    ws2["A1"] = "Category"
+    ws2["B1"] = "Amount"
+    ws2["A2"] = "Salaries"
+    ws2["B2"] = 30000
+    ws2["A3"] = "Marketing"
+    ws2["B3"] = 15000
+
+    wb.save(str(xlsx_file))
+
+    # Parse
+    doc = parser.parse(str(xlsx_file))
+
+    assert doc.processing_status == "completed"
+
+    # Should extract content from both sheets
+    full_text = doc.to_plain_text()
+    assert "Widget" in full_text or "Gadget" in full_text
+    assert "Salaries" in full_text or "Marketing" in full_text
+
+    # May have multiple sections for multiple sheets
+    assert len(doc.sections) >= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_xlsx_with_formulas(parser, tmp_path):
+    """Test XLSX with formulas."""
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        pytest.skip("openpyxl not available")
+
+    xlsx_file = tmp_path / "formulas.xlsx"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Calculations"
+
+    ws["A1"] = "Value1"
+    ws["B1"] = "Value2"
+    ws["C1"] = "Sum"
+
+    ws["A2"] = 100
+    ws["B2"] = 200
+    ws["C2"] = "=A2+B2"  # Formula
+
+    ws["A3"] = 50
+    ws["B3"] = 75
+    ws["C3"] = "=A3+B3"  # Formula
+
+    wb.save(str(xlsx_file))
+
+    # Parse
+    doc = parser.parse(str(xlsx_file))
+
+    assert doc.processing_status == "completed"
+
+    # Check that at least the input values are present
+    full_text = doc.to_plain_text()
+    assert "100" in full_text
+    assert "200" in full_text
+    # Docling may or may not evaluate formulas, but should extract something
+    assert len(full_text) > 50
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_xlsx_metadata_extraction(parser, tmp_path):
+    """Test metadata extraction from XLSX files."""
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        pytest.skip("openpyxl not available")
+
+    xlsx_file = tmp_path / "metadata_test.xlsx"
+
+    wb = Workbook()
+    ws = wb.active
+    ws["A1"] = "Name"
+    ws["B1"] = "Value"
+    ws["A2"] = "Test"
+    ws["B2"] = 123
+
+    wb.save(str(xlsx_file))
+
+    doc = parser.parse(str(xlsx_file))
+
+    # Check all metadata fields
+    assert doc.metadata.file_name == "metadata_test.xlsx"
+    assert (
+        "xlsx" in doc.metadata.file_type.lower()
+        or "spreadsheet" in doc.metadata.file_type.lower()
+    )
+    assert doc.metadata.file_size > 0
+    assert doc.metadata.total_characters > 0
+    assert doc.metadata.total_sections >= 1
+    assert doc.metadata.parser_name == "DoclingParser"
+    assert doc.metadata.processing_time is not None
+    assert doc.metadata.processing_time >= 0

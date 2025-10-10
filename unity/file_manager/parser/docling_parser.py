@@ -341,9 +341,13 @@ class DoclingParser(GenericParser[Document]):
     def _get_supported_formats(self) -> List[str]:
         """Get list of supported formats based on available backends."""
         if DOCLING_AVAILABLE:
+            # Docling supports PDF, DOCX, CSV, XLSX, and more
+            # See: https://docling-project.github.io/docling/usage/supported_formats/
             return [
                 ".pdf",
                 ".docx",
+                ".csv",
+                ".xlsx",
                 ".txt",
             ]
         else:
@@ -578,7 +582,7 @@ class DoclingParser(GenericParser[Document]):
         # For text files, always use basic parsing (Docling doesn't handle .txt well)
         if parsing_path.suffix.lower() in [".txt", ".log"]:
             document = self._parse_as_text_document(parsing_path, **options)
-        # Use advanced parsing if available for other formats
+        # Use advanced parsing if available for other formats (including CSV, XLSX)
         elif DOCLING_AVAILABLE and self.converter:
             try:
                 document = self._parse_with_docling(parsing_path, **options)
