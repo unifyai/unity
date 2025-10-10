@@ -246,6 +246,27 @@ class PublishBusEvent(Event):
 
 
 # --------------------------------------------------------------------------- #
+# LLM inference events
+# --------------------------------------------------------------------------- #
+@dataclass
+class LLMInput(Event):
+    content: list[
+        dict
+    ]  # this will probably be list[str] if the conversation manager ever supports more raw modalities
+
+
+@dataclass
+class UpdateContactRollingSummaryRequest(Event):
+    contacts_ids: list[int]
+    transcripts: list[str]
+
+
+@dataclass
+class UpdateContactRollingSummaryResponse(Event):
+    rolling_summaries: list[tuple[int, str]]
+
+
+# --------------------------------------------------------------------------- #
 # ConversationManagerHandle Events
 # --------------------------------------------------------------------------- #
 
