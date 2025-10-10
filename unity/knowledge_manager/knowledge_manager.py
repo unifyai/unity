@@ -269,33 +269,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
-        """
-        English‑text command interface for schema/data refactoring.
 
-        Parameters
-        ----------
-        text : str
-            Natural‑language instruction (e.g. “create a table … then move column …”).
-        _return_reasoning_steps : bool, default ``False``
-            When ``True``, wrap ``handle.result()`` to also return internal
-            LLM messages for debugging.
-        parent_chat_context : list[dict] | None, default ``None``
-            Optional prior chat context to seed the conversation.
-        clarification_up_q : asyncio.Queue[str] | None, default ``None``
-            When provided together with ``clarification_down_q``, enables
-            interactive clarification requests.
-        clarification_down_q : asyncio.Queue[str] | None, default ``None``
-            Response queue paired with ``clarification_up_q``.
-        rolling_summary_in_prompts : bool | None, default ``None``
-            Overrides the instance‑level ``rolling_summary_in_prompts`` for
-            this call only when not ``None``.
-
-        Returns
-        -------
-        SteerableToolHandle
-            A handle that allows interjection, pause/resume, and awaiting the
-            final result.
-        """
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -403,34 +377,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         _call_id: Optional[str] = None,
         case_specific_instructions: str | None = None,
     ) -> "SteerableToolHandle":
-        """
-        Modify tables/rows based on a natural‑language request.
 
-        Parameters
-        ----------
-        text : str
-            User request describing the desired update.
-        _return_reasoning_steps : bool, default ``False``
-            When ``True``, wrap ``handle.result()`` to also return internal
-            LLM messages for debugging.
-        parent_chat_context : list[dict] | None, default ``None``
-            Optional prior chat context to seed the conversation.
-        clarification_up_q : asyncio.Queue[str] | None, default ``None``
-            When provided together with ``clarification_down_q``, enables
-            interactive clarification requests.
-        clarification_down_q : asyncio.Queue[str] | None, default ``None``
-            Response queue paired with ``clarification_up_q``.
-        rolling_summary_in_prompts : bool | None, default ``None``
-            Overrides the instance‑level ``rolling_summary_in_prompts`` for
-            this call only when not ``None``.
-        case_specific_instructions : str | None, default ``None``
-            Optional case-specific instructions to add to the system prompt.
-        Returns
-        -------
-        SteerableToolHandle
-            A handle that allows interjection, pause/resume, and awaiting the
-            final result.
-        """
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -541,34 +488,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         response_format: Any | None = None,
         _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
-        """
-        Retrieve information from knowledge tables using natural language.
 
-        Parameters
-        ----------
-        text : str
-            User question or retrieval instruction.
-        _return_reasoning_steps : bool, default ``False``
-            When ``True``, wrap ``handle.result()`` to also return internal
-            LLM messages for debugging.
-        parent_chat_context : list[dict] | None, default ``None``
-            Optional prior chat context to seed the conversation.
-        clarification_up_q : asyncio.Queue[str] | None, default ``None``
-            When provided together with ``clarification_down_q``, enables
-            interactive clarification requests.
-        clarification_down_q : asyncio.Queue[str] | None, default ``None``
-            Response queue paired with ``clarification_up_q``.
-        rolling_summary_in_prompts : bool | None, default ``None``
-            Overrides the instance‑level ``rolling_summary_in_prompts`` for
-            this call only when not ``None``.
-        case_specific_instructions : str | None, default ``None``
-            Optional case-specific instructions to add to the system prompt.
-        Returns
-        -------
-        SteerableToolHandle
-            A handle that allows interjection, pause/resume, and awaiting the
-            final result.
-        """
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -700,15 +620,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         ret = unify.get_fields(context=self._ctx_for_table(table))
         return {k: v["data_type"] for k, v in ret.items()}
 
+    @functools.wraps(BaseKnowledgeManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Remove all knowledge tables and re-initialise optional linked storage.
-
-        Behaviour
-        ---------
-        - Deletes every context under this manager's namespace ("self._ctx/*").
-        - Re-provisions optional linked storage (e.g. root-level Contacts).
-        """
         try:
             km_prefix = f"{self._ctx}/"
             ctxs = unify.get_contexts(prefix=km_prefix)
