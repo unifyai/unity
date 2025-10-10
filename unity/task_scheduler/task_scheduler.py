@@ -80,6 +80,8 @@ from .activation_ops import (
 from .reintegration import ReintegrationManager
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
 from .llm import new_llm_client
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 # Sentinel for optional-argument presence detection
@@ -436,6 +438,9 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             tool_policy=effective_tool_policy,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
         # Logging wrapper applied by decorator
 
