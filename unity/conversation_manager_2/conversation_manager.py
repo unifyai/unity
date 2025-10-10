@@ -11,7 +11,6 @@ from pathlib import Path
 from unity.conversation_manager_2.debug_logger import log_job_startup, mark_job_done
 from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.actions import (
-    RESPONSES_MODEL,
     _send_sms_message_via_number,
     _send_email_via_address,
     _start_call,
@@ -122,6 +121,10 @@ class ConversationManager:
             email_address=boss_contact.email_address,
         )
         print(system_message)
+
+        # Use dynamic response models (set_details must be called before run_llm)
+        response_model = self.state.dynamic_response_models[self.state.mode]
+
         if self.state.mode in ["call", "gmeet"]:
             print("running...")
             first_chunk = True
@@ -130,7 +133,7 @@ class ConversationManager:
                 system_message,
                 self.chat_history + [input_message],
                 "gpt-4.1",
-                RESPONSES_MODEL[self.state.mode],
+                response_model,
                 "phone_utterance",
             ):
                 if event["type"] == "chunk":
@@ -168,7 +171,7 @@ class ConversationManager:
                 self.openai_client,
                 system_message,
                 self.chat_history + [input_message],
-                response_model=RESPONSES_MODEL[self.state.mode],
+                response_model=response_model,
             )
             parsed_out = json.loads(out)
 
