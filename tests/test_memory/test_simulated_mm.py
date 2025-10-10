@@ -68,6 +68,19 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
         raising=True,
     )
 
+    # --- ensure the named person does NOT exist yet -----------------------
+    # This gently guides the simulation toward a contact creation rather than
+    # inventing an existing record and performing an update instead.
+    def _fake_filter_contacts(self, *, filter=None, offset=0, limit=1):
+        return []
+
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "_filter_contacts",
+        _fake_filter_contacts,
+        raising=True,
+    )
+
     # --- run the method ----------------------------------------------------
     mm = SimulatedMemoryManager(
         "TEST SCENARIO: Contacts update path. SimulatedContactManager MUST treat the address book as missing"
