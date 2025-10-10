@@ -12,9 +12,10 @@ import pytest
 from tests.helpers import _handle_project
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_txt_simple(parser, supported_format_files):
+async def test_parse_txt_simple(parser, supported_format_files):
     """Test parsing simple text file."""
     txt_files = supported_format_files[".txt"]["files"]
     txt_file = txt_files["simple"]
@@ -33,9 +34,10 @@ def test_parse_txt_simple(parser, supported_format_files):
     assert doc.processing_status == "completed"
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_txt_multi_paragraph(parser, supported_format_files):
+async def test_parse_txt_multi_paragraph(parser, supported_format_files):
     """Test parsing multi-paragraph text file."""
     txt_files = supported_format_files[".txt"]["files"]
     txt_file = txt_files["multi_paragraph"]
@@ -55,9 +57,10 @@ def test_parse_txt_multi_paragraph(parser, supported_format_files):
     assert doc.processing_status == "completed"
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_txt_special_characters(parser, supported_format_files):
+async def test_parse_txt_special_characters(parser, supported_format_files):
     """Test parsing text file with special characters."""
     txt_files = supported_format_files[".txt"]["files"]
     txt_file = txt_files["special_chars"]
@@ -77,9 +80,10 @@ def test_parse_txt_special_characters(parser, supported_format_files):
     assert doc.processing_status == "completed"
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_pdf_file(parser):
+async def test_parse_pdf_file(parser):
     """Test parsing PDF file from sample directory."""
     from pathlib import Path
 
@@ -106,9 +110,10 @@ def test_parse_pdf_file(parser):
     assert doc.processing_status == "completed"
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_docx_file(parser):
+async def test_parse_docx_file(parser):
     """Test parsing DOCX file from sample directory."""
     from pathlib import Path
 
@@ -138,9 +143,10 @@ def test_parse_docx_file(parser):
     assert doc.processing_status == "completed"
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_empty_txt_file(parser, supported_format_files):
+async def test_parse_empty_txt_file(parser, supported_format_files):
     """Test parsing an empty text file."""
     txt_files = supported_format_files[".txt"]["files"]
     empty_file = txt_files["empty"]
@@ -158,9 +164,10 @@ def test_parse_empty_txt_file(parser, supported_format_files):
     assert len(doc.sections) >= 0
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_formats_comprehensive(parser):
+async def test_parse_formats_comprehensive(parser):
     """Test parsing all supported formats comprehensively."""
     from pathlib import Path
 
@@ -195,9 +202,10 @@ def test_parse_formats_comprehensive(parser):
         assert len(docx_doc.to_plain_text().strip()) > 0
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_binary_format_metadata(parser):
+async def test_parse_binary_format_metadata(parser):
     """Test that binary formats (PDF, DOCX) have correct metadata."""
     from pathlib import Path
 
@@ -243,9 +251,10 @@ def test_parse_binary_format_metadata(parser):
 # =============================================================================
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_all_supported_formats_dynamic(
+async def test_all_supported_formats_dynamic(
     parser,
     supported_format_files,
     parser_validation_suite,
@@ -299,9 +308,10 @@ def test_all_supported_formats_dynamic(
                 validation["validate_content"](doc, format_info["validation_patterns"])
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_empty_files_all_formats(parser, supported_format_files):
+async def test_empty_files_all_formats(parser, supported_format_files):
     """Test handling of empty files across all supported formats."""
 
     for fmt, format_info in supported_format_files.items():
@@ -326,9 +336,10 @@ def test_empty_files_all_formats(parser, supported_format_files):
         assert len(doc.sections) == 0
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_flat_records_all_formats(
+async def test_flat_records_all_formats(
     parser,
     supported_format_files,
     parser_validation_suite,
@@ -371,9 +382,10 @@ def test_flat_records_all_formats(
             assert len(para_records) >= expectations["min_paragraphs"]
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_content_preservation_across_formats(parser, supported_format_files):
+async def test_content_preservation_across_formats(parser, supported_format_files):
     """Test that content is properly preserved across different formats."""
 
     for fmt, format_info in supported_format_files.items():
@@ -413,9 +425,10 @@ def test_content_preservation_across_formats(parser, supported_format_files):
                 ), f"Multi-paragraph should have multiple paragraphs in {fmt}"
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_metadata_consistency_across_formats(parser, supported_format_files):
+async def test_metadata_consistency_across_formats(parser, supported_format_files):
     """Test that metadata is consistently set across all formats."""
 
     for fmt, format_info in supported_format_files.items():
@@ -451,9 +464,10 @@ def test_metadata_consistency_across_formats(parser, supported_format_files):
         assert doc.error_message is None
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_large_files_performance(
+async def test_large_files_performance(
     parser,
     supported_format_files,
     performance_benchmarks,

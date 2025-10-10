@@ -10,8 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from unity.file_manager.file_manager import FileManager
 from tests.helpers import _handle_project
+from tests.test_file_manager.helpers import ask_judge
 
 
 @pytest.fixture()
@@ -25,9 +25,10 @@ def temp_dir(tmp_path: Path) -> Path:
     return d
 
 
+@pytest.mark.asyncio
 @_handle_project
 @pytest.mark.unit
-def test_unique_name_generation_on_conflict(tmp_path: Path):
+async def test_unique_name_generation_on_conflict(file_manager, tmp_path: Path):
     """Test unique name generation when importing files with same names."""
     # Create two identical names in different folders and import sequentially
     src1 = tmp_path / "one"
@@ -37,7 +38,7 @@ def test_unique_name_generation_on_conflict(tmp_path: Path):
     (src1 / "conflict.pdf").write_text("x", encoding="utf-8")
     (src2 / "conflict.pdf").write_text("y", encoding="utf-8")
 
-    fm = FileManager()
+    fm = file_manager
     first = fm.import_directory(src1)
     second = fm.import_directory(src2)
     all_names = fm.list()
@@ -46,15 +47,16 @@ def test_unique_name_generation_on_conflict(tmp_path: Path):
     assert len(set(all_names)) == len(all_names)
 
 
+@pytest.mark.asyncio
 @_handle_project
 @pytest.mark.unit
-def test_parse_all_supported_formats(supported_file_examples: dict):
+async def test_parse_all_supported_formats(file_manager, supported_file_examples: dict):
     """Test parsing of all supported file formats."""
-    fm = FileManager()
+    fm = file_manager
 
     for filename, example_data in supported_file_examples.items():
         # Add the file to file manager
-        display_name = fm._add_file(example_data["path"])
+        display_name = fm.import_file(example_data["path"])  # new API
 
         # Parse the file
         result = fm.parse(display_name)
@@ -90,15 +92,16 @@ def test_parse_all_supported_formats(supported_file_examples: dict):
             ), f"Expected substantial content from sample file {filename}"
 
 
+@pytest.mark.asyncio
 @_handle_project
 @pytest.mark.unit
-def test_parse_error_handling(tmp_path: Path):
+async def test_parse_error_handling(file_manager, tmp_path: Path):
     """Test handling of files that can't be parsed."""
     # Create a file with an unsupported extension
     bad_file = tmp_path / "bad.xyz"
     bad_file.write_text("unsupported content", encoding="utf-8")
 
-    fm = FileManager()
+    fm = file_manager
     fm.import_directory(tmp_path)
 
     # Should still import the file
@@ -120,30 +123,45 @@ def test_parse_error_handling(tmp_path: Path):
     assert "unsupported content" in all_content
 
 
+@pytest.mark.asyncio
 @_handle_project
 @pytest.mark.unit
-@pytest.mark.asyncio
-async def test_ask_tool_loop_uses_parse(temp_dir: Path):
+async def test_ask_tool_loop_uses_parse(file_manager, temp_dir: Path):
     """Test that the ask method correctly uses the parse tool."""
-    fm = FileManager()
-    fm.import_directory(temp_dir)
-    # Ask a trivial question which should rely on parse()
+    fm = file_manager
+    imported_files = fm.import_directory(temp_dir)
+
+    # Parse files to add them to Unify logs before ask
+    fm.parse(imported_files)
+
+    # Ask a trivial question which should rely on parsed content
     name = next(n for n in fm.list() if n.endswith(".txt"))
-    handle = await fm.ask(name, f"What does {name} contain?")
+    instruction = f"What does the file {name} contain?"
+    handle = await fm.ask(instruction)
     ans = await handle.result()
     assert isinstance(ans, str)
     assert ans  # non-empty answer
 
+    # Read file content for the judge
+    file_content = (temp_dir / name).read_text(encoding="utf-8")
 
+    # Ask judge to verify
+    verdict = await ask_judge(instruction, ans, file_content=file_content)
+    assert (
+        verdict.lower().strip().startswith("correct")
+    ), f"Judge deemed 'ask' incorrect. Verdict: {verdict}"
+
+
+@pytest.mark.asyncio
 @_handle_project
 @pytest.mark.unit
-def test_file_content_preservation(supported_file_examples: dict):
+async def test_file_content_preservation(file_manager, supported_file_examples: dict):
     """Test that file content is preserved correctly during parsing."""
-    fm = FileManager()
+    fm = file_manager
 
     for filename, example_data in supported_file_examples.items():
         # Add the file to file manager
-        display_name = fm._add_file(example_data["path"])
+        display_name = fm.import_file(example_data["path"])  # new API
 
         result = fm.parse(display_name)
         assert display_name in result
@@ -169,14 +187,18 @@ def test_file_content_preservation(supported_file_examples: dict):
         assert len(file_result["records"]) > 0
 
 
+@pytest.mark.asyncio
 @_handle_project
 @pytest.mark.unit
-def test_document_structure_integrity(supported_file_examples: dict):
+async def test_document_structure_integrity(
+    file_manager,
+    supported_file_examples: dict,
+):
     """Test that all supported formats produce proper document structure."""
-    fm = FileManager()
+    fm = file_manager
 
     for filename, example_data in supported_file_examples.items():
-        display_name = fm._add_file(example_data["path"])
+        display_name = fm.import_file(example_data["path"])  # new API
         result = fm.parse(display_name)
 
         assert display_name in result
@@ -204,8 +226,8 @@ def test_document_structure_integrity(supported_file_examples: dict):
 
 @_handle_project
 @pytest.mark.unit
-def test_file_manager_singleton():
+def test_file_manager_singleton(file_manager):
     """Test that FileManager is a singleton."""
-    fm1 = FileManager()
-    fm2 = FileManager()
+    fm1 = file_manager
+    fm2 = file_manager
     assert fm1 is fm2
