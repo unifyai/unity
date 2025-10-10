@@ -285,17 +285,7 @@ class ImageManager(BaseImageManager):
             ) from e
 
         # Ensure context/fields exist deterministically
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"image_id": "int"},
-            auto_counting={"image_id": None},
-            description="Collection of images with timestamps, captions, and raw base64 data.",
-            fields=model_to_fields(Image),
-        )
-        self._store.ensure_context()
-
-        # Cache built-in fields for fast whitelisting
-        self._BUILTIN_FIELDS: tuple[str, ...] = tuple(Image.model_fields.keys())
+        self._provision_storage()
 
     # ------------------------------ Reads ---------------------------------
     def filter_images(
@@ -448,3 +438,63 @@ class ImageManager(BaseImageManager):
             )
             updated.append(image_id)
         return updated
+
+    # ------------------------------ Maintenance ---------------------------
+    def clear(self) -> None:
+        """
+        Remove all images and re-initialise the Images context.
+
+        Behaviour
+        ---------
+        - Deletes the underlying Images context (best-effort).
+        - Re-provisions the table schema so subsequent operations work against
+          a clean slate.
+        """
+        try:
+            # Drop the entire images table for this active assistant context
+            unify.delete_context(self._ctx)
+        except Exception:
+            # Proceed even if deletion fails (context may already be absent)
+            pass
+
+        # Ensure the schema exists again via shared provisioning helper
+        try:
+            # Remove any previous ensure memo and force re-provisioning
+            from ..common.context_store import TableStore as _TS  # local import
+
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._ctx))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        self._provision_storage()
+
+        # Verify the context is visible before attempting reads
+        try:
+            import time as _time  # local import to avoid polluting module namespace
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
+    # ------------------------------ Internals -----------------------------
+    def _provision_storage(self) -> None:
+        """Ensure Images context and schema exist deterministically."""
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"image_id": "int"},
+            auto_counting={"image_id": None},
+            description="Collection of images with timestamps, captions, and raw base64 data.",
+            fields=model_to_fields(Image),
+        )
+        self._store.ensure_context()
+
+        # Cache built-in fields for fast whitelisting
+        self._BUILTIN_FIELDS: tuple[str, ...] = tuple(Image.model_fields.keys())
