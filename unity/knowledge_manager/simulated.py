@@ -415,3 +415,28 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         "arguments within the same conversation. Prefer reusing prior results and "
         "compose the final answer once sufficient information has been gathered."
     )
+
+    def clear(self) -> None:
+        """
+        Reset simulated state for knowledge manager.
+
+        There is no persistent backend to delete. The simplest and most
+        reliable way to reset the simulated manager is to re-run its
+        constructor in-place, which creates a fresh stateful LLM and rebuilds
+        prompt references.
+        """
+        type(self).__init__(
+            self,
+            description=getattr(
+                self,
+                "_description",
+                "nothing fixed, make up some imaginary scenario",
+            ),
+            log_events=getattr(self, "_log_events", False),
+            rolling_summary_in_prompts=getattr(
+                self,
+                "_rolling_summary_in_prompts",
+                True,
+            ),
+            simulation_guidance=getattr(self, "_simulation_guidance", None),
+        )

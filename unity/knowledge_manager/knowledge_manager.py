@@ -176,6 +176,12 @@ class KnowledgeManager(BaseKnowledgeManager):
                 # Best-effort; KnowledgeManager can still function without immediate Contacts access
                 pass
 
+        # Ensure any additional storage requirements are provisioned
+        try:
+            self._provision_storage()
+        except Exception:
+            pass
+
     # Helpers #
     # --------#
 
@@ -694,8 +700,50 @@ class KnowledgeManager(BaseKnowledgeManager):
         ret = unify.get_fields(context=self._ctx_for_table(table))
         return {k: v["data_type"] for k, v in ret.items()}
 
+    def clear(self) -> None:
+        """
+        Remove all knowledge tables and re-initialise optional linked storage.
+
+        Behaviour
+        ---------
+        - Deletes every context under this manager's namespace ("self._ctx/*").
+        - Re-provisions optional linked storage (e.g. root-level Contacts).
+        """
+        try:
+            km_prefix = f"{self._ctx}/"
+            ctxs = unify.get_contexts(prefix=km_prefix)
+            # Delete all child contexts (tables) under the Knowledge namespace
+            for full_ctx in list(ctxs.keys()):
+                try:
+                    unify.delete_context(full_ctx)
+                except Exception:
+                    # Best-effort delete per context
+                    pass
+        except Exception:
+            # Proceed even if listing/deleting fails
+            pass
+
+        # Re-provision any required/linked storage
+        try:
+            self._provision_storage()
+        except Exception:
+            pass
+
     # Private #
     # --------#
+
+    def _provision_storage(self) -> None:
+        """Ensure optional linked storage exists (e.g. root-level Contacts)."""
+        if self._contacts_ctx is not None:
+            try:
+                TableStore(
+                    self._contacts_ctx,
+                    unique_keys={"contact_id": "int"},
+                    auto_counting={"contact_id": None},
+                ).ensure_context()
+            except Exception:
+                # Best-effort; absence of Contacts must not break KM initialisation
+                pass
 
     # Tables
 
