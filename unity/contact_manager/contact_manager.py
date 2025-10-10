@@ -1023,6 +1023,80 @@ class ContactManager(BaseContactManager):
             return 0
         return int(ret)
 
+    def clear(self) -> None:
+        """
+        Remove all contacts and re-initialise the Contacts context.
+
+        Behaviour
+        ---------
+        - Deletes the underlying Contacts context (best-effort).
+        - Clears the process-local DataStore cache for this context.
+        - Resets any known custom-field bookkeeping.
+        - Re-provisions the table schema and re-creates system contacts
+          (assistant id==0 and default user id==1).
+        """
+        try:
+            # Drop the entire contacts table for this active assistant context
+            unify.delete_context(self._ctx)
+        except Exception:
+            # Proceed even if deletion fails (context may already be absent)
+            pass
+
+        # Clear local cache and custom-field state so subsequent reads/writes
+        # operate against a clean slate
+        try:
+            self._data_store.clear()
+        except Exception:
+            pass
+
+        try:
+            # Reset observed custom fields for this manager instance
+            self._known_custom_fields = set()
+        except Exception:
+            pass
+
+        # Ensure the schema exists again, then recreate protected system contacts
+        try:
+            # Remove any previous ensure memo and force re-provisioning
+            from ..common.context_store import TableStore as _TS  # local import
+
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._ctx))
+            except Exception:
+                pass
+
+            # Recreate the context & columns explicitly to avoid relying on ensure memo
+            unify.create_context(
+                self._ctx,
+                unique_keys={"contact_id": "int"},
+                auto_counting={"contact_id": None},
+                description="List of contacts, with all contact details stored.",
+            )
+            unify.create_fields(model_to_fields(Contact), context=self._ctx)
+        except Exception:
+            # Fall back to ensure_context (may no-op if memoised)
+            try:
+                self._store.ensure_context()
+            except Exception:
+                pass
+
+        # Verify the context is visible before attempting reads
+        try:
+            import time as _time  # local import to avoid polluting module namespace
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
+        # Recreate assistant and default user contacts (id 0 and 1)
+        self._sync_assistant_contact()
+        self._sync_user_contact()
+
     # Private #
     # --------#
 

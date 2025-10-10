@@ -824,6 +824,31 @@ class SimulatedContactManager(BaseContactManager):
             pass
         return data
 
+    def clear(self) -> None:
+        """
+        Reset simulated state for contacts.
+
+        There is no persistent backend context to delete. The simplest and
+        most reliable way to reset the simulated manager is to re-run its
+        constructor in-place, which creates a fresh stateful LLM and rebuilds
+        tool exposure and prompts.
+        """
+        type(self).__init__(
+            self,
+            description=getattr(
+                self,
+                "_description",
+                "nothing fixed, make up some imaginary scenario",
+            ),
+            log_events=getattr(self, "_log_events", False),
+            rolling_summary_in_prompts=getattr(
+                self,
+                "_rolling_summary_in_prompts",
+                True,
+            ),
+            simulation_guidance=getattr(self, "_simulation_guidance", None),
+        )
+
 
 # --- TYPE CHECKING SUPPORT --------------------------------------------------
 
