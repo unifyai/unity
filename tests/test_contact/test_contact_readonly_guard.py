@@ -5,6 +5,7 @@ import pytest
 
 from tests.helpers import _handle_project
 from unity.contact_manager.contact_manager import ContactManager
+from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 @pytest.mark.asyncio
@@ -20,11 +21,26 @@ async def test_contact_manager_ask_guard_triggers_when_enabled(monkeypatch):
 
     cm = ContactManager()
 
-    # Mutation-intent phrasing to trigger the guard classifier
+    # Spy on guard stop() to verify classifier-triggered early stop
+    stop_called: dict[str, str | None] = {"reason": None}
+
+    orig_stop = ReadOnlyAskGuardHandle.stop
+
+    def _wrapped_stop(self, reason: str | None = None) -> str:  # type: ignore[no-redef]
+        stop_called["reason"] = reason
+        return orig_stop(self, reason)
+
+    monkeypatch.setattr(ReadOnlyAskGuardHandle, "stop", _wrapped_stop, raising=True)
+
+    # Mutation-intent phrasing to trigger the real classifier
     handle = await cm.ask(
         "Please change Bob Johnson's email to foo@bar.com; make the update now.",
     )
     result = await handle.result()
+
+    # Sanity-check: some answer returned
     assert isinstance(result, str) and result.strip() != ""
-    # Expect guidance towards using update; exact phrasing may vary but should include 'update'
-    assert "update" in result.lower()
+
+    # Verify early stop due to mutation intent
+    assert stop_called["reason"] is not None
+    assert "mutation intent detected" in str(stop_called["reason"]).lower()
