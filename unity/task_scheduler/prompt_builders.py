@@ -158,12 +158,28 @@ def build_ask_prompt(
         )
     )
 
+    # Early exit policy for mutation-intent requests reaching ask()
+    mutation_exit_block = "\n".join(
+        [
+            "Early exit on mutation requests",
+            "------------------------------",
+            "• If the incoming request asks to create, update, delete, reorder, move, cancel, or otherwise change tasks or queues, EXIT IMMEDIATELY.",
+            "• Do not call any tools. Do not propose steps. Do not ask questions.",
+            "• Return exactly ONE short sentence that:",
+            "  - clearly states this ask channel is read‑only and cannot make changes;",
+            "  - avoids naming specific mutation tools or methods;",
+            "  - may generically note that a separate mutation/write request is required;",
+            "  - may optionally add that you can answer questions about existing data only.",
+        ],
+    )
+
     parts: list[str] = [
         activity_block,
         "You are an assistant specialising in **answering questions about the task list**.",
         "Work strictly through the tools provided.",
         "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
         clar_sentence,
+        mutation_exit_block,
         "Please always mention the relevant task id(s) in your response.",
         f"If the question refers to another person (e.g., comms‑oriented tasks), call `{contact_ask_fname}` first for context. If a task refers to one or more contact_id values (e.g., in a trigger), also query `{contact_ask_fname}` to learn more about those contacts.",
         "",
