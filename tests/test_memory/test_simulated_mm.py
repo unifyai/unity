@@ -147,7 +147,9 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
         " 'bio' column for the target contact Dana; it must NOT refuse and must NOT claim the bio is already"
         " correct. SimulatedTranscriptManager should provide straightforward results. No external I/O.",
     )
-    transcript = _build_transcript("BTW – Dana just moved to Berlin.")
+    transcript = _build_transcript(
+        "BTW – Dana Fox was promoted to Senior Project Manager at Tech Solutions.",
+    )
     new_bio = await mm.update_contact_bio(
         transcript,
         contact_id=1,
@@ -182,6 +184,25 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
         raising=True,
     )
 
+    # --- align names: ensure contact_id==1 refers to the person in transcript
+    def _fake_filter_contacts(self, *, filter=None, offset=0, limit=1):
+        # Deterministic single result matching the transcript's person
+        return [
+            Contact(
+                contact_id=1,
+                first_name="Dana",
+                surname="Fox",
+                rolling_summary="Drives KPI dashboard work; coordinates follow-ups.",
+            ),
+        ]
+
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "_filter_contacts",
+        _fake_filter_contacts,
+        raising=True,
+    )
+
     # run --------------------------------------------------------------------
     mm = SimulatedMemoryManager(
         "TEST SCENARIO: Rolling summary refresh. SimulatedContactManager MUST accept a single deterministic"
@@ -189,7 +210,7 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
         " SimulatedTranscriptManager answers simply. No external I/O.",
     )
     transcript = _build_transcript(
-        "Action items: finalise KPI dashboard by Friday and schedule follow-up.",
+        "Dana Fox – action items: finalise the KPI dashboard by Friday and schedule a follow-up.",
     )
 
     new_summary = await mm.update_contact_rolling_summary(
