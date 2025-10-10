@@ -39,6 +39,13 @@ event_broker = get_event_broker()
 chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
 
+# Pre-load STT, LLM and VAD so that we don't initialize inside entrypoint
+print("Pre-loading STT, LLM and VAD...")
+STT = deepgram.STT(model="nova-3", language="en-GB")
+LLM = openai.LLM(model="gpt-4o")
+VAD = silero.VAD.load(min_speech_duration=0.15)
+print("Pre-loading complete")
+
 
 class Assistant(Agent):
     def __init__(
@@ -54,7 +61,7 @@ class Assistant(Agent):
         self.from_number = from_number
         self._call_received = not outbound
 
-        super().__init__(instructions="", llm=openai.LLM(model="gpt-4o"))
+        super().__init__(instructions="", llm=LLM)
 
     def set_call_received(self):
         self._call_received = True
@@ -115,8 +122,8 @@ async def entrypoint(ctx: agents.JobContext):
     print("voice_id", voice_id)
 
     session = AgentSession(
-        stt=deepgram.STT(model="nova-3", language="en-GB"),
-        llm=openai.LLM(model="gpt-4o"),
+        stt=STT,
+        llm=LLM,
         tts=(
             elevenlabs.TTS(
                 voice_id=voice_id if voice_id != "" else elevenlabs.DEFAULT_VOICE_ID,
@@ -127,7 +134,7 @@ async def entrypoint(ctx: agents.JobContext):
                 voice=voice_id if voice_id != "" else cartesia.tts.TTSDefaultVoiceId,
             )
         ),
-        vad=silero.VAD.load(min_speech_duration=0.15),
+        vad=VAD,
         turn_detection=EnglishModel(),
     )
 
