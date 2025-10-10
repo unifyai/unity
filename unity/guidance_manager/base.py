@@ -82,6 +82,20 @@ class BaseGuidanceManager(ABC, metaclass=SingletonABCMeta):
             reasoning steps.
         """
 
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        Remove all guidance entries and re-initialise the manager's storage.
+
+        Implementations must delete the underlying storage/context for guidance
+        and recreate any required schema so that subsequent reads/writes operate
+        against a clean slate.
+
+        The method is synchronous to allow safe use inside thread offloads in
+        async flows.
+        """
+        raise NotImplementedError
+
     # ------------------------------ Private tools -----------------------------
     @abstractmethod
     def _filter(
