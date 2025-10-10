@@ -118,8 +118,8 @@ def _get_format_content_generators() -> Dict[str, Dict[str, Any]]:
             "validation_patterns": ["Name,Age,City", "John Doe", "Jane Smith"],
             "structure_expectations": {
                 "min_sections": 1,
-                "min_paragraphs": 1,
-                "min_sentences": 1,
+                "min_paragraphs": 0,  # CSV files don't produce paragraphs, they produce tables
+                "min_sentences": 0,  # CSV files don't have sentences in traditional sense
             },
         },
         ".json": {
@@ -624,10 +624,26 @@ def parser_validation_suite() -> Dict[str, Any]:
     def validate_content_preservation(document, validation_patterns: List[str]):
         """Validate that important content patterns are preserved."""
         full_text = document.to_plain_text()
+
+        # Check if this is a CSV file (has tables but no paragraphs)
+        is_csv = document.metadata.file_type == "text/csv" or (
+            len(document.metadata.tables) > 0
+            and sum(len(s.paragraphs) for s in document.sections) == 0
+        )
+
         for pattern in validation_patterns:
-            assert (
-                pattern.lower() in full_text.lower()
-            ), f"Pattern '{pattern}' not found in parsed content"
+            if is_csv and "," in pattern:
+                # For CSV files with comma-separated patterns (e.g., "Name,Age,City")
+                # Check that individual words exist since CSV transforms to table format
+                words = pattern.replace(",", " ").split()
+                assert all(
+                    word.lower() in full_text.lower() for word in words
+                ), f"CSV should contain all words from pattern '{pattern}' in parsed content"
+            else:
+                # For other formats or non-comma patterns, check exact pattern
+                assert (
+                    pattern.lower() in full_text.lower()
+                ), f"Pattern '{pattern}' not found in parsed content"
 
     def validate_flat_records(records: List[Dict[str, Any]]):
         """Validate flat record structure and content."""
