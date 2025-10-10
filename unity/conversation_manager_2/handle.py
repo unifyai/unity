@@ -180,6 +180,12 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         {response_format.model_json_schema()}
         """
 
+        final_requirement = (
+            "- Once you have the user's answer, your final response MUST be a JSON object that strictly conforms to the provided Pydantic model schema. Do not add any extra keys or commentary."
+            if response_format
+            else "- Once you have the user's answer, respond with a clear and concise summary of what they said."
+        )
+
         system_prompt = f"""
         You are a sub-agent focused on a single mission: getting the user's answer to a specific question.
 
@@ -198,7 +204,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
         **CRITICAL**: As soon as you have a confident answer, either from the initial analysis or from the user's direct reply, you must stop using tools and provide the final answer.
         - You are in control of the polling loop. Be patient and persistent.
-        {'- Once you have the user\'s answer, your final response MUST be a JSON object that strictly conforms to the provided Pydantic model schema. Do not add any extra keys or commentary.' if response_format else '- Once you have the user\'s answer, respond with a clear and concise summary of what they said.'}
+        {final_requirement}
 
         ### Additional Considerations:
         1.  **Timing is crucial.** Do not use tools unless you are absolutely sure the user hasn't already answered your question.
