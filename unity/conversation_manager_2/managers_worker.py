@@ -193,7 +193,7 @@ class ManagersWorker:
             timestamp = event.timestamp
             exchange_id = event.exchange_id
             call_utterance_timestamp = event.call_utterance_timestamp
-            call_url = event.call_url
+            # call_url = event.call_url
             metadata = getattr(event, "metadata", None)
 
             # Log the message
@@ -206,7 +206,7 @@ class ManagersWorker:
                     "content": content,
                     "exchange_id": exchange_id,
                     "call_utterance_timestamp": call_utterance_timestamp,
-                    "call_url": call_url,
+                    # "call_url": call_url,
                     "_metadata": metadata,
                 },
                 synchronous=True,
