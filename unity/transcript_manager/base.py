@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 
 class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
@@ -91,14 +92,8 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def clear(self) -> None:
-        """
-        Remove all transcripts and re-initialise the manager's storage.
-
-        Implementations must delete the underlying storage/contexts for
-        transcripts (and related exchanges metadata) and recreate any required
-        schema so that subsequent reads/writes operate against a clean slate.
-
-        The method is synchronous to allow safe use inside thread offloads in
-        async flows.
-        """
         raise NotImplementedError
+
+
+# Attach centralised docstring
+BaseTranscriptManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING

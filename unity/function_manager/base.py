@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
 
 from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 
 class BaseFunctionManager(ABC, metaclass=SingletonABCMeta):
@@ -247,14 +248,8 @@ class BaseFunctionManager(ABC, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def clear(self) -> None:
-        """
-        Remove all functions and re-initialise the manager's storage.
-
-        Implementations must delete the underlying storage/context for functions
-        and recreate any required structures so that subsequent reads/writes
-        operate against a clean slate.
-
-        The method is synchronous to allow safe use inside thread offloads in
-        async flows.
-        """
         raise NotImplementedError
+
+
+# Attach centralised docstring
+BaseFunctionManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING

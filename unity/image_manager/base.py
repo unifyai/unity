@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 
 class BaseImageManager(ABC):
@@ -66,16 +67,6 @@ class BaseImageManager(ABC):
 
     @abstractmethod
     def clear(self) -> None:
-        """
-        Remove all images and re-initialise the manager's storage.
-
-        Implementations must delete the underlying storage/context for images
-        and recreate any required schema so subsequent reads/writes operate
-        against a clean slate.
-
-        The method is synchronous to allow safe use inside thread offloads in
-        async flows.
-        """
         raise NotImplementedError
 
 
@@ -83,3 +74,7 @@ if TYPE_CHECKING:
     # Avoid runtime imports to prevent circular dependencies
     from .types.image import Image
     from .image_manager import ImageHandle
+
+
+# Attach centralised docstring
+BaseImageManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING

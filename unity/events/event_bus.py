@@ -42,6 +42,7 @@ from pydantic.alias_generators import to_snake
 from uuid import uuid4
 
 __all__ = ["Event", "EventBus", "Subscription", "EVENT_BUS"]
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 # ---------------------------------------------------------------------------
 # Context-variable to track the *root* sequence number of a callback cascade.
@@ -1043,20 +1044,7 @@ class EventBus:
 
     # ------------------------------------------------------------------
     def clear(self, delete_contexts: bool = True) -> None:
-        """
-        Bring the *singleton* back to its "just-instantiated" state
-        **and** remove all Unify contexts that were created by the previous
-        incarnation. This guarantees that no stale data or orphaned contexts
-        linger when the active Unify context changes (common during tests).
-
-        What happens:
-        1. Any running background hydration task is cancelled.
-        2. The current `self._global_ctx` **and all of its child contexts**
-           (including the callbacks context) are deleted from Unify.
-        3. The object's constructor is invoked in-place, so every attribute is
-           rebuilt exactly as during a fresh instantiation while picking up the
-           *current* `unify.get_active_context()`.
-        """
+        """ """
 
         # 1. Stop the background pre-fill if it's still pending
         try:
@@ -1383,3 +1371,7 @@ def _initialize_event_bus() -> "EventBus":
         EVENT_BUS._set(bus)  # type: ignore[attr-defined]
         return bus  # type: ignore[return-value]
     return EVENT_BUS  # type: ignore[return-value]
+
+
+# Attach centralised docstring
+EventBus.clear.__doc__ = CLEAR_METHOD_DOCSTRING

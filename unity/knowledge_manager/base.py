@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 
 class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
@@ -204,12 +205,8 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def clear(self) -> None:
-        """
-        Remove all knowledge tables and re-initialise the manager's storage.
-
-        Implementations must delete the underlying storage/contexts for tables
-        under the manager's namespace (e.g. ``<ctx>/Knowledge/*``) so that
-        subsequent reads/writes operate against a clean slate. The method is
-        synchronous to allow safe use inside thread offloads in async flows.
-        """
         raise NotImplementedError
+
+
+# Attach centralised docstring
+BaseKnowledgeManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING
