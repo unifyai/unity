@@ -59,25 +59,6 @@ class ConversationManager:
         project_name: str = "Assistants",
         stop: asyncio.Event = None,
     ):
-        # assistant details
-        self.job_name = job_name
-        self.user_id = user_id
-        self.assistant_id = assistant_id
-        self.assistant_name = assistant_name
-        self.assistant_age = assistant_age
-        self.assistant_region = assistant_region
-        self.assistant_about = assistant_about
-        self.voice_provider = voice_provider
-        self.voice_id = voice_id
-
-        # contact data
-        self.assistant_number = assistant_number
-        self.assistant_email = assistant_email
-        self.user_name = user_name
-        self.user_number = user_number
-        self.user_email = user_email
-        self.user_whatsapp_number = user_whatsapp_number
-
         # events & state(history)
         self.conv_context_length = conv_context_length
         # self.current_llm_run = None
@@ -445,7 +426,7 @@ class ConversationManager:
         # Centralized handler for steering notifications from ConversationManagerHandle
         if isinstance(event, NotificationInjectedEvent):
             # Check if this notification is intended for this CM instance
-            if event.target_conversation_id == self.assistant_id:
+            if event.target_conversation_id == self.state.assistant_id:
                 print(f"INFO: Received steering notification: '{event.content}'")
                 await self.schedule_llm_run(delay=0.1, cancel_running=True)
             return
@@ -555,7 +536,7 @@ class ConversationManager:
 
     def cleanup(self):
         """Clean up any running call processes"""
-        print(f"Marking job {self.job_name} done")
-        mark_job_done(self.job_name)
+        print(f"Marking job {self.state.job_name} done")
+        mark_job_done(self.state.job_name)
         self.cleanup_call_proc()
         self.stop.set()
