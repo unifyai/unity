@@ -202,10 +202,16 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
     async def result(self) -> str:  # type: ignore[override]
         # If a classifier is still running, give it a brief chance to finish so
         # we can return the early response deterministically in tests.
-        with suppress(Exception):
+        try:
             if self._cls_task is not None and not self._cls_task.done():
                 # Wait up to the classifier's own timeout to get a definitive answer
                 await asyncio.wait_for(self._cls_task, timeout=60.0)
+        except asyncio.CancelledError:
+            # Classifier was cancelled (e.g., outer loop stopped) — ignore
+            pass
+        except Exception:
+            # Any other classifier failure should never break result()
+            pass
 
         # If we already have an early response, prefer it (the loop will be or
         # has been stopped by the classifier).
