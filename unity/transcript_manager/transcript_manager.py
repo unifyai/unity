@@ -1624,17 +1624,8 @@ class TranscriptManager(BaseTranscriptManager):
             return 0
         return int(ret)
 
+    @functools.wraps(BaseTranscriptManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Remove all transcripts and exchanges, then re-initialise contexts.
-
-        Behaviour
-        ---------
-        - Deletes the underlying Transcripts and Exchanges contexts (best-effort).
-        - Resets cached column metadata for this manager instance.
-        - Re-provisions the table schemas and re-creates required helper columns
-          (e.g., the private "_metadata" column on Transcripts).
-        """
 
         # Best-effort deletion of both contexts
         try:

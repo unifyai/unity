@@ -280,21 +280,8 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
 
         return handle
 
-    # Append guidance for outer orchestrators via tool description
-    ask.__doc__ = (ask.__doc__ or "") + (
-        "\n\nOuter-orchestrator guidance: Avoid invoking this tool repeatedly with the same "
-        "arguments within the same conversation. Prefer reusing prior results and "
-        "compose the final answer once sufficient information has been gathered."
-    )
-
+    @functools.wraps(BaseTranscriptManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Reset simulated state for transcripts.
-
-        The simulated manager has no backing datastore; re-running the
-        constructor in-place provides a clean slate analogous to the real
-        manager's clear() behaviour.
-        """
         type(self).__init__(
             self,
             description=getattr(
