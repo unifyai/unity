@@ -36,6 +36,8 @@ class WebSearcher(BaseWebSearcher):
             self._map,
             include_class_name=False,
         )
+        # Ensure any internal caches/storage are present
+        self._provision_storage()
 
     @functools.wraps(BaseWebSearcher.ask, updated=())
     @log_manager_call("WebSearcher", "ask", payload_key="question")
@@ -117,6 +119,66 @@ class WebSearcher(BaseWebSearcher):
             handle.result = wrapped_result  # type: ignore[attr-defined]
 
         return handle
+
+    # ------------------------------------------------------------------ #
+    #  Storage and lifecycle helpers                                     #
+    # ------------------------------------------------------------------ #
+
+    def _provision_storage(self) -> None:
+        """
+        Ensure internal, process-local caches/storage exist (idempotent).
+
+        This mirrors the pattern used by other managers which prepare their
+        storage upfront. WebSearcher does not maintain a remote context, but we
+        keep lightweight caches for recent operations to support future
+        optimisations and easy resets via `clear`.
+        """
+        try:
+            # Simple placeholders for last operation snapshots
+            if not hasattr(self, "_last_results"):
+                self._last_results: List[Dict[str, Any]] = []
+            else:
+                # keep existing values; provisioning is idempotent
+                pass
+            if not hasattr(self, "_last_extractions"):
+                self._last_extractions: Dict[str, Any] = {}
+            if not hasattr(self, "_last_crawls"):
+                self._last_crawls: Dict[str, Any] = {}
+            if not hasattr(self, "_last_maps"):
+                self._last_maps: Dict[str, Any] = {}
+        except Exception:
+            # Best-effort only; callers operate without caches if needed
+            pass
+
+    def clear(self) -> None:
+        """
+        Reset internal state/caches and re-initialise storage/context.
+
+        Behaviour
+        ---------
+        - Flushes process-local caches used by this manager.
+        - Re-provisions storage via `_provision_storage`.
+        """
+        # Best-effort cache flush
+        try:
+            self._last_results = []
+        except Exception:
+            pass
+        try:
+            self._last_extractions = {}
+        except Exception:
+            pass
+        try:
+            self._last_crawls = {}
+        except Exception:
+            pass
+        try:
+            self._last_maps = {}
+        except Exception:
+            pass
+
+        # Re-provision storage to a clean slate
+        self._provision_storage()
 
     def _search(
         self,
