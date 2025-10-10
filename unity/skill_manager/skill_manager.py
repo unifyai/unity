@@ -18,6 +18,8 @@ from ..common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..events.manager_event_logging import log_manager_call
 
 from ..function_manager.function_manager import FunctionManager
@@ -163,6 +165,9 @@ class SkillManager(BaseSkillManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             preprocess_msgs=inject_broader_context,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         if _return_reasoning_steps:

@@ -24,6 +24,8 @@ from ..common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..events.event_bus import EVENT_BUS, Event
 from ..events.manager_event_logging import log_manager_call
 from ..common.semantic_search import (
@@ -182,6 +184,9 @@ class GuidanceManager(BaseGuidanceManager):
             parent_chat_context=parent_chat_context,
             tool_policy=self._default_ask_tool_policy,
             preprocess_msgs=inject_broader_context,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         if _return_reasoning_steps:
