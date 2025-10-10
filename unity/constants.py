@@ -49,7 +49,7 @@ def is_readonly_ask_guard_enabled() -> bool:
     Off by default to avoid changing unit tests; enable by setting
     UNITY_READONLY_ASK_GUARD=true (or 1/yes/on) in production.
     """
-    return os.getenv("UNITY_READONLY_ASK_GUARD", "false").lower() not in {
+    return os.getenv("UNITY_READONLY_ASK_GUARD", "true").lower() not in {
         "0",
         "false",
         "no",
