@@ -1042,11 +1042,11 @@ class EventBus:
         return self._specific_ctxs
 
     # ------------------------------------------------------------------
-    def reset(self, delete_contexts: bool = True) -> None:
+    def clear(self, delete_contexts: bool = True) -> None:
         """
         Bring the *singleton* back to its "just-instantiated" state
         **and** remove all Unify contexts that were created by the previous
-        incarnation.  This guarantees that no stale data or orphaned contexts
+        incarnation. This guarantees that no stale data or orphaned contexts
         linger when the active Unify context changes (common during tests).
 
         What happens:

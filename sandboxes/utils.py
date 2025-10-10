@@ -2543,7 +2543,7 @@ def activate_project(project_name: str, overwrite: bool = False) -> None:
         overwrite=("contexts" if overwrite else False),
     )
     # Clears all contexts in the EventBus
-    EVENT_BUS.reset()
+    EVENT_BUS.clear()
 
     # Set Trace Context
     import unify as _unify
