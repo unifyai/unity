@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import textwrap
 from contextlib import suppress
 from typing import Any, Optional
 
@@ -9,6 +10,27 @@ import unify
 
 from .async_tool_loop import AsyncToolLoopHandle
 from pydantic import BaseModel, Field
+
+
+def read_only_ask_mutation_exit_block() -> str:
+    """
+    Return a canonical, manager-agnostic prompt section instructing the model
+    to exit immediately when a mutation request reaches a read-only ask/retrieve
+    channel. This block is reused across managers to keep wording consistent.
+    """
+    return textwrap.dedent(
+        """
+        Early exit on mutation requests
+        ------------------------------
+        • If the incoming request asks to create, update, delete, merge, rename, reorder, move, ingest, transform, refactor, set a field, change values, or otherwise modify state, EXIT IMMEDIATELY.
+        • Do not call any tools. Do not propose steps. Do not ask questions.
+        • Return exactly ONE short sentence that:
+          - clearly states this read‑only channel cannot make changes;
+          - avoids naming specific mutation tools or methods;
+          - may generically note that a separate mutation/write request is required;
+          - may optionally add that you can answer questions about existing data only.
+        """,
+    ).strip()
 
 
 class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):

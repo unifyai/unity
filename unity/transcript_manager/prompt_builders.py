@@ -24,6 +24,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
+from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -242,19 +243,7 @@ def build_ask_prompt(
     ).strip()
 
     # Early exit policy for mutation-intent requests reaching ask()
-    mutation_exit_block = textwrap.dedent(
-        """
-        Early exit on mutation requests
-        ------------------------------
-        • If the incoming request asks to create, update, delete, modify messages, or otherwise change state, EXIT IMMEDIATELY.
-        • Do not call any tools. Do not propose steps. Do not ask questions.
-        • Return exactly ONE short sentence that:
-          - clearly states this ask channel is read‑only and cannot make changes;
-          - avoids naming specific mutation tools or methods;
-          - may generically note that a separate mutation/write request is required;
-          - may optionally add that you can answer questions about existing data only.
-        """,
-    ).strip()
+    mutation_exit_block = read_only_ask_mutation_exit_block()
 
     return "\n".join(
         [
