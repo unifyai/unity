@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 
 class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
@@ -88,14 +89,8 @@ class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def clear(self) -> None:
-        """
-        Reset any internal state/caches and re-initialise storage/context.
-
-        Implementations should delete/flush any underlying storage or cached
-        state used by the web-search manager (best-effort), then recreate any
-        required context so subsequent calls operate against a clean slate.
-
-        The method is synchronous to allow safe use inside thread offloads in
-        async flows.
-        """
         raise NotImplementedError
+
+
+# Attach centralised docstring
+BaseWebSearcher.clear.__doc__ = CLEAR_METHOD_DOCSTRING

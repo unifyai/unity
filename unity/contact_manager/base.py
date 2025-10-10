@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 
 class BaseContactManager(ABC, metaclass=SingletonABCMeta):
@@ -133,17 +134,6 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def clear(self) -> None:
-        """
-        Remove all contacts and re-initialise the manager's storage.
-
-        Implementations must delete the underlying storage/context for contacts
-        and recreate any required system records (e.g. assistant with
-        ``contact_id == 0`` and default user with ``contact_id == 1``) so that
-        subsequent reads/writes operate against a clean slate.
-
-        The method is synchronous to allow safe use inside thread offloads in
-        async flows.
-        """
         raise NotImplementedError
 
     @abstractmethod
@@ -249,3 +239,7 @@ if TYPE_CHECKING:
     # Avoid a runtime import to prevent circular dependencies
     from .types.contact import Contact
     from ..common.tool_outcome import ToolOutcome
+
+
+# Attach centralised docstring
+BaseContactManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING

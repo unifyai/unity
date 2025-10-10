@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 
 class BaseGuidanceManager(ABC, metaclass=SingletonABCMeta):
@@ -84,16 +85,6 @@ class BaseGuidanceManager(ABC, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def clear(self) -> None:
-        """
-        Remove all guidance entries and re-initialise the manager's storage.
-
-        Implementations must delete the underlying storage/context for guidance
-        and recreate any required schema so that subsequent reads/writes operate
-        against a clean slate.
-
-        The method is synchronous to allow safe use inside thread offloads in
-        async flows.
-        """
         raise NotImplementedError
 
     # ------------------------------ Private tools -----------------------------
@@ -159,3 +150,7 @@ if TYPE_CHECKING:
     # Avoid runtime imports to prevent circular dependencies
     from .types.guidance import Guidance
     from ..common.tool_outcome import ToolOutcome
+
+
+# Attach centralised docstring
+BaseGuidanceManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING

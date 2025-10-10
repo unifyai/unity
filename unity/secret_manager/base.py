@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 
 class BaseSecretManager(ABC, metaclass=SingletonABCMeta):
@@ -64,16 +65,6 @@ class BaseSecretManager(ABC, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def clear(self) -> None:
-        """
-        Remove all secrets and re-initialise the manager's storage.
-
-        Implementations must delete the underlying storage/context for secrets
-        and recreate any required schema so that subsequent reads/writes operate
-        against a clean slate.
-
-        The method is synchronous to allow safe use inside thread offloads in
-        async flows.
-        """
         raise NotImplementedError
 
     # ------------------------------------------------------------------ #
@@ -155,3 +146,7 @@ class BaseSecretManager(ABC, metaclass=SingletonABCMeta):
 if TYPE_CHECKING:
     from .types import Secret
     from ..common.tool_outcome import ToolOutcome
+
+
+# Attach centralised docstring
+BaseSecretManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING

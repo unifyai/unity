@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 
 
 class BaseActiveTask(SteerableToolHandle, ABC):
@@ -293,12 +294,8 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def clear(self) -> None:
-        """
-        Remove all tasks and re‑initialise the scheduler's storage/context.
-
-        Implementations must delete any underlying storage/context for tasks and
-        recreate the required schema so subsequent reads/writes operate against a
-        clean slate. The method is synchronous to allow safe use inside thread
-        offloads in async flows.
-        """
         raise NotImplementedError
+
+
+# Attach centralised docstring
+BaseTaskScheduler.clear.__doc__ = CLEAR_METHOD_DOCSTRING
