@@ -149,3 +149,37 @@ def test_system_contacts_respond_to_true():
     assert user[0].respond_to is True, "User should default to respond_to=True"
 
     assert user[0].response_policy == ContactManager.USER_MANAGER_RESPONSE_POLICY
+
+
+@pytest.mark.unit
+@_handle_project
+def test_contact_manager_clear():
+    cm = ContactManager()
+
+    # Seed a couple of user contacts (ids should be > 1)
+    out1 = cm._create_contact(first_name="Alpha")
+    out2 = cm._create_contact(first_name="Beta")
+    id1 = out1["details"]["contact_id"]
+    id2 = out2["details"]["contact_id"]
+    assert id1 > 1 and id2 > 1
+
+    # Sanity: system contacts present before clear
+    a = cm._filter_contacts(filter="contact_id == 0")
+    u = cm._filter_contacts(filter="contact_id == 1")
+    assert a and u
+
+    # Execute clear
+    cm.clear()
+
+    # After clear: system contacts should be present again
+    assistants = cm._filter_contacts(filter="contact_id == 0")
+    users = cm._filter_contacts(filter="contact_id == 1")
+    assert assistants and users
+    assert assistants[0].respond_to is True
+    assert users[0].respond_to is True
+
+    # All prior user contacts should be gone
+    remaining_1 = cm._filter_contacts(filter=f"contact_id == {id1}")
+    remaining_2 = cm._filter_contacts(filter=f"contact_id == {id2}")
+    assert len(remaining_1) == 0
+    assert len(remaining_2) == 0

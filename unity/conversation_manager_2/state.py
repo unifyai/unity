@@ -6,6 +6,7 @@ from collections import deque
 import asyncio
 
 from pydantic import Field
+from unity.conversation_manager_2.actions import build_dynamic_response_models
 from unity.conversation_manager_2.new_events import *
 from unity.contact_manager.types.contact import Contact as ContactType
 from unity.transcript_manager.types.message import UNASSIGNED
@@ -135,6 +136,12 @@ class ConversationManagerState:
         self.event_broker = get_event_broker()
 
         self.summarizing = False
+
+        # dynamic response models
+        self.dynamic_response_models = None
+        print("assistant_id", self.assistant_id)
+        if self.assistant_id:
+            self.build_response_model()
 
     def update_state(self, event: Event):
         # log the event if it's loggable
@@ -302,7 +309,7 @@ class ConversationManagerState:
                     ),
                 )
             case EmailRecieved() as e:
-                contact = self.get_contact(email=e.contact)
+                contact = self.get_contact(email_address=e.contact)
                 self.push_message(
                     contact,
                     "email",
@@ -317,7 +324,7 @@ class ConversationManagerState:
                 )
             # made by assistant
             case EmailSent() as e:
-                contact = self.get_contact(email=e.contact)
+                contact = self.get_contact(email_address=e.contact)
                 self.push_message(
                     contact,
                     "email",
@@ -383,6 +390,7 @@ class ConversationManagerState:
         }
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
+        self.build_response_model()
         os.environ["UNIFY_KEY"] = payload.pop("api_key")
         os.environ["USER_ID"] = self.user_id
         os.environ["USER_NAME"] = self.user_name
@@ -394,6 +402,19 @@ class ConversationManagerState:
         os.environ["ASSISTANT_EMAIL"] = self.assistant_email
         os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
+
+    def build_response_model(self):
+        """Build dynamic response models based on available actions."""
+        self.dynamic_response_models = build_dynamic_response_models(
+            include_email=self.assistant_email not in [None, ""],
+            include_sms=self.assistant_number not in [None, ""],
+            include_call=self.assistant_number not in [None, ""],
+        )
+        available_actions = list(
+            self.dynamic_response_models["call"].model_json_schema()["$defs"].keys()
+        )
+        print("Dynamic response models built.")
+        print(f"Available actions: {available_actions}")
 
     def get_details(self) -> dict:
         return {

@@ -66,14 +66,7 @@ class FunctionManager(BaseFunctionManager):
         self._ctx = f"{read_ctx}/Functions" if read_ctx else "Functions"
 
         # Ensure functions context and fields exist deterministically
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"function_id": "int"},
-            auto_counting={"function_id": None},
-            description="List of functions, with all function details stored.",
-            fields=model_to_fields(Function),
-        )
-        self._store.ensure_context()
+        self._provision_storage()
         # Add tracing
         if traced:
             self = unify.traced(self)
@@ -250,6 +243,17 @@ class FunctionManager(BaseFunctionManager):
     #  Private helpers for persistence                                    #
     # ------------------------------------------------------------------ #
 
+    def _provision_storage(self) -> None:
+        """Ensure Functions context and schema exist deterministically."""
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"function_id": "int"},
+            auto_counting={"function_id": None},
+            description="List of functions, with all function details stored.",
+            fields=model_to_fields(Function),
+        )
+        self._store.ensure_context()
+
     def _get_log_by_function_id(self, *, function_id: int) -> unify.Log:
         logs = unify.get_logs(
             context=self._ctx,
@@ -334,6 +338,54 @@ class FunctionManager(BaseFunctionManager):
     # ------------------------------------------------------------------ #
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
+
+    def clear(self) -> None:
+        """
+        Remove all functions and re-initialise the Functions context.
+
+        Behaviour
+        ---------
+        - Deletes the underlying Functions context (best-effort).
+        - Resets any manager-local bookkeeping.
+        - Re-provisions the table schema.
+        """
+        try:
+            unify.delete_context(self._ctx)
+        except Exception:
+            pass
+
+        # Reset any manager-local counters or caches
+        try:
+            self._next_id = None
+        except Exception:
+            pass
+
+        # Force re-provisioning by clearing TableStore ensure memo for this context
+        try:
+            from ..common.context_store import TableStore as _TS  # local import
+
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._ctx))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Recreate schema
+        self._provision_storage()
+
+        # Verify visibility before proceeding
+        try:
+            import time as _time  # local import to avoid polluting module namespace
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
 
     # 1. Add / register ------------------------------------------------- #
 

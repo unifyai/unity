@@ -56,14 +56,8 @@ class SecretManager(BaseSecretManager):
         ), "read and write contexts must match for SecretManager."
         self._ctx = f"{read_ctx}/Secrets"
 
-        # Fixed schema derived from Secret model
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"name": "str"},
-            description="Key-value secrets with descriptions and embeddings.",
-            fields=model_to_fields(Secret),
-        )
-        self._store.ensure_context()
+        # Ensure storage/schema exists deterministically (idempotent)
+        self._provision_storage()
 
         # Public tools
         self._ask_tools: Dict[str, Callable] = {
@@ -85,7 +79,25 @@ class SecretManager(BaseSecretManager):
             ),
         }
 
-        # Ensure vector for description
+        # .env sync: create file if missing and backfill existing secrets as KEY=VALUE
+        try:
+            self._ensure_dotenv_synced_on_init()
+        except Exception:
+            # Best-effort – local file sync must never break construction
+            pass
+
+    # --------------------- Storage provisioning helper --------------------- #
+    def _provision_storage(self) -> None:
+        """Ensure Secrets context and schema exist and required vectors are present."""
+        # Fixed schema derived from Secret model
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"name": "str"},
+            description="Key-value secrets with descriptions and embeddings.",
+            fields=model_to_fields(Secret),
+        )
+        self._store.ensure_context()
+        # Ensure vector for description (best-effort)
         try:
             ensure_vector_column(
                 self._ctx,
@@ -96,11 +108,46 @@ class SecretManager(BaseSecretManager):
         except Exception:
             pass
 
-        # .env sync: create file if missing and backfill existing secrets as KEY=VALUE
+    def clear(self) -> None:
+        """
+        Remove all secrets and re-initialise the Secrets context.
+
+        Behaviour
+        ---------
+        - Deletes the underlying Secrets context (best-effort).
+        - Re-provisions the table schema and vector columns.
+        """
         try:
-            self._ensure_dotenv_synced_on_init()
+            unify.delete_context(self._ctx)
         except Exception:
-            # Best-effort – local file sync must never break construction
+            # Proceed even if deletion fails (context may already be absent)
+            pass
+
+        # Force re-provisioning even if previously ensured
+        try:
+            from ..common.context_store import TableStore as _TS  # local import
+
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._ctx))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Re-create schema and vectors
+        self._provision_storage()
+
+        # Verify the context is visible before attempting reads
+        try:
+            import time as _time  # local import
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
             pass
 
     # --------------------- Internal helpers (LLM client/policies) --------------------- #
@@ -109,7 +156,7 @@ class SecretManager(BaseSecretManager):
         return unify.AsyncUnify(
             model,
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             reasoning_effort="high",
             service_tier="priority",
         )

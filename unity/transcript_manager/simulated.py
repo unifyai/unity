@@ -286,3 +286,27 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         "arguments within the same conversation. Prefer reusing prior results and "
         "compose the final answer once sufficient information has been gathered."
     )
+
+    def clear(self) -> None:
+        """
+        Reset simulated state for transcripts.
+
+        The simulated manager has no backing datastore; re-running the
+        constructor in-place provides a clean slate analogous to the real
+        manager's clear() behaviour.
+        """
+        type(self).__init__(
+            self,
+            description=getattr(
+                self,
+                "_description",
+                "nothing fixed, make up some imaginary scenario",
+            ),
+            log_events=getattr(self, "_log_events", False),
+            rolling_summary_in_prompts=getattr(
+                self,
+                "_rolling_summary_in_prompts",
+                True,
+            ),
+            simulation_guidance=getattr(self, "_simulation_guidance", None),
+        )

@@ -87,3 +87,33 @@ def test_update_guidance_images_validation():
 
     with pytest.raises(ValueError):
         gm._update_guidance(guidance_id=gid, images={"bad": 1})
+
+
+@pytest.mark.unit
+@_handle_project
+def test_guidance_manager_clear():
+    gm = GuidanceManager()
+
+    # Seed a couple of guidance entries
+    out1 = gm._add_guidance(title="Alpha", content="First entry")
+    out2 = gm._add_guidance(title="Beta", content="Second entry")
+    gid1 = out1["details"]["guidance_id"]
+    gid2 = out2["details"]["guidance_id"]
+
+    # Sanity: entries present before clear
+    assert gm._filter(filter=f"guidance_id == {gid1}")
+    assert gm._filter(filter=f"guidance_id == {gid2}")
+
+    # Execute clear
+    gm.clear()
+
+    # After clear: schema should be present again
+    cols = gm._list_columns()
+    for key in ("guidance_id", "title", "content", "images"):
+        assert key in cols
+
+    # All prior guidance entries should be gone
+    remaining_1 = gm._filter(filter=f"guidance_id == {gid1}")
+    remaining_2 = gm._filter(filter=f"guidance_id == {gid2}")
+    assert len(remaining_1) == 0
+    assert len(remaining_2) == 0

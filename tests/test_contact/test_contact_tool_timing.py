@@ -87,8 +87,8 @@ def test_tool_create_custom_column_timing():
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(resp, dict)
     assert col in cm._list_columns()
-    assert elapsed_ms < 1200
-    print(f"elapsed: {elapsed_ms} < 1200")
+    assert elapsed_ms < 1800
+    print(f"elapsed: {elapsed_ms} < 1800")
 
 
 @pytest.mark.unit

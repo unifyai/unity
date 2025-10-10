@@ -49,6 +49,10 @@ tiktoken>=0.11.0
 docling>=2.49.0
 spacy>=3.8.7
 
+# SpaCy language model (required by DoclingParser)
+# Pinned to 3.8.x to match spaCy>=3.8.7
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+
 # Uncomment this based on your OS
 # # Needed for Python Word COM automation (Windows only)
 # pywin32>=306; platform_system == "Windows"

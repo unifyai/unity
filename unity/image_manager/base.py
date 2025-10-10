@@ -64,6 +64,20 @@ class BaseImageManager(ABC):
         set ``timestamp``, ``caption``, and/or ``data``. Returns updated ids.
         """
 
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        Remove all images and re-initialise the manager's storage.
+
+        Implementations must delete the underlying storage/context for images
+        and recreate any required schema so subsequent reads/writes operate
+        against a clean slate.
+
+        The method is synchronous to allow safe use inside thread offloads in
+        async flows.
+        """
+        raise NotImplementedError
+
 
 if TYPE_CHECKING:
     # Avoid runtime imports to prevent circular dependencies

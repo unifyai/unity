@@ -132,6 +132,21 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         """
 
     @abstractmethod
+    def clear(self) -> None:
+        """
+        Remove all contacts and re-initialise the manager's storage.
+
+        Implementations must delete the underlying storage/context for contacts
+        and recreate any required system records (e.g. assistant with
+        ``contact_id == 0`` and default user with ``contact_id == 1``) so that
+        subsequent reads/writes operate against a clean slate.
+
+        The method is synchronous to allow safe use inside thread offloads in
+        async flows.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def _filter_contacts(
         self,
         *,

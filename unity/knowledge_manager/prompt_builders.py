@@ -775,10 +775,26 @@ def build_ask_prompt(
         """,
     ).strip()
 
+    # Early exit policy for mutation-intent requests reaching ask()/retrieve
+    mutation_exit_block = textwrap.dedent(
+        """
+        Early exit on mutation requests
+        ------------------------------
+        • If the incoming request asks to create, update, delete, rename, ingest, transform, refactor, or otherwise mutate knowledge/tables, EXIT IMMEDIATELY.
+        • Do not call any tools. Do not propose steps. Do not ask questions.
+        • Return exactly ONE short sentence that:
+          - clearly states this ask/retrieve channel is read‑only and cannot make changes;
+          - avoids naming specific mutation tools or methods;
+          - may generically note that a separate mutation/write request is required;
+          - may optionally add that you can answer questions about existing data only.
+        """,
+    ).strip()
+
     parts: list[str] = [
         activity_block,
         instructions_block,
         clar_sentence_ask,
+        mutation_exit_block,
         clar_section,
         "",
         usage_examples,

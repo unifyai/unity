@@ -101,3 +101,51 @@ def test_get_images_order_and_raw():
     raw1 = handles[1].raw()
     assert raw0 == base64.b64decode(PNG_BLUE_B64)
     assert raw1 == base64.b64decode(PNG_RED_B64)
+
+
+@pytest.mark.unit
+@_handle_project
+def test_image_manager_clear():
+    im = ImageManager()
+
+    # Seed a couple of images
+    ids = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "alpha",
+                "data": PNG_RED_B64,
+            },
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "beta",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+    )
+    id1, id2 = ids
+    assert id1 != id2
+
+    # Sanity: present before clear
+    assert im.filter_images(filter=f"image_id == {id1}")
+    assert im.filter_images(filter=f"image_id == {id2}")
+
+    # Execute clear
+    im.clear()
+
+    # After clear: prior images should be gone
+    assert len(im.filter_images(filter=f"image_id == {id1}")) == 0
+    assert len(im.filter_images(filter=f"image_id == {id2}")) == 0
+
+    # Re-provisioning works: can add a new image
+    [new_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "after clear",
+                "data": PNG_RED_B64,
+            },
+        ],
+    )
+    row = im.filter_images(filter=f"image_id == {new_id}")
+    assert row and row[0].caption == "after clear"

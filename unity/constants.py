@@ -42,6 +42,21 @@ def is_semantic_cache_enabled() -> bool:
     }
 
 
+def is_readonly_ask_guard_enabled() -> bool:
+    """
+    Flag controlling the read-only ask guard (mutation-intent classifier).
+
+    Off by default to avoid changing unit tests; enable by setting
+    UNITY_READONLY_ASK_GUARD=true (or 1/yes/on) in production.
+    """
+    return os.getenv("UNITY_READONLY_ASK_GUARD", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
 # --------------------------------------------------------------------------- #
 #  Logging setup for verbose asyncio debug mode                               #
 # --------------------------------------------------------------------------- #

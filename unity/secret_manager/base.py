@@ -62,6 +62,20 @@ class BaseSecretManager(ABC, metaclass=SingletonABCMeta):
           messages must use `${name}` placeholders only.
         """
 
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        Remove all secrets and re-initialise the manager's storage.
+
+        Implementations must delete the underlying storage/context for secrets
+        and recreate any required schema so that subsequent reads/writes operate
+        against a clean slate.
+
+        The method is synchronous to allow safe use inside thread offloads in
+        async flows.
+        """
+        raise NotImplementedError
+
     # ------------------------------------------------------------------ #
     # Private helpers that concrete managers must implement              #
     # ------------------------------------------------------------------ #

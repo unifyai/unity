@@ -173,6 +173,38 @@ def test_search_functions_filtering_across_columns():
     hits = fm.search_functions(filter="name[0:2] == 'sq'")
     assert {h["name"] for h in hits} == {"square"}
 
+
+# --------------------------------------------------------------------------- #
+#  8.  clear                                                                  #
+# --------------------------------------------------------------------------- #
+
+
+@_handle_project
+@pytest.mark.unit
+def test_function_manager_clear():
+    fm = FunctionManager()
+
+    # Seed a couple of functions
+    fm.add_functions(implementations="def alpha():\n    return 1\n")
+    fm.add_functions(implementations="def beta():\n    return 2\n")
+
+    listing = fm.list_functions()
+    assert set(listing.keys()) == {"alpha", "beta"}
+    ids = {listing["alpha"]["function_id"], listing["beta"]["function_id"]}
+    assert all(isinstance(x, int) for x in ids)
+
+    # Execute clear
+    fm.clear()
+
+    # After clear: no functions should remain
+    assert fm.list_functions() == {}
+
+    # New additions should work against a clean slate (ids reset)
+    fm.add_functions(implementations="def gamma():\n    return 3\n")
+    post = fm.list_functions()
+    assert set(post.keys()) == {"gamma"}
+    assert post["gamma"]["function_id"] == 0
+
     # filter by implementation contents (allowed column)
     hits = fm.search_functions(filter="'return x * x' in implementation")
     assert {h["name"] for h in hits} == {"square"}

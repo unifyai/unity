@@ -244,3 +244,17 @@ class BaseFunctionManager(ABC, metaclass=SingletonABCMeta):
             field (``float``) representing the similarity (lower distance or
             higher similarity depending on implementation).
         """
+
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        Remove all functions and re-initialise the manager's storage.
+
+        Implementations must delete the underlying storage/context for functions
+        and recreate any required structures so that subsequent reads/writes
+        operate against a clean slate.
+
+        The method is synchronous to allow safe use inside thread offloads in
+        async flows.
+        """
+        raise NotImplementedError

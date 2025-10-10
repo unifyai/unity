@@ -328,3 +328,50 @@ def test_metadata_private_column_roundtrip():
     msgs = tm._filter_messages(filter=f"exchange_id == {unique_exchange}")
     assert len(msgs) == 1
     assert getattr(msgs[0], "_metadata", None) is None
+
+
+@pytest.mark.unit
+@_handle_project
+def test_transcript_manager_clear():
+    tm = TranscriptManager()
+
+    # Seed a couple of messages (distinct exchange_ids)
+    tm.log_messages(
+        Message(
+            medium="email",
+            sender_id=0,
+            receiver_ids=[1],
+            timestamp=datetime.now(UTC),
+            content="Alpha",
+            exchange_id=1001,
+        ),
+    )
+    tm.log_messages(
+        Message(
+            medium="sms_message",
+            sender_id=1,
+            receiver_ids=[0],
+            timestamp=datetime.now(UTC),
+            content="Beta",
+            exchange_id=1002,
+        ),
+    )
+    tm.join_published()
+
+    # Sanity: messages exist before clear
+    pre = tm._filter_messages()
+    assert len(pre) >= 2
+
+    # Execute clear
+    tm.clear()
+
+    # After clear: contexts should exist again and private column present
+    fields_transcripts = unify.get_fields(context=tm._transcripts_ctx)
+    assert "_metadata" in fields_transcripts
+
+    fields_exchanges = unify.get_fields(context=tm._exchanges_ctx)
+    assert "exchange_id" in fields_exchanges
+
+    # Prior messages should be gone
+    post = tm._filter_messages()
+    assert len(post) == 0

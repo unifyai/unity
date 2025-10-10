@@ -34,6 +34,8 @@ from ..common.semantic_search import (
     backfill_rows,
 )
 from ..constants import is_semantic_cache_enabled
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 class ContactManager(BaseContactManager):
@@ -82,15 +84,6 @@ class ContactManager(BaseContactManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
         self._ctx = f"{read_ctx}/Contacts"
-        # Ensure context/fields exist deterministically (idempotent)
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"contact_id": "int"},
-            auto_counting={"contact_id": None},
-            description="List of contacts, with all contact details stored.",
-            fields=model_to_fields(Contact),
-        )
-        self._store.ensure_context()
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("contact_id",))
@@ -137,16 +130,8 @@ class ContactManager(BaseContactManager):
         # still returning custom fields commonly used right after creation/update.
         self._known_custom_fields: set[str] = set()
 
-        # Prefill known custom fields once at construction to include any preexisting
-        # non-private columns without an extra lookup per tool call.
-        try:
-            existing_cols = self._get_columns()
-            for col in existing_cols:
-                if col not in self._REQUIRED_COLUMNS and not str(col).startswith("_"):
-                    self._known_custom_fields.add(col)
-        except Exception:
-            # Best-effort only; tools fall back safely
-            pass
+        # Ensure context/schema and prefill known custom fields
+        self._provision_storage()
 
         # ── ensure an assistant contact with id 0 exists and is up-to-date ──
         self._sync_assistant_contact()
@@ -798,6 +783,9 @@ class ContactManager(BaseContactManager):
             tool_policy=tool_policy_fn,
             preprocess_msgs=inject_broader_context,
             semantic_cache=use_semantic_cache,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         if _return_reasoning_steps:
@@ -1018,8 +1006,93 @@ class ContactManager(BaseContactManager):
             return 0
         return int(ret)
 
+    def clear(self) -> None:
+        """
+        Remove all contacts and re-initialise the Contacts context.
+
+        Behaviour
+        ---------
+        - Deletes the underlying Contacts context (best-effort).
+        - Clears the process-local DataStore cache for this context.
+        - Resets any known custom-field bookkeeping.
+        - Re-provisions the table schema and re-creates system contacts
+          (assistant id==0 and default user id==1).
+        """
+        try:
+            # Drop the entire contacts table for this active assistant context
+            unify.delete_context(self._ctx)
+        except Exception:
+            # Proceed even if deletion fails (context may already be absent)
+            pass
+
+        # Clear local cache and custom-field state so subsequent reads/writes
+        # operate against a clean slate
+        try:
+            self._data_store.clear()
+        except Exception:
+            pass
+
+        try:
+            # Reset observed custom fields for this manager instance
+            self._known_custom_fields = set()
+        except Exception:
+            pass
+
+        # Ensure the schema exists again via shared provisioning helper
+        try:
+            # Remove any previous ensure memo and force re-provisioning
+            from ..common.context_store import TableStore as _TS  # local import
+
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._ctx))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        self._provision_storage()
+
+        # Verify the context is visible before attempting reads
+        try:
+            import time as _time  # local import to avoid polluting module namespace
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
+        # Recreate assistant and default user contacts (id 0 and 1)
+        self._sync_assistant_contact()
+        self._sync_user_contact()
+
     # Private #
     # --------#
+
+    def _provision_storage(self) -> None:
+        """Ensure Contacts context, schema, and custom-field bookkeeping exist."""
+        # Ensure context/fields exist deterministically (idempotent)
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"contact_id": "int"},
+            auto_counting={"contact_id": None},
+            description="List of contacts, with all contact details stored.",
+            fields=model_to_fields(Contact),
+        )
+        self._store.ensure_context()
+
+        # Prefill known custom fields once to include any preexisting non-private columns
+        try:
+            existing_cols = self._get_columns()
+            for col in existing_cols:
+                if col not in self._REQUIRED_COLUMNS and not str(col).startswith("_"):
+                    self._known_custom_fields.add(col)
+        except Exception:
+            # Best-effort only; tools fall back safely
+            pass
 
     def _sanitize_custom_columns(
         self,
@@ -1830,7 +1903,7 @@ class ContactManager(BaseContactManager):
         return unify.AsyncUnify(
             model,
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             reasoning_effort="high",
             service_tier="priority",
         )

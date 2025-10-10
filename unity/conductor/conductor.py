@@ -290,7 +290,7 @@ class Conductor:
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             reasoning_effort="high",
             service_tier="priority",
         )
@@ -382,7 +382,7 @@ class Conductor:
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             reasoning_effort="high",
             service_tier="priority",
         )

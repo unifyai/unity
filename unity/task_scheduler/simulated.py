@@ -264,6 +264,49 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             f"Back-story: {self._description}",
         )
 
+    def clear(self) -> None:
+        """
+        Reset simulated scheduler state.
+
+        Since this simulated scheduler has no backing storage, clearing simply
+        resets the shared LLM state and re-applies the system message so future
+        interactions start from a clean slate.
+        """
+        try:
+            # Reset the LLM's internal state (best-effort)
+            self._llm.reset_state()
+        except Exception:
+            pass
+        # Rebuild and set the system message again to mirror initialisation
+        from .types.task import Task as _Task  # local import to avoid cycles
+
+        fake_task_columns = [
+            {k: str(v.annotation)} for k, v in _Task.model_fields.items()
+        ]
+        ask_tools = mirror_task_scheduler_tools("ask")
+        update_tools = mirror_task_scheduler_tools("update")
+        ask_msg = build_ask_prompt(
+            ask_tools,
+            num_tasks=10,
+            columns=fake_task_columns,
+            include_activity=self._rolling_summary_in_prompts,
+        )
+        update_msg = build_update_prompt(
+            update_tools,
+            num_tasks=10,
+            columns=fake_task_columns,
+            include_activity=self._rolling_summary_in_prompts,
+        )
+        self._llm.set_system_message(
+            "You are a *simulated* task-list manager. "
+            "No real database exists; invent plausible tasks but remain internally "
+            "consistent across turns.\n\n"
+            "As reference, here are the *real* TaskScheduler prompts:\n\n"
+            f"ASK system message:\n{ask_msg}\n\n"
+            f"UPDATE system message:\n{update_msg}\n\n"
+            f"Back-story: {self._description}",
+        )
+
     # ------------------------------------------------------------------ #
     #  ask                                                               #
     # ------------------------------------------------------------------ #

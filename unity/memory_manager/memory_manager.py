@@ -825,7 +825,7 @@ class MemoryManager(BaseMemoryManager):
     async def reset(self) -> None:  # noqa: D401 – imperative name
         """Reset the event bus and re-register message-related callbacks."""
 
-        EVENT_BUS.reset()
+        EVENT_BUS.clear()
 
         if self._register_update_callbacks:
             await asyncio.gather(

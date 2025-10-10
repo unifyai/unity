@@ -38,6 +38,8 @@ from ..events.event_bus import EVENT_BUS, Event
 from ..common.grouping_helpers import maybe_group_rows
 from ..common.tool_spec import read_only
 from ..constants import is_semantic_cache_enabled
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -174,6 +176,12 @@ class KnowledgeManager(BaseKnowledgeManager):
                 # Best-effort; KnowledgeManager can still function without immediate Contacts access
                 pass
 
+        # Ensure any additional storage requirements are provisioned
+        try:
+            self._provision_storage()
+        except Exception:
+            pass
+
     # Helpers #
     # --------#
 
@@ -291,7 +299,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             reasoning_effort="high",
             service_tier="priority",
         )
@@ -426,7 +434,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             reasoning_effort="high",
             service_tier="priority",
         )
@@ -564,7 +572,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         client = unify.AsyncUnify(
             "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             reasoning_effort="high",
             service_tier="priority",
         )
@@ -654,6 +662,9 @@ class KnowledgeManager(BaseKnowledgeManager):
             preprocess_msgs=inject_broader_context,
             response_format=response_format,
             semantic_cache=use_semantic_cache,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         # Optionally wrap .result() to expose reasoning
@@ -689,8 +700,50 @@ class KnowledgeManager(BaseKnowledgeManager):
         ret = unify.get_fields(context=self._ctx_for_table(table))
         return {k: v["data_type"] for k, v in ret.items()}
 
+    def clear(self) -> None:
+        """
+        Remove all knowledge tables and re-initialise optional linked storage.
+
+        Behaviour
+        ---------
+        - Deletes every context under this manager's namespace ("self._ctx/*").
+        - Re-provisions optional linked storage (e.g. root-level Contacts).
+        """
+        try:
+            km_prefix = f"{self._ctx}/"
+            ctxs = unify.get_contexts(prefix=km_prefix)
+            # Delete all child contexts (tables) under the Knowledge namespace
+            for full_ctx in list(ctxs.keys()):
+                try:
+                    unify.delete_context(full_ctx)
+                except Exception:
+                    # Best-effort delete per context
+                    pass
+        except Exception:
+            # Proceed even if listing/deleting fails
+            pass
+
+        # Re-provision any required/linked storage
+        try:
+            self._provision_storage()
+        except Exception:
+            pass
+
     # Private #
     # --------#
+
+    def _provision_storage(self) -> None:
+        """Ensure optional linked storage exists (e.g. root-level Contacts)."""
+        if self._contacts_ctx is not None:
+            try:
+                TableStore(
+                    self._contacts_ctx,
+                    unique_keys={"contact_id": "int"},
+                    auto_counting={"contact_id": None},
+                ).ensure_context()
+            except Exception:
+                # Best-effort; absence of Contacts must not break KM initialisation
+                pass
 
     # Tables
 

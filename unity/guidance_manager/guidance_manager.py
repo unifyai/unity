@@ -32,7 +32,7 @@ from ..common.semantic_search import (
 )
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
-from ..image_manager.image_manager import ImageManager, ImageHandle
+from ..image_manager.image_manager import ImageManager
 from ..image_manager.utils import substring_from_span
 from ..common.embed_utils import list_private_fields
 
@@ -60,18 +60,6 @@ class GuidanceManager(BaseGuidanceManager):
         ), "read and write contexts must be the same when instantiating a GuidanceManager."
 
         self._ctx = f"{read_ctx}/Guidance" if read_ctx else "Guidance"
-
-        # Ensure context/fields exist deterministically
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"guidance_id": "int"},
-            auto_counting={"guidance_id": None},
-            description=(
-                "Table of distilled guidance entries from transcripts and images."
-            ),
-            fields=model_to_fields(Guidance),
-        )
-        self._store.ensure_context()
 
         # Built-in fields derived from Guidance model
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Guidance.model_fields.keys())
@@ -113,13 +101,9 @@ class GuidanceManager(BaseGuidanceManager):
 
         # Track custom fields seen/created during lifetime
         self._known_custom_fields: set[str] = set()
-        try:
-            existing_cols = self._get_columns()
-            for col in existing_cols:
-                if col not in self._REQUIRED_COLUMNS and not str(col).startswith("_"):
-                    self._known_custom_fields.add(col)
-        except Exception:
-            pass
+
+        # Ensure context/schema and prefill known custom fields
+        self._provision_storage()
 
     # ------------------------------- Public API -------------------------------
     @functools.wraps(BaseGuidanceManager.ask, updated=())
@@ -311,14 +295,88 @@ class GuidanceManager(BaseGuidanceManager):
             return 0
         return int(ret)
 
+    def clear(self) -> None:
+        """
+        Remove all guidance entries and re-initialise the Guidance context.
+
+        Behaviour
+        ---------
+        - Deletes the underlying Guidance context (best-effort).
+        - Resets any known custom-field bookkeeping for this manager instance.
+        - Re-provisions the table schema so subsequent reads/writes operate against a clean slate.
+        """
+        try:
+            # Drop the entire guidance table for this active assistant context
+            unify.delete_context(self._ctx)
+        except Exception:
+            # Proceed even if deletion fails (context may already be absent)
+            pass
+
+        # Reset observed custom fields for this manager instance
+        try:
+            self._known_custom_fields = set()
+        except Exception:
+            pass
+
+        # Ensure the schema exists again via shared provisioning helper
+        try:
+            # Remove any previous ensure memo and force re-provisioning
+            from ..common.context_store import TableStore as _TS  # local import
+
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._ctx))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        self._provision_storage()
+
+        # Verify the context is visible before attempting reads
+        try:
+            import time as _time  # local import to avoid polluting module namespace
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
     def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
         return unify.AsyncUnify(
             model,
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             reasoning_effort="high",
             service_tier="priority",
         )
+
+    def _provision_storage(self) -> None:
+        """Ensure Guidance context, schema, and custom-field bookkeeping exist."""
+        # Ensure context/fields exist deterministically (idempotent)
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"guidance_id": "int"},
+            auto_counting={"guidance_id": None},
+            description=(
+                "Table of distilled guidance entries from transcripts and images."
+            ),
+            fields=model_to_fields(Guidance),
+        )
+        self._store.ensure_context()
+
+        # Prefill known custom fields once to include any preexisting non-private columns
+        try:
+            existing_cols = self._get_columns()
+            for col in existing_cols:
+                if col not in self._REQUIRED_COLUMNS and not str(col).startswith("_"):
+                    self._known_custom_fields.add(col)
+        except Exception:
+            # Best-effort only; tools fall back safely
+            pass
 
     def _get_columns(self) -> Dict[str, str]:
         return self._store.get_columns()
@@ -425,8 +483,31 @@ class GuidanceManager(BaseGuidanceManager):
             )
         return out
 
-    @functools.wraps(ImageHandle.ask, assigned=("__doc__",), updated=())
     async def _ask_image(self, *, image_id: int, question: str) -> str:
+        """Ask a one‑off question about a specific stored image.
+
+        Mirrors :pyfunc:`ImageHandle.ask` behaviour but requires an explicit
+        ``image_id`` so the correct image is resolved first. Sends the image to
+        a vision‑capable model as an image block and returns a textual answer only.
+
+        Parameters
+        ----------
+        image_id : int
+            Identifier of the image to analyse. If the underlying ``data`` is a
+            Google Cloud Storage URL, a short‑lived signed URL is generated to
+            grant access to the model; otherwise base64 is delivered via a
+            ``data:image/...;base64,`` URL.
+        question : str
+            Natural‑language question to ask about the image.
+
+        Returns
+        -------
+        str
+            Text answer from the vision model. This does not persist visual
+            context across turns; use ``attach_image_to_context`` or
+            ``attach_guidance_images_to_context`` when follow‑ups should keep
+            seeing the image(s).
+        """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
@@ -437,13 +518,33 @@ class GuidanceManager(BaseGuidanceManager):
             answer = str(answer)
         return answer
 
-    @functools.wraps(ImageHandle.raw, assigned=("__doc__",), updated=())
     def _attach_image_to_context(
         self,
         *,
         image_id: int,
         note: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Attach a single image (by id) as raw base64 for persistent context.
+
+        Behaviour mirrors :pyfunc:`ImageHandle.raw` for source resolution:
+        - If the stored ``data`` is a GCS URL (``gs://`` or
+          ``https://storage.googleapis.com/...``), bytes are downloaded
+          (raising if inaccessible).
+        - Otherwise, ``data`` is expected to be base64 and is decoded to bytes.
+
+        Parameters
+        ----------
+        image_id : int
+            Identifier of the image to attach.
+        note : str | None
+            Optional note describing why the image is attached.
+
+        Returns
+        -------
+        dict
+            {"note": str, "image": base64_string} where ``image`` contains the
+            raw image bytes encoded as base64 (PNG or JPEG).
+        """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
@@ -483,6 +584,9 @@ class GuidanceManager(BaseGuidanceManager):
         -------
         dict
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
+            Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, the
+            list of ``spans`` that referenced this image in the guidance text, and
+            derived ``substrings`` from the guidance content for alignment.
         """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:

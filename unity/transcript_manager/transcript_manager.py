@@ -41,10 +41,12 @@ from ..common.semantic_search import (
 )
 import json as _json
 from ..events.event_bus import EVENT_BUS, Event
-from ..image_manager.image_manager import ImageManager, ImageHandle
+from ..image_manager.image_manager import ImageManager
 from ..image_manager.utils import substring_from_span
 from ..common.tool_spec import read_only
 from ..constants import is_semantic_cache_enabled
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -125,59 +127,10 @@ class TranscriptManager(BaseTranscriptManager):
             self._transcripts_ctx = f"{read_ctx}/Transcripts"
         else:
             self._transcripts_ctx = "Transcripts"
-        # Ensure transcripts context and fields deterministically
-        self._store = TableStore(
-            self._transcripts_ctx,
-            unique_keys={"message_id": "int"},
-            auto_counting={"message_id": None, "exchange_id": None},
-            description="List of *all* timestamped messages sent between *all* contacts across *all* mediums.",
-            fields=model_to_fields(Message),
-        )
-        self._store.ensure_context()
-
-        # Exchanges context: one row per exchange_id with optional metadata
         if read_ctx:
             self._exchanges_ctx = f"{read_ctx}/Exchanges"
         else:
             self._exchanges_ctx = "Exchanges"
-        self._exchanges_store = TableStore(
-            self._exchanges_ctx,
-            unique_keys={"exchange_id": "int"},
-            description="One row per conversation exchange/thread with optional metadata.",
-            fields={
-                "exchange_id": {
-                    "type": "int",
-                    "description": "Unique identifier for the exchange/thread",
-                },
-                "metadata": {
-                    "type": "dict",
-                    "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
-                },
-                "medium": {
-                    "type": "string",
-                    "description": "Communication medium for the exchange (same semantics as Message.medium)",
-                },
-            },
-        )
-        self._exchanges_store.ensure_context()
-
-        # Ensure a private `_metadata` column exists (dict, mutable) irrespective of context creation path
-        try:
-            existing_fields = unify.get_fields(context=self._transcripts_ctx)
-            if "_metadata" not in existing_fields:
-                unify.create_fields(
-                    {
-                        "_metadata": {
-                            "type": "dict",
-                            "mutable": True,
-                            "description": "Internal, non user-facing metadata for infrastructure.",
-                        },
-                    },
-                    context=self._transcripts_ctx,
-                )
-        except Exception:
-            # Non-fatal; logging will still work without the helper if backend creates implicitly
-            pass
 
         # Image support: lazy-safe image manager and image-aware tools
         self._image_manager: ImageManager = ImageManager()
@@ -196,16 +149,9 @@ class TranscriptManager(BaseTranscriptManager):
         # leaving the actual network I/O to an internal worker thread.
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
-        # Cache transcript columns for this singleton instance to avoid repeat
-        # backend reads during tools like `_list_columns`. This cache is
-        # populated lazily on first use, but we attempt a best-effort prefetch
-        # here so the first tool call does not pay the network cost.
+        # Initialise cache then provision storage (contexts, fields, columns)
         self._columns_cache_all: Dict[str, str] = {}
-        try:
-            self._columns_cache_all = dict(self._store.get_columns())
-        except Exception:
-            # Defer to lazy population if prefetch fails
-            self._columns_cache_all = {}
+        self._provision_storage()
 
     @classmethod
     def _get_logger(cls) -> unify.AsyncLoggerManager:
@@ -219,7 +165,7 @@ class TranscriptManager(BaseTranscriptManager):
         return unify.AsyncUnify(
             model,
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             reasoning_effort="high",
             service_tier="priority",
         )
@@ -332,6 +278,9 @@ class TranscriptManager(BaseTranscriptManager):
             preprocess_msgs=inject_broader_context,
             tool_policy=effective_tool_policy,
             semantic_cache=use_semantic_cache,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         # ── 4.  Optional reasoning exposure  ───────────────────────────────
@@ -1442,8 +1391,32 @@ class TranscriptManager(BaseTranscriptManager):
         return out
 
     @read_only
-    @functools.wraps(ImageHandle.ask, assigned=("__doc__",), updated=())
     async def _ask_image(self, *, image_id: int, question: str) -> str:
+        """Ask a one‑off question about a specific stored image.
+
+        This helper mirrors the behaviour of :pyfunc:`ImageHandle.ask` but is
+        exposed as a TranscriptManager tool that requires an explicit
+        ``image_id``. It sends the underlying image to a vision‑capable model as
+        an image block and returns a textual answer only.
+
+        Parameters
+        ----------
+        image_id : int
+            Identifier of the image to analyse. If the image's ``data`` is a
+            Google Cloud Storage URL, a short‑lived signed URL is generated to
+            grant the model access; otherwise the stored base64 is converted to
+            a ``data:image/...;base64,`` URL.
+        question : str
+            Natural‑language question to ask about the image.
+
+        Returns
+        -------
+        str
+            Text answer from the vision model. This call does not persist the
+            visual context for follow‑up turns; prefer
+            ``attach_image_to_context``/``attach_message_images_to_context``
+            when subsequent steps should keep seeing the image(s).
+        """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
@@ -1454,13 +1427,37 @@ class TranscriptManager(BaseTranscriptManager):
             answer = str(answer)
         return answer
 
-    @functools.wraps(ImageHandle.raw, assigned=("__doc__",), updated=())
     def _attach_image_to_context(
         self,
         *,
         image_id: int,
         note: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Attach a single image (by id) as raw base64 for persistent context.
+
+        Loads the image bytes for ``image_id`` and returns a payload suitable
+        for inclusion as an image block in the current tool‑use loop. Behaviour
+        aligns with :pyfunc:`ImageHandle.raw` for source resolution:
+        - If ``data`` is a GCS URL (``gs://`` or
+          ``https://storage.googleapis.com/...``), the bytes are downloaded
+          (raising if not accessible).
+        - Otherwise, ``data`` is expected to be base64 and is decoded to bytes.
+
+        Parameters
+        ----------
+        image_id : int
+            Identifier of the image to attach.
+        note : str | None
+            Optional human‑readable note describing why the image is attached.
+
+        Returns
+        -------
+        dict
+            A payload of the form:
+            {"note": str, "image": base64_string}
+            where ``image`` is the raw bytes of the image encoded as base64
+            (PNG or JPEG). Downstream should render this as an image block.
+        """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
@@ -1500,6 +1497,9 @@ class TranscriptManager(BaseTranscriptManager):
         -------
         dict
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
+            Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, the
+            list of ``spans`` that referenced this image in the message, and the
+            derived ``substrings`` from the message content for alignment.
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
@@ -1623,6 +1623,140 @@ class TranscriptManager(BaseTranscriptManager):
         if ret is None:
             return 0
         return int(ret)
+
+    def clear(self) -> None:
+        """
+        Remove all transcripts and exchanges, then re-initialise contexts.
+
+        Behaviour
+        ---------
+        - Deletes the underlying Transcripts and Exchanges contexts (best-effort).
+        - Resets cached column metadata for this manager instance.
+        - Re-provisions the table schemas and re-creates required helper columns
+          (e.g., the private "_metadata" column on Transcripts).
+        """
+
+        # Best-effort deletion of both contexts
+        try:
+            unify.delete_context(self._transcripts_ctx)
+        except Exception:
+            pass
+        try:
+            unify.delete_context(self._exchanges_ctx)
+        except Exception:
+            pass
+
+        # Reset local cached state
+        try:
+            self._columns_cache_all = {}
+        except Exception:
+            pass
+
+        # Drop ensure memo then re-provision via shared helper
+        try:
+            from ..common.context_store import TableStore as _TS  # local import
+
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._transcripts_ctx))
+            except Exception:
+                pass
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._exchanges_ctx))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Recreate contexts and required columns via shared helper
+        self._provision_storage()
+
+        # Verify both contexts become visible before returning
+        try:
+            import time as _time  # local import
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._transcripts_ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
+        try:
+            import time as _time  # local import
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._exchanges_ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
+    #  Internal provisioning helper                                      #
+    # ------------------------------------------------------------------ #
+    def _provision_storage(self) -> None:
+        """Ensure contexts, fields, helper columns and local caches exist."""
+        # Ensure transcripts context and fields deterministically
+        self._store = TableStore(
+            self._transcripts_ctx,
+            unique_keys={"message_id": "int"},
+            auto_counting={"message_id": None, "exchange_id": None},
+            description=(
+                "List of *all* timestamped messages sent between *all* contacts across *all* mediums."
+            ),
+            fields=model_to_fields(Message),
+        )
+        self._store.ensure_context()
+
+        # Exchanges context: one row per exchange_id with optional metadata
+        self._exchanges_store = TableStore(
+            self._exchanges_ctx,
+            unique_keys={"exchange_id": "int"},
+            description="One row per conversation exchange/thread with optional metadata.",
+            fields={
+                "exchange_id": {
+                    "type": "int",
+                    "description": "Unique identifier for the exchange/thread",
+                },
+                "metadata": {
+                    "type": "dict",
+                    "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
+                },
+                "medium": {
+                    "type": "string",
+                    "description": "Communication medium for the exchange (same semantics as Message.medium)",
+                },
+            },
+        )
+        self._exchanges_store.ensure_context()
+
+        # Ensure a private `_metadata` column exists (dict, mutable)
+        try:
+            existing_fields = unify.get_fields(context=self._transcripts_ctx)
+            if "_metadata" not in existing_fields:
+                unify.create_fields(
+                    {
+                        "_metadata": {
+                            "type": "dict",
+                            "mutable": True,
+                            "description": "Internal, non user-facing metadata for infrastructure.",
+                        },
+                    },
+                    context=self._transcripts_ctx,
+                )
+        except Exception:
+            # Non-fatal; logging will still work without the helper if backend creates implicitly
+            pass
+
+        # Update columns cache best-effort
+        try:
+            self._columns_cache_all = dict(self._store.get_columns())
+        except Exception:
+            self._columns_cache_all = {}
 
     # ------------------------------------------------------------------ #
     #  Exchanges helper                                                   #

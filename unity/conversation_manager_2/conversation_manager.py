@@ -11,7 +11,6 @@ from pathlib import Path
 from unity.conversation_manager_2.debug_logger import log_job_startup, mark_job_done
 from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.actions import (
-    RESPONSES_MODEL,
     _send_sms_message_via_number,
     _send_email_via_address,
     _start_call,
@@ -61,25 +60,6 @@ class ConversationManager:
         project_name: str = "Assistants",
         stop: asyncio.Event = None,
     ):
-        # assistant details
-        self.job_name = job_name
-        self.user_id = user_id
-        self.assistant_id = assistant_id
-        self.assistant_name = assistant_name
-        self.assistant_age = assistant_age
-        self.assistant_region = assistant_region
-        self.assistant_about = assistant_about
-        self.voice_provider = voice_provider
-        self.voice_id = voice_id
-
-        # contact data
-        self.assistant_number = assistant_number
-        self.assistant_email = assistant_email
-        self.user_name = user_name
-        self.user_number = user_number
-        self.user_email = user_email
-        self.user_whatsapp_number = user_whatsapp_number
-
         # events & state(history)
         self.conv_context_length = conv_context_length
         # self.current_llm_run = None
@@ -144,7 +124,10 @@ class ConversationManager:
             phone_number=boss_contact.phone_number,
             email_address=boss_contact.email_address,
         )
-        # print(system_message)
+        print(system_message)
+
+        # Use dynamic response models (set_details must be called before run_llm)
+        response_model = self.state.dynamic_response_models[self.state.mode]
         if self.state.mode in ["call", "gmeet"]:
             print("running...")
             first_chunk = True
@@ -153,7 +136,7 @@ class ConversationManager:
                 system_message,
                 self.state.chat_history + [input_message],
                 "gpt-4.1",
-                RESPONSES_MODEL[self.state.mode],
+                response_model,
                 "phone_utterance",
             ):
                 if event["type"] == "chunk":
@@ -191,7 +174,7 @@ class ConversationManager:
                 self.openai_client,
                 system_message,
                 self.state.chat_history + [input_message],
-                response_model=RESPONSES_MODEL[self.state.mode],
+                response_model=response_model,
             )
             parsed_out = json.loads(out)
 
@@ -455,6 +438,7 @@ class ConversationManager:
         if self.state.call_start_timestamp:
             delta = datetime.now() - self.state.call_start_timestamp
             minutes, seconds = divmod(int(delta.total_seconds()), 60)
+            # ToDo: Make this MM:SS once we have explicit types working
             call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
         if "default-assistant" not in self.state.assistant_id:
             call_url = (
@@ -483,7 +467,7 @@ class ConversationManager:
         # Centralized handler for steering notifications from ConversationManagerHandle
         if isinstance(event, NotificationInjectedEvent):
             # Check if this notification is intended for this CM instance
-            if event.target_conversation_id == self.assistant_id:
+            if event.target_conversation_id == self.state.assistant_id:
                 print(f"INFO: Received steering notification: '{event.content}'")
                 await self.schedule_llm_run(delay=0.1, cancel_running=True)
             return
@@ -593,7 +577,7 @@ class ConversationManager:
 
     def cleanup(self):
         """Clean up any running call processes"""
-        print(f"Marking job {self.job_name} done")
-        mark_job_done(self.job_name)
+        print(f"Marking job {self.state.job_name} done")
+        mark_job_done(self.state.job_name)
         self.cleanup_call_proc()
         self.stop.set()

@@ -63,3 +63,24 @@ def test_to_placeholder_public_method(secret_manager_context):
     text = "Use sk-live-abc to authenticate and p@ssw0rd for the database."
     out = asyncio.get_event_loop().run_until_complete(sm.to_placeholder(text))
     assert "${api_key}" in out and "${db_password}" in out
+
+
+@pytest.mark.unit
+def test_secret_manager_clear(secret_manager_context):
+    sm = SecretManager()
+
+    # Seed a couple of secrets
+    sm._create_secret(name="alpha", value="val_a", description="A secret")
+    sm._create_secret(name="beta", value="val_b", description="B secret")
+
+    # Sanity: present before clear
+    before = sm._list_secret_keys()
+    assert "alpha" in before and "beta" in before
+
+    # Execute clear
+    sm.clear()
+
+    # After clear: storage should be re-provisioned and empty
+    after = sm._list_secret_keys()
+    assert isinstance(after, list)
+    assert len(after) == 0

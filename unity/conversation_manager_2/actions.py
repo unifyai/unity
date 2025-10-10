@@ -2,7 +2,7 @@ import os
 from typing import Literal, Optional, Union
 import asyncio
 import aiohttp
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 
 # conductor
@@ -64,21 +64,57 @@ class MakeCall(BaseModel):
     phone_number: str
 
 
-actions = Union[WaitForNextEvent, SendSMS, SendEmail, MakeCall]
+def build_dynamic_response_models(
+    include_email: bool = True,
+    include_sms: bool = True,
+    include_call: bool = True,
+):
+    """
+    Dynamically create response models with conditional actions based on available contact info.
 
+    Args:
+        include_email: Whether SendEmail action should be available
+        include_sms: Whether SendSMS action should be available
+        include_call: Whether MakeCall action should be available
 
-class ResponsePhone(BaseModel):
-    thoughts: str
-    phone_utterance: str
-    actions: Optional[list[actions]]
+    Returns:
+        dict: Response models for different modes (call, gmeet, text)
+    """
+    # Build list of available action types
+    available_actions = [AskConductor, WaitForNextEvent]  # Always available
 
+    if include_email:
+        available_actions.append(SendEmail)
+    if include_sms:
+        available_actions.append(SendSMS)
+    if include_call:
+        available_actions.append(MakeCall)
 
-class Response(BaseModel):
-    thoughts: str
-    actions: Optional[list[actions]]
+    # Create dynamic Union of available actions
+    ActionsUnion = Union[tuple(available_actions)]
 
+    # Dynamically create Response model for text mode
+    DynamicResponse = create_model(
+        "DynamicResponse",
+        thoughts=(str, ...),
+        actions=(Optional[list[ActionsUnion]], ...),
+        __base__=BaseModel,
+    )
 
-RESPONSES_MODEL = {"call": ResponsePhone, "gmeet": ResponsePhone, "text": Response}
+    # Dynamically create ResponsePhone model for call/gmeet modes
+    DynamicResponsePhone = create_model(
+        "DynamicResponsePhone",
+        thoughts=(str, ...),
+        phone_utterance=(str, ...),
+        actions=(Optional[list[ActionsUnion]], ...),
+        __base__=BaseModel,
+    )
+
+    return {
+        "call": DynamicResponsePhone,
+        "gmeet": DynamicResponsePhone,
+        "text": DynamicResponse,
+    }
 
 
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
