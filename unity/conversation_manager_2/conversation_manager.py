@@ -26,13 +26,15 @@ import redis.asyncio as redis
 from openai import AsyncOpenAI
 
 
-MAX_PENDING_EVENTS = 10
-
-
-CONV_CONTEXT_LENGTH = 50
-
 with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
     SYS = f.read()
+
+
+MAX_CONV_MANAGER_MSGS = 30
+
+# so basically, whenever the total count of a contact message > 10
+# we are going to ask the contact manager/transcript manager to provide an update rolling summary
+# we will keep the last N messages still
 
 
 class ConversationManager:
@@ -122,11 +124,13 @@ class ConversationManager:
             user_whatsapp_number=user_whatsapp_number,
         )
 
-        self.chat_history = []
+        self.chat_history = self.state.chat_history
         self.call_proc = None
+        # self.summarizing = False
 
     async def run_llm(self):
         self.state.snapshot()
+        # print(DUMMY_EVENT_BUS)
         prompt = self.state.get_state_for_llm()
         print(prompt)
         input_message = {"role": "user", "content": prompt}
@@ -140,14 +144,14 @@ class ConversationManager:
             phone_number=boss_contact.phone_number,
             email_address=boss_contact.email_address,
         )
-        print(system_message)
+        # print(system_message)
         if self.state.mode in ["call", "gmeet"]:
             print("running...")
             first_chunk = True
             async for event in stream_llm_call(
                 self.openai_client,
                 system_message,
-                self.chat_history + [input_message],
+                self.state.chat_history + [input_message],
                 "gpt-4.1",
                 RESPONSES_MODEL[self.state.mode],
                 "phone_utterance",
@@ -186,7 +190,7 @@ class ConversationManager:
             out = await llm_call(
                 self.openai_client,
                 system_message,
-                self.chat_history + [input_message],
+                self.state.chat_history + [input_message],
                 response_model=RESPONSES_MODEL[self.state.mode],
             )
             parsed_out = json.loads(out)
@@ -281,11 +285,46 @@ class ConversationManager:
                                 "app:comms:call_initiated",
                                 PhoneCallSent(contact=contact.phone_number).to_json(),
                             )
-        # obviously all three ops here should be "atomic", but that's an edge case for
+        # obviously all ops here should be "atomic", but that's an edge case for
         # another day...
         self.state.commit()
-        self.chat_history.append(input_message)
-        self.chat_history.append({"role": "assistant", "content": out})
+        self.state.chat_history.append(input_message)
+        # DUMMY_EVENT_BUS.append(LLMInput(content=input_message["content"]))
+        # event = LLMInput(content=input_message["content"])
+        # asyncio.create_task(self.publish_bus_events(event))
+        self.state.chat_history.append({"role": "assistant", "content": out})
+        # DUMMY_EVENT_BUS.append(LLMOutput(content=out))
+        event = LLMInput(content=self.state.chat_history)
+        asyncio.create_task(self.publish_bus_events(event))
+
+        print("**NUMBER OF MESSAGES **", len(self.state.chat_history))
+        if (
+            len(self.state.chat_history) >= MAX_CONV_MANAGER_MSGS
+            and not self.state.summarizing
+        ):
+            print("CLEARING CHAT HISTORY, REACHED MAX NUM")
+            # self.chat_history = []
+            # DUMMY_EVENT_BUS.append(ClearContext())
+            try:
+                event = UpdateContactRollingSummaryRequest(
+                    contacts_ids=[
+                        int(c.contact_id)
+                        for c in self.state.active_conversations.values()
+                    ],
+                    transcripts=[
+                        self.state._render_contact_threads(c)
+                        for c in self.state.active_conversations.values()
+                    ],
+                )
+                print(event)
+                asyncio.create_task(
+                    self.event_broker.publish("app:managers:input", event.to_json())
+                )
+                self.state.summarizing = True
+                print("sent")
+            except Exception as e:
+                print(e)
+                raise
 
     async def schedule_llm_run(self, delay=1, cancel_running=False):
         if self.scheduled_response and not self.scheduled_response.done():

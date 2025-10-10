@@ -9,22 +9,11 @@ from typing import Optional
 import redis.asyncio as redis
 
 import unity
+from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.events.event_bus import EVENT_BUS
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.conversation_manager_2.new_events import (
-    CreateContactInput,
-    Event,
-    GetBusEventsInput,
-    GetBusEventsOutput,
-    ManagersStartupInput,
-    LogMessageInput,
-    GetContactsInput,
-    LogMessageOutput,
-    GetContactsOutput,
-    ManagersStartupOutput,
-    PublishBusEvent,
-)
+from unity.conversation_manager_2.new_events import *
 
 
 class ManagersWorker:
@@ -49,6 +38,7 @@ class ManagersWorker:
         # Managers (initialized on startup message)
         self._contact_manager: Optional[ContactManager] = None
         self._transcript_manager: Optional[TranscriptManager] = None
+        self._memory_manager: Optional[MemoryManager] = None
 
         # State flags
         self._initialized = False
@@ -99,6 +89,8 @@ class ManagersWorker:
                         },
                     )
                 print("[ManagersWorker] Unity initialized")
+                # print("Clearing all events for clean testing")
+                # EVENT_BUS.reset()
 
                 # Assumes UNIFY_KEY is already in environment from set_details()
                 api_key = os.environ.get("UNIFY_KEY")
@@ -125,6 +117,13 @@ class ManagersWorker:
                 # 2. Initialize ContactManager and get contacts
                 print("[ManagersWorker] Initializing ContactManager...")
                 self._contact_manager = ContactManager()
+
+                # clear rolling summary
+                # contacts = self._contact_manager._filter_contacts()
+                # print("got contacts", contacts)
+                # for c in contacts:
+                #     self._contact_manager._update_contact(contact_id=c.contact_id, rolling_summary="")
+
                 contacts_task = asyncio.create_task(self._get_contacts())
                 await asyncio.gather(bus_events_task, contacts_task)
                 print("[ManagersWorker] ContactManager initialized")
@@ -144,6 +143,16 @@ class ManagersWorker:
                     print("[ManagersWorker] TranscriptManager logger configured")
 
                 # TODO: Initialize other managers (Conductor, etc.) here
+                print("[ManagersWorker] Initializing MemoryManager...")
+                self._memory_manager = MemoryManager(
+                    transcript_manager=self._transcript_manager,
+                    contact_manager=self._contact_manager,
+                )
+                print("[ManagersWorker] MemoryManager initialized")
+
+                # contacts = self._contact_manager._filter_contacts()
+                # for c in contacts:
+                #     self._contact_manager._update_contact(c["contact_id"], rolling_summary="")
 
                 self._initialized = True
                 print("[ManagersWorker] Initialization complete")
@@ -276,6 +285,26 @@ class ManagersWorker:
         except Exception as e:
             print(f"[ManagersWorker] Error creating contact: {e}")
 
+    async def _update_contact_rolling_summary(
+        self, contacts_ids: list[int], transcripts: list[str]
+    ):
+        print(transcripts)
+        tasks = [
+            self._memory_manager.update_contact_rolling_summary(t, contact_id=cid)
+            for cid, t in zip(contacts_ids, transcripts)
+        ]
+        await asyncio.gather(*tasks)
+        contacts = await asyncio.to_thread(
+            self._contact_manager.get_contact_info, contacts_ids
+        )
+        print(contacts)
+        event = UpdateContactRollingSummaryResponse(
+            rolling_summaries=[
+                (c["contact_id"], c["rolling_summary"]) for c in contacts.values()
+            ]
+        )
+        await self._event_broker.publish("app:managers:output", event.to_json())
+
     # ──────────────────────────────────────────────────────────────────
     # Message processing
     # ──────────────────────────────────────────────────────────────────
@@ -295,6 +324,13 @@ class ManagersWorker:
             asyncio.create_task(self._get_contacts())
         elif isinstance(event, CreateContactInput):
             asyncio.create_task(self._create_contact(event.to_dict()["payload"]))
+        elif isinstance(event, UpdateContactRollingSummaryRequest):
+            print("REACHED")
+            asyncio.create_task(
+                self._update_contact_rolling_summary(
+                    event.contacts_ids, event.transcripts
+                )
+            )
         else:
             print(f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}")
 
