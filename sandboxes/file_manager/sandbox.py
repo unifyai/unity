@@ -37,7 +37,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # ────────────────────────────────  unity imports  ───────────────────────────
-from unity.file_manager.file_manager import FileManager
+from unity.file_manager.managers.local import LocalFileManager as FileManager
 from unity.common.async_tool_loop import SteerableToolHandle
 from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
