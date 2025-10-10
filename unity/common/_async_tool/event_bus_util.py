@@ -1,6 +1,5 @@
 from typing import Union, Dict, List
 from .loop_config import LoopConfig
-from ...events.event_bus import Event, EVENT_BUS
 
 
 # ── small helper: publish to the EventBus (if configured) ──────────────
@@ -15,6 +14,12 @@ async def to_event_bus(
     and the *public method* that spawned the loop so downstream
     subscribers can easily group / filter events.
     """
+    # Import lazily to avoid import-time cycles with `unity.events.event_bus`.
+    from ...events.event_bus import (
+        Event,
+        EVENT_BUS,
+    )  # local import to break circular dependency
+
     if not EVENT_BUS:
         return
     if isinstance(messages, dict):
