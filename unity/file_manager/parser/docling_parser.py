@@ -104,7 +104,7 @@ class DoclingParser(GenericParser[Document]):
         max_chunk_size: int = 500,
         chunk_overlap: int = 200,
         sentence_chunk_size: int = 512,
-        use_hybrid_chunking: bool = False,
+        use_hybrid_chunking: bool = True,
         extract_images: bool = True,
         extract_tables: bool = True,
         use_llm_enrichment: bool = True,
@@ -556,43 +556,45 @@ class DoclingParser(GenericParser[Document]):
         Returns:
             Document: Parsed document with hierarchical structure
         """
-        print(f"Parsing document: {Path(file_path).name}")
-
-        file_path = Path(file_path).expanduser().resolve()
+        original_path = Path(file_path).expanduser().resolve()
+        print(f"Parsing document: {original_path.name}")
 
         # Pre-conversion: convert inputs for supported formats (e.g., .doc/.docx -> .pdf)
-        converted_paths, to_cleanup = self._maybe_convert_inputs([file_path])
-        file_path = converted_paths[0]
+        converted_paths, to_cleanup = self._maybe_convert_inputs([original_path])
+        parsing_path = converted_paths[0]  # Use converted path for parsing
+
+        # Store original path for metadata (preserve original filename, extension, etc.)
+        options["_original_path"] = original_path
 
         # Check if file exists
-        if not file_path.exists() or not file_path.is_file():
-            raise FileNotFoundError(str(file_path))
+        if not parsing_path.exists() or not parsing_path.is_file():
+            raise FileNotFoundError(str(parsing_path))
 
         # Check if format is supported
-        if file_path.suffix.lower() not in self.supported_formats:
+        if parsing_path.suffix.lower() not in self.supported_formats:
             # Try basic text parsing as fallback
-            return self._parse_as_text_document(file_path, **options)
+            return self._parse_as_text_document(parsing_path, **options)
 
         # For text files, always use basic parsing (Docling doesn't handle .txt well)
-        if file_path.suffix.lower() in [".txt", ".log"]:
-            document = self._parse_as_text_document(file_path, **options)
+        if parsing_path.suffix.lower() in [".txt", ".log"]:
+            document = self._parse_as_text_document(parsing_path, **options)
         # Use advanced parsing if available for other formats
         elif DOCLING_AVAILABLE and self.converter:
             try:
-                document = self._parse_with_docling(file_path, **options)
+                document = self._parse_with_docling(parsing_path, **options)
             except Exception as e:
                 # Fall back to basic parsing
                 print(f"Advanced parsing failed, falling back to basic: {e}")
-                document = self._parse_as_text_document(file_path, **options)
+                document = self._parse_as_text_document(parsing_path, **options)
         else:
-            document = self._parse_as_text_document(file_path, **options)
+            document = self._parse_as_text_document(parsing_path, **options)
 
         print(
             f"Document parsed successfully: {len(document.sections)} sections, {document.get_total_paragraphs()} paragraphs",
         )
 
-        # Save parsed result if enabled
-        self._save_parsed_result_if_enabled(file_path, document)
+        # Save parsed result if enabled (use original path for output naming)
+        self._save_parsed_result_if_enabled(original_path, document)
 
         # Cleanup converted artifacts if enabled
         if self.cleanup_converted_files and to_cleanup:
@@ -618,13 +620,21 @@ class DoclingParser(GenericParser[Document]):
         - Post-processing (structure extraction, summaries, metadata) is parallelized via unify.map
           when available, with a sequential fallback.
         """
-        normalized: List[Path] = [Path(p).expanduser().resolve() for p in file_paths]
+        original_paths: List[Path] = [
+            Path(p).expanduser().resolve() for p in file_paths
+        ]
 
         # Pre-conversion pass: convert supported formats (preserve order), allow safe parallelism
-        normalized, to_cleanup = self._maybe_convert_inputs(
-            normalized,
+        parsing_paths, to_cleanup = self._maybe_convert_inputs(
+            original_paths,
             parallel=self.conversion_parallel,
         )
+
+        # Create mapping from parsing path to original path for metadata preservation
+        path_mapping: dict[Path, Path] = {
+            parsing: original
+            for parsing, original in zip(parsing_paths, original_paths)
+        }
 
         # Continue with Docling's convert_all / per-file parse
         documents: List[Document] = []
@@ -644,24 +654,28 @@ class DoclingParser(GenericParser[Document]):
             and self.converter is not None
             and all(
                 p.suffix.lower() in self.supported_formats and p.is_file()
-                for p in normalized
+                for p in parsing_paths
             )
         )
 
         if not can_batch:
             # Fallback to individual parse preserving existing logic
-            for p in normalized:
+            for parsing_path in parsing_paths:
                 try:
-                    documents.append(self.parse(str(p), **options))
+                    # Pass original path for metadata via options
+                    original_path = path_mapping.get(parsing_path, parsing_path)
+                    opts = {**options, "_original_path": original_path}
+                    documents.append(self.parse(str(parsing_path), **opts))
                 except Exception as e:
                     if raises_on_error:
                         raise
-                    # Create minimal failed document with metadata
+                    # Create minimal failed document with metadata (use original path)
+                    original_path = path_mapping.get(parsing_path, parsing_path)
                     try:
                         doc_id = short_id(4)
                     except Exception:
-                        doc_id = self._compute_document_id(p)[:8]
-                    meta = self._create_base_metadata(p)
+                        doc_id = self._compute_document_id(original_path)[:8]
+                    meta = self._create_base_metadata(original_path)
                     documents.append(
                         Document(
                             document_id=doc_id,
@@ -676,7 +690,7 @@ class DoclingParser(GenericParser[Document]):
         supported_indices: list[int] = []
         unsupported_indices: list[int] = []
         supported_paths: list[Path] = []
-        for idx, p in enumerate(normalized):
+        for idx, p in enumerate(parsing_paths):
             if p.suffix.lower() in self.supported_formats and p.is_file():
                 supported_indices.append(idx)
                 supported_paths.append(p)
@@ -692,10 +706,13 @@ class DoclingParser(GenericParser[Document]):
         # Prepare post-processing tasks for supported inputs
         tasks: list[dict] = []
         for conv_res, src in zip(conv_results, supported_paths):
+            # Get original path for metadata
+            original_path = path_mapping.get(src, src)
             tasks.append(
                 {
                     "conv_res": conv_res,
                     "src_path": src,
+                    "original_path": original_path,
                     "options": options,
                     "start_time": start_time,
                 },
@@ -704,6 +721,7 @@ class DoclingParser(GenericParser[Document]):
         def _post_process(**data) -> Document:
             conv_res = data["conv_res"]
             src_path = data.get("src_path")
+            original_path = data.get("original_path", src_path)
             opts = data.get("options", {})
 
             if conv_res.status != ConversionStatus.SUCCESS:
@@ -714,26 +732,31 @@ class DoclingParser(GenericParser[Document]):
                         ".log",
                         ".json",
                     ]:
-                        return self._parse_as_text_document(src_path, **opts)
+                        # Pass original path for metadata
+                        opts_with_original = {**opts, "_original_path": original_path}
+                        return self._parse_as_text_document(
+                            src_path,
+                            **opts_with_original,
+                        )
                 except Exception:
                     pass
-                # Minimal document for failure
+                # Minimal document for failure (use original path for metadata)
                 doc_id = (
-                    self._compute_document_id(src_path)
-                    if src_path
+                    self._compute_document_id(original_path)
+                    if original_path
                     else str(time.time())
                 )
                 meta = (
-                    self._create_base_metadata(src_path)
-                    if src_path
+                    self._create_base_metadata(original_path)
+                    if original_path
                     else DocumentMetadata(
                         title="Unknown",
-                        file_path=str(src_path) if src_path else "",
-                        file_name=str(src_path.name) if src_path else "",
+                        file_path=str(original_path) if original_path else "",
+                        file_name=str(original_path.name) if original_path else "",
                         file_size=0,
                         file_type=(
-                            self._get_mime_type(src_path.suffix)
-                            if src_path
+                            self._get_mime_type(original_path.suffix)
+                            if original_path
                             else "application/octet-stream"
                         ),
                         created_at="",
@@ -754,10 +777,10 @@ class DoclingParser(GenericParser[Document]):
 
             # SUCCESS: use common builder
             docling_doc = conv_res.document
-            file_path = src_path or Path(str(conv_res.input.file))
+            # Use original path for metadata, not the converted/parsing path
             return self._build_document_from_docling(
                 docling_doc,
-                file_path,
+                original_path,
                 data.get("start_time", time.time()),
             )
 
@@ -771,16 +794,22 @@ class DoclingParser(GenericParser[Document]):
         # Parse unsupported indices individually (reuse existing parse)
         built_unsupported: dict[int, Document] = {}
         for idx in unsupported_indices:
-            p = normalized[idx]
+            parsing_path = parsing_paths[idx]
+            original_path = path_mapping.get(parsing_path, parsing_path)
             try:
-                built_unsupported[idx] = self.parse(str(p), **options)
+                # Pass original path for metadata
+                opts_with_original = {**options, "_original_path": original_path}
+                built_unsupported[idx] = self.parse(
+                    str(parsing_path),
+                    **opts_with_original,
+                )
             except Exception:
-                # minimal failed doc
+                # minimal failed doc (use original path for metadata)
                 try:
                     doc_id = short_id(4)
                 except Exception:
-                    doc_id = self._compute_document_id(p)[:8]
-                meta = self._create_base_metadata(p)
+                    doc_id = self._compute_document_id(original_path)[:8]
+                meta = self._create_base_metadata(original_path)
                 built_unsupported[idx] = Document(
                     document_id=doc_id,
                     metadata=meta,
@@ -789,7 +818,7 @@ class DoclingParser(GenericParser[Document]):
                 )
 
         # Merge results preserving input order
-        result_docs: list[Document] = [None] * len(normalized)  # type: ignore
+        result_docs: list[Document] = [None] * len(parsing_paths)  # type: ignore
         # Place supported
         for local_idx, global_idx in enumerate(supported_indices):
             result_docs[global_idx] = built_supported[local_idx]
@@ -800,9 +829,10 @@ class DoclingParser(GenericParser[Document]):
         # Replace any None (should not happen) with minimal stub
         for i, maybe_doc in enumerate(result_docs):
             if maybe_doc is None:
-                p = normalized[i]
-                doc_id = self._compute_document_id(p)
-                meta = self._create_base_metadata(p)
+                parsing_path = parsing_paths[i]
+                original_path = path_mapping.get(parsing_path, parsing_path)
+                doc_id = self._compute_document_id(original_path)
+                meta = self._create_base_metadata(original_path)
                 result_docs[i] = Document(
                     document_id=doc_id,
                     metadata=meta,
@@ -810,19 +840,22 @@ class DoclingParser(GenericParser[Document]):
                     processing_status="failed",
                 )
 
-        # Save parsed results when enabled
+        # Save parsed results when enabled (use original paths for output naming)
         try:
             # Save for batch-converted (supported) inputs
             for local_idx, global_idx in enumerate(supported_indices):
-                src_path = supported_paths[local_idx]
+                parsing_path = supported_paths[local_idx]
+                original_path = path_mapping.get(parsing_path, parsing_path)
                 doc = result_docs[global_idx]
-                self._save_parsed_result_if_enabled(src_path, doc)
+                self._save_parsed_result_if_enabled(original_path, doc)
 
             # Save for unsupported that failed (minimal stubs)
             for global_idx in unsupported_indices:
                 doc = result_docs[global_idx]
                 if getattr(doc, "processing_status", "") == "failed":
-                    self._save_parsed_result_if_enabled(normalized[global_idx], doc)
+                    parsing_path = parsing_paths[global_idx]
+                    original_path = path_mapping.get(parsing_path, parsing_path)
+                    self._save_parsed_result_if_enabled(original_path, doc)
         except Exception:
             pass
 
@@ -920,7 +953,13 @@ class DoclingParser(GenericParser[Document]):
         if result.status != ConversionStatus.SUCCESS:
             raise ValueError(f"Document conversion failed with status: {result.status}")
 
-        return self._build_document_from_docling(result.document, file_path, start_time)
+        # Use original path for metadata if available, otherwise use parsing path
+        metadata_path = options.get("_original_path", file_path)
+        return self._build_document_from_docling(
+            result.document,
+            metadata_path,
+            start_time,
+        )
 
     def _build_document_from_docling(
         self,
@@ -1039,8 +1078,11 @@ class DoclingParser(GenericParser[Document]):
         except Exception as e:
             raise ValueError(f"Failed to read file: {e}")
 
+        # Use original path for metadata if available, otherwise use parsing path
+        metadata_path = options.get("_original_path", file_path)
+
         # Create metadata
-        metadata = self._create_base_metadata(file_path)
+        metadata = self._create_base_metadata(metadata_path)
         metadata.total_characters = len(content)
         metadata.total_words = len(content.split())
 
