@@ -339,16 +339,8 @@ class FunctionManager(BaseFunctionManager):
     #  Public API                                                        #
     # ------------------------------------------------------------------ #
 
+    @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Remove all functions and re-initialise the Functions context.
-
-        Behaviour
-        ---------
-        - Deletes the underlying Functions context (best-effort).
-        - Resets any manager-local bookkeeping.
-        - Re-provisions the table schema.
-        """
         try:
             unify.delete_context(self._ctx)
         except Exception:

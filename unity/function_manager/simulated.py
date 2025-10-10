@@ -267,15 +267,8 @@ class SimulatedFunctionManager(BaseFunctionManager):
             )
         return data
 
+    @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:
-        """
-        Reset simulated state for functions.
-
-        There is no persistent backend context to delete. The simplest and
-        most reliable way to reset the simulated manager is to re-run its
-        constructor in-place, which creates a fresh stateful LLM and rebuilds
-        configuration.
-        """
         type(self).__init__(
             self,
             description=getattr(
