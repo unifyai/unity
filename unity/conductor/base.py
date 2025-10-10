@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from .types import StateManager
 
 
 class BaseConductor(ABC, metaclass=SingletonABCMeta):
@@ -94,3 +96,20 @@ class BaseConductor(ABC, metaclass=SingletonABCMeta):
 
         All parameters & return value mirror :py:meth:`ask`.
         """
+
+    # ------------------------------------------------------------------ #
+    #  clear – irreversible state wipe for a selected manager            #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    def clear(self, target: StateManager) -> None:
+        """
+        {base}
+
+        Parameters
+        ----------
+        target : StateManager
+            Which manager to clear. Options include: CONTACTS, TRANSCRIPTS, KNOWLEDGE,
+            TASKS, WEB_SEARCH, and forward-compat entries FUNCTIONS, GUIDANCE, IMAGES, SECRETS.
+        """.format(
+            base=CLEAR_METHOD_DOCSTRING,
+        )

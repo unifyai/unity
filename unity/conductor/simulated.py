@@ -21,6 +21,8 @@ from ..skill_manager.simulated import SimulatedSkillManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
 from ..web_searcher.simulated import SimulatedWebSearcher
 from ..actor.simulated import SimulatedActor
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from .types import StateManager
 
 __all__ = [
     "SimulatedConductor",
@@ -141,3 +143,21 @@ class SimulatedConductor(Conductor):
             web_searcher=_web_searcher,
             actor=_actor,
         )
+
+    # ------------------------------------------------------------------ #
+    #  clear – delegate to base implementation                            #
+    # ------------------------------------------------------------------ #
+    def clear(self, target: StateManager) -> None:
+        """
+        {base}
+
+        Parameters
+        ----------
+        target : StateManager
+            Which manager to clear. Options include: CONTACTS, TRANSCRIPTS, KNOWLEDGE,
+            TASKS, WEB_SEARCH, and forward-compat entries FUNCTIONS, GUIDANCE, IMAGES, SECRETS.
+        """.format(
+            base=CLEAR_METHOD_DOCSTRING,
+        )
+
+        super().clear(target)
