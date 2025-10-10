@@ -8,7 +8,6 @@ from typing import Any, Optional
 import unify
 
 from .async_tool_loop import AsyncToolLoopHandle
-from ..constants import LOGGER
 from pydantic import BaseModel, Field
 
 
@@ -102,16 +101,14 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
                 description="A concise assistant reply to return immediately when mutation is detected",
             )
 
-        # Build a tiny client for classification (fast, cached)
-        try:
-            cls_client = unify.AsyncUnify(
-                "gpt-5@openai",
-                cache=True,
-                traced=False,
-                reasoning_effort="low",
-            )
-        except Exception:
-            return
+        # Build classification client
+        cls_client = unify.AsyncUnify(
+            "gpt-5@openai",
+            cache=True,
+            traced=False,
+            reasoning_effort="high",
+            service_tier="priority",
+        )
 
         # Derive a concise label so the LLM knows which manager/method this is
         label = "ask"
@@ -133,18 +130,13 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
             "If mutation_intent is false, early_response may be an empty string.\n"
             f"Manager/Method: {label}"
         )
-        try:
-            cls_client.set_system_message(sys_msg)
-            # Enforce structured output via the client API
-            cls_client.set_response_format(_AskGuardSchema)
-        except Exception:
-            pass
+        cls_client.set_system_message(sys_msg)
+        cls_client.set_response_format(_AskGuardSchema)
 
         payload = user_text
 
         async def _run():
             try:
-                # Use a very short timeout to avoid delaying the main loop
                 res = await asyncio.wait_for(
                     cls_client.generate(
                         return_full_completion=False,
@@ -160,12 +152,10 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
                             },
                         ],
                     ),
-                    timeout=0.8,
+                    timeout=60.0,
                 )
                 return str(res)
             except Exception as _exc:  # noqa: BLE001
-                with suppress(Exception):
-                    LOGGER.info(f"AskGuard classifier failed or timed out: {_exc!r}")
                 return None
 
         raw = await _run()
@@ -214,7 +204,8 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
         # we can return the early response deterministically in tests.
         with suppress(Exception):
             if self._cls_task is not None and not self._cls_task.done():
-                await asyncio.wait_for(self._cls_task, timeout=1.0)
+                # Wait up to the classifier's own timeout to get a definitive answer
+                await asyncio.wait_for(self._cls_task, timeout=60.0)
 
         # If we already have an early response, prefer it (the loop will be or
         # has been stopped by the classifier).
