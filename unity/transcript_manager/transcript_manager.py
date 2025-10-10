@@ -45,6 +45,8 @@ from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..image_manager.utils import substring_from_span
 from ..common.tool_spec import read_only
 from ..constants import is_semantic_cache_enabled
+from ..constants import is_readonly_ask_guard_enabled
+from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -332,6 +334,9 @@ class TranscriptManager(BaseTranscriptManager):
             preprocess_msgs=inject_broader_context,
             tool_policy=effective_tool_policy,
             semantic_cache=use_semantic_cache,
+            handle_cls=(
+                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
+            ),
         )
 
         # ── 4.  Optional reasoning exposure  ───────────────────────────────
