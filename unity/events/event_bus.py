@@ -1044,7 +1044,6 @@ class EventBus:
 
     # ------------------------------------------------------------------
     def clear(self, delete_contexts: bool = True) -> None:
-        """ """
 
         # 1. Stop the background pre-fill if it's still pending
         try:
