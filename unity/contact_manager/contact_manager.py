@@ -84,15 +84,6 @@ class ContactManager(BaseContactManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
         self._ctx = f"{read_ctx}/Contacts"
-        # Ensure context/fields exist deterministically (idempotent)
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"contact_id": "int"},
-            auto_counting={"contact_id": None},
-            description="List of contacts, with all contact details stored.",
-            fields=model_to_fields(Contact),
-        )
-        self._store.ensure_context()
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("contact_id",))
@@ -139,16 +130,8 @@ class ContactManager(BaseContactManager):
         # still returning custom fields commonly used right after creation/update.
         self._known_custom_fields: set[str] = set()
 
-        # Prefill known custom fields once at construction to include any preexisting
-        # non-private columns without an extra lookup per tool call.
-        try:
-            existing_cols = self._get_columns()
-            for col in existing_cols:
-                if col not in self._REQUIRED_COLUMNS and not str(col).startswith("_"):
-                    self._known_custom_fields.add(col)
-        except Exception:
-            # Best-effort only; tools fall back safely
-            pass
+        # Ensure context/schema and prefill known custom fields
+        self._provision_storage()
 
         # ── ensure an assistant contact with id 0 exists and is up-to-date ──
         self._sync_assistant_contact()
@@ -1055,7 +1038,7 @@ class ContactManager(BaseContactManager):
         except Exception:
             pass
 
-        # Ensure the schema exists again, then recreate protected system contacts
+        # Ensure the schema exists again via shared provisioning helper
         try:
             # Remove any previous ensure memo and force re-provisioning
             from ..common.context_store import TableStore as _TS  # local import
@@ -1064,21 +1047,10 @@ class ContactManager(BaseContactManager):
                 _TS._ENSURED.discard((unify.active_project(), self._ctx))
             except Exception:
                 pass
-
-            # Recreate the context & columns explicitly to avoid relying on ensure memo
-            unify.create_context(
-                self._ctx,
-                unique_keys={"contact_id": "int"},
-                auto_counting={"contact_id": None},
-                description="List of contacts, with all contact details stored.",
-            )
-            unify.create_fields(model_to_fields(Contact), context=self._ctx)
         except Exception:
-            # Fall back to ensure_context (may no-op if memoised)
-            try:
-                self._store.ensure_context()
-            except Exception:
-                pass
+            pass
+
+        self._provision_storage()
 
         # Verify the context is visible before attempting reads
         try:
@@ -1099,6 +1071,28 @@ class ContactManager(BaseContactManager):
 
     # Private #
     # --------#
+
+    def _provision_storage(self) -> None:
+        """Ensure Contacts context, schema, and custom-field bookkeeping exist."""
+        # Ensure context/fields exist deterministically (idempotent)
+        self._store = TableStore(
+            self._ctx,
+            unique_keys={"contact_id": "int"},
+            auto_counting={"contact_id": None},
+            description="List of contacts, with all contact details stored.",
+            fields=model_to_fields(Contact),
+        )
+        self._store.ensure_context()
+
+        # Prefill known custom fields once to include any preexisting non-private columns
+        try:
+            existing_cols = self._get_columns()
+            for col in existing_cols:
+                if col not in self._REQUIRED_COLUMNS and not str(col).startswith("_"):
+                    self._known_custom_fields.add(col)
+        except Exception:
+            # Best-effort only; tools fall back safely
+            pass
 
     def _sanitize_custom_columns(
         self,
