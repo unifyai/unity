@@ -201,3 +201,15 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
             every structural change (and, optionally, the hidden chain‑of‑
             thought when *_return_reasoning_steps* is *True*).
         """
+
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        Remove all knowledge tables and re-initialise the manager's storage.
+
+        Implementations must delete the underlying storage/contexts for tables
+        under the manager's namespace (e.g. ``<ctx>/Knowledge/*``) so that
+        subsequent reads/writes operate against a clean slate. The method is
+        synchronous to allow safe use inside thread offloads in async flows.
+        """
+        raise NotImplementedError
