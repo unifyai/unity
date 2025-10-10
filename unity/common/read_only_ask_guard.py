@@ -128,7 +128,16 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
             "You classify whether a read-only ask() request actually tries to mutate state.\n"
             "Return a JSON object matching the required schema.\n"
             "If mutation_intent is false, early_response may be an empty string.\n"
-            f"Manager/Method: {label}"
+            f"Manager/Method: {label}\n"
+            "\n"
+            "If mutation_intent is true, craft early_response as ONE short sentence that:\n"
+            "- clearly states this ask channel is read-only and cannot make changes;\n"
+            "- does not propose drafting, planning, or performing changes;\n"
+            "- does not ask the user follow-up questions;\n"
+            "- avoids naming specific mutation methods or tools (do not guess names like 'update');\n"
+            "- may generically say a separate mutation request/write operation is required;\n"
+            "- may optionally add that you can answer questions about existing data only.\n"
+            "Prefer plain, declarative wording without offers (e.g., 'I can’t make changes from this read‑only ask channel.')."
         )
         cls_client.set_system_message(sys_msg)
         cls_client.set_response_format(_AskGuardSchema)
