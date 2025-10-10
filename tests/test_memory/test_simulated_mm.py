@@ -82,11 +82,16 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
     )
 
     # --- run the method ----------------------------------------------------
+    cm = SimulatedContactManager(
+        description=(
+            "TEST SCENARIO: Contacts update path. SimulatedContactManager MUST treat the address book as missing"
+            " the named person; its ask helpers must NOT invent existing records. It should deterministically"
+            " accept create/update calls and return concise confirmations. SimulatedTranscriptManager should"
+            " return straightforward results. No external I/O."
+        ),
+    )
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Contacts update path. SimulatedContactManager MUST treat the address book as missing"
-        " the named person; its ask helpers must NOT invent existing records. It should deterministically"
-        " accept create/update calls and return concise confirmations. SimulatedTranscriptManager should"
-        " return straightforward results. No external I/O.",
+        contact_manager=cm,
     )
     transcript = _build_transcript(
         "FYI: New contact – Dana Fox, dana.fox@example.com, phone +14155550123.",
@@ -142,10 +147,15 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
     )
 
     # run --------------------------------------------------------------------
+    cm = SimulatedContactManager(
+        description=(
+            "TEST SCENARIO: Bio refresh. SimulatedContactManager MUST accept a single deterministic update to the"
+            " 'bio' column for the target contact Dana; it must NOT refuse and must NOT claim the bio is already"
+            " correct. SimulatedTranscriptManager should provide straightforward results. No external I/O."
+        ),
+    )
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Bio refresh. SimulatedContactManager MUST accept a single deterministic update to the"
-        " 'bio' column for the target contact Dana; it must NOT refuse and must NOT claim the bio is already"
-        " correct. SimulatedTranscriptManager should provide straightforward results. No external I/O.",
+        contact_manager=cm,
     )
     transcript = _build_transcript(
         "BTW – Dana Fox was promoted to Senior Project Manager at Tech Solutions.",
@@ -204,10 +214,15 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
     )
 
     # run --------------------------------------------------------------------
+    cm = SimulatedContactManager(
+        description=(
+            "TEST SCENARIO: Rolling summary refresh. SimulatedContactManager MUST accept a single deterministic"
+            " update to 'rolling_summary' for the target contact; do NOT claim it's already up to date."
+            " SimulatedTranscriptManager answers simply. No external I/O."
+        ),
+    )
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Rolling summary refresh. SimulatedContactManager MUST accept a single deterministic"
-        " update to 'rolling_summary' for the target contact; do NOT claim it's already up to date."
-        " SimulatedTranscriptManager answers simply. No external I/O.",
+        contact_manager=cm,
     )
     transcript = _build_transcript(
         "Dana Fox – action items: finalise the KPI dashboard by Friday and schedule a follow-up.",
@@ -267,10 +282,15 @@ async def test_mm_update_contact_response_policy_invocations(monkeypatch):
         raising=True,
     )
 
+    cm = SimulatedContactManager(
+        description=(
+            "TEST SCENARIO: Response policy update. SimulatedContactManager MUST accept a single deterministic"
+            " update to 'response_policy' for the target contact; do NOT claim it is already set."
+            " SimulatedTranscriptManager answers simply. No external I/O."
+        ),
+    )
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Response policy update. SimulatedContactManager MUST accept a single deterministic"
-        " update to 'response_policy' for the target contact; do NOT claim it is already set."
-        " SimulatedTranscriptManager answers simply. No external I/O.",
+        contact_manager=cm,
     )
     transcript = _build_transcript("Please be more formal when replying to Jane.")
 
@@ -304,12 +324,17 @@ async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
         raising=True,
     )
 
+    km = SimulatedKnowledgeManager(
+        description=(
+            "TEST SCENARIO: Knowledge update. SimulatedKnowledgeManager MUST treat the knowledge base as EMPTY for"
+            " this run. All KnowledgeManager.ask calls MUST respond 'not found/absent' for facts introduced in"
+            " this transcript unless the transcript itself includes an explicit KnowledgeManager.update"
+            " manager-method proving prior storage. Therefore the flow should proceed to call"
+            " KnowledgeManager.update exactly once to store the new fact. No external I/O."
+        ),
+    )
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Knowledge update. SimulatedKnowledgeManager MUST treat the knowledge base as EMPTY for"
-        " this run. All KnowledgeManager.ask calls MUST respond 'not found/absent' for facts introduced in"
-        " this transcript unless the transcript itself includes an explicit KnowledgeManager.update"
-        " manager-method proving prior storage. Therefore the flow should proceed to call"
-        " KnowledgeManager.update exactly once to store the new fact. No external I/O.",
+        knowledge_manager=km,
     )
     transcript = _build_transcript(
         "Fun fact: The company standardised on Kubernetes for all deployments back in 2021.",
@@ -345,10 +370,15 @@ async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
         raising=True,
     )
 
+    ts = SimulatedTaskScheduler(
+        description=(
+            "TEST SCENARIO: Task creation/update. SimulatedTaskScheduler MUST accept a deterministic update"
+            " creating the requested task; do NOT claim the task already exists. SimulatedTranscriptManager"
+            " returns straightforward results. No external I/O."
+        ),
+    )
     mm = SimulatedMemoryManager(
-        "TEST SCENARIO: Task creation/update. SimulatedTaskScheduler MUST accept a deterministic update"
-        " creating the requested task; do NOT claim the task already exists. SimulatedTranscriptManager"
-        " returns straightforward results. No external I/O.",
+        task_scheduler=ts,
     )
     transcript = _build_transcript(
         "Please create a task to organise the quarterly review meeting next Monday.",
