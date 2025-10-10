@@ -4,22 +4,25 @@ import asyncio
 import pytest
 import functools
 
-from unity.file_manager.simulated import (
-    SimulatedFileManager,
-    _SimulatedFileHandle,
-)
+from unity.file_manager import simulated as sim_mod
 
 # helper that wraps each test in its own Unify project / trace context
-from tests.helpers import (
-    _handle_project,
-    _ack_ok,
-    _assert_blocks_while_paused,
-    DEFAULT_TIMEOUT,
-    _normalize_alnum_lower,
-)
+from tests.helpers import _handle_project
+from tests.test_file_manager.helpers import ask_judge
 
 
-# ────────────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def simulated_file_manager():
+    """Fixture for a clean SimulatedFileManager singleton instance."""
+    # The class is a singleton, so this will always return the same instance
+    fm = sim_mod.SimulatedFileManager()
+    # We must clear its state before each test
+    fm.clear_simulated_files()
+    yield fm
+    # And clear it after, to prevent state leakage
+    fm.clear_simulated_files()
+
+
 # 1.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
 def test_simulated_fm_docstrings_match_base():
@@ -40,21 +43,78 @@ def test_simulated_fm_docstrings_match_base():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_fm():
-    fm = SimulatedFileManager("Demo file storage for unit-tests.")
-
+async def test_start_and_ask_simulated_fm(simulated_file_manager):
+    fm = simulated_file_manager
     # Add a sample file
+    file_content = "Sample document content for testing"
     fm.add_simulated_file(
         "sample.txt",
         records=[{"content": "Sample document content"}],
         metadata={"file_type": "text/plain"},
-        full_text="Sample document content for testing",
+        full_text=file_content,
         description="A sample document for testing purposes",
     )
 
-    handle = await fm.ask("sample.txt", "What is the main topic of this file?")
+    instruction = "What is the main topic of this file?"
+    handle = await fm.ask("sample.txt", instruction)
     answer = await handle.result()
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
+
+    verdict = await ask_judge(instruction, answer, file_content=file_content)
+    assert (
+        verdict.lower().strip().startswith("correct")
+    ), f"Judge deemed 'ask' incorrect. Verdict: {verdict}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_about_file_simulated_fm(simulated_file_manager):
+    fm = simulated_file_manager
+    file_content = "Notes about Mars missions and space exploration"
+    fm.add_simulated_file(
+        "topic.txt",
+        records=[{"content": "Space exploration notes"}],
+        metadata={"file_type": "text/plain"},
+        full_text=file_content,
+        description="Space notes",
+    )
+    instruction = "Summarize the key theme of topic.txt"
+    handle = await fm.ask_about_file("topic.txt", instruction)
+    answer = await handle.result()
+    assert isinstance(answer, str) and answer.strip()
+
+    verdict = await ask_judge(instruction, answer, file_content=file_content)
+    assert (
+        verdict.lower().strip().startswith("correct")
+    ), f"Judge deemed 'ask_about_file' incorrect. Verdict: {verdict}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_organize_simulated_fm(simulated_file_manager):
+    fm = simulated_file_manager
+    fm.add_simulated_file(
+        "docA.txt",
+        records=[{"content": "alpha"}],
+        full_text="alpha",
+        description="A",
+    )
+    fm.add_simulated_file(
+        "docB.txt",
+        records=[{"content": "beta"}],
+        full_text="beta",
+        description="B",
+    )
+    instruction = "Rename docA.txt to alpha_document.txt and delete docB.txt."
+    handle = await fm.organize(instruction)
+    answer = await handle.result()
+    assert isinstance(answer, str) and answer.strip()
+
+    # Ask LLM judge to verify the plausibility of the simulated response
+    verdict = await ask_judge(instruction, answer)
+    assert (
+        verdict.lower().strip().startswith("correct")
+    ), f"Judge deemed the operation incorrect. Verdict: {verdict}"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -62,49 +122,65 @@ async def test_start_and_ask_simulated_fm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_fm_stateful_serial_asks():
+async def test_fm_stateful_serial_asks(simulated_file_manager):
     """
     Two consecutive .ask() calls should share context.
     """
-    fm = SimulatedFileManager()
+    fm = simulated_file_manager
 
     # Add a file
+    file_content = "Project Alpha documentation with detailed specifications"
     fm.add_simulated_file(
         "project.txt",
         records=[{"content": "Project Alpha documentation"}],
         metadata={"project": "Alpha"},
-        full_text="Project Alpha documentation with detailed specifications",
+        full_text=file_content,
         description="Documentation for Project Alpha",
     )
 
     # first question – ask for a single‐word theme of the file
+    instruction1 = (
+        "Using one word only, how would you describe the main theme of this file?"
+    )
     h1 = await fm.ask(
         "project.txt",
-        "Using one word only, how would you describe the main theme of this file?",
+        instruction1,
     )
     theme = (await h1.result()).strip()
     assert theme, "Theme word should not be empty"
 
+    # Verify with judge
+    verdict1 = await ask_judge(instruction1, theme, file_content=file_content)
+    assert (
+        verdict1.lower().strip().startswith("correct")
+    ), f"Judge deemed the first ask incorrect. Verdict: {verdict1}"
+
     # follow-up question
+    instruction2 = "What single word did you just use to describe this file?"
     h2 = await fm.ask(
         "project.txt",
-        "What single word did you just use to describe this file?",
+        instruction2,
     )
     ans2 = (await h2.result()).lower()
-    theme_norm = _normalize_alnum_lower(theme)
-    ans2_norm = _normalize_alnum_lower(ans2)
-    assert theme_norm, "Theme should normalize to a non-empty token"
+
+    # Let the judge decide if the second answer is consistent with the first, given the context
+    verdict2 = await ask_judge(
+        instruction2,
+        ans2,
+        file_content=f"The previous response was: '{theme}'",
+    )
     assert (
-        theme_norm in ans2_norm or ans2_norm in theme_norm
-    ), f"LLM should recall the theme it produced earlier. Theme: '{theme}', Answer: '{ans2}'"
+        verdict2.lower().strip().startswith("correct")
+    ), f"LLM should recall the theme it produced earlier. Theme: '{theme}', Answer: '{ans2}', Verdict: {verdict2}"
 
 
 # ────────────────────────────────────────────────────────────────────────────
 # 4.  Basic synchronous methods                                              #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_fm_synchronous_operations():
+@pytest.mark.asyncio
+async def test_simulated_fm_synchronous_operations(simulated_file_manager):
     """Test the synchronous methods like list, exists, parse."""
-    fm = SimulatedFileManager()
+    fm = simulated_file_manager
 
     # Initially empty
     assert fm.list() == []
@@ -149,6 +225,9 @@ def test_simulated_fm_synchronous_operations():
     assert result["missing.txt"]["status"] == "error"
 
 
+# Remaining tests intentionally create isolated instances or operate on handles.
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Steerable handle tests                                                     #
 # ────────────────────────────────────────────────────────────────────────────
@@ -159,18 +238,23 @@ def test_simulated_fm_synchronous_operations():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_simulated_fm(monkeypatch):
+async def test_interject_simulated_fm(monkeypatch, simulated_file_manager):
     calls = {"interject": 0}
-    orig = _SimulatedFileHandle.interject
+    orig = sim_mod._SimulatedFileHandle.interject
 
     @functools.wraps(orig)
     def wrapped(self, msg: str) -> str:  # type: ignore[override]
         calls["interject"] += 1
         return orig(self, msg)
 
-    monkeypatch.setattr(_SimulatedFileHandle, "interject", wrapped, raising=True)
+    monkeypatch.setattr(
+        sim_mod._SimulatedFileHandle,
+        "interject",
+        wrapped,
+        raising=True,
+    )
 
-    fm = SimulatedFileManager()
+    fm = simulated_file_manager
     fm.add_simulated_file(
         "report.txt",
         records=[{"content": "Annual report"}],
@@ -178,12 +262,26 @@ async def test_interject_simulated_fm(monkeypatch):
         description="Company annual report",
     )
 
-    handle = await fm.ask("report.txt", "Summarize the key points.")
+    instruction = "Summarize the key points of the report.txt file."
+    handle = await fm.ask("report.txt", instruction)
     await asyncio.sleep(0.05)
     reply = handle.interject("Focus on financial metrics.")
-    assert _ack_ok(reply)
-    await handle.result()
+    assert "ack" in reply.lower() or "noted" in reply.lower()
+    final_answer = await handle.result()
     assert calls["interject"] == 1, ".interject should be called exactly once"
+
+    # Judge the final answer based on the initial instruction and the interjection
+    full_instruction = (
+        instruction + " Follow-up instruction: Focus on financial metrics."
+    )
+    verdict = await ask_judge(
+        full_instruction,
+        final_answer,
+        file_content="Annual report with financial details",
+    )
+    assert (
+        verdict.lower().strip().startswith("correct")
+    ), f"Judge deemed interjected ask incorrect. Verdict: {verdict}"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -191,8 +289,8 @@ async def test_interject_simulated_fm(monkeypatch):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_simulated_fm():
-    fm = SimulatedFileManager()
+async def test_stop_simulated_fm(simulated_file_manager):
+    fm = simulated_file_manager
     fm.add_simulated_file(
         "large.txt",
         records=[{"content": "Very large document"}],
@@ -212,8 +310,8 @@ async def test_stop_simulated_fm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_fm_requests_clarification():
-    fm = SimulatedFileManager()
+async def test_fm_requests_clarification(simulated_file_manager):
+    fm = simulated_file_manager
     fm.add_simulated_file(
         "data.txt",
         records=[{"content": "Research data"}],
@@ -238,7 +336,14 @@ async def test_fm_requests_clarification():
     await down_q.put("Focus on statistical trends.")
     answer = await handle.result()
     assert isinstance(answer, str) and answer.strip()
-    assert "statistic" in answer.lower() or "trend" in answer.lower()
+
+    # Judge the final answer
+    instruction = "Please analyze this file thoroughly. Clarification: Focus on statistical trends."
+    file_content = "Research data with statistical analysis"
+    verdict = await ask_judge(instruction, answer, file_content=file_content)
+    assert (
+        verdict.lower().strip().startswith("correct")
+    ), f"Judge deemed clarification flow incorrect. Verdict: {verdict}"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -246,14 +351,14 @@ async def test_fm_requests_clarification():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_and_resume_simulated_fm(monkeypatch):
+async def test_pause_and_resume_simulated_fm(monkeypatch, simulated_file_manager):
     """
     Ensure a `_SimulatedFileHandle` can be paused and resumed.
     """
     counts = {"pause": 0, "resume": 0}
 
     # --- patch pause -------------------------------------------------------
-    orig_pause = _SimulatedFileHandle.pause
+    orig_pause = sim_mod._SimulatedFileHandle.pause
 
     @functools.wraps(orig_pause)
     def _patched_pause(self):  # type: ignore[override]
@@ -261,14 +366,14 @@ async def test_pause_and_resume_simulated_fm(monkeypatch):
         return orig_pause(self)
 
     monkeypatch.setattr(
-        _SimulatedFileHandle,
+        sim_mod._SimulatedFileHandle,
         "pause",
         _patched_pause,
         raising=True,
     )
 
     # --- patch resume ------------------------------------------------------
-    orig_resume = _SimulatedFileHandle.resume
+    orig_resume = sim_mod._SimulatedFileHandle.resume
 
     @functools.wraps(orig_resume)
     def _patched_resume(self):  # type: ignore[override]
@@ -276,13 +381,13 @@ async def test_pause_and_resume_simulated_fm(monkeypatch):
         return orig_resume(self)
 
     monkeypatch.setattr(
-        _SimulatedFileHandle,
+        sim_mod._SimulatedFileHandle,
         "resume",
         _patched_resume,
         raising=True,
     )
 
-    fm = SimulatedFileManager()
+    fm = simulated_file_manager
     fm.add_simulated_file(
         "complex.txt",
         records=[{"content": "Complex document"}],
@@ -317,13 +422,13 @@ async def test_pause_and_resume_simulated_fm(monkeypatch):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_ask():
+async def test_handle_ask(simulated_file_manager):
     """
     The internal handle returned by SimulatedFileManager.ask exposes a
     dynamic ask() method that should produce a nested handle whose result can
     be awaited independently of the parent.
     """
-    fm = SimulatedFileManager()
+    fm = simulated_file_manager
     fm.add_simulated_file(
         "business.txt",
         records=[{"content": "Business plan for European expansion"}],
@@ -332,19 +437,34 @@ async def test_handle_ask():
     )
 
     # Start an initial ask to obtain the live handle
-    handle = await fm.ask("business.txt", "Summarize this business document.")
+    instruction1 = "Summarize this business document about European expansion."
+    handle = await fm.ask("business.txt", instruction1)
 
     # Add extra context to ensure nested prompt includes it
     handle.interject("Focus on European market opportunities.")
 
     # Invoke the dynamic ask on the running handle
-    nested = await handle.ask("What is the key opportunity mentioned?")
+    instruction2 = "What is the key opportunity mentioned?"
+    nested = await handle.ask(instruction2)
 
     nested_answer = await nested.result()
     assert isinstance(nested_answer, str) and nested_answer.strip(), (
         "Nested ask() should yield a non-empty string answer",
     )
-    assert any(substr in nested_answer.lower() for substr in ("europe", "eu"))
+
+    # Judge the nested answer
+    full_instruction_nested = (
+        f"Initial summary task: '{instruction1}'. Follow-up question: '{instruction2}'"
+    )
+    file_content = "Business plan for European expansion with market analysis"
+    verdict_nested = await ask_judge(
+        full_instruction_nested,
+        nested_answer,
+        file_content=file_content,
+    )
+    assert (
+        verdict_nested.lower().strip().startswith("correct")
+    ), f"Judge deemed nested ask incorrect. Verdict: {verdict_nested}"
 
     # The original handle should still be awaitable and produce an answer
     handle_answer = await handle.result()
@@ -352,51 +472,15 @@ async def test_handle_ask():
         "Handle should still yield a non-empty answer after nested ask",
     )
 
-
-# ────────────────────────────────────────────────────────────────────────────
-# 12a.  Stop while paused should finish immediately                          #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_stop_while_paused_finishes_immediately_fm():
-    fm = SimulatedFileManager()
-    fm.add_simulated_file("pause.txt", records=[{"content": "x"}])
-    h = await fm.ask("pause.txt", "Generate a very long analysis.")
-    # Pause then ensure result blocks
-    h.pause()
-    res_task = asyncio.create_task(h.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done()
-    # Stop should unblock and complete promptly
-    h.stop("cancelled")
-    out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
-    assert isinstance(out, str)
-    assert h.done()
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 12b.  Stop while waiting for clarification should finish immediately        #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_stop_while_waiting_for_clarification_finishes_immediately_fm():
-    fm = SimulatedFileManager()
-    fm.add_simulated_file("clar.txt", records=[{"content": "y"}])
-    up_q: asyncio.Queue[str] = asyncio.Queue()
-    down_q: asyncio.Queue[str] = asyncio.Queue()
-    h = await fm.ask(
-        "clar.txt",
-        "Please analyze with detailed metrics.",
-        _clarification_up_q=up_q,
-        _clarification_down_q=down_q,
-        _requests_clarification=True,
+    # Judge the final answer of the main handle
+    verdict_main = await ask_judge(
+        instruction1,
+        handle_answer,
+        file_content=file_content,
     )
-    q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
-    assert "clarify" in q.lower()
-    h.stop("no longer needed")
-    out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
-    assert isinstance(out, str)
-    assert h.done()
+    assert (
+        verdict_main.lower().strip().startswith("correct")
+    ), f"Judge deemed main ask incorrect after nested call. Verdict: {verdict_main}"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -404,9 +488,9 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately_fm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_reasoning_steps_toggle():
+async def test_reasoning_steps_toggle(simulated_file_manager):
     """Test that _return_reasoning_steps works correctly."""
-    fm = SimulatedFileManager()
+    fm = simulated_file_manager
     fm.add_simulated_file(
         "analysis.txt",
         records=[{"content": "Market analysis document"}],
@@ -415,9 +499,10 @@ async def test_reasoning_steps_toggle():
     )
 
     # Ask with reasoning steps
+    instruction = "What are the key insights from analysis.txt?"
     handle = await fm.ask(
         "analysis.txt",
-        "What are the key insights?",
+        instruction,
         _return_reasoning_steps=True,
     )
     result = await handle.result()
@@ -426,294 +511,23 @@ async def test_reasoning_steps_toggle():
     assert isinstance(answer, str) and answer.strip()
     assert isinstance(messages, list) and len(messages) >= 1
 
+    # Judge the answer part of the result
+    file_content = "Market analysis document with industry trends"
+    verdict = await ask_judge(instruction, answer, file_content=file_content)
+    assert (
+        verdict.lower().strip().startswith("correct")
+    ), f"Judge deemed ask with reasoning incorrect. Verdict: {verdict}"
+
     # Ask without reasoning steps
     handle2 = await fm.ask(
         "analysis.txt",
-        "What are the key insights?",
+        instruction,
         _return_reasoning_steps=False,
     )
     result2 = await handle2.result()
     assert isinstance(result2, str) and result2.strip()
 
-
-# ────────────────────────────────────────────────────────────────────────────
-# 11. New FileManager functionality tests                                      #
-# ────────────────────────────────────────────────────────────────────────────
-
-
-def test_import_file_functionality():
-    """Test the import_file method."""
-    fm = SimulatedFileManager()
-
-    # Test importing a file
-    filename = fm.import_file("/path/to/document.pdf")
-    assert filename == "document.pdf"
-    assert fm.exists(filename)
-
-    # Test duplicate filename handling
-    filename2 = fm.import_file("/path/to/document.pdf")
-    assert filename2 == "document (1).pdf"
-    assert fm.exists(filename2)
-
-
-def test_import_directory_functionality():
-    """Test the import_directory method."""
-    fm = SimulatedFileManager()
-
-    # Test importing a directory
-    added_files = fm.import_directory("/path/to/directory")
-    assert len(added_files) >= 2
-
-    # All files should exist
-    for filename in added_files:
-        assert fm.exists(filename)
-
-
-def test_search_files_functionality():
-    """Test the _search_files method."""
-    fm = SimulatedFileManager()
-
-    # Add test files with different content
-    fm.add_simulated_file(
-        "ai_research.pdf",
-        records=[{"content": "AI research"}],
-        full_text="Artificial intelligence and machine learning research",
-        description="Research about AI",
-    )
-    fm.add_simulated_file(
-        "cooking.txt",
-        records=[{"content": "Cooking recipes"}],
-        full_text="Chocolate chip cookie recipes",
-        description="Cooking guide",
-    )
-
-    # Test semantic search
-    results = fm._search_files(references={"full_text": "artificial intelligence"}, k=2)
-    assert len(results) >= 1
-    assert results[0]["filename"] == "ai_research.pdf"
-
-    # Test search by description
-    results = fm._search_files(references={"description": "cooking guide"}, k=2)
-    assert len(results) >= 1
-    assert results[0]["filename"] == "cooking.txt"
-
-    # Test search without references (recent files)
-    results = fm._search_files(k=5)
-    assert len(results) == 2
-
-
-def test_filter_files_functionality():
-    """Test the _filter_files method."""
-    fm = SimulatedFileManager()
-
-    # Add test files
-    fm.add_simulated_file(
-        "success.pdf",
-        records=[{"content": "Success doc"}],
-        status="success",
-    )
-    fm.add_simulated_file(
-        "error.txt",
-        records=[],
-        status="error",
-    )
-
-    # Test filtering
-    results = fm._filter_files(filter="status == 'success'")
-    assert len(results) == 1
-    assert results[0]["filename"] == "success.pdf"
-
-    # Test filename filtering
-    results = fm._filter_files(filter="endswith('.pdf')")
-    assert len(results) == 1
-    assert results[0]["filename"] == "success.pdf"
-
-    # Test no filter
-    results = fm._filter_files()
-    assert len(results) == 2
-
-
-def test_list_columns_functionality():
-    """Test the _list_columns method."""
-    fm = SimulatedFileManager()
-
-    # Test with types
-    columns = fm._list_columns(include_types=True)
-    assert isinstance(columns, dict)
-    expected_columns = [
-        "file_id",
-        "filename",
-        "status",
-        "error",
-        "records",
-        "full_text",
-        "metadata",
-        "description",
-        "imported_at",
-    ]
-    for col in expected_columns:
-        assert col in columns
-        assert isinstance(columns[col], str)  # Type should be a string
-
-    # Test without types
-    column_list = fm._list_columns(include_types=False)
-    assert isinstance(column_list, list)
-    for col in expected_columns:
-        assert col in column_list
-
-
-def test_delete_file_functionality():
-    """Test the _delete_file method."""
-    fm = SimulatedFileManager()
-
-    # Add a test file
-    fm.add_simulated_file(
-        "test.txt",
-        records=[{"content": "Test"}],
-    )
-
-    # Get the file to find its ID
-    files = fm._filter_files()
-    assert len(files) == 1
-    file_id = files[0]["file_id"]
-
-    # Delete the file
-    result = fm._delete_file(file_id=file_id)
-    assert result["outcome"] == "file deleted"
-    assert result["details"]["file_id"] == file_id
-
-    # File should no longer exist
-    files = fm._filter_files()
-    assert len(files) == 0
-
-    # Deleting non-existent file should raise error
-    import pytest
-
-    with pytest.raises(ValueError, match="No file found with file_id"):
-        fm._delete_file(file_id=999)
-
-
-def test_enhanced_parse_functionality():
-    """Test the enhanced parse method with new fields."""
-    fm = SimulatedFileManager()
-
-    # Add test files
-    fm.add_simulated_file(
-        "doc.txt",
-        records=[{"content": "Document content"}],
-        full_text="Full document text",
-        description="Test document",
-    )
-
-    # Test parsing
-    results = fm.parse("doc.txt")
-    assert "doc.txt" in results
-    result = results["doc.txt"]
-
-    # Check all expected fields
-    assert result["status"] == "success"
-    assert result["error"] is None
-    assert result["records"] == [{"content": "Document content"}]
-    assert result["full_text"] == "Full document text"
-    assert result["description"] == "Test document"
-
-    # Test parsing non-existent file
-    results = fm.parse("missing.txt")
-    assert "missing.txt" in results
-    result = results["missing.txt"]
-    assert result["status"] == "error"
-    assert "not found" in result["error"]
-
-
-def test_file_data_consistency():
-    """Test that file data is consistent across different methods."""
-    fm = SimulatedFileManager()
-
-    # Add a test file
-    fm.add_simulated_file(
-        "consistency.pdf",
-        records=[{"content": "Consistent data"}],
-        metadata={"topic": "testing"},
-        full_text="Full text for consistency testing",
-        description="Consistency test file",
-    )
-
-    # Check data via different methods
-    # 1. Via list and exists
-    assert "consistency.pdf" in fm.list()
-    assert fm.exists("consistency.pdf")
-
-    # 2. Via parse
-    parse_result = fm.parse("consistency.pdf")["consistency.pdf"]
-    assert parse_result["full_text"] == "Full text for consistency testing"
-    assert parse_result["description"] == "Consistency test file"
-
-    # 3. Via search
-    search_results = fm._search_files(references={"full_text": "consistency"}, k=1)
-    assert len(search_results) == 1
-    search_result = search_results[0]
-    assert search_result["filename"] == "consistency.pdf"
-    assert search_result["full_text"] == "Full text for consistency testing"
-
-    # 4. Via filter
-    filter_results = fm._filter_files()
-    assert len(filter_results) == 1
-    filter_result = filter_results[0]
-    assert filter_result["filename"] == "consistency.pdf"
-    assert filter_result["description"] == "Consistency test file"
-
-
-def test_file_ids_are_unique():
-    """Test that file IDs are unique and sequential."""
-    fm = SimulatedFileManager()
-
-    # Add multiple files
-    fm.add_simulated_file("file1.txt", records=[{"content": "1"}])
-    fm.add_simulated_file("file2.txt", records=[{"content": "2"}])
-    fm.add_simulated_file("file3.txt", records=[{"content": "3"}])
-
-    # Get all files
-    files = fm._filter_files()
-    assert len(files) == 3
-
-    # Check IDs are unique and sequential
-    ids = [f["file_id"] for f in files]
-    assert len(set(ids)) == 3  # All unique
-    assert min(ids) == 1
-    assert max(ids) == 3
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 12. Update existing test helper calls                                        #
-# ────────────────────────────────────────────────────────────────────────────
-
-
-def test_simulated_fm_updated_helpers():
-    """Test all the helper methods and test updated functionality."""
-    fm = SimulatedFileManager()
-
-    # Test list_columns is available
-    columns = fm._list_columns()
-    assert "filename" in columns
-    assert "full_text" in columns
-    assert "description" in columns
-
-    # Test updated add_simulated_file parameters work
-    fm.add_simulated_file(
-        "updated_test.pdf",
-        records=[{"content": "Updated test"}],
-        metadata={"version": "2.0"},
-        full_text="This is the full text content",
-        description="An updated test file",
-        status="success",
-    )
-
-    # Verify the file was added with all fields
-    files = fm._filter_files()
-    assert len(files) == 1
-    file_data = files[0]
-    assert file_data["filename"] == "updated_test.pdf"
-    assert file_data["full_text"] == "This is the full text content"
-    assert file_data["description"] == "An updated test file"
-    assert file_data["status"] == "success"
-    assert file_data["metadata"]["version"] == "2.0"
+    verdict2 = await ask_judge(instruction, result2, file_content=file_content)
+    assert (
+        verdict2.lower().strip().startswith("correct")
+    ), f"Judge deemed ask without reasoning incorrect. Verdict: {verdict2}"

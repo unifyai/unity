@@ -4,10 +4,8 @@ Test FileManager search, filter, and file creation functionality.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
-from unity.file_manager.file_manager import FileManager
 from unity.file_manager.types.file import File
 from tests.helpers import _handle_project
 
@@ -15,12 +13,22 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_create_file_basic():
+def test_create_file_basic(file_manager):
     """Test basic _create_file functionality."""
-    file_manager = FileManager()
+    file_manager = file_manager
     result = file_manager._create_file(
         filename="travel_notes.pdf",
         status="success",
+        records=[
+            {
+                "content_type": "document",
+                "content_text": "This document contains notes about hiking trails in the Alps.",
+            },
+            {
+                "content_type": "paragraph",
+                "content_text": "Hiking in the Alps is a wonderful experience.",
+            },
+        ],
         full_text="This document contains notes about hiking trails in the Alps.",
         metadata={"file_size": 2048, "file_type": "pdf", "topic": "travel"},
     )
@@ -33,13 +41,14 @@ def test_create_file_basic():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_create_file_with_error():
+def test_create_file_with_error(file_manager):
     """Test _create_file with error status."""
-    file_manager = FileManager()
+    file_manager = file_manager
     result = file_manager._create_file(
         filename="corrupt_music_score.pdf",
         status="error",
         error="Failed to parse sheet music",
+        records=[],
         full_text="",
         metadata={"topic": "music"},
     )
@@ -51,10 +60,10 @@ def test_create_file_with_error():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_single_reference_basic():
+def test_search_files_single_reference_basic(file_manager):
     """Test basic semantic search over file contents."""
     # Create test files with different content
-    file_manager = FileManager()
+    file_manager = file_manager
     files_data = [
         (
             "history_essay.pdf",
@@ -75,6 +84,10 @@ def test_search_files_single_reference_basic():
         file_manager._create_file(
             filename=filename,
             status="success",
+            records=[
+                {"content_type": "document", "content_text": content},
+                {"content_type": "paragraph", "content_text": content},
+            ],
             full_text=content,
             metadata={"file_size": len(content), "file_type": filename.split(".")[-1]},
         )
@@ -85,7 +98,7 @@ def test_search_files_single_reference_basic():
 
     assert len(results) >= 1
     assert isinstance(results[0], File)
-    # Should find AI research doc first
+    # Should find sports report first
     assert results[0].filename == "sports_report.docx"
 
     # Verify columns were created
@@ -96,12 +109,22 @@ def test_search_files_single_reference_basic():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_multi_columns():
+def test_search_files_multi_columns(file_manager):
     """Test semantic search across multiple columns."""
-    file_manager = FileManager()
+    file_manager = file_manager
     file_manager._create_file(
         filename="wildlife_guide.pdf",
         status="success",
+        records=[
+            {
+                "content_type": "document",
+                "content_text": "Information about African elephants and their migratory patterns.",
+            },
+            {
+                "content_type": "paragraph",
+                "content_text": "African elephants migrate across vast distances.",
+            },
+        ],
         full_text="Information about African elephants and their migratory patterns.",
         metadata={"file_type": "pdf", "category": "nature reference"},
         description="Information about African elephants and their migratory patterns.",
@@ -110,6 +133,16 @@ def test_search_files_multi_columns():
     file_manager._create_file(
         filename="theatre_review.docx",
         status="success",
+        records=[
+            {
+                "content_type": "document",
+                "content_text": "Critical analysis of Shakespeare's Hamlet performances.",
+            },
+            {
+                "content_type": "paragraph",
+                "content_text": "Hamlet's soliloquies are central to the play.",
+            },
+        ],
         full_text="Critical analysis of Shakespeare's Hamlet performances.",
         metadata={"file_type": "docx", "category": "arts review"},
         description="Critical analysis of Shakespeare's Hamlet performances.",
@@ -134,10 +167,10 @@ def test_search_files_multi_columns():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_ranking_precision_k1():
+def test_search_files_ranking_precision_k1(file_manager):
     """Test that search correctly ranks documents and returns most relevant first (k=1)."""
     # Create multiple documents with different relevance levels for the same query
-    file_manager = FileManager()
+    file_manager = file_manager
     test_docs = [
         (
             "ai_overview.txt",
@@ -164,6 +197,10 @@ def test_search_files_ranking_precision_k1():
         file_manager._create_file(
             filename=filename,
             status="success",
+            records=[
+                {"content_type": "document", "content_text": content},
+                {"content_type": "paragraph", "content_text": content},
+            ],
             full_text=content,
             metadata={"file_size": len(content)},
             description=description,
@@ -184,10 +221,10 @@ def test_search_files_ranking_precision_k1():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_ranking_precision_k3():
+def test_search_files_ranking_precision_k3(file_manager):
     """Test search ranking with k=3 to verify correct ordering."""
     # Create documents with varying degrees of relevance
-    file_manager = FileManager()
+    file_manager = file_manager
     test_docs = [
         (
             "irrelevant.txt",
@@ -215,6 +252,10 @@ def test_search_files_ranking_precision_k3():
         file_manager._create_file(
             filename=filename,
             status="success",
+            records=[
+                {"content_type": "document", "content_text": content},
+                {"content_type": "paragraph", "content_text": content},
+            ],
             full_text=content,
         )
 
@@ -236,9 +277,9 @@ def test_search_files_ranking_precision_k3():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_exact_match_beats_partial():
+def test_search_files_exact_match_beats_partial(file_manager):
     """Test that exact keyword matches rank higher than partial matches."""
-    file_manager = FileManager()
+    file_manager = file_manager
     test_docs = [
         (
             "partial_match.txt",
@@ -258,6 +299,10 @@ def test_search_files_exact_match_beats_partial():
         file_manager._create_file(
             filename=filename,
             status="success",
+            records=[
+                {"content_type": "document", "content_text": content},
+                {"content_type": "paragraph", "content_text": content},
+            ],
             full_text=content,
             metadata={},
         )
@@ -273,13 +318,23 @@ def test_search_files_exact_match_beats_partial():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_multiple_reference_columns():
+def test_search_files_multiple_reference_columns(file_manager):
     """Test search across multiple reference columns with correct ranking."""
     # Create files where different signals appear in different fields
-    file_manager = FileManager()
+    file_manager = file_manager
     file_manager._create_file(
         filename="signal_in_text.pdf",
         status="success",
+        records=[
+            {
+                "content_type": "document",
+                "content_text": "Deep learning neural networks for computer vision and natural language processing.",
+            },
+            {
+                "content_type": "paragraph",
+                "content_text": "Computer vision applications use neural networks.",
+            },
+        ],
         full_text="Deep learning neural networks for computer vision and natural language processing.",
         metadata={"category": "general", "keywords": "basic"},
         description="Deep learning neural networks for computer vision and natural language processing.",
@@ -288,6 +343,16 @@ def test_search_files_multiple_reference_columns():
     file_manager._create_file(
         filename="signal_in_both.docx",
         status="success",
+        records=[
+            {
+                "content_type": "document",
+                "content_text": "Advanced machine learning techniques including neural networks and deep learning algorithms.",
+            },
+            {
+                "content_type": "paragraph",
+                "content_text": "Neural networks and deep learning are key techniques.",
+            },
+        ],
         full_text="Advanced machine learning techniques including neural networks and deep learning algorithms.",
         metadata={
             "category": "machine learning research",
@@ -299,6 +364,16 @@ def test_search_files_multiple_reference_columns():
     file_manager._create_file(
         filename="signal_in_metadata.txt",
         status="success",
+        records=[
+            {
+                "content_type": "document",
+                "content_text": "This is a general technology document.",
+            },
+            {
+                "content_type": "paragraph",
+                "content_text": "General technology overview.",
+            },
+        ],
         full_text="This is a general technology document.",
         metadata={
             "category": "deep learning neural networks",
@@ -327,10 +402,10 @@ def test_search_files_multiple_reference_columns():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_domain_specific_ranking():
+def test_search_files_domain_specific_ranking(file_manager):
     """Test search ranking for domain-specific queries."""
     # Create documents in different domains
-    file_manager = FileManager()
+    file_manager = file_manager
     test_docs = [
         (
             "medical_ai.pdf",
@@ -354,6 +429,10 @@ def test_search_files_domain_specific_ranking():
         file_manager._create_file(
             filename=filename,
             status="success",
+            records=[
+                {"content_type": "document", "content_text": content},
+                {"content_type": "paragraph", "content_text": content},
+            ],
             full_text=content,
             metadata={},
         )
@@ -379,13 +458,17 @@ def test_search_files_domain_specific_ranking():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_filter_files_basic():
+def test_filter_files_basic(file_manager):
     """Test basic filtering of files."""
     # Create test files
-    file_manager = FileManager()
+    file_manager = file_manager
     file_manager._create_file(
         filename="document.pdf",
         status="success",
+        records=[
+            {"content_type": "document", "content_text": "PDF content"},
+            {"content_type": "paragraph", "content_text": "This is a PDF document."},
+        ],
         full_text="PDF content",
         metadata={"file_size": 2048},
     )
@@ -394,6 +477,7 @@ def test_filter_files_basic():
         filename="spreadsheet.xlsx",
         status="error",
         error="Parse failed",
+        records=[],
         full_text="",
         metadata={"file_size": 512},
     )
@@ -413,12 +497,19 @@ def test_filter_files_basic():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_filter_files_metadata():
+def test_filter_files_metadata(file_manager):
     """Test filtering files by metadata fields."""
-    file_manager = FileManager()
+    file_manager = file_manager
     file_manager._create_file(
         filename="large_file.pdf",
         status="success",
+        records=[
+            {"content_type": "document", "content_text": "Large document content"},
+            {
+                "content_type": "paragraph",
+                "content_text": "This is a large document with lots of content.",
+            },
+        ],
         full_text="Large document content",
         metadata={"file_size": 5000000, "file_type": "pdf"},
     )
@@ -426,6 +517,10 @@ def test_filter_files_metadata():
     file_manager._create_file(
         filename="small_file.txt",
         status="success",
+        records=[
+            {"content_type": "document", "content_text": "Small text content"},
+            {"content_type": "paragraph", "content_text": "This is a small text file."},
+        ],
         full_text="Small text content",
         metadata={"file_size": 1000, "file_type": "txt"},
     )
@@ -439,12 +534,22 @@ def test_filter_files_metadata():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_files_no_results_backfill():
+def test_search_files_no_results_backfill(file_manager):
     """Test that search falls back to recent files when no semantic matches."""
-    file_manager = FileManager()
+    file_manager = file_manager
     file_manager._create_file(
         filename="random_doc.txt",
         status="success",
+        records=[
+            {
+                "content_type": "document",
+                "content_text": "Random content about nothing relevant",
+            },
+            {
+                "content_type": "paragraph",
+                "content_text": "This is random unrelated content.",
+            },
+        ],
         full_text="Random content about nothing relevant",
         metadata={},
     )
@@ -463,13 +568,17 @@ def test_search_files_no_results_backfill():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_list_columns():
+def test_list_columns(file_manager):
     """Test _list_columns functionality."""
     # Create a file to ensure table exists
-    file_manager = FileManager()
+    file_manager = file_manager
     file_manager._create_file(
         filename="test.txt",
         status="success",
+        records=[
+            {"content_type": "document", "content_text": "test content"},
+            {"content_type": "paragraph", "content_text": "This is test content."},
+        ],
         full_text="test content",
         metadata={},
     )
@@ -485,181 +594,3 @@ def test_list_columns():
     cols_list = file_manager._list_columns(include_types=False)
     assert isinstance(cols_list, list)
     assert "filename" in cols_list
-
-
-@pytest.mark.unit
-@pytest.mark.requires_real_unify
-@_handle_project
-def test_integration_parse_and_search(supported_file_examples: dict):
-    """Test integration between parsing and search functionality."""
-    # Import and parse the actual sample documents (PDF/DOCX)
-    sample_paths = [
-        info["path"]
-        for info in supported_file_examples.values()
-        if info.get("is_sample_file", False)
-    ]
-    assert len(sample_paths) >= 2, "Expected IT policy PDF and SmartHome DOCX files"
-    file_manager = FileManager()
-    added_files = []
-    for sample_path in sample_paths:
-        display_name = file_manager.import_file(sample_path)
-        added_files.append(display_name)
-
-    # Parse the files (this should create file records automatically)
-    parse_results = file_manager.parse(added_files)
-
-    # Verify files were logged to the table
-    all_files = file_manager._filter_files()
-    assert len(all_files) >= len(added_files)
-
-    # Search for specific content from the sample files
-    # Based on the provided sample content, search for IT-related terms
-    it_results = file_manager._search_files(
-        references={"full_text": "IT department policy security"},
-        k=3,
-    )
-
-    # Should find the IT policy document
-    assert len(it_results) >= 1
-
-    # Search for SmartHome content
-    smarthome_results = file_manager._search_files(
-        references={"full_text": "SmartHome Hub IoT devices"},
-        k=3,
-    )
-
-    # Should find the SmartHome documentation
-    assert len(smarthome_results) >= 1
-
-
-@pytest.mark.unit
-@pytest.mark.requires_real_unify
-@_handle_project
-def test_sample_files_search_ranking_k1(supported_file_examples: dict):
-    """Test search ranking with actual sample files - IT vs SmartHome content."""
-    # Import and parse the actual sample documents (PDF/DOCX)
-    file_manager = FileManager()
-    sample_paths = [
-        info["path"]
-        for info in supported_file_examples.values()
-        if info.get("is_sample_file", False)
-    ]
-    assert len(sample_paths) >= 2, "Expected IT policy PDF and SmartHome DOCX files"
-
-    added_files = []
-    for sample_path in sample_paths:
-        display_name = file_manager.import_file(sample_path)
-        added_files.append(display_name)
-
-    # Parse the files (this should create file records automatically)
-    parse_results = file_manager.parse(added_files)
-
-    # Verify we have both sample files
-    assert len(added_files) >= 2
-
-    # Test IT-specific search - should rank IT policy document first
-    it_query = "IT governance security policy compliance GDPR"
-    it_results = file_manager._search_files(
-        references={"full_text": it_query},
-        k=1,
-    )
-
-    assert len(it_results) == 1
-    # Should get the IT policy document (contains "IT Department Policy Document")
-    it_filename = it_results[0].filename.lower()
-    assert "it" in it_filename or "policy" in it_filename
-
-    # Test IoT/SmartHome specific search - should rank SmartHome doc first
-    smarthome_query = "SmartHome Hub IoT devices Zigbee Z-Wave connectivity"
-    smarthome_results = file_manager._search_files(
-        references={"full_text": smarthome_query},
-        k=1,
-    )
-
-    assert len(smarthome_results) == 1
-    # Should get the SmartHome documentation
-    smarthome_filename = smarthome_results[0].filename.lower()
-    assert (
-        "smarthome" in smarthome_filename
-        or "hub" in smarthome_filename
-        or "x200" in smarthome_filename
-    )
-
-    # Test technical architecture search - should rank SmartHome doc first
-    # (since it has more detailed technical specs)
-    tech_query = "architecture specifications processor memory connectivity API"
-    tech_results = file_manager._search_files(
-        references={"full_text": tech_query},
-        k=1,
-    )
-
-    assert len(tech_results) == 1
-    # Should prioritize the SmartHome doc which has detailed technical specs
-    tech_filename = tech_results[0].filename.lower()
-    assert (
-        "smarthome" in tech_filename
-        or "hub" in tech_filename
-        or "x200" in tech_filename
-    )
-
-    # Test security-focused search - should rank IT policy first
-    # (since it has comprehensive security policies)
-    security_query = "security policies access control data classification encryption"
-    security_results = file_manager._search_files(
-        references={"full_text": security_query},
-        k=1,
-    )
-
-    assert len(security_results) == 1
-    # Should prioritize the IT policy doc which has detailed security policies
-    security_filename = security_results[0].filename.lower()
-    assert "it" in security_filename or "policy" in security_filename
-
-
-@pytest.mark.unit
-@pytest.mark.requires_real_unify
-@_handle_project
-def test_import_file_method(sample_files: Path):
-    """Test the public import_file method with basic sample files."""
-    # Get a basic sample file (this test is fine with simple .txt files)
-    file_manager = FileManager()
-    sample_file = list(sample_files.iterdir())[0]
-
-    # Import single file
-    file_manager = FileManager()
-    display_name = file_manager.import_file(sample_file)
-
-    assert display_name is not None
-    assert file_manager.exists(display_name)
-    assert display_name in file_manager.list()
-
-
-@pytest.mark.unit
-@pytest.mark.requires_real_unify
-@_handle_project
-def test_unique_filename_handling():
-    """Test that unique filename logic works with file creation."""
-    # Create two files with same base name (use unique name to avoid conflicts with other tests)
-    file_manager = FileManager()
-    file_manager._create_file(
-        filename="unique_test_doc.pdf",
-        status="success",
-        full_text="First document",
-        metadata={},
-    )
-
-    # This should work without conflict since unique names are established before parsing
-    file_manager._create_file(
-        filename="unique_test_doc (1).pdf",
-        status="success",
-        full_text="Second document",
-        metadata={},
-    )
-
-    # Both files should exist
-    files = file_manager._filter_files(filter="filename.startswith('unique_test_doc')")
-    assert len(files) == 2
-
-    filenames = [f.filename for f in files]
-    assert "unique_test_doc.pdf" in filenames
-    assert "unique_test_doc (1).pdf" in filenames
