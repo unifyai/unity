@@ -214,6 +214,25 @@ async def test_mm_update_contact_response_policy_invocations(monkeypatch):
         raising=True,
     )
 
+    # --- align names: ensure contact_id==1 refers to Jane -----------------
+    def _fake_filter_contacts(self, *, filter=None, offset=0, limit=1):
+        # Deterministic single result matching the transcript's person
+        return [
+            Contact(
+                contact_id=1,
+                first_name="Jane",
+                surname="Doe",
+                response_policy="Respond within 24 hours to all inquiries.",
+            ),
+        ]
+
+    monkeypatch.setattr(
+        SimulatedContactManager,
+        "_filter_contacts",
+        _fake_filter_contacts,
+        raising=True,
+    )
+
     mm = SimulatedMemoryManager(
         "TEST SCENARIO: Response policy update. SimulatedContactManager MUST accept a single deterministic"
         " update to 'response_policy' for the target contact; do NOT claim it is already set."
