@@ -266,3 +266,28 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 "search_functions_by_similarity: expected a JSON array of function records with scores",
             )
         return data
+
+    def clear(self) -> None:
+        """
+        Reset simulated state for functions.
+
+        There is no persistent backend context to delete. The simplest and
+        most reliable way to reset the simulated manager is to re-run its
+        constructor in-place, which creates a fresh stateful LLM and rebuilds
+        configuration.
+        """
+        type(self).__init__(
+            self,
+            description=getattr(
+                self,
+                "_description",
+                "nothing fixed, make up some imaginary scenario",
+            ),
+            log_events=getattr(self, "_log_events", False),
+            rolling_summary_in_prompts=getattr(
+                self,
+                "_rolling_summary_in_prompts",
+                True,
+            ),
+            simulation_guidance=getattr(self, "_simulation_guidance", None),
+        )
