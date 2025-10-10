@@ -7,16 +7,13 @@ from __future__ import annotations
 
 import pytest
 
-from unity.file_manager.file_manager import FileManager
-
 
 @pytest.mark.asyncio
-async def test_parse_async_single_file(supported_file_examples: dict):
-    file_manager = FileManager()
+async def test_parse_async_single_file(file_manager, supported_file_examples: dict):
     """Test async parsing of a single file."""
     # Get the first available test file
     filename, example_data = next(iter(supported_file_examples.items()))
-    display_name = file_manager._add_file(example_data["path"])
+    display_name = file_manager.import_file(example_data["path"])  # new API
 
     # Parse asynchronously
     results = []
@@ -29,13 +26,12 @@ async def test_parse_async_single_file(supported_file_examples: dict):
 
 
 @pytest.mark.asyncio
-async def test_parse_async_multiple_files(supported_file_examples: dict):
-    file_manager = FileManager()
+async def test_parse_async_multiple_files(file_manager, supported_file_examples: dict):
     """Test async parsing of multiple files."""
     # Import all example files
     imported = []
     for filename, example_data in supported_file_examples.items():
-        display_name = file_manager._add_file(example_data["path"])
+        display_name = file_manager.import_file(example_data["path"])  # new API
         imported.append(display_name)
 
     # Parse asynchronously
@@ -56,13 +52,12 @@ async def test_parse_async_multiple_files(supported_file_examples: dict):
 
 
 @pytest.mark.asyncio
-async def test_parse_async_with_batch_size(supported_file_examples: dict):
-    file_manager = FileManager()
+async def test_parse_async_with_batch_size(file_manager, supported_file_examples: dict):
     """Test async parsing with custom batch size."""
     # Import multiple files
     imported = []
     for filename, example_data in supported_file_examples.items():
-        display_name = file_manager._add_file(example_data["path"])
+        display_name = file_manager.import_file(example_data["path"])  # new API
         imported.append(display_name)
 
     # Parse with small batch size
@@ -74,12 +69,11 @@ async def test_parse_async_with_batch_size(supported_file_examples: dict):
 
 
 @pytest.mark.asyncio
-async def test_parse_async_mixed_files(supported_file_examples: dict):
-    file_manager = FileManager()
+async def test_parse_async_mixed_files(file_manager, supported_file_examples: dict):
     """Test async parsing with mix of existing and non-existing files."""
     # Import one file
     filename, example_data = next(iter(supported_file_examples.items()))
-    existing = file_manager._add_file(example_data["path"])
+    existing = file_manager.import_file(example_data["path"])  # new API
 
     # Mix of existing and non-existing
     files_to_parse = [existing, "nonexistent.txt", "another_missing.txt"]
@@ -100,8 +94,7 @@ async def test_parse_async_mixed_files(supported_file_examples: dict):
 
 
 @pytest.mark.asyncio
-async def test_parse_async_empty_list():
-    file_manager = FileManager()
+async def test_parse_async_empty_list(file_manager):
     """Test async parsing with empty file list."""
     results = []
     async for result in file_manager.parse_async([]):
@@ -111,13 +104,12 @@ async def test_parse_async_empty_list():
 
 
 @pytest.mark.asyncio
-async def test_parse_async_with_options(supported_file_examples: dict):
-    file_manager = FileManager()
+async def test_parse_async_with_options(file_manager, supported_file_examples: dict):
     """Test async parsing with parser options."""
     # Import files
     imported = []
     for filename, example_data in supported_file_examples.items():
-        display_name = file_manager._add_file(example_data["path"])
+        display_name = file_manager.import_file(example_data["path"])  # new API
         imported.append(display_name)
 
     # Parse with options

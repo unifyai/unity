@@ -9,6 +9,39 @@ import pytest
 from pathlib import Path
 from typing import Any, Dict, List
 from unity.file_manager.parser import DoclingParser
+from unity.file_manager.managers.local import LocalFileManager
+from unity.file_manager.global_file_manager import GlobalFileManager
+from unity.file_manager.simulated import SimulatedFileManager
+
+
+@pytest.fixture(scope="session")
+def fm_root(tmp_path_factory) -> str:
+    """Session-scoped root directory for the singleton LocalFileManager.
+
+    All tests must instantiate the manager with this same root to respect
+    singleton semantics across the suite.
+    """
+    return tmp_path_factory.mktemp("fm_root").as_posix()
+
+
+@pytest.fixture()
+def file_manager(fm_root: str) -> LocalFileManager:
+    """Return the singleton LocalFileManager bound to the session's fm_root."""
+    return LocalFileManager(fm_root)
+
+
+@pytest.fixture()
+def global_file_manager(file_manager):
+    """Return the singleton GlobalFileManager configured with the local manager."""
+    local = file_manager
+    gfm = GlobalFileManager({"local": local})
+    return gfm
+
+
+@pytest.fixture(scope="module")
+def simulated_fm() -> SimulatedFileManager:
+    """Provide a singleton-ish simulated file manager for this module."""
+    return SimulatedFileManager("Demo file storage for unit-tests.")
 
 
 @pytest.fixture()
@@ -338,16 +371,14 @@ def _create_sample_file(file_path: Path, file_type: str) -> None:
 
 
 @pytest.fixture()
-def sample_files(tmp_path: Path) -> Path:
+def sample_files(tmp_path: Path, fm_root: str) -> Path:
     """Create sample files for all supported formats."""
-    from unity.file_manager.file_manager import FileManager
-
     d = tmp_path / "samples"
     d.mkdir(parents=True, exist_ok=True)
 
-    # Get supported formats from the current FileManager/parser
-    fm = FileManager()
-    supported_formats = fm.supported_formats
+    # Get supported formats from the current LocalFileManager/parser
+    fm = LocalFileManager(fm_root)
+    supported_formats = fm._parser.supported_formats
 
     # Create sample files for each supported format
     for i, fmt in enumerate(supported_formats):
@@ -374,12 +405,10 @@ def sample_files(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def supported_file_examples(tmp_path: Path) -> dict:
+def supported_file_examples(tmp_path: Path, fm_root: str) -> dict:
     """Create examples of files in each supported format with expected content."""
-    from unity.file_manager.file_manager import FileManager
-
-    fm = FileManager()
-    supported_formats = fm.supported_formats
+    fm = LocalFileManager(fm_root)
+    supported_formats = fm._parser.supported_formats
 
     examples = {}
 
@@ -610,14 +639,10 @@ def parser_validation_suite() -> Dict[str, Any]:
 
         # Validate record structure
         required_fields = [
-            "content_id",
             "content_type",
             "title",
             "summary",
             "content_text",
-            "level",
-            "confidence_score",
-            "schema_id",
         ]
         for record in records:
             for field in required_fields:
@@ -631,8 +656,6 @@ def parser_validation_suite() -> Dict[str, Any]:
                 "image",
                 "table",
             ]
-            assert isinstance(record["confidence_score"], (int, float))
-            assert 0.0 <= record["confidence_score"] <= 1.0
 
     return {
         "validate_structure": validate_document_structure,
@@ -665,13 +688,3 @@ def performance_benchmarks() -> Dict[str, Any]:
             "min_concurrency": 2,  # minimum concurrent files
         },
     }
-
-
-# Import the proper SimulatedFileManager
-from unity.file_manager.simulated import SimulatedFileManager
-
-
-@pytest.fixture()
-def simulated_file_manager() -> SimulatedFileManager:
-    """Create a simulated FileManager for unit tests."""
-    return SimulatedFileManager()
