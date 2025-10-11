@@ -12,6 +12,8 @@ from ..skill_manager.base import BaseSkillManager
 from ..task_scheduler.base import BaseTaskScheduler
 from ..web_searcher.base import BaseWebSearcher
 from ..actor.base import BaseActor
+from ..guidance_manager.base import BaseGuidanceManager
+from ..guidance_manager.guidance_manager import GuidanceManager
 
 # Simulated implementations (defaults for this subclass)
 from ..contact_manager.simulated import SimulatedContactManager
@@ -47,6 +49,7 @@ class SimulatedConductor(Conductor):
         contact_manager: Optional[BaseContactManager] = None,
         transcript_manager: Optional[BaseTranscriptManager] = None,
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
+        guidance_manager: Optional[BaseGuidanceManager] = None,
         skill_manager: Optional[BaseSkillManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         web_searcher: Optional[BaseWebSearcher] = None,
@@ -96,6 +99,14 @@ class SimulatedConductor(Conductor):
             )
         )
 
+        _guidance_manager = (
+            guidance_manager
+            if guidance_manager is not None
+            else GuidanceManager(
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+            )
+        )
+
         _skill_manager = (
             skill_manager
             if skill_manager is not None
@@ -136,6 +147,7 @@ class SimulatedConductor(Conductor):
             contact_manager=_contact_manager,
             transcript_manager=_transcript_manager,
             knowledge_manager=_knowledge_manager,
+            guidance_manager=_guidance_manager,
             skill_manager=_skill_manager,
             task_scheduler=_task_scheduler,
             web_searcher=_web_searcher,

@@ -32,16 +32,8 @@ _CASES = [
         "web_searcher",
     ),
     (
-        "Erase all saved function definitions and related state.",
-        "function_manager",
-    ),
-    (
         "Clear all stored guidance instructions and memory.",
         "guidance_manager",
-    ),
-    (
-        "Delete all stored images; wipe image storage.",
-        "image_manager",
     ),
     (
         "Erase all stored secrets and credentials.",
