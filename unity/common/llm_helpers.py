@@ -88,6 +88,8 @@ def _canonical_tool_owner_name(cls: type) -> str:
     Policy:
     - Walk the MRO; if any ancestor's name starts with "Base", strip "Base"
       and use the remainder (e.g., BaseActor → Actor).
+    - If any ancestor's name starts with "Simulated", strip "Simulated" and use the remainder
+      (e.g., SimulatedConductor → Conductor).
     - Fallback to the class' own __name__ unchanged.
     """
     try:
@@ -97,6 +99,8 @@ def _canonical_tool_owner_name(cls: type) -> str:
             name = getattr(c, "__name__", "")
             if name.startswith("Base") and len(name) > 4:
                 return name[4:]
+            elif name.startswith("Simulated") and len(name) > 9:
+                return name[9:]
     except Exception:
         pass
 
