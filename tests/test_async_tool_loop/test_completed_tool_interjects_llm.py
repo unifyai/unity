@@ -202,9 +202,11 @@ async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
     await handle.result()
 
     # ── Assertions ───────────────────────────────────────────────────────
-    roles = [m["role"] for m in client.messages]
+    # Some real clients persist the system header as a first message.
+    # Ignore any leading system messages when asserting the core skeleton.
+    roles = [m["role"] for m in client.messages if m.get("role") != "system"]
 
-    # Basic skeleton:
+    # Basic skeleton (excluding any system headers):
     #   user
     #   assistant(tool_calls fast & slow)
     #   tool  (fast_task result)
