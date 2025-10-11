@@ -91,7 +91,7 @@ class PlanRuntime:
         self._waiting_for_actor = False
 
         self.action_counter = 0
-        self.cache_miss_counter = 0
+        self.cache_miss_counter: List[int] = []
         self.path_context: List[str] = []
         self.call_stacks = defaultdict(list)
         self.frame_id_counter = 0
@@ -907,7 +907,8 @@ class _SteerableToolHandleProxy:
                     self._plan.idempotency_cache[cache_key],
                 )
 
-            self._plan.runtime.cache_miss_counter += 1
+            if self._plan.runtime.cache_miss_counter:
+                self._plan.runtime.cache_miss_counter[-1] += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
@@ -957,7 +958,8 @@ class _SteerableToolHandleProxy:
                     self._plan.idempotency_cache[cache_key],
                 )
 
-            self._plan.runtime.cache_miss_counter += 1
+            if self._plan.runtime.cache_miss_counter:
+                self._plan.runtime.cache_miss_counter[-1] += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
@@ -1109,7 +1111,8 @@ class _ActionProviderProxy:
                     )
                 return cached_result_id
 
-            self._plan.runtime.cache_miss_counter += 1
+            if self._plan.runtime.cache_miss_counter:
+                self._plan.runtime.cache_miss_counter[-1] += 1
             self._plan.action_log.append(
                 f"{diag_prefix} CACHE MISS: Executing {call_repr}",
             )
@@ -1250,7 +1253,8 @@ class _ActionProviderProxy:
                     )
                 return cached_result_id
 
-            self._plan.runtime.cache_miss_counter += 1
+            if self._plan.runtime.cache_miss_counter:
+                self._plan.runtime.cache_miss_counter[-1] += 1
             self._plan.action_log.append(
                 f"{diag_prefix} CACHE MISS: Executing {call_repr}",
             )
@@ -3859,7 +3863,9 @@ class HierarchicalActor(BaseActor):
                     logger.info(f"{diag_prefix} VERIFY: Entering '{func_name}'")
                     parent_action_counter = plan.runtime.action_counter
                     plan.runtime.action_counter = 0
-                    plan.runtime.cache_miss_counter = 0
+
+                    step_cache_miss_counter = 0
+                    plan.runtime.cache_miss_counter.append(0)
 
                     if plan.runtime.execution_mode != "replay_after_modification":
                         await self._ensure_precondition(plan, func_name)
@@ -4041,9 +4047,10 @@ class HierarchicalActor(BaseActor):
                             "screenshot": None,
                         }
 
-                        step_cache_miss_counter = plan.runtime.cache_miss_counter
-
-                        plan.runtime.cache_miss_counter = 0
+                        if plan.runtime.cache_miss_counter:
+                            step_cache_miss_counter = (
+                                plan.runtime.cache_miss_counter.pop()
+                            )
 
                         try:
                             frame = inspect.currentframe()
@@ -4103,7 +4110,10 @@ class HierarchicalActor(BaseActor):
                         )
                         plan.runtime.action_counter = parent_action_counter
 
-                        plan.runtime.cache_miss_counter = 0
+                        if plan.runtime.cache_miss_counter:
+                            plan.runtime.cache_miss_counter[
+                                -1
+                            ] += step_cache_miss_counter
 
             return wrapper
 
