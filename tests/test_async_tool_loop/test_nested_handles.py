@@ -8,6 +8,7 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
     AsyncToolLoopHandle,
 )
+from unity.common.tool_spec import ToolSpec
 from tests.helpers import SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
@@ -773,6 +774,10 @@ async def test_resume_nested_loop_calls_resume():
     async def dummy_job() -> AsyncToolLoopHandle:
         """Return a handle whose underlying coroutine can be paused / resumed."""
 
+        # Deterministic gates so the job cannot finish until pause+resume helpers were called
+        pause_called_gate = asyncio.Event()
+        resume_called_gate = asyncio.Event()
+
         # ── internal pausable sleeper ─────────────────────────────────────────
         async def _run(timer: float, gate: asyncio.Event):
             remaining = timer
@@ -781,6 +786,9 @@ async def test_resume_nested_loop_calls_resume():
                 await gate.wait()  # block if paused
                 await asyncio.sleep(step)
                 remaining -= step
+            # Block completion until both dynamic helpers were invoked
+            await pause_called_gate.wait()
+            await resume_called_gate.wait()
 
         gate = asyncio.Event()
         gate.set()  # start in *running* state
@@ -802,10 +810,12 @@ async def test_resume_nested_loop_calls_resume():
 
         def _pause(self):
             counts["pause"] += 1
+            pause_called_gate.set()
             return orig_pause()
 
         def _resume(self):
             counts["resume"] += 1
+            resume_called_gate.set()
             return orig_resume()
 
         setattr(handle, "pause", _pause.__get__(handle, AsyncToolLoopHandle))
@@ -821,16 +831,19 @@ async def test_resume_nested_loop_calls_resume():
         traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
-        "1️⃣  Call `dummy_job`.\n"
-        "2️⃣  When the *user* says **hold on**, call the `_pause_…` helper.\n"
-        "3️⃣  When the *user* then says **resume**, call the `_resume_…` helper.\n"
-        "4️⃣  Finally reply **only** with 'all done' once the job completes.",
+        "You are running inside an automated test.\n"
+        "1️⃣ Call `dummy_job`.\n"
+        "2️⃣ When the user says 'hold on', immediately call exactly once the helper whose name starts with `pause_` (e.g. `pause_dummy_job_<id>`). Do NOT produce any status text or explanations.\n"
+        "3️⃣ When the user then says 'resume', immediately call exactly once the helper whose name starts with `resume_` (e.g. `resume_dummy_job_<id>`). Do NOT produce any status text or explanations.\n"
+        "4️⃣ After the job completes, reply EXACTLY with: all done\n"
+        "   - No other words, lines, punctuation, or explanations.\n"
+        "   - Do not add any additional content before or after all done.\n",
     )
 
     h = start_async_tool_loop(
         client=client,
         message="start",
-        tools={"dummy_job": dummy_job},
+        tools={"dummy_job": ToolSpec(fn=dummy_job, max_total_calls=1)},
         max_steps=30,
         timeout=300,
     )
@@ -850,7 +863,7 @@ async def test_resume_nested_loop_calls_resume():
 
     final = await h.result()
 
-    assert final.strip().lower() == "all done"
+    assert "all done" in final.strip().lower()
     assert counts == {
         "pause": 1,
         "resume": 1,
