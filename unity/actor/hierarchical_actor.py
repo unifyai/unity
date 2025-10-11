@@ -4448,6 +4448,64 @@ class HierarchicalActor(BaseActor):
                 f"Fatal error in '{fn.__name__}': {assessment.reason}",
             )
 
+    async def _inject_library_functions(self, base_code: str) -> str:
+        if not self.function_manager:
+            return base_code
+
+        final_code_parts = [base_code]
+        injected_functions = set()
+
+        try:
+            tree = ast.parse(base_code)
+            functions_to_inject = {
+                node.func.id
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            }
+        except SyntaxError as e:
+            logger.warning(f"Could not parse base plan for function injection: {e}")
+            return base_code
+
+        while functions_to_inject:
+            function_name = functions_to_inject.pop()
+
+            if function_name in injected_functions:
+                continue
+
+            search_results = self.function_manager.search_functions(
+                filter=f"name == '{function_name}'",
+                limit=1,
+            )
+            if not search_results:
+                continue
+
+            library_func_data = search_results[0]
+            func_code = library_func_data.get("implementation")
+
+            if not func_code:
+                continue
+            if not library_func_data or "implementation" not in library_func_data:
+                continue
+
+            logger.info(f"Injecting skill '{function_name}' from FunctionManager.")
+
+            final_code_parts.insert(0, f"\n{func_code}\n")
+            injected_functions.add(function_name)
+
+            try:
+                injected_tree = ast.parse(func_code)
+                for node in ast.walk(injected_tree):
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                        dependency_name = node.func.id
+                        if dependency_name not in injected_functions:
+                            functions_to_inject.add(dependency_name)
+            except SyntaxError as e:
+                logger.warning(
+                    f"Could not parse injected function '{function_name}' for dependencies: {e}",
+                )
+
+        return "".join(final_code_parts)
+
     async def _generate_initial_plan(
         self,
         plan: HierarchicalPlan,
@@ -4500,17 +4558,19 @@ class HierarchicalActor(BaseActor):
                     prompt,
                     images=plan.images,
                 )
-                code = (
+                base_code = (
                     response.strip().replace("```python", "").replace("```", "").strip()
                 )
                 logger.debug(
                     f"LLM response for initial plan (attempt {attempt+1}):\n\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---\n\n",
                 )
 
-                return self._sanitize_code(code, plan)
+                full_code = await self._inject_library_functions(base_code)
+
+                return self._sanitize_code(full_code, plan)
 
             except SyntaxError as e:
-                last_error = f"{e}\nProblematic Code:\n---\n{code}\n---"
+                last_error = f"{e}\nProblematic Code:\n---\n{base_code}\n---"
                 logger.error(
                     f"Attempt {attempt+1} to generate plan failed. Reason: {last_error}",
                 )
@@ -4650,10 +4710,11 @@ class HierarchicalActor(BaseActor):
                             .replace("```", "")
                             .strip()
                         )
+                        full_code = await self._inject_library_functions(clean_code)
                         ast.parse(
-                            textwrap.dedent(clean_code),
+                            textwrap.dedent(full_code),
                         )
-                        decision.code = clean_code
+                        decision.code = full_code
                         return decision
                     except SyntaxError as e:
                         last_syntax_error = f"Invalid Python code provided.\nError: {e}\nProblematic Code Snippet:\n---\n{decision.code}\n---"
