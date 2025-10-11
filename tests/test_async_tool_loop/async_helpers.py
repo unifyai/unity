@@ -213,3 +213,69 @@ def make_gated_sync_tool(return_value: str = "ok", timeout: float = 300):
         return return_value
 
     return gate, _tool
+
+
+# --------------------------------------------------------------------------- #
+#  TRANSCRIPT SCANNING HELPERS (INDEX-AGNOSTIC)                                #
+# --------------------------------------------------------------------------- #
+
+
+def first_user_message(msgs: List[dict]) -> dict:
+    """Return the first user message in a chat transcript."""
+    for m in msgs:
+        if m.get("role") == "user":
+            return m
+    raise AssertionError("No user message found in transcript")
+
+
+def first_assistant_tool_call(msgs: List[dict], tool_name: str) -> tuple[dict, dict]:
+    """Return (assistant_message, tool_call) for the first assistant turn that calls tool_name."""
+    for m in msgs:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            f = tc.get("function", {}) or {}
+            if f.get("name") == tool_name:
+                return m, tc
+    raise AssertionError(f"Assistant tool call not found: {tool_name}")
+
+
+def first_assistant_tool_call_by_prefix(
+    msgs: List[dict],
+    name_prefix: str,
+) -> tuple[dict, dict]:
+    """Return (assistant_message, tool_call) for the first assistant turn that calls a tool whose name startswith prefix."""
+    for m in msgs:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            f = tc.get("function", {}) or {}
+            n = f.get("name") or ""
+            if isinstance(n, str) and n.startswith(name_prefix):
+                return m, tc
+    raise AssertionError(f"Assistant tool call not found with prefix: {name_prefix}")
+
+
+def last_plain_assistant_message(msgs: List[dict]) -> dict:
+    """Return the last assistant message that has no tool_calls."""
+    for m in reversed(msgs):
+        if m.get("role") == "assistant" and not m.get("tool_calls"):
+            return m
+    raise AssertionError("No plain assistant message (without tool_calls) found")
+
+
+def first_tool_message_by_name_prefix(msgs: List[dict], prefix: str) -> dict:
+    """Return the first tool message whose name startswith prefix."""
+    for m in msgs:
+        if m.get("role") == "tool" and isinstance(m.get("name"), str):
+            if m["name"].startswith(prefix):
+                return m
+    raise AssertionError(f"No tool message found with name prefix: {prefix}")
+
+
+def first_tool_message_by_name(msgs: List[dict], name: str) -> dict:
+    """Return the first tool message whose name equals the given name."""
+    for m in msgs:
+        if m.get("role") == "tool" and m.get("name") == name:
+            return m
+    raise AssertionError(f"No tool message found with name: {name}")
