@@ -64,6 +64,7 @@ class VerificationWorkItem:
     function_name: str
     parent_stack: tuple
     func_source: str
+    docstring: str
     pre_state: dict
     post_state: dict
     interactions: list
@@ -1923,9 +1924,7 @@ class HierarchicalPlan(BaseActiveTask):
                     assessment = await self.actor._check_state_against_goal(
                         plan=self,
                         function_name=item.function_name,
-                        function_docstring=inspect.getdoc(
-                            self.execution_namespace[item.function_name],
-                        ),
+                        function_docstring=item.docstring,
                         function_source_code=item.func_source,
                         interactions=item.interactions,
                         screenshot=post_state_screenshot,
@@ -3879,9 +3878,30 @@ class HierarchicalActor(BaseActor):
                                 local_interactions.clear()
                             try:
 
-                                current_fn_for_execution = plan.execution_namespace[
-                                    func_name
-                                ]
+                                frame = inspect.currentframe()
+                                current_fn_for_execution = None
+                                try:
+                                    if (
+                                        frame
+                                        and frame.f_back
+                                        and func_name in frame.f_back.f_locals
+                                    ):
+                                        current_fn_for_execution = (
+                                            frame.f_back.f_locals[func_name]
+                                        )
+
+                                    elif func_name in plan.execution_namespace:
+                                        current_fn_for_execution = (
+                                            plan.execution_namespace[func_name]
+                                        )
+
+                                    else:
+                                        raise KeyError(
+                                            f"Function '{func_name}' not found in local or global scope.",
+                                        )
+                                finally:
+                                    del frame
+
                                 captured_run_id = current_run_id_var.get()
                                 result = await inspect.unwrap(current_fn_for_execution)(
                                     *args,
@@ -4025,6 +4045,27 @@ class HierarchicalActor(BaseActor):
 
                         plan.runtime.cache_miss_counter = 0
 
+                        try:
+                            frame = inspect.currentframe()
+                            target_fn_obj = None
+                            try:
+                                if (
+                                    frame
+                                    and frame.f_back
+                                    and func_name in frame.f_back.f_locals
+                                ):
+                                    target_fn_obj = frame.f_back.f_locals[func_name]
+                                elif func_name in plan.execution_namespace:
+                                    target_fn_obj = plan.execution_namespace[func_name]
+                            finally:
+                                del frame
+
+                            captured_docstring = (
+                                inspect.getdoc(target_fn_obj) if target_fn_obj else ""
+                            )
+                        except Exception:
+                            captured_docstring = ""
+
                         plan.verif_seq += 1
                         item = VerificationWorkItem(
                             ordinal=plan.verif_seq,
@@ -4033,6 +4074,7 @@ class HierarchicalActor(BaseActor):
                                 plan.run_id,
                             )[:-1],
                             func_source=plan.function_source_map.get(func_name, ""),
+                            docstring=captured_docstring,
                             pre_state=pre_state,
                             post_state=post_state,
                             interactions=copy.deepcopy(local_interactions),
@@ -4608,11 +4650,24 @@ class HierarchicalActor(BaseActor):
             if is_browser_task:
                 browser_screenshot = await self.action_provider.browser.get_screenshot()
 
-            docstring = (
-                inspect.getdoc(plan.execution_namespace[function_name])
-                or "No docstring provided."
-            )
-            func_sig = inspect.signature(plan.execution_namespace[function_name])
+            try:
+                frame = inspect.currentframe()
+                target_fn_obj = None
+                try:
+                    if (
+                        frame
+                        and frame.f_back
+                        and function_name in frame.f_back.f_locals
+                    ):
+                        target_fn_obj = frame.f_back.f_locals[function_name]
+                    elif function_name in plan.execution_namespace:
+                        target_fn_obj = plan.execution_namespace[function_name]
+                finally:
+                    del frame
+            except Exception:
+                target_fn_obj
+            docstring = inspect.getdoc(target_fn_obj) or "No docstring provided."
+            func_sig = inspect.signature(target_fn_obj)
             parent_code = (
                 plan.clean_function_source_map.get(plan.call_stack[-2], "")
                 if len(plan.call_stack) > 1
