@@ -362,8 +362,15 @@ class Conductor:
         attr_name = f"_{key}"
         manager = getattr(self, attr_name, None)
         if manager is None:
+            # Build a robust label irrespective of whether `target` is an Enum or a string
+            try:
+                target_label = (
+                    target.name if isinstance(target, StateManager) else str(target)
+                )
+            except Exception:
+                target_label = str(target)
             raise ValueError(
-                f"State manager '{target.name}' is not available on this Conductor instance.",
+                f"State manager '{target_label}' is not available on this Conductor instance.",
             )
 
         clear_fn = getattr(manager, "clear", None)
