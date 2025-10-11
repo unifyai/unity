@@ -128,59 +128,35 @@ class ActionProvider:
 
     def _setup_browser_methods(self):
         """Dynamically create tool methods without forcing an early backend connection."""
+        from unity.controller.browser_backends import (
+            LegacyBrowserBackend,
+            MagnitudeBrowserBackend,
+        )
 
-        def _make_lazy_wrapper(method_name: str, doc: str | None = None):
+        backend_class = (
+            MagnitudeBrowserBackend
+            if self._browser_mode == "magnitude"
+            else LegacyBrowserBackend
+        )
+
+        def _make_lazy_wrapper(method_name: str, backend_class):
             async def wrapper(*args, **kwargs):
-                # Initialize browser lazily on first actual call
                 backend_method = getattr(self.browser.backend, method_name)
                 return await backend_method(*args, **kwargs)
 
             wrapper.__name__ = method_name
             wrapper.__qualname__ = method_name
-            if doc:
-                wrapper.__doc__ = doc
+            backend_method = getattr(backend_class, method_name, None)
+            if backend_method and hasattr(backend_method, "__doc__"):
+                wrapper.__doc__ = backend_method.__doc__
             return wrapper
 
-        setattr(
-            self,
-            "act",
-            _make_lazy_wrapper(
-                "act",
-                doc=(
-                    "Performs a single high-level action in the browser (lazy-inits backend on first use)."
-                ),
-            ),
-        )
-        setattr(
-            self,
-            "observe",
-            _make_lazy_wrapper(
-                "observe",
-                doc=(
-                    "Observes/queries the current page visually (lazy-inits backend on first use)."
-                ),
-            ),
-        )
-        setattr(
-            self,
-            "query",
-            _make_lazy_wrapper(
-                "query",
-                doc=(
-                    "Queries agent memory/action history (lazy-inits backend on first use)."
-                ),
-            ),
-        )
-        setattr(
-            self,
-            "navigate",
-            _make_lazy_wrapper(
-                "navigate",
-                doc=(
-                    "Navigates to a URL in the browser (lazy-inits backend on first use)."
-                ),
-            ),
-        )
+        for method_name in ["act", "observe", "query", "navigate"]:
+            setattr(
+                self,
+                method_name,
+                _make_lazy_wrapper(method_name, backend_class),
+            )
 
     @property
     def browser(self) -> Browser:
