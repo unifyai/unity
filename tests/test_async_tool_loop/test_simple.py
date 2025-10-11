@@ -196,8 +196,11 @@ async def test_recovers_after_failure():
     answer = await start_async_tool_loop(
         client,
         message=(
-            "First divide 4 by 0 using the `divide` tool – that will fail.   "
-            "Then divide 4 by 2 with the same tool and give me just the result."
+            "Perform EXACTLY two tool calls and no more, in this order:\n"
+            "1) Call `divide` with a=4 and b=0. This will fail with ZeroDivisionError. Do NOT retry or fix it.\n"
+            "2) Then call `divide` with a=4 and b=2.\n"
+            "After the second call returns, reply with the result only (plain text `2`). Do not schedule any additional tool calls,"
+            " and do not attempt to re-run the failing divide(4,0)."
         ),
         tools={"divide": divide},
         max_consecutive_failures=3,
