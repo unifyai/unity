@@ -8,6 +8,10 @@ import pytest
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_assistant_call_prefix,
+)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -80,15 +84,55 @@ async def test_notification_bubbles_up_two_tiers() -> None:
     and allow the assistant to react; the tool then completes successfully.
     """
 
+    # Deterministic ordering gates – ensure notify_parent is called while send_email is running
+    notify_called_gate = asyncio.Event()
+
+    @unify.traced
+    async def send_email(
+        address: str,
+        description: str,
+        *,
+        notification_up_q: asyncio.Queue | None = None,
+    ) -> str:
+        """Send an email, emitting notifications along the way (deterministic flow)."""
+        if notification_up_q is None:
+            raise RuntimeError("notification queue missing")
+
+        # Emit an early progress update, then block until notify_parent has been requested
+        await notification_up_q.put({"message": "Composing email…"})
+        await notify_called_gate.wait()
+        await asyncio.sleep(0)  # yield to allow notify_parent to run
+        await notification_up_q.put({"message": "Sending email…"})
+        return "Email sent!"
+
+    @unify.traced
+    async def send_text(
+        number: str,
+        description: str,
+        *,
+        notification_up_q: asyncio.Queue | None = None,
+    ) -> str:
+        return "Text queued!"
+
+    # Helper tool the assistant must call to surface progress upward
+    @unify.traced
+    async def notify_parent(
+        message: str,
+        *,
+        notification_up_q: asyncio.Queue | None = None,
+    ) -> str:
+        if notification_up_q is None:
+            raise RuntimeError("notification queue missing")
+        await notification_up_q.put({"message": message})
+        return "ack"
+
     outer_client = make_llm(
         "You are coordinating internal tools that may emit progress notifications while running.\n"
-        "When any pending tool emits a progress update: \n"
-        "(1) Immediately surface a concise, non-blocking update one level up by calling notify_parent(message=...).\n"
-        "    Use the actual progress text when available (e.g., 'Composing email…', 'Sending email…'); do not invent.\n"
-        "(2) Do not wait for any acknowledgement; let the running tool continue.\n"
-        "(3) Avoid starting unrelated tools while the original call is in progress, unless required to complete the task.\n"
-        "As soon as the email has been sent successfully, end your final assistant message with an explicit confirmation "
-        "using the word 'sent' (e.g., 'Email sent.'). Keep responses concise.",
+        "Follow these rules exactly for this session:\n"
+        "1) As soon as a running tool emits a progress update, immediately call notify_parent(message=...) with the exact text (e.g., 'Composing email…').\n"
+        "2) Do not produce a normal assistant message while work is pending; use tools only.\n"
+        "3) Avoid starting unrelated tools while the original call is in progress.\n"
+        "4) Once the email has been sent, produce a single, concise assistant message that includes the word 'sent' (e.g., 'Email sent.').",
     )
 
     outer_tools = {
@@ -104,11 +148,22 @@ async def test_notification_bubbles_up_two_tiers() -> None:
     )
 
     try:
-        # Await a surfaced notification produced when the assistant calls notify_parent.
-        # Ignore any earlier progress events from base tools (e.g., send_email).
+        # Deterministic ordering:
+        # 1) Wait until assistant schedules send_email
+        await _wait_for_tool_request(outer_client, "send_email", timeout=120.0)
+        # 2) Wait until assistant schedules notify_parent in response to the progress update
+        await _wait_for_assistant_call_prefix(
+            outer_client,
+            "notify_parent",
+            timeout=120.0,
+        )
+        # 3) Unblock send_email so it can continue and finish
+        notify_called_gate.set()
+
+        # Now assert that a bubbled notification from notify_parent is received
         notification_event = None
         for _ in range(5):
-            evt = await asyncio.wait_for(outer_handle.next_notification(), timeout=300)
+            evt = await asyncio.wait_for(outer_handle.next_notification(), timeout=120)
             if evt.get("tool_name") == "notify_parent":
                 notification_event = evt
                 break
@@ -139,15 +194,16 @@ async def test_notification_bubbles_up_two_tiers() -> None:
     # ─────────────────────────
     msgs = outer_client.messages
 
-    # 1️⃣ original user request ------------------------------------------------
-    assert msgs[0]["role"] == "user"
-    assert msgs[0]["content"] == (
+    # 1️⃣ system + original user request ---------------------------------------
+    assert msgs[0]["role"] == "system"
+    assert msgs[1]["role"] == "user"
+    assert msgs[1]["content"] == (
         "Please email jonathan.smith123@gmail.com and politely tell him I (Dan) "
         "will be arriving at the BBQ around 5pm."
     )
 
     # 2️⃣ assistant chooses `send_email` --------------------------------------
-    m1 = msgs[1]
+    m1 = msgs[2]
     assert m1["role"] == "assistant"
     assert len(m1.get("tool_calls", [])) == 1
     call1 = m1["tool_calls"][0]
