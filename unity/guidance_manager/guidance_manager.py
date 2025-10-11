@@ -37,6 +37,7 @@ from .types.guidance import Guidance
 from ..image_manager.image_manager import ImageManager
 from ..image_manager.utils import substring_from_span
 from ..common.embed_utils import list_private_fields
+from ..common.filter_utils import normalize_filter_expr
 
 
 class GuidanceManager(BaseGuidanceManager):
@@ -832,9 +833,10 @@ class GuidanceManager(BaseGuidanceManager):
         limit: int = 100,
     ) -> List[Guidance]:
         from_fields = list(self._BUILTIN_FIELDS)
+        normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._ctx,
-            filter=filter,
+            filter=normalized,
             offset=offset,
             limit=limit,
             from_fields=from_fields,

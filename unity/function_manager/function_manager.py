@@ -13,6 +13,7 @@ from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
 from ..file_manager.file_manager import FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
+from ..common.filter_utils import normalize_filter_expr
 
 
 class FunctionManager(BaseFunctionManager):
@@ -526,9 +527,10 @@ class FunctionManager(BaseFunctionManager):
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
 
+        normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._ctx,
-            filter=filter,
+            filter=normalized,
             offset=offset,
             limit=limit,
             exclude_fields=list_private_fields(self._ctx),

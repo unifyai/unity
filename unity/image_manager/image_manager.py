@@ -25,6 +25,7 @@ from ..common.semantic_search import backfill_rows, fetch_top_k_by_references
 from .base import BaseImageManager
 from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
+from ..common.filter_utils import normalize_filter_expr
 
 
 class ImageHandle:
@@ -296,9 +297,10 @@ class ImageManager(BaseImageManager):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Image]:
+        normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._ctx,
-            filter=filter,
+            filter=normalized,
             offset=offset,
             limit=limit,
             from_fields=list(self._BUILTIN_FIELDS),

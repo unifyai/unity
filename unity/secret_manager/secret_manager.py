@@ -32,6 +32,7 @@ from ..common.model_to_fields import model_to_fields
 from .types import Secret
 from .base import BaseSecretManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
+from ..common.filter_utils import normalize_filter_expr
 
 
 class SecretManager(BaseSecretManager):
@@ -715,9 +716,10 @@ class SecretManager(BaseSecretManager):
         List[Secret]
             Matching Secret models with ``value`` redacted.
         """
+        normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._ctx,
-            filter=filter,
+            filter=normalized,
             offset=offset,
             limit=limit,
             from_fields=["name", "description"],

@@ -40,6 +40,7 @@ from ..common.tool_spec import read_only
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
+from ..common.filter_utils import normalize_filter_expr
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -2058,11 +2059,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         def _fetch_one(table_name: str) -> tuple[str, List[Dict[str, Any]]]:
             ctx = self._ctx_for_table(table_name)
             excl = list_private_fields(ctx)
+            normalized = normalize_filter_expr(filter)
             rows: List[Dict[str, Any]] = [
                 log.entries
                 for log in unify.get_logs(
                     context=ctx,
-                    filter=filter,
+                    filter=normalized,
                     offset=offset,
                     limit=limit,
                     exclude_fields=excl,

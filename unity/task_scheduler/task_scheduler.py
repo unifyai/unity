@@ -78,6 +78,7 @@ from .activation_ops import (
     detach_from_queue_for_activation as _ops_detach_for_activation,
 )
 from .reintegration import ReintegrationManager
+from ..common.filter_utils import normalize_filter_expr
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
 from .llm import new_llm_client
 from ..constants import is_readonly_ask_guard_enabled
@@ -4282,14 +4283,14 @@ class TaskScheduler(BaseTaskScheduler):
         list[dict]
             Entries for each matching task (raw JSON-serialisable dictionaries).
         """
-        filter = self._normalize_filter_expr(filter)
+        normalized_filter = normalize_filter_expr(filter)
 
         # Note: Avoid capping limits for task_id filters; tests may expect
         # multiple instances of the same task_id to be returned (e.g., clones).
         effective_limit = limit
 
         rows = self._view.get_entries(
-            filter=filter,
+            filter=normalized_filter,
             offset=offset,
             limit=effective_limit,
             # Avoid an extra backend call here by deriving private fields from the
