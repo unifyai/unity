@@ -14,6 +14,8 @@ from ..web_searcher.base import BaseWebSearcher
 from ..actor.base import BaseActor
 from ..guidance_manager.base import BaseGuidanceManager
 from ..guidance_manager.guidance_manager import GuidanceManager
+from ..secret_manager.base import BaseSecretManager
+from ..secret_manager.simulated import SimulatedSecretManager
 
 # Simulated implementations (defaults for this subclass)
 from ..contact_manager.simulated import SimulatedContactManager
@@ -50,6 +52,7 @@ class SimulatedConductor(Conductor):
         transcript_manager: Optional[BaseTranscriptManager] = None,
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         guidance_manager: Optional[BaseGuidanceManager] = None,
+        secret_manager: Optional[BaseSecretManager] = None,
         skill_manager: Optional[BaseSkillManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         web_searcher: Optional[BaseWebSearcher] = None,
@@ -107,6 +110,16 @@ class SimulatedConductor(Conductor):
             )
         )
 
+        _secret_manager = (
+            secret_manager
+            if secret_manager is not None
+            else SimulatedSecretManager(
+                description=description,
+                log_events=log_events,
+                simulation_guidance=simulation_guidance,
+            )
+        )
+
         _skill_manager = (
             skill_manager
             if skill_manager is not None
@@ -148,6 +161,7 @@ class SimulatedConductor(Conductor):
             transcript_manager=_transcript_manager,
             knowledge_manager=_knowledge_manager,
             guidance_manager=_guidance_manager,
+            secret_manager=_secret_manager,
             skill_manager=_skill_manager,
             task_scheduler=_task_scheduler,
             web_searcher=_web_searcher,

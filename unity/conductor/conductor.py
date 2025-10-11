@@ -39,6 +39,8 @@ from ..web_searcher.base import BaseWebSearcher
 from ..web_searcher.web_searcher import WebSearcher
 from ..actor.base import BaseActor
 from ..actor.hierarchical_actor import HierarchicalActor
+from ..secret_manager.base import BaseSecretManager
+from ..secret_manager.secret_manager import SecretManager
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
@@ -69,6 +71,7 @@ class Conductor:
         transcript_manager: Optional[BaseTranscriptManager] = None,
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
         guidance_manager: Optional[BaseGuidanceManager] = None,
+        secret_manager: Optional[BaseSecretManager] = None,
         skill_manager: Optional[BaseSkillManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         web_searcher: Optional[BaseWebSearcher] = None,
@@ -122,6 +125,10 @@ class Conductor:
             )
         )
 
+        self._secret_manager = (
+            secret_manager if secret_manager is not None else SecretManager()
+        )
+
         self._skill_manager = (
             skill_manager if skill_manager is not None else SkillManager()
         )
@@ -151,6 +158,7 @@ class Conductor:
             self._transcript_manager.ask,
             self._knowledge_manager.ask,
             self._guidance_manager.ask,
+            self._secret_manager.ask,
             self._skill_manager.ask,
             self._task_scheduler.ask,
             self._web_searcher.ask,
@@ -177,6 +185,7 @@ class Conductor:
                 self._contact_manager.update,
                 self._knowledge_manager.update,
                 self._guidance_manager.update,
+                self._secret_manager.update,
                 self._task_scheduler.update,
                 self._actor.act,
                 ToolSpec(self._task_scheduler.execute, max_concurrent=1),
