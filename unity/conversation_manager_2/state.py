@@ -158,6 +158,8 @@ class ConversationManagerState:
                 self.set_details(payload)
 
             case GetBusEventsOutput() as e:
+                # TODO: should also grab the latest messages ~50 messages
+                # and populate their contacts in the active conversations
                 for ev in reversed(e.events):
                     if ev["event_name"] == "LLMInput":
                         print("found history")
@@ -254,7 +256,7 @@ class ConversationManagerState:
                 self.push_message(
                     contact,
                     "phone",
-                    Message(contact.full_name, e.content, e.timestamp),
+                    Message("You", e.content, e.timestamp),
                 )
                 self.push_notif(
                     Notification(
