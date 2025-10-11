@@ -1003,6 +1003,8 @@ async def test_dynamic_handle_public_method():
     progress_calls = {"count": 0}
 
     # ── tool that returns a handle with `.ask` ──────────────────────────
+    ask_called_gate = asyncio.Event()
+
     async def long_compute() -> AsyncToolLoopHandle:
         """
         • Runs a 3-second dummy job in the background.
@@ -1012,6 +1014,8 @@ async def test_dynamic_handle_public_method():
         start_ts = time.perf_counter()
 
         async def _job():
+            # Ensure the dynamic `ask_…` helper is invoked before the job can finish
+            await ask_called_gate.wait()
             await asyncio.sleep(8)
             return "compute-done"
 
@@ -1026,6 +1030,8 @@ async def test_dynamic_handle_public_method():
         async def _ask(self):
             progress_calls["count"] += 1
             elapsed = time.perf_counter() - start_ts
+            # Signal that `ask_…` has been called so the job may proceed
+            ask_called_gate.set()
             return f"{elapsed:.1f}s elapsed"
 
         # Bind and expose
@@ -1043,11 +1049,9 @@ async def test_dynamic_handle_public_method():
     )
     client.set_system_message(
         "1️⃣  Call `long_compute`.\n"
-        "2️⃣  When the *user* asks **progress?**, call the helper whose name "
-        "starts with `ask_` exactly once.\n"
-        "3️⃣  After calling the `ask_…` helper, do not reply to the user yet. "
-        "If waiting is still needed, call the `wait` helper.\n"
-        "4️⃣  Only once the computation finishes, answer **only** with 'all done'",
+        "2️⃣  When the *user* says 'progress?', you MUST immediately call exactly once the helper whose name starts with `ask_` (e.g. `ask_long_compute_<id>`). Do not call any other helpers before this.\n"
+        "2️⃣b After calling the `ask_…` helper, if waiting is still needed, call the `wait` helper to keep waiting. You may call `wait` repeatedly while still waiting. Do not call any other helpers (no status checks). Do not reply to the user yet.\n"
+        "3️⃣  Only once the computation finishes, answer **only** with 'all done'.",
     )
 
     top = start_async_tool_loop(
@@ -1058,9 +1062,16 @@ async def test_dynamic_handle_public_method():
         timeout=300,
     )
 
-    # Wait deterministically until the assistant has launched the tool so `_ask_…` exists
+    # Wait deterministically until the assistant has launched the tool and a placeholder exists
+    # so that dynamic helpers (including `ask_…`) are visible before we interject.
     await _wait_for_tool_request(client, "long_compute")
+    await _wait_for_tool_result(client, tool_name="long_compute", min_results=1)
+
+    # Now interject to trigger the `ask_…` helper
     await top.interject("progress?")
+
+    # Ensure the assistant actually invokes the dynamic `ask_…` helper
+    await _wait_for_assistant_call_prefix(client, "ask_")
 
     final_reply = await top.result()
 
