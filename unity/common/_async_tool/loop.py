@@ -1516,8 +1516,6 @@ async def async_tool_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
-                        # Trigger an immediate LLM turn after helper action
-                        llm_turn_required = True
 
                         continue  # nothing else to schedule
 
@@ -1570,8 +1568,6 @@ async def async_tool_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
-                        # Trigger an immediate LLM turn after helper action
-                        llm_turn_required = True
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
@@ -1623,8 +1619,6 @@ async def async_tool_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
-                        # Trigger an immediate LLM turn after helper action
-                        llm_turn_required = True
                         continue  # helper handled
 
                     if name.startswith("clarify_"):
@@ -1690,8 +1684,6 @@ async def async_tool_loop_inner(
                             tools_data.info[tgt_task].clarify_placeholder = (
                                 tool_reply_msg
                             )
-                        # Trigger an immediate LLM turn after helper action
-                        llm_turn_required = True
                         continue
 
                     if name.startswith("interject_"):
@@ -1760,9 +1752,6 @@ async def async_tool_loop_inner(
                             client,
                             _msg_dispatcher,
                         )
-                        # Trigger an immediate LLM turn after helper action
-                        llm_turn_required = True
-
                         continue  # nothing else to schedule
 
                     # Respect hidden per-tool total-call quotas (pre-pruned); guard
