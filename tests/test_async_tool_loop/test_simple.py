@@ -266,9 +266,10 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
 
     prompt = (
         "You have access to a function named `echo(text: str)`.\n"
-        "For demonstration purposes **call `echo` twice** with exactly the same JSON "
-        'arguments `{ "text": "hello" }` – do not merge the calls.  After both calls, '
-        "answer with a single short sentence."
+        "CRITICAL: In your FIRST assistant message, request TWO tool calls to `echo`, "
+        "both in the SAME assistant message. Use the exact JSON arguments string "
+        '`{ "text": "hello" }` for each tool call (identical including spaces). Do not include any normal assistant text in that first message; only tool calls.\n'
+        "After you receive both tool replies, answer with a single short sentence."
     )
 
     # ------------------------------------------------------------------ #
