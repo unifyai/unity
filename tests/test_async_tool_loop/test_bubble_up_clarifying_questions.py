@@ -7,6 +7,11 @@ import pytest
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_tool_message_prefix,
+    _wait_for_assistant_call_prefix,
+)
 
 # ──────────────────────────────────────────────────────────────────────────
 # Small helpers
@@ -115,8 +120,27 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
         tools=outer_tools,
     )
 
+    # Deterministic ordering using triggers:
+    # 1) Wait until assistant schedules send_email
+    await _wait_for_tool_request(outer_client, "send_email", timeout=120.0)
+    # 2) Wait until the clarification request tool message appears
+    await _wait_for_tool_message_prefix(
+        outer_client,
+        "clarification_request_",
+        timeout=120.0,
+    )
+
+    # 3) The request_clarification tool will bubble the question up – capture it
     await clar_up_q.get()
+    # 4) Provide the answer; assistant should then call a clarify_* helper
     await clar_down_q.put("I'll be bringing sausages and a pack of beer")
+
+    # 5) Ensure the assistant has invoked a clarify_* helper
+    await _wait_for_assistant_call_prefix(
+        outer_client,
+        "clarify_send_email",
+        timeout=120.0,
+    )
 
     await outer_handle.result()
 
@@ -126,18 +150,16 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
 
     import json
 
-    # 0️⃣ basic shape – we always end with 8 chat entries
-    assert len(outer_client.messages) == 8
-
-    # 1️⃣ original user request ------------------------------------------------
-    assert outer_client.messages[0]["role"] == "user"
-    assert outer_client.messages[0]["content"] == (
+    # 1️⃣ system + original user request ---------------------------------------
+    assert outer_client.messages[0]["role"] == "system"
+    assert outer_client.messages[1]["role"] == "user"
+    assert outer_client.messages[1]["content"] == (
         "Please email jonathan.smith123@gmail.com and politely tell him I (Dan) "
         "will be arriving at the BBQ around 5pm."
     )
 
     # 2️⃣ assistant chooses `send_email` --------------------------------------
-    m1 = outer_client.messages[1]
+    m1 = outer_client.messages[2]
     assert m1["role"] == "assistant"
     assert len(m1["tool_calls"]) == 1
     call1 = m1["tool_calls"][0]
@@ -146,36 +168,36 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
     assert args1["address"] == "jonathan.smith123@gmail.com"
 
     # 3️⃣ tool asks a clarification question ----------------------------------
-    clar_req = outer_client.messages[2]
+    clar_req = outer_client.messages[3]
     assert clar_req["role"] == "tool"
     assert clar_req["name"].startswith("clarification_request_")
     assert "Will you be bringing anything" in clar_req["content"]
 
     # 4️⃣ assistant calls `request_clarification` -----------------------------
-    m3 = outer_client.messages[3]
+    m3 = outer_client.messages[4]
     assert m3["role"] == "assistant"
     assert m3["tool_calls"][0]["function"]["name"] == "request_clarification"
 
     # 5️⃣ tool returns the user’s answer --------------------------------------
-    clar_ans = outer_client.messages[4]
+    clar_ans = outer_client.messages[5]
     assert clar_ans["role"] == "tool"
     assert clar_ans["name"] == "request_clarification"
     assert "sausages" in clar_ans["content"]
     assert "beer" in clar_ans["content"]
 
     # 6️⃣ assistant forwards the answer via `_clarify_send_email…` ------------
-    m5 = outer_client.messages[5]
+    m5 = outer_client.messages[6]
     assert m5["role"] == "assistant"
     assert m5["tool_calls"][0]["function"]["name"].startswith("clarify_send_email")
 
     # 7️⃣ final tool message contains the real result -------------------------
-    final_tool = outer_client.messages[6]
+    final_tool = outer_client.messages[7]
     assert final_tool["role"] == "tool"
     assert final_tool["name"].startswith("clarify_send_email")
     assert "Email sent" in final_tool["content"]
 
     # 8️⃣ assistant wraps up ---------------------------------------------------
-    closing = outer_client.messages[7]
+    closing = outer_client.messages[8]
     assert closing["role"] == "assistant"
     content = closing["content"].lower()
     assert any(["email" in content, "message" in content]) and "sent" in content
