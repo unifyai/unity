@@ -65,6 +65,7 @@ class VerificationWorkItem:
     parent_stack: tuple
     func_source: str
     docstring: str
+    func_sig_str: str
     pre_state: dict
     post_state: dict
     interactions: list
@@ -2023,8 +2024,12 @@ class HierarchicalPlan(BaseActiveTask):
         if hasattr(self, "cumulative_interactions"):
             self.cumulative_interactions.extend(item.interactions)
 
+        is_top_level_function = item.func_source and not item.func_source.startswith(
+            (" ", "\t"),
+        )
+
         if (
-            item.func_source
+            is_top_level_function
             and self.actor.function_manager
             and item.function_name != "main_plan"
         ):
@@ -2211,6 +2216,7 @@ class HierarchicalPlan(BaseActiveTask):
                 existing_code_for_modification=self.clean_function_source_map.get(
                     item.function_name,
                 ),
+                failed_item=item,
             )
 
             await self.actor._verify_and_correct_state(
@@ -4083,8 +4089,14 @@ class HierarchicalActor(BaseActor):
                             captured_docstring = (
                                 inspect.getdoc(target_fn_obj) if target_fn_obj else ""
                             )
+                            captured_sig_str = (
+                                str(inspect.signature(target_fn_obj))
+                                if target_fn_obj
+                                else "()"
+                            )
                         except Exception:
                             captured_docstring = ""
+                            captured_sig_str = "()"
 
                         plan.verif_seq += 1
                         item = VerificationWorkItem(
@@ -4095,6 +4107,7 @@ class HierarchicalActor(BaseActor):
                             )[:-1],
                             func_source=plan.function_source_map.get(func_name, ""),
                             docstring=captured_docstring,
+                            func_sig_str=captured_sig_str,
                             pre_state=pre_state,
                             post_state=post_state,
                             interactions=copy.deepcopy(local_interactions),
@@ -4688,9 +4701,18 @@ class HierarchicalActor(BaseActor):
                 finally:
                     del frame
             except Exception:
-                target_fn_obj
-            docstring = inspect.getdoc(target_fn_obj) or "No docstring provided."
-            func_sig = inspect.signature(target_fn_obj)
+                target_fn_obj = None
+
+            if target_fn_obj:
+                docstring = inspect.getdoc(target_fn_obj) or "No docstring provided."
+                func_sig = inspect.signature(target_fn_obj)
+            else:
+                failed_item: VerificationWorkItem | None = kwargs.get("failed_item")
+                docstring = (
+                    failed_item.docstring if failed_item else "Docstring not available."
+                )
+                func_sig = failed_item.func_sig_str if failed_item else "()"
+
             parent_code = (
                 plan.clean_function_source_map.get(plan.call_stack[-2], "")
                 if len(plan.call_stack) > 1
