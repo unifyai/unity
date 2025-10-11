@@ -254,9 +254,18 @@ async def test_interjections_are_processed_and_loop_completes():
     Fire two interjections (B, then C) and validate FIFO order and sufficient tool work.
     """
     client = new_client()
+    client.set_cache(False)
     handle = start_async_tool_loop(
         client,
-        "Echo A please, then say 'done' when finished.",
+        (
+            "Follow STRICTLY these steps:\n"
+            '1) Call the tool `echo` with {"txt":"A"}.\n'
+            "2) WAIT for my next instruction; do NOT produce a final answer yet.\n"
+            '3) For each user interjection of the form \'X please\', call `echo` once with that letter as {"txt": "X"}, in FIFO order. '
+            "I will interject 'B please' then 'C please'.\n"
+            "4) Only after all requested echo calls have completed, reply with exactly the single word: done.\n"
+            "Never include 'B' or 'C' in your assistant messages; produce them only via tool calls."
+        ),
         {"echo": echo},
     )
 
