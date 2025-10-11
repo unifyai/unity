@@ -88,6 +88,23 @@ async def test_real_conductor_contact_ask_calls_contact_manager():
         "ContactManager_ask",
     }, f"Assistant should request only ContactManager_ask, saw: {sorted(set(requested_list))}"
 
+    # Global exclusivity: verify no other manager tools ran
+    all_tool_names = [
+        str(m.get("name"))
+        for m in messages
+        if m.get("role") == "tool"
+        and not str(m.get("name") or "").startswith("check_status_")
+    ]
+    assert all_tool_names, "Expected at least one tool call overall"
+    assert all(
+        n.startswith("ContactManager_ask")
+        or n.startswith("continue_ContactManager_ask")
+        for n in all_tool_names
+    ), f"Unexpected tools executed: {sorted(set(all_tool_names))}"
+    assert (
+        len(all_tool_names) == 1
+    ), f"Only one tool call expected; saw: {all_tool_names}"
+
 
 # ---------------------------------------------------------------------------
 #  Real Conductor → ContactManager.update
@@ -133,3 +150,20 @@ async def test_real_conductor_contact_update_calls_contact_manager():
     # Verify the mutation took effect
     rows = cm._filter_contacts(filter="email_address == 'bob.update@example.com'")
     assert rows and rows[0].phone_number == "5557778888"
+
+    # Global exclusivity: verify no other manager tools ran
+    all_tool_names = [
+        str(m.get("name"))
+        for m in messages
+        if m.get("role") == "tool"
+        and not str(m.get("name") or "").startswith("check_status_")
+    ]
+    assert all_tool_names, "Expected at least one tool call overall"
+    assert all(
+        n.startswith("ContactManager_update")
+        or n.startswith("continue_ContactManager_update")
+        for n in all_tool_names
+    ), f"Unexpected tools executed: {sorted(set(all_tool_names))}"
+    assert (
+        len(all_tool_names) == 1
+    ), f"Only one tool call expected; saw: {all_tool_names}"
