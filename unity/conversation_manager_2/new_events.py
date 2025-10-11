@@ -252,8 +252,7 @@ class PublishBusEvent(Event):
 class LLMInput(Event):
     content: list[
         dict
-    ]  # this will probably be list[str] if the conversation manager ever supports more raw modalities
-
+    ]
 
 @dataclass
 class UpdateContactRollingSummaryRequest(Event):
