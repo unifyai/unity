@@ -14,7 +14,5 @@ class StateManager(Enum):
     WEB_SEARCH = "web_searcher"
 
     # Planned integrations – exposed here for forward compatibility
-    FUNCTIONS = "function_manager"
     GUIDANCE = "guidance_manager"
-    IMAGES = "image_manager"
     SECRETS = "secret_manager"
