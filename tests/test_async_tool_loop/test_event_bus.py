@@ -45,7 +45,10 @@ async def test_basic_event_flow() -> None:
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     ).set_system_message(
-        "please echo whatever the user says",
+        "You are an automated test agent.\n"
+        "You MUST call the tool named `echo` exactly once, passing the user's message as the `text` argument.\n"
+        "Do NOT reply directly without first calling the `echo` tool (even if you think you know the answer).\n"
+        "After the tool returns, reply with exactly the tool result text.",
     )
 
     pause_event = asyncio.Event()
