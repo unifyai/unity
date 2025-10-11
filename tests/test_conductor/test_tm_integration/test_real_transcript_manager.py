@@ -111,3 +111,20 @@ async def test_real_conductor_transcript_ask_calls_transcript_manager():
     assert set(requested_list) <= {
         "TranscriptManager_ask",
     }, f"Assistant should request only TranscriptManager_ask, saw: {sorted(set(requested_list))}"
+
+    # Global exclusivity: verify no other manager tools ran
+    all_tool_names = [
+        str(m.get("name"))
+        for m in messages
+        if m.get("role") == "tool"
+        and not str(m.get("name") or "").startswith("check_status_")
+    ]
+    assert all_tool_names, "Expected at least one tool call overall"
+    assert all(
+        n.startswith("TranscriptManager_ask")
+        or n.startswith("continue_TranscriptManager_ask")
+        for n in all_tool_names
+    ), f"Unexpected tools executed: {sorted(set(all_tool_names))}"
+    assert (
+        len(all_tool_names) == 1
+    ), f"Only one tool call expected; saw: {all_tool_names}"
