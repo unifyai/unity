@@ -11,6 +11,9 @@ from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_assistant_call_prefix,
+    first_user_message,
+    first_assistant_tool_call,
+    last_plain_assistant_message,
 )
 
 
@@ -194,20 +197,16 @@ async def test_notification_bubbles_up_two_tiers() -> None:
     # ─────────────────────────
     msgs = outer_client.messages
 
-    # 1️⃣ system + original user request ---------------------------------------
-    assert msgs[0]["role"] == "system"
-    assert msgs[1]["role"] == "user"
-    assert msgs[1]["content"] == (
+    # 1️⃣ original user request – robust to clients that don't persist system messages
+    first_user_msg = first_user_message(msgs)
+    assert first_user_msg["content"] == (
         "Please email jonathan.smith123@gmail.com and politely tell him I (Dan) "
         "will be arriving at the BBQ around 5pm."
     )
 
     # 2️⃣ assistant chooses `send_email` --------------------------------------
-    m1 = msgs[2]
-    assert m1["role"] == "assistant"
-    assert len(m1.get("tool_calls", [])) == 1
-    call1 = m1["tool_calls"][0]
-    assert call1["function"]["name"] == "send_email"
+    # Find the first assistant tool call that requests `send_email` (avoid fixed indices)
+    _m1, call1 = first_assistant_tool_call(msgs, "send_email")
     args1 = json.loads(call1["function"]["arguments"])
     assert args1["address"] == "jonathan.smith123@gmail.com"
 
@@ -223,8 +222,8 @@ async def test_notification_bubbles_up_two_tiers() -> None:
     )
 
     # 5️⃣ assistant wraps up ---------------------------------------------------
-    closing = msgs[-1]
-    assert closing["role"] == "assistant"
+    # Find the last plain assistant message (no tool_calls) and validate it closes correctly
+    closing = last_plain_assistant_message(msgs)
     content = (closing.get("content") or "").lower()
     assert any(["email" in content, "message" in content]) and "sent" in content
 

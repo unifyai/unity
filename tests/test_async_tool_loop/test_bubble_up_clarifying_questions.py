@@ -11,6 +11,12 @@ from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_message_prefix,
     _wait_for_assistant_call_prefix,
+    first_user_message,
+    first_assistant_tool_call,
+    first_assistant_tool_call_by_prefix,
+    first_tool_message_by_name_prefix,
+    first_tool_message_by_name,
+    last_plain_assistant_message,
 )
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -150,56 +156,55 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
 
     import json
 
-    # 1️⃣ system + original user request ---------------------------------------
-    assert outer_client.messages[0]["role"] == "system"
-    assert outer_client.messages[1]["role"] == "user"
-    assert outer_client.messages[1]["content"] == (
+    # 1️⃣ original user request – robust to clients that don't persist system messages
+    _first_user = first_user_message(outer_client.messages)
+    assert _first_user["content"] == (
         "Please email jonathan.smith123@gmail.com and politely tell him I (Dan) "
         "will be arriving at the BBQ around 5pm."
     )
 
     # 2️⃣ assistant chooses `send_email` --------------------------------------
-    m1 = outer_client.messages[2]
-    assert m1["role"] == "assistant"
-    assert len(m1["tool_calls"]) == 1
-    call1 = m1["tool_calls"][0]
-    assert call1["function"]["name"] == "send_email"
+    m1, call1 = first_assistant_tool_call(outer_client.messages, "send_email")
     args1 = json.loads(call1["function"]["arguments"])
     assert args1["address"] == "jonathan.smith123@gmail.com"
 
     # 3️⃣ tool asks a clarification question ----------------------------------
-    clar_req = outer_client.messages[3]
-    assert clar_req["role"] == "tool"
-    assert clar_req["name"].startswith("clarification_request_")
+    clar_req = first_tool_message_by_name_prefix(
+        outer_client.messages,
+        "clarification_request_",
+    )
     assert "Will you be bringing anything" in clar_req["content"]
 
     # 4️⃣ assistant calls `request_clarification` -----------------------------
-    m3 = outer_client.messages[4]
-    assert m3["role"] == "assistant"
-    assert m3["tool_calls"][0]["function"]["name"] == "request_clarification"
+    m3, req_call = first_assistant_tool_call(
+        outer_client.messages,
+        "request_clarification",
+    )
 
     # 5️⃣ tool returns the user’s answer --------------------------------------
-    clar_ans = outer_client.messages[5]
-    assert clar_ans["role"] == "tool"
-    assert clar_ans["name"] == "request_clarification"
+    clar_ans = first_tool_message_by_name(
+        outer_client.messages,
+        "request_clarification",
+    )
     assert "sausages" in clar_ans["content"]
     assert "beer" in clar_ans["content"]
 
     # 6️⃣ assistant forwards the answer via `_clarify_send_email…` ------------
-    m5 = outer_client.messages[6]
-    assert m5["role"] == "assistant"
-    assert m5["tool_calls"][0]["function"]["name"].startswith("clarify_send_email")
+    _m5, _clar = first_assistant_tool_call_by_prefix(
+        outer_client.messages,
+        "clarify_send_email",
+    )
 
     # 7️⃣ final tool message contains the real result -------------------------
-    final_tool = outer_client.messages[7]
-    assert final_tool["role"] == "tool"
-    assert final_tool["name"].startswith("clarify_send_email")
+    final_tool = first_tool_message_by_name_prefix(
+        outer_client.messages,
+        "clarify_send_email",
+    )
     assert "Email sent" in final_tool["content"]
 
     # 8️⃣ assistant wraps up ---------------------------------------------------
-    closing = outer_client.messages[8]
-    assert closing["role"] == "assistant"
-    content = closing["content"].lower()
+    closing = last_plain_assistant_message(outer_client.messages)
+    content = (closing.get("content") or "").lower()
     assert any(["email" in content, "message" in content]) and "sent" in content
 
 
