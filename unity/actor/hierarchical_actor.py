@@ -495,15 +495,14 @@ class PlanSanitizer(ast.NodeTransformer):
     - Ensures every `async def` function is decorated with `@verify`.
     - Injects checkpoint calls (`_cp`) and interrupt probes (`_int`).
     - Safely wraps awaited tool calls and sub-tasks.
+    - Recursively applies transformations to nested functions.
     """
 
     def __init__(self):
-        self._current_function_name = "global"
+        self._function_context: list[str] = []
         self._is_in_async_context = False
         self._defined_functions = set()
-        self._loop_counter = 0
-        self._if_counter = 0
-        self._try_counter = 0
+        self._counters: dict[str, dict[str, int]] = {}
 
     def _make_call_node(self, func_id: str, args: list) -> ast.Call:
         return ast.Call(
@@ -550,6 +549,38 @@ class PlanSanitizer(ast.NodeTransformer):
             ),
         )
 
+    def _enter_function(
+        self,
+        node: typing.Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    ):
+        """Helper to manage entering a function's scope."""
+        self._function_context.append(node.name)
+        self._counters[node.name] = {
+            "loop": 0,
+            "if": 0,
+            "try": 0,
+        }
+
+    def _exit_function(self):
+        """Helper to manage exiting a function's scope."""
+        if self._function_context:
+            self._function_context.pop()
+
+    def _get_counter(self, counter_type: str) -> int:
+        """Gets and increments a counter for the current function scope."""
+        current_func = (
+            self._function_context[-1] if self._function_context else "global"
+        )
+        if current_func not in self._counters:
+            self._counters[current_func] = {"loop": 0, "if": 0, "try": 0}
+        self._counters[current_func][counter_type] += 1
+        return self._counters[current_func][counter_type]
+
+    @property
+    def _current_function_name(self) -> str:
+        """Property for backward compatibility."""
+        return self._function_context[-1] if self._function_context else "global"
+
     def visit_Module(self, node: ast.Module) -> ast.Module:
         for sub_node in node.body:
             if isinstance(sub_node, (ast.AsyncFunctionDef, ast.FunctionDef)):
@@ -558,19 +589,25 @@ class PlanSanitizer(ast.NodeTransformer):
         return node
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.FunctionDef:
-        """Handles regular (non-async) function definitions."""
+        """Handles regular (non-async) function definitions and their nesting."""
+        self._enter_function(node)
         parent_is_async = self._is_in_async_context
         self._is_in_async_context = False
 
         self.generic_visit(node)
 
         self._is_in_async_context = parent_is_async
+        self._exit_function()
         return node
 
     def visit_AsyncFunctionDef(
         self,
         node: ast.AsyncFunctionDef,
     ) -> ast.AsyncFunctionDef:
+        self._enter_function(node)
+        parent_is_async = self._is_in_async_context
+        self._is_in_async_context = True
+
         cleaned_body = []
         for stmt in node.body:
             if (
@@ -604,20 +641,10 @@ class PlanSanitizer(ast.NodeTransformer):
             cleaned_body.append(stmt)
         node.body = cleaned_body
 
-        self._loop_counter = 0
-        self._if_counter = 0
-        self._try_counter = 0
-
-        parent_is_async = self._is_in_async_context
-        self._is_in_async_context = True
-
-        is_top_level_function = self._current_function_name == "global"
-        parent = self._current_function_name
-        self._current_function_name = node.name
-
-        if is_top_level_function and not any(
+        has_verify_decorator = any(
             isinstance(d, ast.Name) and d.id == "verify" for d in node.decorator_list
-        ):
+        )
+        if not has_verify_decorator:
             node.decorator_list.insert(0, ast.Name(id="verify", ctx=ast.Load()))
 
         entry_probes = [
@@ -637,8 +664,9 @@ class PlanSanitizer(ast.NodeTransformer):
         node.body[offset:offset] = entry_probes
 
         self.generic_visit(node)
-        self._current_function_name = parent
+
         self._is_in_async_context = parent_is_async
+        self._exit_function()
         return node
 
     def _wrap_block_with_context(
@@ -665,8 +693,7 @@ class PlanSanitizer(ast.NodeTransformer):
         return [finalized_block]
 
     def visit_If(self, node: ast.If) -> ast.If:
-        self._if_counter += 1
-        if_id = f"if_{self._if_counter}"
+        if_id = f"if_{self._get_counter('if')}"
         self.generic_visit(node)
 
         node.body = self._wrap_block_with_context(node.body, f"{if_id}_true")
@@ -676,8 +703,7 @@ class PlanSanitizer(ast.NodeTransformer):
         return node
 
     def visit_Try(self, node: ast.Try) -> ast.Try:
-        self._try_counter += 1
-        try_id = f"try_{self._try_counter}"
+        try_id = f"try_{self._get_counter('try')}"
         self.generic_visit(node)
 
         node.body = self._wrap_block_with_context(node.body, f"{try_id}_try")
