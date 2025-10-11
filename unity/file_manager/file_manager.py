@@ -33,6 +33,7 @@ from ..events.event_bus import EVENT_BUS, Event
 from .base import BaseFileManager
 from .parser import BaseParser, DoclingParser
 from .prompt_builders import build_ask_prompt
+from ..common.filter_utils import normalize_filter_expr
 
 
 def _unique_name(existing: set[str], desired: str) -> str:
@@ -528,9 +529,10 @@ class FileManager(BaseFileManager):
         from ..common.embed_utils import list_private_fields
         from .types.file import File
 
+        normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._ctx,
-            filter=filter,
+            filter=normalized,
             offset=offset,
             limit=limit,
             exclude_fields=list_private_fields(self._ctx),

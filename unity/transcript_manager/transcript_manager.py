@@ -47,6 +47,7 @@ from ..common.tool_spec import read_only
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
+from ..common.filter_utils import normalize_filter_expr
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -1231,9 +1232,10 @@ class TranscriptManager(BaseTranscriptManager):
         - Quote strings with single quotes inside the filter expression to avoid escaping issues.
         - If you need deterministic pagination, keep your filter stable and page using consistent `offset`/`limit` values.
         """
+        normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._transcripts_ctx,
-            filter=filter,
+            filter=normalized,
             offset=offset,
             limit=limit,
             sorting={"timestamp": "descending"},

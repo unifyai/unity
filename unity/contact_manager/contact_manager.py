@@ -36,6 +36,7 @@ from ..common.semantic_search import (
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
+from ..common.filter_utils import normalize_filter_expr
 
 
 class ContactManager(BaseContactManager):
@@ -1869,9 +1870,10 @@ class ContactManager(BaseContactManager):
         from_fields = list(self._BUILTIN_FIELDS)
         if getattr(self, "_known_custom_fields", None):
             from_fields.extend(sorted(self._known_custom_fields))
+        normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._ctx,
-            filter=filter,
+            filter=normalized,
             offset=offset,
             limit=eff_limit,
             from_fields=from_fields,
