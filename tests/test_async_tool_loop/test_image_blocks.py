@@ -111,7 +111,7 @@ async def test_tool_result_image_is_promoted_and_reasoned_over() -> None:
     # ---- phase 1: run the tool and verify promotion ----------------------
     client = new_client()
     client.set_system_message(
-        "Call image_tool exactly once and, after it finishes, reply with the one-word three-letter animal you saw.",
+        "Call image_tool exactly once. The tool will return a base64-encoded image of a domestic cat. After the tool finishes, respond with exactly 'cat' (lowercase, no punctuation). Do not output anything else.",
     )
 
     primary_handle = start_async_tool_loop(
