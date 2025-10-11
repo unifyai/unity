@@ -15,6 +15,7 @@ from tests.test_async_tool_loop.async_helpers import (
     _wait_for_assistant_call_prefix,
     _wait_for_tool_message_prefix,
     _wait_for_condition,
+    make_gated_sync_tool,
 )
 
 
@@ -179,11 +180,19 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     client.set_system_message(
         "You are running inside an automated test.\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
-        "2️⃣  If the *user* later says **stop**, call the appropriate "
-        "`_stop_…` helper to stop that running call.\n"
-        "2️⃣b Immediately after that, call the `wait` helper to keep waiting if needed.\n"
-        "3️⃣  Do not produce any other reply until the stop has taken effect; then reply exactly the single line 'outer stopped'.",
+        "2️⃣  If the user later says **stop**, you MUST immediately call exactly once the helper whose function name starts with `_stop_` (e.g. `stop_outer_tool_<id>`) to stop the running call. Do not wait for the inner tool to finish by itself.\n"
+        "2️⃣b Immediately after that, call the `wait` helper to keep waiting if needed. Do not call any other helpers. You may call `wait` again if still waiting.\n"
+        "3️⃣  Do not produce any other reply until the stop has taken effect.\n"
+        "4️⃣  Only after you have called a `stop_…` helper and received the acknowledgement tool message (containing 'stopped successfully'), reply exactly the single line 'outer stopped'.",
     )
+
+    # 2a. Gate the existing inner_tool so it cannot finish until we observe the stop helper
+    finish_gate, gated_inner = make_gated_sync_tool(
+        return_value="inner-result",
+        timeout=60,
+    )
+    # Ensure the nested loop inside `outer_tool` resolves the gated function
+    outer_tool.__globals__["inner_tool"] = gated_inner
 
     outer_handle = start_async_tool_loop(
         client=client,
@@ -198,6 +207,13 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     await _wait_for_tool_request(client, "outer_tool")
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
     await outer_handle.interject("stop")
+
+    # Ensure the assistant actually invokes the dynamic stop helper for the outer tool
+    await _wait_for_assistant_call_prefix(client, "stop_outer_tool_")
+
+    # Only now allow the inner tool to finish so the LLM's tool selection
+    # happened while it was still running
+    finish_gate.set()
 
     # 4.  Wait for completion & check outcomes
     final_reply = await outer_handle.result()

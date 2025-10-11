@@ -191,3 +191,25 @@ async def _wait_for_tool_message_prefix(
     raise TimeoutError(
         f"Timed out after {timeout}s waiting for a tool message with name starting with {prefix!r}.",
     )
+
+
+# --------------------------------------------------------------------------- #
+#  TEST UTILITIES – GATED TOOLS                                               #
+# --------------------------------------------------------------------------- #
+
+
+def make_gated_sync_tool(return_value: str = "ok", timeout: float = 60):
+    """
+    Return (gate, tool_fn) where tool_fn blocks until gate.set() is called,
+    then returns `return_value`. Useful to keep a sync tool running until a
+    deterministic trigger is observed in the outer loop.
+    """
+    from threading import Event
+
+    gate = Event()
+
+    def _tool():
+        gate.wait(timeout=timeout)
+        return return_value
+
+    return gate, _tool
