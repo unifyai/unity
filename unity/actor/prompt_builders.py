@@ -54,16 +54,25 @@ def _format_existing_functions(existing_functions: Dict[str, Any]) -> str:
     if not existing_functions:
         return "None."
 
-    unique_implementations = {
-        textwrap.dedent(func_data.get("implementation", "")).strip()
-        for func_data in existing_functions.values()
-        if func_data.get("implementation")
-    }
+    formatted_summaries = []
+    for name, func_data in existing_functions.items():
+        signature = func_data.get("argspec", "()")
+        docstring = func_data.get("docstring", "No docstring available.")
+        implementation = func_data.get("implementation", "")
+        prefix = "async def" if "async def" in implementation.lstrip()[:10] else "def"
+        summary = (
+            f"{prefix} {name}{signature}:\n"
+            f'    """\n'
+            f"    {textwrap.indent(docstring, '    ').strip()}\n"
+            f'    """\n'
+            f"    # ... (implementation is hidden)\n"
+        )
+        formatted_summaries.append(summary)
 
-    if not unique_implementations:
+    if not formatted_summaries:
         return "None."
 
-    return "\n\n---\n\n".join(unique_implementations)
+    return "\n---\n".join(formatted_summaries)
 
 
 def _format_cache_summary(idempotency_cache: Dict[tuple, Any], last_n: int = 20) -> str:
@@ -659,13 +668,16 @@ def _build_initial_plan_rules_and_examples(
                 pass
             ```
 
-        8.  **Await Keyword**: ALWAYS await async action_provider methods.
+        8.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all `action_provider` methods AND any helper functions or skills you call.
             ```python
-            # ❌ WRONG: Missing await
-            action_provider.navigate("https://example.com")
-
-            # ✅ CORRECT: With await
+            # ✅ CORRECT: Awaiting an action_provider method
             await action_provider.navigate("https://example.com")
+
+            # ✅ CORRECT: Awaiting a helper function/skill from the library
+            result = await helper_func_1("arg1", "arg2")
+
+            # ❌ WRONG: Forgetting to await a helper function
+            result = helper_func_1("arg1", "arg2")
             ```
 
         9.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
@@ -749,6 +761,23 @@ def _build_initial_plan_rules_and_examples(
 
             # ❌ WRONG: Do not call it on action_provider
             # destination = await action_provider.request_clarification(...)
+            ```
+        13. **Return the Final Value**: If the last function or skill you call returns a value, your `main_plan` **MUST** capture that value and return it. This ensures the final result of the plan is meaningful.
+
+            ```python
+            # ✅ CORRECT: Capturing and returning the result
+            async def main_plan():
+                def step_one(arg1, arg2):
+                    return arg1 + arg2
+
+                # ... other steps ...
+                final_result = await step_one(arg1, arg2)
+                return final_result
+
+            # ❌ WRONG: Calling the skill but not returning its value
+            async def main_plan():
+                await step_one(arg1, arg2)
+                # This plan will incorrectly return None.
             ```
         """,
     )
@@ -1414,13 +1443,16 @@ def _build_dynamic_implement_rules_and_examples(
                 return data
             ```
 
-        5.  **Await Keyword:** ALWAYS await async action_provider methods.
+        5.  **Await Keyword**: ALWAYS use the `await` keyword when calling ANY `async def` function. This includes all `action_provider` methods AND any helper functions or skills you call.
             ```python
-            # ❌ WRONG: Missing await
-            result = action_provider.observe("Get data")
+            # ✅ CORRECT: Awaiting an action_provider method
+            await action_provider.navigate("https://example.com")
 
-            # ✅ CORRECT: With await
-            result = await action_provider.observe("Get data")
+            # ✅ CORRECT: Awaiting a helper function/skill from the library
+            result = await helper_func_1("arg1", "arg2")
+
+            # ❌ WRONG: Forgetting to await a helper function
+            result = helper_func_1("arg1", "arg2")
             ```
 
         6.  **Structured Output with Pydantic - THE COMPLETE PATTERN:**
@@ -1946,6 +1978,19 @@ def build_initial_plan_prompt(
         tool_usage_instruction,
     )
 
+    library_instruction = textwrap.dedent(
+        f"""
+        ### Existing Functions Library (Your Skills)
+        You have access to the following pre-existing, trusted functions. If a function from this library is suitable for the user's goal, you **MUST** call it.
+
+        **CRITICAL RULE:** When using a function from this library, **ONLY write the call to it** in your plan (e.g., `await your_skill_name()`). **DO NOT include its source code**. The framework will inject the code for you automatically.
+
+        ```python
+        {formatted_functions}
+        ```
+        """,
+    )
+
     return textwrap.dedent(
         f"""
         You are an expert strategist. Your task is to generate a high-level Python script that outlines the **strategy** to achieve a user's goal.
@@ -1953,10 +1998,7 @@ def build_initial_plan_prompt(
         **Primary Goal:** "{goal}"
         {rules_and_examples}
         ---
-        ### Existing Functions Library
-        You may use these pre-existing functions if they are suitable. If you use one, you MUST include its full source code in your response.
-        {formatted_functions}
-
+        {library_instruction}
         ---
         {retry_msg}
 
@@ -1990,16 +2032,16 @@ def build_dynamic_implement_prompt(
     """Builds the system prompt for dynamically implementing or modifying a function."""
 
     formatted_functions = _format_existing_functions(existing_functions)
-    existing_functions_section = textwrap.dedent(
+    library_instruction = textwrap.dedent(
         f"""
-        ---
-        ### Existing Functions Library
-        You may find these pre-existing functions useful. You can either call them directly
-        (if their source code is already in the 'Source Code' below) or
-        copy and adapt their implementation.
+        ### Existing Functions Library (Your Skills)
+        You have access to the following pre-existing, trusted functions. If a function from this library is suitable for the user's goal, you **MUST** call it.
 
+        **CRITICAL RULE:** When using a function from this library, **ONLY write the call to it** in your plan (e.g., `await your_skill_name()`). **DO NOT include its source code**. The framework will inject the code for you automatically.
+
+        ```python
         {formatted_functions}
-        ---
+        ```
         """,
     )
     modification_instructions = ""
@@ -2132,7 +2174,7 @@ def build_dynamic_implement_prompt(
         {goal}
         ---
 
-        {existing_functions_section}
+        {library_instruction}
 
         **CRITICAL: You must choose one of four actions:**
         1.  **`implement_function`**: Write the Python code for `{function_name}`. Choose this if the function's goal is achievable from the current browser state. **Your code MUST be a single, self-contained `async def` function block. DO NOT include top-level imports or class definitions outside the function.** All necessary imports and helper classes MUST be defined *inside* the function.
