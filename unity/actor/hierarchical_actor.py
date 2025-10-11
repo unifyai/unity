@@ -1382,6 +1382,7 @@ class HierarchicalPlan(BaseActiveTask):
         self._recovery_task: Optional[asyncio.Task] = None
         self._recovery_target_ordinal: Optional[int] = None
         self.is_verifying_post_completion: bool = False
+        self._recovery_in_progress: bool = False
 
         self._execution_task = asyncio.create_task(self._initialize_and_run())
         self.MAX_ESCALATIONS = max_escalations or 2
@@ -1573,6 +1574,16 @@ class HierarchicalPlan(BaseActiveTask):
                         *[h.task for h in self.pending_verifications.values()],
                         return_exceptions=True,
                     )
+
+                    if self._recovery_in_progress:
+                        self.action_log.append(
+                            "Recovery initiated during final verification. Aborting completion.",
+                        )
+                        logger.info(
+                            "Recovery initiated during final verification. Aborting plan completion to allow recovery task to proceed.",
+                        )
+                        return
+
                     self.action_log.append("All background verifications complete.")
 
                 await self._cancel_all_background_tasks()
@@ -2145,6 +2156,8 @@ class HierarchicalPlan(BaseActiveTask):
                         f"Stale verification for '{item.function_name}' discarded.",
                     )
                     return
+
+            self._recovery_in_progress = True
 
             logger.critical(
                 f"[V-TASK-{item.ordinal}] VERIFICATION FAILED for '{item.function_name}'. "
