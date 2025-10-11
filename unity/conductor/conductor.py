@@ -29,6 +29,8 @@ from ..transcript_manager.base import BaseTranscriptManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.base import BaseKnowledgeManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
+from ..guidance_manager.base import BaseGuidanceManager
+from ..guidance_manager.guidance_manager import GuidanceManager
 from ..skill_manager.base import BaseSkillManager
 from ..skill_manager.skill_manager import SkillManager
 from ..task_scheduler.base import BaseTaskScheduler
@@ -66,6 +68,7 @@ class Conductor:
         contact_manager: Optional[BaseContactManager] = None,
         transcript_manager: Optional[BaseTranscriptManager] = None,
         knowledge_manager: Optional[BaseKnowledgeManager] = None,
+        guidance_manager: Optional[BaseGuidanceManager] = None,
         skill_manager: Optional[BaseSkillManager] = None,
         task_scheduler: Optional[BaseTaskScheduler] = None,
         web_searcher: Optional[BaseWebSearcher] = None,
@@ -111,6 +114,14 @@ class Conductor:
             )
         )
 
+        self._guidance_manager = (
+            guidance_manager
+            if guidance_manager is not None
+            else GuidanceManager(
+                rolling_summary_in_prompts=rolling_summary_in_prompts,
+            )
+        )
+
         self._skill_manager = (
             skill_manager if skill_manager is not None else SkillManager()
         )
@@ -139,6 +150,7 @@ class Conductor:
             self._contact_manager.ask,
             self._transcript_manager.ask,
             self._knowledge_manager.ask,
+            self._guidance_manager.ask,
             self._skill_manager.ask,
             self._task_scheduler.ask,
             self._web_searcher.ask,
@@ -164,6 +176,7 @@ class Conductor:
             **methods_to_tool_dict(
                 self._contact_manager.update,
                 self._knowledge_manager.update,
+                self._guidance_manager.update,
                 self._task_scheduler.update,
                 self._actor.act,
                 ToolSpec(self._task_scheduler.execute, max_concurrent=1),

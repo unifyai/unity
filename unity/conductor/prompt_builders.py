@@ -53,6 +53,7 @@ def build_ask_prompt(
     contact_ask_fname = _tool_name(tools, "contactmanager_ask")
     transcript_ask_fname = _tool_name(tools, "transcriptmanager_ask")
     knowledge_ask_fname = _tool_name(tools, "knowledgemanager_ask")
+    guidance_ask_fname = _tool_name(tools, "guidancemanager_ask")
     task_ask_fname = _tool_name(tools, "taskscheduler_ask")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
     actor_act_fname = _tool_name(tools, "actor_act")
@@ -66,6 +67,7 @@ def build_ask_prompt(
             "ContactManager.ask": contact_ask_fname,
             "TranscriptManager.ask": transcript_ask_fname,
             "KnowledgeManager.ask": knowledge_ask_fname,
+            "GuidanceManager.ask": guidance_ask_fname,
             "TaskScheduler.ask": task_ask_fname,
         },
         tools,
@@ -140,6 +142,7 @@ def build_ask_prompt(
             f'• People – who is the Berlin-based product designer?\n  `{contact_ask_fname}(text="Who is the Berlin-based product designer?")`',
             f'• Messages – top-3 messages about budgeting and banking\n  `{transcript_ask_fname}(text="Show the latest 3 messages about banking and budgeting")`',
             f'• Knowledge – onboarding policy summary\n  `{knowledge_ask_fname}(text="Summarise the employee onboarding policy")`',
+            f'• Guidance – find guidance about onboarding demos\n  `{guidance_ask_fname}(text="Find guidance about the onboarding demo")`',
             f'• Tasks – list tasks due today\n  `{task_ask_fname}(text="Which tasks are due today?")`{web_example}',
         ],
     )
@@ -183,6 +186,8 @@ def build_request_prompt(
     transcript_ask_fname = _tool_name(tools, "transcriptmanager_ask")
     knowledge_ask_fname = _tool_name(tools, "knowledgemanager_ask")
     knowledge_update_fname = _tool_name(tools, "knowledgemanager_update")
+    guidance_ask_fname = _tool_name(tools, "guidancemanager_ask")
+    guidance_update_fname = _tool_name(tools, "guidancemanager_update")
     task_ask_fname = _tool_name(tools, "taskscheduler_ask")
     task_update_fname = _tool_name(tools, "taskscheduler_update")
     task_execute_fname = _tool_name(tools, "taskscheduler_execute")
@@ -199,10 +204,12 @@ def build_request_prompt(
             "ContactManager.ask": contact_ask_fname,
             "TranscriptManager.ask": transcript_ask_fname,
             "KnowledgeManager.ask": knowledge_ask_fname,
+            "GuidanceManager.ask": guidance_ask_fname,
             "TaskScheduler.ask": task_ask_fname,
             # Write / action helpers
             "ContactManager.update": contact_update_fname,
             "KnowledgeManager.update": knowledge_update_fname,
+            "GuidanceManager.update": guidance_update_fname,
             "TaskScheduler.update": task_update_fname,
             "TaskScheduler.execute": task_execute_fname,
         },
@@ -290,6 +297,7 @@ def build_request_prompt(
             f'• Create or update a contact then confirm via read\n  1) `{contact_update_fname}(text="Create Jane Doe with email jane@example.com")`\n  2) `{contact_ask_fname}(text="Show Jane Doe\'s contact details")`{web_example}',
             f"• Run an existing task immediately\n  `{task_execute_fname}(text=\"Run the task named 'Email Contoso about invoices' now\")`",
             f"• Run a task at a specific time\n  `{task_execute_fname}(text=\"Start 'Prepare slides for kickoff' today at 16:00\")`",
+            f'• Create or update guidance\n  `{guidance_update_fname}(text="Create guidance: Troubleshooting VPN issues")`',
         ],
     )
 
