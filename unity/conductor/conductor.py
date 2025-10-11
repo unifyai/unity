@@ -20,7 +20,6 @@ from ..common.llm_helpers import (
 from ..common.async_tool_loop import start_async_tool_loop
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
-from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from .types import StateManager
 from .prompt_builders import build_ask_prompt, build_request_prompt
 from .base import BaseConductor
@@ -344,18 +343,9 @@ class Conductor:
     # ------------------------------------------------------------------ #
     #  clear – irreversible state wipe for a selected manager            #
     # ------------------------------------------------------------------ #
-    def clear(self, target: StateManager) -> None:
-        """
-        {base}
 
-        Parameters
-        ----------
-        target : StateManager
-            Which manager to clear. Options include: CONTACTS, TRANSCRIPTS, KNOWLEDGE,
-            TASKS, WEB_SEARCH, and forward-compat entries FUNCTIONS, GUIDANCE, IMAGES, SECRETS.
-        """.format(
-            base=CLEAR_METHOD_DOCSTRING,
-        )
+    @functools.wraps(BaseConductor.clear, updated=())
+    def clear(self, target: StateManager) -> None:
 
         # Accept either an Enum member or its string value for robustness at runtime
         if isinstance(target, StateManager):

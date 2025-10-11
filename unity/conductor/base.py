@@ -110,6 +110,9 @@ class BaseConductor(ABC, metaclass=SingletonABCMeta):
         target : StateManager
             Which manager to clear. Options include: CONTACTS, TRANSCRIPTS, KNOWLEDGE,
             TASKS, WEB_SEARCH, and forward-compat entries FUNCTIONS, GUIDANCE, IMAGES, SECRETS.
-        """.format(
-            base=CLEAR_METHOD_DOCSTRING,
-        )
+        """
+
+
+BaseConductor.clear.__doc__ = (BaseConductor.clear.__doc__ or "").format(
+    base=CLEAR_METHOD_DOCSTRING,
+)
