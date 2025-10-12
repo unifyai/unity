@@ -476,26 +476,21 @@ class FileManager(BaseFileManager):
             results are sorted by similarity. When references are omitted,
             returns the most recent files.
         """
-        from ..common.semantic_search import (
-            fetch_top_k_by_references,
-            backfill_rows,
-        )
+        from ..common.search_utils import table_search_top_k
         from .types.file import File
 
-        rows = fetch_top_k_by_references(
-            self._ctx,
-            references,
+        # Restrict payload to the File schema to avoid fetching private/vector fields
+        allowed_fields = list(File.model_fields.keys())
+
+        rows = table_search_top_k(
+            context=self._ctx,
+            references=references,
             k=k,
+            allowed_fields=allowed_fields,
             row_filter="status == 'success'",
-        )
-        filled = backfill_rows(
-            self._ctx,
-            rows,
-            k,
             unique_id_field="file_id",
-            row_filter="status == 'success'",
         )
-        return [File(**r) for r in filled]
+        return [File(**r) for r in rows]
 
     def _filter_files(
         self,

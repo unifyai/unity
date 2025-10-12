@@ -68,7 +68,7 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..common.semantic_search import fetch_top_k_by_references, backfill_rows
+from ..common.search_utils import table_search_top_k
 from .queue_utils import (
     sched_prev as _q_prev,
     sched_next as _q_next,
@@ -4018,22 +4018,6 @@ class TaskScheduler(BaseTaskScheduler):
     #  (removed) checkpoint persistence                                   #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _normalize_filter_expr(expr: Optional[str]) -> Optional[str]:
-        """Return a storage-compatible filter expression.
-
-        Currently performs a minimal rewrite so attribute-style access to
-        nested schedule fields (e.g. ``schedule.start_at``) matches how values
-        are stored in Unify (``schedule['start_at']``).  Keep this intentionally
-        conservative to avoid altering semantics of unrelated expressions.
-        """
-        if not isinstance(expr, str):
-            return expr
-        try:
-            return expr.replace(".start_at", "['start_at']")
-        except Exception:
-            return expr
-
     def _make_request_clarification_tool(
         self,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -4234,20 +4218,14 @@ class TaskScheduler(BaseTaskScheduler):
             "deadline",
         ]
 
-        # 1) Primary: semantic similarity results (ordered). When references is None/empty,
-        # the shared helper returns an empty list, and backfill-only logic applies.
-        rows = fetch_top_k_by_references(
+        # Single shared helper: semantic similarity with safe backfill
+        filled = table_search_top_k(
             self._ctx,
             references,
             k=k,
             allowed_fields=allowed_fields,
-        )
-        filled = backfill_rows(
-            self._ctx,
-            rows,
-            k,
+            row_filter=None,
             unique_id_field="task_id",
-            allowed_fields=allowed_fields,
         )
         return [Task(**lg) for lg in filled]
 
@@ -4361,32 +4339,6 @@ class TaskScheduler(BaseTaskScheduler):
     # ────────────────────────────────────────────────────────────────────
     # Broader context helper
     # ────────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _inject_broader_context(msgs: list[dict]) -> list[dict]:
-        """Replace `{broader_context}` placeholders inside *system* messages with
-        the latest summary from `MemoryManager` right before sending the prompt."""
-
-        import copy
-
-        from unity.memory_manager.memory_manager import (
-            MemoryManager,
-        )  # local import to avoid cycles
-
-        patched = copy.deepcopy(msgs)
-
-        try:
-            broader_ctx = MemoryManager.get_rolling_activity()
-        except Exception:
-            broader_ctx = ""
-
-        for m in patched:
-            if m.get("role") == "system" and "{broader_context}" in (
-                m.get("content") or ""
-            ):
-                m["content"] = m["content"].replace("{broader_context}", broader_ctx)
-
-        return patched
 
     # ────────────────────────────────────────────────────────────────────
     # Column and metrics helpers (paralleling Contact/TranscriptManager)

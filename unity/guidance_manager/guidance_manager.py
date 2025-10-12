@@ -28,10 +28,7 @@ from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..events.event_bus import EVENT_BUS, Event
 from ..events.manager_event_logging import log_manager_call
-from ..common.semantic_search import (
-    fetch_top_k_by_references,
-    backfill_rows,
-)
+from ..common.search_utils import table_search_top_k
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from ..image_manager.image_manager import ImageManager
@@ -809,21 +806,21 @@ class GuidanceManager(BaseGuidanceManager):
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Guidance]:
+        """Semantic search over guidance rows using shared table helper.
+
+        Returns up to k rows ranked by similarity, backfilled to k when
+        similarity yields fewer rows. Payload is restricted to built‑in
+        fields for efficiency.
+        """
         allowed_fields = list(self._BUILTIN_FIELDS)
-        rows = fetch_top_k_by_references(
-            self._ctx,
-            references,
+        rows = table_search_top_k(
+            context=self._ctx,
+            references=references,
             k=k,
             allowed_fields=allowed_fields,
-        )
-        filled = backfill_rows(
-            self._ctx,
-            rows,
-            k,
             unique_id_field="guidance_id",
-            allowed_fields=allowed_fields,
         )
-        return [Guidance(**r) for r in filled]
+        return [Guidance(**r) for r in rows]
 
     def _filter(
         self,

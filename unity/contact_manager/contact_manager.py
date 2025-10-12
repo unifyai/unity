@@ -5,7 +5,6 @@ import functools
 import os
 import re
 from .prompt_builders import build_ask_prompt, build_update_prompt
-from ..common.embed_utils import ensure_vector_column
 from ..knowledge_manager.types import ColumnType
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
@@ -29,10 +28,7 @@ from ..common.async_tool_loop import (
 from ..events.event_bus import EVENT_BUS, Event
 from ..events.manager_event_logging import log_manager_call
 import asyncio
-from ..common.semantic_search import (
-    fetch_top_k_by_references,
-    backfill_rows,
-)
+from ..common.search_utils import table_search_top_k
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
@@ -637,66 +633,6 @@ class ContactManager(BaseContactManager):
                 pass
 
         return response
-
-    # ------------------------------------------------------------------ #
-    #  Vector-search helpers                                             #
-    # ------------------------------------------------------------------ #
-
-    def _ensure_table_vector(
-        self,
-        *,
-        column: str,
-        source_expr: str,
-    ) -> None:
-        """
-        Ensure that an embedding column exists for the provided source expression.
-
-        Parameters
-        ----------
-        column : str
-            The (private) vector column name (e.g. "_notes_emb"). Must end with
-            the suffix "_emb". The corresponding source column name will be
-            derived by stripping the suffix.
-        source_expr : str
-            A Unify expression string that produces the source text to embed.
-            This may be either:
-            - a plain column name like "bio" (treated as an existing column), or
-            - a full expression using Unify's expression language, e.g.
-              "str({first_name}) + ' ' + str({surname})".
-
-        Notes
-        -----
-        When a plain column name is provided, the function will reference that
-        column directly. When a full expression is provided, a derived source
-        column will be created (if needed) using the name obtained by removing
-        the trailing "_emb" from the provided embedding column key.
-        """
-        # Derive a stable source column key from the embedding column name.
-        source_column_name = column[:-4] if column.endswith("_emb") else f"{column}_src"
-
-        # Heuristic: treat simple identifiers (no braces or ops) as direct columns
-        is_plain_identifier = (
-            "{" not in source_expr
-            and "}" not in source_expr
-            and any(c.isalpha() for c in source_expr)
-        )
-
-        if is_plain_identifier:
-            # Use the provided identifier as the source column directly
-            ensure_vector_column(
-                self._ctx,
-                embed_column=column,
-                source_column=source_expr,
-                derived_expr=None,
-            )
-        else:
-            # Treat the input as a full expression that defines/derives the source
-            ensure_vector_column(
-                self._ctx,
-                embed_column=column,
-                source_column=source_column_name,
-                derived_expr=source_expr,
-            )
 
     # Public #
     # -------#
@@ -1772,21 +1708,13 @@ class ContactManager(BaseContactManager):
 
         # Persisted embedding flow: ensure vector/derived columns exist (first use),
         # then sort by cosine/mean-cosine using server-side columns.
-        rows = fetch_top_k_by_references(
+        filled = table_search_top_k(
             self._ctx,
             references,
             k=k,
             allowed_fields=allowed_fields,
             row_filter=system_filter,
-        )
-
-        filled = backfill_rows(
-            self._ctx,
-            rows,
-            k,
-            row_filter=system_filter,
             unique_id_field="contact_id",
-            allowed_fields=allowed_fields,
         )
         # Write-through to local DataStore mirror
         try:
