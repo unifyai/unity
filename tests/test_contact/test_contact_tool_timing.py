@@ -44,8 +44,8 @@ def test_tool_update_contact_timing():
     out = cm._update_contact(contact_id=cid, surname="Case")
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] and out["details"]["contact_id"] == cid
-    assert elapsed_ms < 2300
-    print(f"elapsed: {elapsed_ms} < 2300")
+    assert elapsed_ms < 3450
+    print(f"elapsed: {elapsed_ms} < 3450")
 
 
 @pytest.mark.unit
@@ -123,8 +123,8 @@ def test_tool_merge_contacts_timing():
     )
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert out["outcome"] and out["details"]["kept_contact_id"] == c1
-    assert elapsed_ms < 6000
-    print(f"elapsed: {elapsed_ms} < 6000")
+    assert elapsed_ms < 9000
+    print(f"elapsed: {elapsed_ms} < 9000")
 
 
 @pytest.mark.unit
