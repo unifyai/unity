@@ -1570,7 +1570,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             async for result in self._file_manager.parse_async(
                 filenames,
                 batch_size=batch_size,
-                flatten_auto_counting=auto_counting,
+                auto_counting=auto_counting,
                 document_index_offset=0,
                 **parse_options,
             ):
