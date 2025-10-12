@@ -86,6 +86,8 @@ class DocumentTable(BaseModel):
     bbox: Optional[Dict[str, float]] = None
     # Optional hierarchical hint set by parser from Docling refs
     section_path: Optional[List[str]] = None
+    # Optional sheet/tab name for spreadsheet files (CSV/XLSX)
+    sheet_name: Optional[str] = None
 
 
 class DocumentSentence(BaseModel):
@@ -662,9 +664,17 @@ class Document(BaseModel):
                     sec_title_for_tbl = self.sections[0].title
 
                 html = getattr(tbl, "html", None) if hasattr(tbl, "html") else None
-                title = (
-                    f"Table {idx + 1}{f' (page {page})' if page is not None else ''}"
+                sheet_name = (
+                    getattr(tbl, "sheet_name", None)
+                    if hasattr(tbl, "sheet_name")
+                    else None
                 )
+
+                # Build title with sheet name if available
+                if sheet_name:
+                    title = f"Table {idx + 1} - {sheet_name}{f' (page {page})' if page is not None else ''}"
+                else:
+                    title = f"Table {idx + 1}{f' (page {page})' if page is not None else ''}"
                 content_text = (html or "").strip()
 
                 tbl_row = create_base_record(

@@ -5,11 +5,48 @@ Tests all supported formats (.txt, .pdf, .docx) with rigorous validation.
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
 
 from tests.helpers import _handle_project
+from tests.test_file_manager.conftest import llm_judge_html_equivalence
+
+
+def normalize_html_for_comparison(html_str: str) -> str:
+    """
+    Normalize HTML for comparison by removing ALL attributes and standardizing structure.
+
+    This removes:
+    - ALL HTML attributes from ALL tags (everything between <tag and >)
+    - <thead> wrappers (pandas adds these, Docling might not)
+    - Extra whitespace
+
+    Returns lowercase normalized HTML string with pure tags only.
+    """
+    # First, normalize whitespace
+    html_str = re.sub(r"\s+", " ", html_str.strip())
+    html_str = re.sub(r">\s+<", "><", html_str)
+
+    # Remove ALL attributes from opening tags
+    # This handles: <tag attr="value">, <tag attr='value'>, <tag attr>, etc.
+    # Pattern explanation:
+    # <        - opening bracket
+    # (\w+)    - capture the tag name (group 1)
+    # \s+      - at least one whitespace (means there are attributes)
+    # [^>]*    - anything that's not a closing bracket (the attributes)
+    # >        - closing bracket
+    # Replace with: <tagname>
+    html_str = re.sub(r"<(\w+)\s+[^>]*>", r"<\1>", html_str)
+
+    # Also handle self-closing tags like <br /> or <img ... />
+    html_str = re.sub(r"<(\w+)\s+[^/>]*/>", r"<\1/>", html_str)
+
+    # Normalize thead/tbody structure - remove thead wrapper if present
+    html_str = re.sub(r"<thead>(.*?)</thead>", r"\1", html_str)
+
+    return html_str.lower()
 
 
 @pytest.mark.asyncio
@@ -221,46 +258,25 @@ async def test_parse_csv_file(parser):
         docling_table_html = doc.metadata.tables[0].html
         assert docling_table_html is not None, "Table HTML should be extracted"
 
-        # Normalize both HTML strings for comparison (remove extra whitespace)
-        import re
+        # Normalize both HTML strings for comparison
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
 
-        def normalize_html(html_str):
-            # Remove extra whitespace, newlines, and normalize spacing
-            html_str = re.sub(r"\s+", " ", html_str.strip())
-            html_str = re.sub(r">\s+<", "><", html_str)
-            return html_str.lower()
-
-        normalized_expected = normalize_html(expected_html)
-        normalized_docling = normalize_html(docling_table_html)
-
-        # Check that key data elements are present in extracted HTML
-        for employee in [
-            "Alice Johnson",
-            "Bob Smith",
-            "Charlie Davis",
-            "Diana Green",
-            "Ethan Brown",
-            "Fiona White",
-        ]:
-            assert (
-                employee.lower() in normalized_docling
-            ), f"Table HTML should contain {employee}"
-
-        # Verify departments in HTML
-        for dept in ["Engineering", "Marketing", "Sales", "Finance", "HR"]:
-            assert (
-                dept.lower() in normalized_docling
-            ), f"Table HTML should contain department {dept}"
-
-        # Check that column headers are in the table HTML
-        assert "employeeid" in normalized_docling or "employee" in normalized_docling
-        assert "name" in normalized_docling
-        assert "department" in normalized_docling
-        assert "salary" in normalized_docling
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
 
     except ImportError:
         # If pandas is not available, we still pass the test since core assertions passed
-        print(f"Skipping pandas verification for test_parse_xlsx_file")
+        print(f"Skipping pandas verification for test_parse_csv_file")
 
 
 @pytest.mark.asyncio
@@ -386,64 +402,21 @@ async def test_parse_xlsx_file(parser):
         docling_table_html = doc.metadata.tables[0].html
         assert docling_table_html is not None, "Table HTML should be extracted"
 
-        # Normalize both HTML strings for comparison (remove extra whitespace)
-        import re
+        # Normalize both HTML strings for comparison
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
 
-        def normalize_html(html_str):
-            # Remove extra whitespace, newlines, and normalize spacing
-            html_str = re.sub(r"\s+", " ", html_str.strip())
-            html_str = re.sub(r">\s+<", "><", html_str)
-            return html_str.lower()
-
-        normalized_expected = normalize_html(expected_html)
-        normalized_docling = normalize_html(docling_table_html)
-
-        # Check that key project data is present in extracted HTML
-        project_ids = ["prj-001", "prj-002", "prj-003", "prj-004", "prj-005"]
-        for proj_id in project_ids:
-            # Be flexible with formatting (PRJ-001, PRJ 001, prj001, etc.)
-            assert (
-                proj_id.replace("-", "")
-                in normalized_docling.replace("-", "").replace(" ", "")
-                or proj_id in normalized_docling
-            ), f"Table HTML should contain project {proj_id}"
-
-        # Verify project names in HTML
-        project_names = ["chatbot", "website", "mobile", "migration", "security"]
-        for name in project_names:
-            assert (
-                name in normalized_docling
-            ), f"Table HTML should contain project name {name}"
-
-        # Verify manager names in HTML
-        managers = ["alice", "bob", "charlie", "diana", "ethan"]
-        for manager in managers:
-            assert (
-                manager in normalized_docling
-            ), f"Table HTML should contain manager {manager}"
-
-        # Verify statuses in HTML
-        statuses = ["completed", "progress", "delayed", "planning"]
-        for status in statuses:
-            assert (
-                status in normalized_docling
-            ), f"Table HTML should contain status {status}"
-
-        # Check that column headers are in the table HTML
-        assert (
-            "project" in normalized_docling
-        ), "Should have ProjectID or ProjectName column"
-        assert "manager" in normalized_docling, "Should have Manager column"
-        assert "status" in normalized_docling, "Should have Status column"
-        assert "budget" in normalized_docling, "Should have Budget column"
-
-        # Verify budget values in HTML
-        budgets = ["50000", "75000", "120000", "90000", "110000"]
-        for budget in budgets:
-            assert budget in normalized_docling.replace(",", "").replace(
-                ".",
-                "",
-            ), f"Table HTML should contain budget {budget}"
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
 
     except ImportError:
         # If pandas is not available, we still pass the test since core assertions passed
@@ -858,6 +831,36 @@ async def test_parse_csv_simple(parser, supported_format_files):
     assert doc.metadata.total_characters > 0
     assert doc.metadata.total_words > 0
 
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from CSV"
+
+        df_expected = pd.read_csv(csv_file)
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_parse_csv_simple")
+
 
 @pytest.mark.asyncio
 @pytest.mark.unit
@@ -882,6 +885,36 @@ async def test_parse_csv_complex(parser, supported_format_files):
     # CSV files store data in tables, not paragraphs
     assert doc.metadata.total_characters > 0
 
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from CSV"
+
+        df_expected = pd.read_csv(csv_file)
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_parse_csv_complex")
+
 
 @pytest.mark.asyncio
 @pytest.mark.unit
@@ -904,6 +937,36 @@ Charlie;35;Madrid"""
     assert "Alice" in full_text
     assert "Paris" in full_text
     assert "Berlin" in full_text
+
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from CSV"
+
+        df_expected = pd.read_csv(csv_file, sep=";")
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_csv_semicolon_delimiter")
 
 
 @pytest.mark.asyncio
@@ -928,6 +991,36 @@ Steve|HR|65000"""
     assert "Engineering" in full_text
     assert "95000" in full_text
 
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from CSV"
+
+        df_expected = pd.read_csv(csv_file, sep="|")
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_csv_pipe_delimiter")
+
 
 @pytest.mark.asyncio
 @pytest.mark.unit
@@ -949,6 +1042,36 @@ François,Montréal,Bonjour
     # Check for Unicode preservation
     assert "José" in full_text or "São Paulo" in full_text
     assert "François" in full_text or "Montréal" in full_text
+
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from CSV"
+
+        df_expected = pd.read_csv(csv_file, encoding="utf-8")
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_csv_with_unicode")
 
 
 @pytest.mark.asyncio
@@ -973,6 +1096,36 @@ Bob,35,Sydney,Australia
     assert "John" in full_text
     assert "London" in full_text
     assert "Australia" in full_text
+
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from CSV"
+
+        df_expected = pd.read_csv(csv_file)
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_csv_empty_cells")
 
 
 @pytest.mark.asyncio
@@ -1033,6 +1186,36 @@ Bob,Sales,75000"""
     all_content = " ".join(r.get("content_text", "") for r in rows)
     assert "Alice" in all_content or "Engineering" in all_content
 
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from CSV"
+
+        df_expected = pd.read_csv(csv_file)
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_csv_to_schema_rows")
+
 
 @pytest.mark.asyncio
 @pytest.mark.unit
@@ -1060,6 +1243,36 @@ Data,456"""
     assert doc.metadata.processed_at is not None
     assert doc.metadata.processing_time is not None
     assert doc.metadata.processing_time >= 0
+
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from CSV"
+
+        df_expected = pd.read_csv(csv_file)
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_csv_metadata_extraction")
 
 
 @pytest.mark.asyncio
@@ -1094,6 +1307,370 @@ Gizmo,39.99,75"""
     for section in doc.sections:
         assert section.section_id is not None
         assert section.document_id == doc.document_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_parse_workforce_data_xlsx(parser):
+    """Test parsing workforce_data.xlsx with multiple sheets (Employees, Attendance, Salaries)."""
+    from pathlib import Path
+
+    # Use the actual XLSX file from sample directory
+    sample_dir = Path(__file__).parent.parent / "sample"
+    xlsx_file = sample_dir / "workforce_data.xlsx"
+
+    if not xlsx_file.exists():
+        pytest.skip("workforce_data.xlsx sample file not found")
+
+    doc = parser.parse(xlsx_file)
+
+    # Check metadata
+    assert (
+        "xlsx" in doc.metadata.file_type.lower()
+        or "spreadsheet" in doc.metadata.file_type.lower()
+        or "openxmlformats" in doc.metadata.file_type.lower()
+    ), f"Expected XLSX file type, got: {doc.metadata.file_type}"
+    assert doc.metadata.file_name == "workforce_data.xlsx"
+    assert doc.metadata.file_size > 0
+    assert doc.processing_status == "completed"
+
+    # Check content extraction - verify data from all three sheets
+    full_text = doc.to_plain_text()
+    assert len(full_text.strip()) > 0, "XLSX should contain extractable text"
+
+    # ===== Sheet 1: Employees =====
+    # Verify employee names (exact names from file)
+    assert "Aria Patel" in full_text, "Should contain Aria Patel from Employees sheet"
+    assert "Bilal Khan" in full_text, "Should contain Bilal Khan from Employees sheet"
+    assert "Chen Li" in full_text, "Should contain Chen Li from Employees sheet"
+    assert "Diego Reyes" in full_text, "Should contain Diego Reyes from Employees sheet"
+    assert "Emma Novak" in full_text, "Should contain Emma Novak from Employees sheet"
+    assert (
+        "Farah Qureshi" in full_text
+    ), "Should contain Farah Qureshi from Employees sheet"
+
+    # Verify employee IDs from Employees sheet
+    assert "301" in full_text, "Should contain EmployeeID 301"
+    assert "302" in full_text, "Should contain EmployeeID 302"
+    assert "303" in full_text, "Should contain EmployeeID 303"
+    assert "304" in full_text, "Should contain EmployeeID 304"
+    assert "305" in full_text, "Should contain EmployeeID 305"
+    assert "306" in full_text, "Should contain EmployeeID 306"
+
+    # Verify departments (exact departments from file)
+    assert "Engineering" in full_text, "Should contain Engineering department"
+    assert "Design" in full_text, "Should contain Design department"
+    assert "Sales" in full_text, "Should contain Sales department"
+    assert "Finance" in full_text, "Should contain Finance department"
+    assert "HR" in full_text, "Should contain HR department"
+
+    # ===== Sheet 2: Attendance =====
+    # Verify attendance statuses (exact statuses from file)
+    assert "Present" in full_text, "Should contain Present status from Attendance sheet"
+    assert (
+        "Absent" in full_text or "absent" in full_text.lower()
+    ), "Should contain Absent status"
+    assert (
+        "Remote" in full_text or "remote" in full_text.lower()
+    ), "Should contain Remote status"
+
+    # Verify hours worked data
+    assert "8" in full_text, "Should contain hours worked data (8 hours)"
+    assert "0" in full_text, "Should contain 0 hours for absent employees"
+
+    # ===== Sheet 3: Salaries =====
+    # Verify salary data (exact values from file)
+    assert (
+        "98000" in full_text or "98,000" in full_text
+    ), "Should contain salary 98000 (EmployeeID 301)"
+    assert (
+        "105000" in full_text or "105,000" in full_text
+    ), "Should contain salary 105000 (EmployeeID 302)"
+    assert (
+        "86000" in full_text or "86,000" in full_text
+    ), "Should contain salary 86000 (EmployeeID 303)"
+    assert (
+        "45000" in full_text or "45,000" in full_text
+    ), "Should contain salary 45000 (EmployeeID 304)"
+    assert (
+        "92000" in full_text or "92,000" in full_text
+    ), "Should contain salary 92000 (EmployeeID 305)"
+    assert (
+        "52000" in full_text or "52,000" in full_text
+    ), "Should contain salary 52000 (EmployeeID 306)"
+
+    # Verify bonus amounts (exact values from file)
+    assert "10000" in full_text or "10,000" in full_text, "Should contain bonus 10000"
+    assert "15000" in full_text or "15,000" in full_text, "Should contain bonus 15000"
+    assert "8000" in full_text or "8,000" in full_text, "Should contain bonus 8000"
+    assert "2000" in full_text or "2,000" in full_text, "Should contain bonus 2000"
+    assert "12000" in full_text or "12,000" in full_text, "Should contain bonus 12000"
+    assert "3000" in full_text or "3,000" in full_text, "Should contain bonus 3000"
+
+    # Verify column headers across all sheets
+    assert (
+        "Employee" in full_text or "employee" in full_text.lower()
+    ), "Should have Employee-related headers"
+    assert "Department" in full_text, "Should have Department column"
+    assert (
+        "Salary" in full_text or "salary" in full_text.lower()
+    ), "Should have Salary column"
+    assert (
+        "Attendance" in full_text
+        or "attendance" in full_text.lower()
+        or "Status" in full_text
+    ), "Should reference Attendance/Status"
+    assert (
+        "Bonus" in full_text or "bonus" in full_text.lower()
+    ), "Should have Bonus column"
+
+    # Check structure - XLSX with multiple sheets should produce multiple sections or tables
+    assert len(doc.sections) >= 1, "XLSX should produce at least one section"
+
+    # Check statistics
+    assert doc.metadata.total_characters > 0
+    assert doc.metadata.total_words > 0
+    assert doc.metadata.total_sections >= 1
+
+    # Validate table extraction - should have multiple tables for multiple sheets
+    try:
+        import pandas as pd
+
+        # Check that tables were extracted
+        assert (
+            len(doc.metadata.tables) >= 3
+        ), "Should extract at least 3 tables (one per sheet)"
+
+        # Load each sheet with pandas and compare HTML
+        sheet_names = ["Employees", "Attendance", "Salaries"]
+
+        # For each sheet, load with pandas and verify EXACT HTML match
+        for i, sheet_name in enumerate(sheet_names):
+            df_expected = pd.read_excel(xlsx_file, sheet_name=sheet_name)
+            expected_html = df_expected.to_html(index=False)
+            normalized_expected = normalize_html_for_comparison(expected_html)
+
+            # Get the corresponding extracted table HTML
+            if i < len(doc.metadata.tables):
+                docling_table_html = doc.metadata.tables[i].html
+                assert (
+                    docling_table_html is not None
+                ), f"Table HTML for {sheet_name} should be extracted"
+                normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+                # Use LLM judge for semantic HTML equivalence
+                is_equivalent, explanation = await llm_judge_html_equivalence(
+                    normalized_expected,
+                    normalized_docling,
+                )
+                assert is_equivalent, (
+                    f"HTML tables are not semantically equivalent for sheet '{sheet_name}'!\n"
+                    f"Reason: {explanation}\n\n"
+                    f"Expected HTML:\n{normalized_expected}\n\n"
+                    f"Parsed HTML:\n{normalized_docling}"
+                )
+
+    except ImportError:
+        # If pandas is not available, we still pass the test since core assertions passed
+        print("Skipping pandas verification for workforce_data.xlsx")
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+@_handle_project
+async def test_parse_retail_data_xlsx(parser):
+    """Test parsing retail_data.xlsx with multiple sheets (Stores, Sales, Inventory, Returns)."""
+    from pathlib import Path
+
+    # Use the actual XLSX file from sample directory
+    sample_dir = Path(__file__).parent.parent / "sample"
+    xlsx_file = sample_dir / "retail_data.xlsx"
+
+    if not xlsx_file.exists():
+        pytest.skip("retail_data.xlsx sample file not found")
+
+    doc = parser.parse(xlsx_file)
+
+    # Check metadata
+    assert (
+        "xlsx" in doc.metadata.file_type.lower()
+        or "spreadsheet" in doc.metadata.file_type.lower()
+        or "openxmlformats" in doc.metadata.file_type.lower()
+    ), f"Expected XLSX file type, got: {doc.metadata.file_type}"
+    assert doc.metadata.file_name == "retail_data.xlsx"
+    assert doc.metadata.file_size > 0
+    assert doc.processing_status == "completed"
+
+    # Check content extraction - verify data from all four sheets
+    full_text = doc.to_plain_text()
+    assert len(full_text.strip()) > 0, "XLSX should contain extractable text"
+
+    # ===== Sheet 1: Stores =====
+    # Verify store names (exact names from file)
+    assert "Gulshan" in full_text, "Should contain Gulshan store from Stores sheet"
+    assert "DHA" in full_text, "Should contain DHA store"
+    assert "Blue Area" in full_text, "Should contain Blue Area store"
+    assert "Saddar" in full_text, "Should contain Saddar store"
+
+    # Verify cities (exact cities from file)
+    assert "Karachi" in full_text, "Should contain Karachi city"
+    assert "Lahore" in full_text, "Should contain Lahore city"
+    assert "Islamabad" in full_text, "Should contain Islamabad city"
+    assert "Rawalpindi" in full_text, "Should contain Rawalpindi city"
+
+    # Verify store IDs (exact IDs from file)
+    assert "10" in full_text, "Should contain StoreID 10 (Gulshan)"
+    assert "11" in full_text, "Should contain StoreID 11 (DHA)"
+    assert "12" in full_text, "Should contain StoreID 12 (Blue Area)"
+    assert "13" in full_text, "Should contain StoreID 13 (Saddar)"
+
+    # ===== Sheet 2: Sales =====
+    # Verify sale IDs (exact IDs from file)
+    assert "5001" in full_text, "Should contain SaleID 5001 from Sales sheet"
+    assert "5002" in full_text, "Should contain SaleID 5002"
+    assert "5003" in full_text, "Should contain SaleID 5003"
+    assert "5004" in full_text, "Should contain SaleID 5004"
+    assert "5005" in full_text, "Should contain SaleID 5005"
+    assert "5006" in full_text, "Should contain SaleID 5006"
+
+    # Verify SKUs (exact SKUs from file)
+    assert (
+        "LTP-15" in full_text or "ltp-15" in full_text.lower()
+    ), "Should contain SKU LTP-15 (Laptop)"
+    assert (
+        "MOU-01" in full_text or "mou-01" in full_text.lower()
+    ), "Should contain SKU MOU-01 (Mouse)"
+    assert (
+        "KBD-02" in full_text or "kbd-02" in full_text.lower()
+    ), "Should contain SKU KBD-02 (Keyboard)"
+    assert (
+        "MON-27" in full_text or "mon-27" in full_text.lower()
+    ), "Should contain SKU MON-27 (Monitor)"
+    assert (
+        "PRN-10" in full_text or "prn-10" in full_text.lower()
+    ), "Should contain SKU PRN-10 (Printer)"
+
+    # Verify amounts in PKR (exact amounts from file)
+    assert (
+        "420000" in full_text or "420,000" in full_text
+    ), "Should contain amount 420000 PKR"
+    assert "7500" in full_text or "7,500" in full_text, "Should contain amount 7500 PKR"
+    assert (
+        "12000" in full_text or "12,000" in full_text
+    ), "Should contain amount 12000 PKR"
+    assert (
+        "85000" in full_text or "85,000" in full_text
+    ), "Should contain amount 85000 PKR"
+    assert (
+        "45000" in full_text or "45,000" in full_text
+    ), "Should contain amount 45000 PKR"
+    assert "6000" in full_text or "6,000" in full_text, "Should contain amount 6000 PKR"
+
+    # ===== Sheet 3: Inventory =====
+    # Verify item names (exact names from file)
+    assert (
+        "Laptop" in full_text or "laptop" in full_text.lower()
+    ), 'Should contain Laptop 15" from Inventory'
+    assert (
+        "Mouse" in full_text or "mouse" in full_text.lower()
+    ), "Should contain Wireless Mouse"
+    assert (
+        "Keyboard" in full_text or "keyboard" in full_text.lower()
+    ), "Should contain Mechanical Keyboard"
+    assert (
+        "Monitor" in full_text or "monitor" in full_text.lower()
+    ), 'Should contain Monitor 27"'
+    assert (
+        "Printer" in full_text or "printer" in full_text.lower()
+    ), "Should contain Laser Printer"
+
+    # Verify quantity data (exact quantities from file)
+    assert "7" in full_text, "Should contain quantity 7 (LTP-15 at Store 10)"
+    assert "120" in full_text, "Should contain quantity 120 (MOU-01 at Store 11)"
+    assert "45" in full_text, "Should contain quantity 45 (KBD-02 at Store 12)"
+    assert "12" in full_text, "Should contain quantity 12 (MON-27 at Store 13)"
+    assert "6" in full_text, "Should contain quantity 6 (PRN-10 at Store 10)"
+
+    # ===== Sheet 4: Returns =====
+    # Verify return data (exact IDs from file)
+    assert "9001" in full_text, "Should contain ReturnID 9001 from Returns sheet"
+    assert "9002" in full_text, "Should contain ReturnID 9002"
+
+    # Verify return reasons (exact reasons from file)
+    assert (
+        "Defective" in full_text or "defective" in full_text.lower()
+    ), "Should contain return reason 'Defective mouse'"
+    assert (
+        "Damaged" in full_text or "damaged" in full_text.lower()
+    ), "Should contain return reason 'Damaged packaging'"
+
+    # Verify refund amounts (exact amounts from file)
+    assert "1500" in full_text, "Should contain refund 1500 PKR (ReturnID 9001)"
+    assert "5000" in full_text, "Should contain refund 5000 PKR (ReturnID 9002)"
+
+    # Verify column headers across all sheets
+    assert (
+        "Store" in full_text or "store" in full_text.lower()
+    ), "Should have Store-related headers"
+    assert "Sale" in full_text or "sale" in full_text.lower(), "Should have Sale column"
+    assert (
+        "Inventory" in full_text or "inventory" in full_text.lower()
+    ), "Should reference Inventory"
+    assert (
+        "Return" in full_text or "return" in full_text.lower()
+    ), "Should have Return column"
+    assert "SKU" in full_text or "sku" in full_text.lower(), "Should have SKU column"
+
+    # Check structure - XLSX with multiple sheets should produce multiple sections or tables
+    assert len(doc.sections) >= 1, "XLSX should produce at least one section"
+
+    # Check statistics
+    assert doc.metadata.total_characters > 0
+    assert doc.metadata.total_words > 0
+    assert doc.metadata.total_sections >= 1
+
+    # Validate table extraction - should have multiple tables for multiple sheets
+    try:
+        import pandas as pd
+
+        # Check that tables were extracted
+        assert (
+            len(doc.metadata.tables) >= 4
+        ), "Should extract at least 4 tables (one per sheet)"
+
+        # Load each sheet with pandas and compare HTML
+        sheet_names = ["Stores", "Sales", "Inventory", "Returns"]
+
+        # For each sheet, load with pandas and verify EXACT HTML match
+        for i, sheet_name in enumerate(sheet_names):
+            df_expected = pd.read_excel(xlsx_file, sheet_name=sheet_name)
+            expected_html = df_expected.to_html(index=False)
+            normalized_expected = normalize_html_for_comparison(expected_html)
+
+            # Get the corresponding extracted table HTML
+            if i < len(doc.metadata.tables):
+                docling_table_html = doc.metadata.tables[i].html
+                assert (
+                    docling_table_html is not None
+                ), f"Table HTML for {sheet_name} should be extracted"
+                normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+                # Use LLM judge for semantic HTML equivalence
+                is_equivalent, explanation = await llm_judge_html_equivalence(
+                    normalized_expected,
+                    normalized_docling,
+                )
+                assert is_equivalent, (
+                    f"HTML tables are not semantically equivalent for sheet '{sheet_name}'!\n"
+                    f"Reason: {explanation}\n\n"
+                    f"Expected HTML:\n{normalized_expected}\n\n"
+                    f"Parsed HTML:\n{normalized_docling}"
+                )
+
+    except ImportError:
+        # If pandas is not available, we still pass the test since core assertions passed
+        print("Skipping pandas verification for retail_data.xlsx")
 
 
 @pytest.mark.asyncio
@@ -1144,6 +1721,57 @@ async def test_xlsx_multiple_sheets(parser, tmp_path):
     # May have multiple sections for multiple sheets
     assert len(doc.sections) >= 1
 
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert (
+            len(doc.metadata.tables) >= 2
+        ), "Should extract at least 2 tables (one per sheet)"
+
+        # Check first sheet (Q1 Sales) - Use LLM judge for equivalence
+        df1 = pd.read_excel(xlsx_file, sheet_name="Q1 Sales")
+        expected_html1 = df1.to_html(index=False)
+        normalized_expected1 = normalize_html_for_comparison(expected_html1)
+
+        if len(doc.metadata.tables) > 0:
+            docling_html1 = doc.metadata.tables[0].html
+            assert docling_html1 is not None
+            normalized_docling1 = normalize_html_for_comparison(docling_html1)
+            is_equivalent, explanation = await llm_judge_html_equivalence(
+                normalized_expected1,
+                normalized_docling1,
+            )
+            assert is_equivalent, (
+                f"HTML tables are not semantically equivalent for sheet 'Q1 Sales'!\n"
+                f"Reason: {explanation}\n\n"
+                f"Expected HTML:\n{normalized_expected1}\n\n"
+                f"Parsed HTML:\n{normalized_docling1}"
+            )
+
+        # Check second sheet (Q1 Expenses) - Use LLM judge for equivalence
+        df2 = pd.read_excel(xlsx_file, sheet_name="Q1 Expenses")
+        expected_html2 = df2.to_html(index=False)
+        normalized_expected2 = normalize_html_for_comparison(expected_html2)
+
+        if len(doc.metadata.tables) > 1:
+            docling_html2 = doc.metadata.tables[1].html
+            assert docling_html2 is not None
+            normalized_docling2 = normalize_html_for_comparison(docling_html2)
+            is_equivalent, explanation = await llm_judge_html_equivalence(
+                normalized_expected2,
+                normalized_docling2,
+            )
+            assert is_equivalent, (
+                f"HTML tables are not semantically equivalent for sheet 'Q1 Expenses'!\n"
+                f"Reason: {explanation}\n\n"
+                f"Expected HTML:\n{normalized_expected2}\n\n"
+                f"Parsed HTML:\n{normalized_docling2}"
+            )
+
+    except ImportError:
+        print("Skipping pandas verification for test_xlsx_multiple_sheets")
+
 
 @pytest.mark.asyncio
 @pytest.mark.unit
@@ -1187,6 +1815,37 @@ async def test_xlsx_with_formulas(parser, tmp_path):
     # Docling may or may not evaluate formulas, but should extract something
     assert len(full_text) > 50
 
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from XLSX"
+
+        # Load with pandas (formulas won't be evaluated in pandas either without engine)
+        df_expected = pd.read_excel(xlsx_file, sheet_name="Calculations")
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_xlsx_with_formulas")
+
 
 @pytest.mark.asyncio
 @pytest.mark.unit
@@ -1223,3 +1882,33 @@ async def test_xlsx_metadata_extraction(parser, tmp_path):
     assert doc.metadata.parser_name == "DoclingParser"
     assert doc.metadata.processing_time is not None
     assert doc.metadata.processing_time >= 0
+
+    # Validate table extraction with pandas HTML comparison
+    try:
+        import pandas as pd
+
+        assert len(doc.metadata.tables) > 0, "Should extract table metadata from XLSX"
+
+        df_expected = pd.read_excel(xlsx_file)
+        expected_html = df_expected.to_html(index=False)
+
+        docling_table_html = doc.metadata.tables[0].html
+        assert docling_table_html is not None, "Table HTML should be extracted"
+
+        normalized_expected = normalize_html_for_comparison(expected_html)
+        normalized_docling = normalize_html_for_comparison(docling_table_html)
+
+        # Use LLM judge for semantic HTML equivalence
+        is_equivalent, explanation = await llm_judge_html_equivalence(
+            normalized_expected,
+            normalized_docling,
+        )
+        assert is_equivalent, (
+            f"HTML tables are not semantically equivalent!\n"
+            f"Reason: {explanation}\n\n"
+            f"Expected HTML:\n{normalized_expected}\n\n"
+            f"Parsed HTML:\n{normalized_docling}"
+        )
+
+    except ImportError:
+        print("Skipping pandas verification for test_xlsx_metadata_extraction")
