@@ -1035,11 +1035,16 @@ class DoclingParser(GenericParser[Document]):
             # Tables HTML
             tables = getattr(document.metadata, "tables", []) or []
             html_blocks: list[str] = []
-            for tbl in tables:
+            for idx, tbl in enumerate(tables):
                 try:
                     html = (getattr(tbl, "html", "") or "").strip()
+                    sheet_name = (getattr(tbl, "sheet_name", "") or "").strip()
                     if html:
-                        html_blocks.append(html)
+                        # Add sheet name as a header if available
+                        if sheet_name:
+                            html_blocks.append(f"Sheet: {sheet_name}\n{html}")
+                        else:
+                            html_blocks.append(html)
                 except Exception:
                     continue
             if html_blocks:
@@ -2615,6 +2620,30 @@ class DoclingParser(GenericParser[Document]):
         try:
             tables: list[DocumentTable] = []
 
+            # Build a mapping from table self_ref to sheet/tab name from groups
+            table_to_sheet_name: dict[str, str] = {}
+            try:
+                if hasattr(docling_doc, "groups") and docling_doc.groups:
+                    for group in docling_doc.groups:
+                        # Extract sheet name from group name (format: "sheet: <SheetName>")
+                        group_name = getattr(group, "name", None)
+                        if (
+                            group_name
+                            and isinstance(group_name, str)
+                            and group_name.startswith("sheet:")
+                        ):
+                            sheet_name = group_name.replace("sheet:", "").strip()
+
+                            # Get children (tables) of this group
+                            children = getattr(group, "children", [])
+                            for child in children:
+                                # Extract table reference from child
+                                if getattr(child, "cref", None):
+                                    table_ref = child.cref
+                                    table_to_sheet_name[table_ref] = sheet_name
+            except Exception:
+                pass
+
             if hasattr(docling_doc, "tables"):
                 for table in docling_doc.tables:
                     if hasattr(table, "label") and "table" in str(table.label).lower():
@@ -2640,6 +2669,16 @@ class DoclingParser(GenericParser[Document]):
                             except Exception:
                                 section_path = None
 
+                            # Extract sheet name from table self_ref
+                            sheet_name = None
+                            try:
+                                if hasattr(table, "self_ref"):
+                                    table_ref = getattr(table, "self_ref", None)
+                                    if table_ref and table_ref in table_to_sheet_name:
+                                        sheet_name = table_to_sheet_name[table_ref]
+                            except Exception:
+                                pass
+
                             tables.append(
                                 DocumentTable(
                                     page=page_num,
@@ -2651,6 +2690,7 @@ class DoclingParser(GenericParser[Document]):
                                         else {}
                                     ),
                                     section_path=section_path,
+                                    sheet_name=sheet_name,
                                 ),
                             )
                         except Exception:
@@ -3590,10 +3630,18 @@ class DoclingParser(GenericParser[Document]):
                         for tbl in getattr(document.metadata, "tables", []) or []:
                             try:
                                 html = (tbl.html or "").strip()
+                                sheet_name = (
+                                    getattr(tbl, "sheet_name", "") or ""
+                                ).strip()
                             except Exception:
                                 html = ""
+                                sheet_name = ""
                             if html:
-                                table_html.append(html)
+                                # Add sheet name as a header if available
+                                if sheet_name:
+                                    table_html.append(f"Sheet: {sheet_name}\n{html}")
+                                else:
+                                    table_html.append(html)
                         tables_block = (
                             "Tables (HTML):\n" + "\n\n".join(table_html)
                             if table_html

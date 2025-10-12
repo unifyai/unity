@@ -13,6 +13,103 @@ from unity.file_manager.managers.local import LocalFileManager
 from unity.file_manager.global_file_manager import GlobalFileManager
 from unity.file_manager.simulated import SimulatedFileManager
 
+from tests.helpers import SETTINGS
+
+
+async def llm_judge_html_equivalence(
+    expected_html: str,
+    parsed_html: str,
+) -> tuple[bool, str]:
+    """
+    Use a small LLM to judge if two HTML tables are semantically equivalent.
+
+    This allows for structural differences (e.g., header rows wrapped in <tbody> vs not)
+    as long as the content, information, and overall table structure are identical.
+
+    Args:
+        expected_html: The expected HTML table (from pandas)
+        parsed_html: The parsed HTML table (from Docling)
+
+    Returns:
+        Tuple of (is_equivalent: bool, explanation: str)
+    """
+    try:
+        import unify
+
+        system_prompt = """You are an HTML table comparison expert. Your task is to determine if two HTML tables are semantically equivalent.
+
+Rules for comparison:
+1. The actual TABLE DATA (cell contents, values, text) MUST be identical (with exceptions below)
+2. The table structure (rows, columns, headers) MUST be the same
+3. Minor structural differences are acceptable if they don't change the meaning:
+   - Header rows inside or outside <tbody> tags
+   - Presence or absence of <thead> wrappers
+   - Different tag nesting that preserves the same logical structure
+4. The number of rows and columns MUST match
+5. Header cells and data cells must be in the correct positions
+6. **CRITICAL: Missing/empty data representations are equivalent:**
+   - Empty cells, "nan", "NaN", "None", blank strings, and missing values are ALL considered equivalent
+   - A cell with "nan" is the same as an empty cell or a cell with whitespace
+   - Different representations of missing data should NOT cause a mismatch
+7. **CRITICAL: Numeric equivalence:**
+   - Integers and floats representing the same value are equivalent: "30" == "30.0" == "30.00"
+   - Trailing zeros in floats should be ignored: "1.5" == "1.50"
+   - Different numeric formats representing the same value are acceptable
+8. **CRITICAL: Parsed table can be MORE complete:**
+   - If the parsed table has actual data where the expected table has missing/nan values, this is ACCEPTABLE
+   - The parsed table having MORE information than expected (filling in nan/missing cells) is GOOD
+   - Only flag as NOT_EQUIVALENT if parsed table is MISSING data that exists in expected table
+
+Respond with ONLY one of these two formats:
+- If tables are semantically equivalent: "EQUIVALENT: <brief reason>"
+- If tables are NOT equivalent: "NOT_EQUIVALENT: <specific difference found>"
+"""
+
+        user_prompt = f"""Compare these two HTML tables:
+
+Expected HTML:
+{expected_html}
+
+Parsed HTML:
+{parsed_html}
+
+Your response:"""
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
+        )
+        client.set_system_message(system_prompt)
+        result = await client.generate(user_prompt)
+
+        # Handle the response - it might be a string or None
+        if result is None:
+            return (
+                expected_html == parsed_html,
+                "LLM returned None, using exact string match",
+            )
+
+        response_text = str(result).strip()
+
+        if response_text.startswith("EQUIVALENT"):
+            return True, response_text.replace("EQUIVALENT:", "").strip()
+        else:
+            return False, response_text.replace("NOT_EQUIVALENT:", "").strip()
+
+    except ImportError:
+        # If unify is not available, fall back to string comparison
+        return (
+            expected_html == parsed_html,
+            "LLM judge not available, using exact string match",
+        )
+    except Exception as e:
+        # If LLM call fails, fall back to string comparison
+        return (
+            expected_html == parsed_html,
+            f"LLM judge failed: {str(e)}, using exact string match",
+        )
+
 
 @pytest.fixture(scope="session")
 def fm_root(tmp_path_factory) -> str:
