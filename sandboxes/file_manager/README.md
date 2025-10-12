@@ -1,198 +1,400 @@
-File Manager Sandbox
-====================
+# FileManager & GlobalFileManager Sandboxes
 
-This folder contains an **interactive playground** for the `FileManager` component that lives in `unity/file_manager/`.  The goal of the sandbox is to let you experiment with the manager in isolation – import files, parse their contents, manage file operations, and observe how the underlying tool-loop behaves before you integrate the manager into a larger system.
+Interactive command-line environments for testing and exploring the **FileManager** and **GlobalFileManager** components of the Unity framework.
 
-### Video walkthroughs
+---
 
-- Coming soon...
+## Overview
 
-What is the `FileManager`?
---------------------------
-`FileManager` is a **powerful read-only** file analysis system that manages files received or downloaded during a Unity session. Files are automatically added when:
+This directory contains two interactive sandboxes:
 
-- **Email attachments** are received
-- **Browser downloads** are completed
-- **Other system integrations** add files
+1. **FileManager Sandbox** (`file_manager_sandbox.py`) - For testing a single filesystem adapter
+2. **GlobalFileManager Sandbox** (`global_file_manager_sandbox.py`) - For testing operations across multiple filesystems
 
-It supports multiple file formats (`.txt`, `.pdf`, `.docx`) and provides sophisticated content analysis capabilities:
+Both sandboxes provide full access to the managers' public API methods (`ask`, `ask_about_file`, `organize`) with support for:
+- Voice input/output (optional)
+- Clarification requests during execution
+- Mid-flight steering (pause/interject/cancel)
+- Multiple filesystem adapters (Local, CodeSandbox, Interact, Google Drive)
+- Scenario-based testing with synthetic file generation
 
-### Core Methods
-* **`ask(filename, question)`** – Ask specific questions about individual file contents
-* **`search_files(references, k)`** – Semantic search across all files by content similarity
-* **`filter_files(filter)`** – Exact filtering by criteria like filename, status, metadata
-* **`parse(filename)`** – Extract structured data from files
-* **`list()`** – List all available files
-* **`exists(filename)`** – Check if a file is available
-* **`import_file(path)`** – Import a single file from filesystem
-* **`import_directory(path)`** – Import all files from a directory
+---
 
-### Advanced Capabilities
-The FileManager automatically parses imported files and stores structured content in a cloud-based table, enabling:
+## FileManager Sandbox
 
-- **Semantic Search**: Find files by content similarity using natural language queries
-- **Cross-Document Analysis**: Compare and analyze content across multiple files
-- **Metadata Filtering**: Filter by file properties, processing status, size, type, etc.
-- **Persistent Storage**: Parsed content is stored and searchable without re-parsing
+### Purpose
 
-Under the hood, `ask` launches a _tool-loop_ where an LLM can call comprehensive read-only tools (`parse`, `search_files`, `filter_files`, `list`, `exists`) until it reaches a final answer. The extensive unit-test suite in `tests/test_file_manager/` exercises all functionality – including ranking precision tests that verify semantic search returns the most relevant documents first.
+Test and explore a single FileManager instance with your choice of filesystem adapter. Supports file operations, content analysis, semantic search, and organization tasks.
 
-### Features
-
-- **Semantic Search**: Find files by content similarity using embeddings and cosine distance ranking
-- **Advanced Filtering**: Exact criteria filtering with support for complex expressions
-- **Multi-format parsing**: Supports text files, PDFs, and Word documents using the integrated DoclingParser
-- **Persistent Storage**: Automatically logs parsed files to cloud table for fast retrieval
-- **Cross-document analysis**: Compare content, extract information across multiple files
-- **Content intelligence**: Query file contents, extract key information, and perform document analysis
-- **Read-only operations**: Safe content queries without file modification
-- **Voice interaction**: Full voice mode support with speech-to-text and text-to-speech
-- **Steerable tools**: In-flight steering to interject and control runs without restarting
-- **Clarification requests**: Interactive clarification flows for ambiguous questions
-
-Running the sandbox
--------------------
-The entry-point lives at `sandboxes/file_manager/sandbox.py` and can be executed directly or via Python's `-m` switch:
+### Usage
 
 ```bash
-# Basic text-only session
-python -m sandboxes.file_manager.sandbox
+# Basic usage with default local adapter
+python -m sandboxes.file_manager.file_manager_sandbox
 
-# The same, but enable voice I/O via Deepgram + Cartesia
-python -m sandboxes.file_manager.sandbox --voice
+# With specific adapter
+python -m sandboxes.file_manager.file_manager_sandbox --adapter local --root /tmp/my_files
+
+# With voice mode
+python -m sandboxes.file_manager.file_manager_sandbox --voice
+
+# With tracing enabled
+python -m sandboxes.file_manager.file_manager_sandbox --traced
+
+# With custom project
+python -m sandboxes.file_manager.file_manager_sandbox --project_name MyProject --overwrite
 ```
 
-CLI flags
-~~~~~~~~~
-`sandbox.py` re-uses the common helper in `sandboxes/utils.py`, so it shares a standard set of options:
+### Command Line Arguments
 
+| Argument | Alias | Default | Description |
+|----------|-------|---------|-------------|
+| `--adapter` | `-a` | `local` | Filesystem adapter: `local`, `codesandbox`, `interact`, `google_drive` |
+| `--root` | `-r` | `None` | Root directory for local adapter (creates temp dir if not specified) |
+| `--voice` | `-v` | `False` | Enable voice input/output |
+| `--traced` | `-t` | `False` | Enable Unify tracing |
+| `--debug` | `-d` | `False` | Show reasoning steps |
+| `--project_name` | `-p` | `Sandbox` | Unify project name |
+| `--overwrite` | `-o` | `False` | Overwrite existing project data |
+| `--no_clarifications` | | `False` | Disable clarification requests |
+| `--log_in_terminal` | | `False` | Print logs to terminal |
+| `--log_tcp_port` | | `None` | TCP port for log streaming |
+| `--http_log_tcp_port` | | `None` | TCP port for HTTP log streaming |
+| `--project_version` | | `-1` | Project version to load (-1 for latest) |
+
+### Interactive Commands
+
+Once in the sandbox, you can use these commands:
+
+| Command | Description |
+|---------|-------------|
+| `us {description}` | Generate synthetic file scenario from text description |
+| `usv` | Generate synthetic file scenario from voice (requires `--voice`) |
+| `save_project` or `sp` | Save current project state |
+| `help` or `h` | Show command list |
+| `quit` or `exit` | Exit sandbox |
+| Any other text | Automatically routed to `ask`, `ask_about_file`, or `organize` |
+
+### Examples
+
+#### Basic File Query
 ```
---voice / -v        Enable voice capture (Deepgram) + TTS playback (Cartesia)
---debug / -d        Show full reasoning steps of every tool-loop
---traced / -t       Wrap manager calls with unify.traced for detailed logs
---project_name / -p Name of the Unify **project/context** (default: "Sandbox")
---overwrite / -o    Delete any existing data for the chosen project before start
---project_version   Roll back to a specific project commit (int index)
---no_clarifications Disable clarification requests (auto-proceed with best guesses)
---log_level         Logging verbosity: DEBUG, INFO, WARNING, ERROR (default: INFO)
---log_file          Optional file path for logs (default: console only)
---log_tcp           Enable TCP log streaming on localhost:9999
---show_requests     Stream all Unify API requests to the terminal
-```
-
-The defaults work well for getting started, but `--voice` is especially fun once you have Deepgram and Cartesia API keys in your environment.
-
-Getting started
----------------
-When you first run the sandbox, you'll see a command prompt that accepts both structured commands and free-form natural language. Here are some ways to get started:
-
-### Quick commands
-
-```
-us "populate sample files"        # Load sample files for testing
-lf                                # List all available files
-pf document.pdf                   # Parse and analyze a specific file
-search AI machine learning        # Search files by content similarity
-filter filename.endswith('.pdf')  # Filter files by exact criteria
-lc                                # List table columns/schema
-if /path/to/file.pdf              # Import a single file
-id /path/to/directory             # Import all files from directory
-```
-
-### Natural language examples
-
-```
-"What are the main topics discussed in the quarterly report?"
-"Find all files that mention artificial intelligence"
-"Which documents contain security policies?"
-"Compare the technical specifications across all PDF files"
-"Search for files about machine learning algorithms"
-"What is the difference between report1.pdf and report2.pdf?"
-"Extract all the compliance requirements from policy documents"
-"Find documents that discuss IoT devices and connectivity"
+command> What files do I have?
+[ask] → You currently have 5 files: report.pdf, data.csv, notes.txt, image.png, slides.pptx
 ```
 
-### Advanced search examples
-
+#### File-Specific Question
 ```
-search "IT security policy compliance GDPR"     # Semantic content search
-filter "status == 'success' and metadata['file_size'] > 1000000"  # Complex filtering
-search "neural networks deep learning"          # Find AI/ML documents
-filter "filename.endswith('.docx')"            # Find Word documents
+command> What's the main topic of report.pdf?
+[ask_about_file] → The report discusses Q3 sales performance across EMEA regions...
 ```
 
-### Scenario seeding
-
-Use `us` or `usv` (voice mode) to populate the file manager with sample files for testing:
-
+#### File Organization
 ```
-us "Demonstrate semantic search across IT policy and technical documentation"
-us "Showcase cross-document analysis and filtering capabilities"
-us "Load sample files and show content intelligence features"
-usv  # Voice-guided scenario creation
+command> Rename data.csv to q3_data.csv
+[organize] → Successfully renamed 'data.csv' to 'q3_data.csv'
 ```
 
-The sandbox automatically pre-loads sample files (IT Policy Document and SmartHome Hub Documentation) to demonstrate:
-- Semantic search across different document types
-- Domain-specific content filtering
-- Cross-document analysis and comparison
-- Content extraction and intelligence workflows
+#### Scenario Generation
+```
+command> us Create 10 sample documents about AI research papers
+[generate] Building synthetic file scenario – this can take a moment…
+📁 Pre-populated 10 sample files: paper1.pdf, paper2.pdf, ...
+```
 
-### Voice mode
+---
 
-With `--voice`, you can:
-- **Speak commands**: Press Enter on an empty line to start voice recording
-- **Voice steering**: Say "pause", "stop", or "cancel" during LLM operations
-- **TTS playback**: Hear responses read aloud (press Enter to skip)
-- **Voice clarifications**: Respond to clarification requests by voice
+## GlobalFileManager Sandbox
 
-Architecture notes
-------------------
-The sandbox demonstrates several key patterns:
+### Purpose
 
-1. **Read-only design**: All operations are safe content queries without file modification
-2. **Semantic search architecture**: Embeddings-based search with cosine distance ranking
-3. **Persistent storage**: Automatically logs parsed files to cloud table for instant retrieval
-4. **Multi-column references**: Search across content, metadata, and derived expressions
-5. **File format detection**: Dynamically determines supported formats and parsing strategies
-6. **Content extraction**: Leverages DoclingParser for robust document parsing
-7. **Tool composition**: Shows how search, filter, parse, and analysis tools work together
-8. **Error handling**: Graceful handling of missing files and parsing failures
+Test and explore cross-filesystem operations with multiple filesystem adapters simultaneously. Ideal for testing file synchronization, cross-filesystem search, and multi-source content analysis.
 
-The `FileManager` maintains both a local registry (display names → file paths) and a cloud-based table (parsed content + metadata) that enables powerful semantic search and filtering. The architecture mirrors ContactManager patterns while maintaining read-only semantics. Files are automatically parsed and logged when imported, creating a searchable knowledge base.
+### Usage
 
-File formats & parsing
-----------------------
-Currently supported formats:
-- **Text files** (`.txt`): Direct content extraction with encoding detection
-- **PDF documents** (`.pdf`): Layout-aware parsing with text and structure extraction
-- **Word documents** (`.docx`): Native Office document parsing with formatting preservation
+```bash
+# Basic usage with single local filesystem
+python -m sandboxes.file_manager.global_file_manager_sandbox
 
-The parsing system is extensible – new formats can be added by implementing the `BaseParser` interface.
+# With multiple filesystems
+python -m sandboxes.file_manager.global_file_manager_sandbox --filesystems local,interact
 
-Development notes
------------------
-For FileManager development:
-- The core implementation lives in `unity/file_manager/`
-- Tests are in `tests/test_file_manager/` including comprehensive search ranking tests
-- Search/filter functionality tests in `tests/test_file_manager/test_file_manager_search_filter.py`
-- Parser-specific tests are in `tests/test_file_manager/test_parser/`
-- The sandbox provides an isolated environment for testing new features
+# With custom local root
+python -m sandboxes.file_manager.global_file_manager_sandbox --filesystems local --local-root /tmp/my_files
 
-This sandbox is particularly useful for:
-- **Testing semantic search precision**: Verify ranking and relevance with k=1 queries
-- **Cross-document analysis**: Compare content across multiple file types
-- **Advanced filtering workflows**: Test complex filtering expressions and metadata queries
-- **Content intelligence**: Extract structured information from unstructured documents
-- **Search ranking validation**: Ensure most relevant documents appear first
-- **Multi-column search**: Test search across content, metadata, and derived fields
-- Validating parsing behavior across different file formats
-- Experimenting with natural language content queries
-- Debugging document parsing and extraction logic
+# With voice mode
+python -m sandboxes.file_manager.global_file_manager_sandbox --voice --filesystems local,codesandbox
 
-### Key Testing Scenarios
-The sandbox includes sample files (IT Policy + SmartHome Documentation) specifically chosen to test:
-- Domain-specific search precision (IT vs IoT content)
-- Technical specification extraction
-- Policy and compliance information retrieval
-- Cross-document comparison and analysis
+# With tracing enabled
+python -m sandboxes.file_manager.global_file_manager_sandbox --traced --filesystems local,interact,google_drive
+```
+
+### Command Line Arguments
+
+| Argument | Alias | Default | Description |
+|----------|-------|---------|-------------|
+| `--filesystems` | `-f` | `local` | Comma-separated list: `local`, `codesandbox`, `interact`, `google_drive` |
+| `--local-root` | | `None` | Root directory for local adapter (creates temp dir if not specified) |
+| `--voice` | `-v` | `False` | Enable voice input/output |
+| `--traced` | `-t` | `False` | Enable Unify tracing |
+| `--debug` | `-d` | `False` | Show reasoning steps |
+| `--project_name` | `-p` | `Sandbox` | Unify project name |
+| `--overwrite` | `-o` | `False` | Overwrite existing project data |
+| `--no_clarifications` | | `False` | Disable clarification requests |
+| `--log_in_terminal` | | `False` | Print logs to terminal |
+| `--log_tcp_port` | | `None` | TCP port for log streaming |
+| `--http_log_tcp_port` | | `None` | TCP port for HTTP log streaming |
+| `--project_version` | | `-1` | Project version to load (-1 for latest) |
+
+### Interactive Commands
+
+Once in the sandbox, you can use these commands:
+
+| Command | Description |
+|---------|-------------|
+| `us {description}` | Generate synthetic file scenario across filesystems |
+| `usv` | Generate synthetic file scenario from voice (requires `--voice`) |
+| `save_project` or `sp` | Save current project state |
+| `help` or `h` | Show command list |
+| `quit` or `exit` | Exit sandbox |
+| Any other text | Automatically routed to `ask` or `organize` |
+
+### Examples
+
+#### Cross-Filesystem Query
+```
+command> What files do I have across all filesystems?
+[ask] → Found 15 files across 2 filesystems:
+  - local: 8 files (reports, data, notes)
+  - interact: 7 files (presentations, images)
+```
+
+#### Cross-Filesystem Search
+```
+command> Search for files about Python
+[ask] → Found 5 matching files:
+  - /local/python_tutorial.pdf (87% match)
+  - /interact/python_project.docx (82% match)
+  - /local/django_notes.txt (76% match)
+  ...
+```
+
+#### Cross-Filesystem Organization
+```
+command> Move all PDFs from local to interact
+[organize] → Successfully moved 3 files from 'local' to 'interact':
+  - report.pdf
+  - guide.pdf
+  - manual.pdf
+```
+
+---
+
+## Filesystem Adapters
+
+### Local Adapter
+- **Use case**: Local filesystem operations
+- **Setup**: Specify `--root` directory or use default temp directory
+- **Features**: Full read/write, rename, move, delete
+
+### CodeSandbox Adapter
+- **Use case**: CodeSandbox environment files
+- **Setup**: Requires CodeSandbox SDK authentication
+- **Features**: Read/write via SDK, download/upload support
+
+### Interact Adapter
+- **Use case**: Remote browser files (downloads, uploads)
+- **Setup**: Requires active Interact session
+- **Features**: Read/write via API, stream support
+
+### Google Drive Adapter
+- **Use case**: Google Drive files and folders
+- **Setup**: Requires OAuth 2.0 authentication (see `GOOGLE_DRIVE_SETUP.md`)
+- **Features**: Read/write, Google Workspace format conversion
+
+---
+
+## Advanced Features
+
+### Voice Mode
+
+Enable hands-free operation with voice input/output:
+
+```bash
+python -m sandboxes.file_manager.file_manager_sandbox --voice
+```
+
+Once running, press Enter on an empty line or type `r` to record voice input.
+
+### Clarification Requests
+
+Both sandboxes support mid-execution clarification requests. The manager can ask for additional information when needed:
+
+```
+command> Organize my files
+[organize] →
+🔔 Clarification needed: How would you like the files organized? By type, date, or custom criteria?
+clarification> By file type, please
+[organize] → Organized 15 files into 4 folders by type: documents/, images/, spreadsheets/, presentations/
+```
+
+### Steering Controls
+
+During execution, you can:
+- **Pause**: Type `/pause` to pause execution
+- **Interject**: Type `/interject <message>` to add context
+- **Cancel**: Type `/cancel` to stop execution
+- **Resume**: Type `/resume` to continue after pause
+
+### Scenario Generation
+
+Use the `us` (update scenario) command to generate synthetic file environments:
+
+```
+command> us Create a realistic corporate file structure with 20 documents across departments
+```
+
+The LLM will:
+1. Generate appropriate file names and types
+2. Create realistic file contents
+3. Organize files hierarchically
+4. Populate metadata (dates, sizes, etc.)
+
+---
+
+## Testing Workflows
+
+### Basic FileManager Testing
+
+1. **Setup**: Start sandbox with local adapter
+   ```bash
+   python -m sandboxes.file_manager.file_manager_sandbox --adapter local --root /tmp/test_files
+   ```
+
+2. **Import Files**: Use `us` command to generate sample files
+   ```
+   command> us Create 10 sample business documents
+   ```
+
+3. **Query**: Ask questions about files
+   ```
+   command> What's in the quarterly report?
+   command> Which files mention revenue?
+   ```
+
+4. **Organize**: Reorganize files
+   ```
+   command> Rename Q1_report.pdf to 2024_Q1_report.pdf
+   command> Move all spreadsheets to /data folder
+   ```
+
+### Cross-Filesystem Testing
+
+1. **Setup**: Start with multiple filesystems
+   ```bash
+   python -m sandboxes.file_manager.global_file_manager_sandbox --filesystems local,interact
+   ```
+
+2. **Populate**: Generate files across filesystems
+   ```
+   command> us Create sample files in both local and interact filesystems
+   ```
+
+3. **Cross-Query**: Search across filesystems
+   ```
+   command> Find all files containing "budget"
+   command> Compare files in local vs interact
+   ```
+
+4. **Cross-Organize**: Move/sync files
+   ```
+   command> Copy all reports from local to interact
+   command> Sync presentation files between filesystems
+   ```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**Issue**: "No adapter configured"
+- **Solution**: Ensure you're using a valid adapter name: `local`, `codesandbox`, `interact`, `google_drive`
+
+**Issue**: "File not found"
+- **Solution**: Check file exists with exact name/path. Use namespace prefix for GlobalFileManager (e.g., `/local/file.txt`)
+
+**Issue**: "Permission denied"
+- **Solution**: Some files are protected. Check `is_protected()` status. Use appropriate credentials for remote adapters.
+
+**Issue**: Voice mode not working
+- **Solution**: Ensure microphone permissions and Deepgram API key is configured in `.env`
+
+**Issue**: Google Drive authentication fails
+- **Solution**: Follow setup instructions in `GOOGLE_DRIVE_SETUP.md` for OAuth 2.0 credentials
+
+---
+
+## Loom Walkthrough
+
+**Coming Soon**: A comprehensive video walkthrough demonstrating:
+- FileManager sandbox basics
+- GlobalFileManager cross-filesystem operations
+- Voice mode capabilities
+- Advanced steering and clarification features
+- Real-world testing scenarios
+
+---
+
+## Development Notes
+
+### Architecture
+
+Both sandboxes follow the standard Unity manager sandbox pattern:
+
+1. **Intent Classification**: LLM judge routes user input to appropriate method
+2. **Tool Loop**: AsyncToolLoop orchestrates LLM + tool execution
+3. **Clarifications**: Optional bidirectional clarification queues
+4. **Steering**: SteerableToolHandle for mid-flight control
+
+### Adding New Adapters
+
+To add support for a new filesystem adapter:
+
+1. Create adapter in `unity/file_manager/fs_adapters/`
+2. Create manager in `unity/file_manager/managers/`
+3. Add to `--adapter` choices in FileManager sandbox
+4. Add to `--filesystems` options in GlobalFileManager sandbox
+
+### Testing Philosophy
+
+These sandboxes support:
+- **Exploratory testing**: Ad-hoc queries and operations
+- **Scenario testing**: LLM-generated synthetic environments
+- **Integration testing**: Cross-component interactions
+- **User acceptance testing**: Real-world workflows
+
+---
+
+## Related Documentation
+
+- [FileManager API](../../unity/file_manager/README.md)
+- [GlobalFileManager API](../../unity/file_manager/README.md)
+- [Google Drive Setup](../../unity/file_manager/GOOGLE_DRIVE_SETUP.md)
+- [Filesystem Adapters](../../unity/file_manager/fs_adapters/README.md)
+- [Parser Documentation](../../unity/file_manager/parser/README.md)
+
+---
+
+## Support
+
+For issues or questions:
+1. Check existing documentation
+2. Review test files in `tests/test_file_manager/`
+3. Examine similar manager sandboxes for patterns
+4. Consult Unity framework documentation
+
+---
+
+**Last Updated**: 2025-10-12
+**Maintainer**: Unity Team
