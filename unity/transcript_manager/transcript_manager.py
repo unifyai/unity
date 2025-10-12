@@ -32,7 +32,7 @@ from ..events.manager_event_logging import (
 from .prompt_builders import build_ask_prompt
 from .base import BaseTranscriptManager
 from ..common.context_store import TableStore
-from ..common.semantic_search import (
+from ..common.search_utils import (
     is_plain_identifier,
     ensure_vector_for_source,
     fetch_top_k_by_terms,
@@ -683,49 +683,8 @@ class TranscriptManager(BaseTranscriptManager):
 
         return "\n".join(lines)
 
-    # ────────────────────────────────────────────────────────────────────
-    # Broader context helper
-    # ────────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _inject_broader_context(msgs: list[dict]) -> list[dict]:
-        """Replace the ``{broader_context}`` placeholder inside system messages with a fresh snapshot.
-
-        The snapshot is pulled from ``MemoryManager`` just before the LLM call.
-
-        Parameters
-        ----------
-        msgs : list[dict]
-            The chat messages to preprocess.
-
-        Returns
-        -------
-        list[dict]
-            A deep-copied list of messages where system prompts have the
-            ``{broader_context}`` placeholder replaced with the current rolling
-            activity snapshot.
-        """
-
-        import copy
-
-        from unity.memory_manager.memory_manager import (
-            MemoryManager,
-        )  # local import to avoid cycles
-
-        patched = copy.deepcopy(msgs)
-
-        try:
-            broader_ctx = MemoryManager.get_rolling_activity()
-        except Exception:
-            broader_ctx = ""
-
-        for m in patched:
-            if m.get("role") == "system" and "{broader_context}" in (
-                m.get("content") or ""
-            ):
-                m["content"] = m["content"].replace("{broader_context}", broader_ctx)
-
-        return patched
+    # Broader context injection is provided by `inject_broader_context` from
+    # `unity.common.llm_helpers` and wired via `start_async_tool_loop`.
 
     # Tools #
     # ------#

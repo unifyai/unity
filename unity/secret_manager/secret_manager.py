@@ -33,6 +33,7 @@ from .types import Secret
 from .base import BaseSecretManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.filter_utils import normalize_filter_expr
+from ..common.search_utils import table_search_top_k, is_plain_identifier
 
 
 class SecretManager(BaseSecretManager):
@@ -629,6 +630,43 @@ class SecretManager(BaseSecretManager):
         cols = self._store.get_columns()
         return cols if include_types else list(cols)
 
+    def _sanitize_secret_references(
+        self,
+        references: Optional[Dict[str, str]],
+    ) -> Optional[Dict[str, str]]:
+        """Return a safe subset of references limited to description-based terms.
+
+        Only allows:
+        - Plain identifier "description"; or
+        - Derived expressions whose placeholders are exclusively {description}.
+        Any other term is dropped to avoid embedding sensitive columns like "value".
+        """
+        if not references:
+            return references
+
+        allowed: Dict[str, str] = {}
+        for source_expr, ref_text in references.items():
+            try:
+                if is_plain_identifier(source_expr):
+                    if source_expr == "description":
+                        allowed[source_expr] = ref_text
+                    continue
+
+                # Derived expression – verify placeholders are only {description}
+                import re as _re
+
+                placeholders = _re.findall(
+                    r"\{\s*([a-zA-Z_][\w]*)\s*\}",
+                    source_expr or "",
+                )
+                if placeholders and all(ph == "description" for ph in placeholders):
+                    allowed[source_expr] = ref_text
+            except Exception:
+                # Skip malformed expressions defensively
+                continue
+
+        return allowed or None
+
     def _search_secrets(
         self,
         *,
@@ -651,46 +689,25 @@ class SecretManager(BaseSecretManager):
         List[Secret]
             Up to ``k`` redacted Secret models (``value`` is never populated).
         """
-        # Simple implementation: prefer description vector; fallback to recent
-        try:
-            from ..common.semantic_search import (
-                fetch_top_k_by_references,
-                backfill_rows,
-            )
+        # Sanitize references to avoid embedding sensitive fields like "value"
+        safe_refs = self._sanitize_secret_references(references)
 
-            rows = fetch_top_k_by_references(
-                self._ctx,
-                references,
-                k=k,
-                allowed_fields=["name", "description"],
-                row_filter=None,
+        rows = table_search_top_k(
+            context=self._ctx,
+            references=safe_refs,
+            k=k,
+            allowed_fields=["name", "description"],  # Never return the secret value
+            row_filter=None,
+            unique_id_field="name",
+        )
+        return [
+            Secret(
+                name=r.get("name"),
+                value="",
+                description=r.get("description", ""),
             )
-            filled = backfill_rows(
-                self._ctx,
-                rows,
-                k,
-                row_filter=None,
-                unique_id_field="name",
-                allowed_fields=["name", "description"],
-            )
-            return [
-                Secret(
-                    name=r.get("name"),
-                    value="",
-                    description=r.get("description", ""),
-                )
-                for r in filled
-            ]
-        except Exception:
-            logs = unify.get_logs(context=self._ctx, limit=k)
-            return [
-                Secret(
-                    name=lg.entries.get("name"),
-                    value="",
-                    description=lg.entries.get("description", ""),
-                )
-                for lg in logs
-            ]
+            for r in rows
+        ]
 
     def _filter_secrets(
         self,

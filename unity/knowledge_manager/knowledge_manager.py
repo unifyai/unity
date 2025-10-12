@@ -29,10 +29,7 @@ from .prompt_builders import (
     build_ask_prompt,
     build_refactor_prompt,
 )
-from ..common.semantic_search import (
-    fetch_top_k_by_references,
-    backfill_rows,
-)
+from ..common.search_utils import table_search_top_k
 from ..common.context_store import TableStore
 from ..events.event_bus import EVENT_BUS, Event
 from ..common.grouping_helpers import maybe_group_rows
@@ -1643,14 +1640,12 @@ class KnowledgeManager(BaseKnowledgeManager):
                 returned order, skipping duplicates based on each table's unique id.
         """
         context = self._ctx_for_table(table)
-
-        rows: List[Dict[str, Any]] = fetch_top_k_by_references(
-            context,
-            references,
+        rows: List[Dict[str, Any]] = table_search_top_k(
+            context=context,
+            references=references,
             k=k,
             row_filter=filter,
         )
-        rows = backfill_rows(context, rows, k)
         return maybe_group_rows(
             rows=rows,
             exclude_fields=list_private_fields(context),
@@ -1735,13 +1730,12 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         try:
             # 2️⃣  Primary similarity-ranked results
-            rows: List[Dict[str, Any]] = fetch_top_k_by_references(
-                dest_ctx,
-                references,
+            rows: List[Dict[str, Any]] = table_search_top_k(
+                context=dest_ctx,
+                references=references,
                 k=k,
                 row_filter=filter,
             )
-            rows = backfill_rows(dest_ctx, rows, k)
             return maybe_group_rows(
                 rows=rows,
                 exclude_fields=list_private_fields(dest_ctx),
@@ -1878,13 +1872,12 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         try:
             # 1) Primary similarity-ranked results from the final joined context
-            rows: List[Dict[str, Any]] = fetch_top_k_by_references(
-                final_ctx,
-                references,
+            rows: List[Dict[str, Any]] = table_search_top_k(
+                context=final_ctx,
+                references=references,
                 k=k,
                 row_filter=filter,
             )
-            rows = backfill_rows(final_ctx, rows, k)
             return maybe_group_rows(
                 rows=rows,
                 exclude_fields=list_private_fields(final_ctx),
@@ -2357,33 +2350,3 @@ class KnowledgeManager(BaseKnowledgeManager):
             exclude_fields=list_private_fields(final_ctx),
             enabled=self._group_results,
         )
-
-    # ────────────────────────────────────────────────────────────────────
-    # Broader context helper
-    # ────────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _inject_broader_context(msgs: list[dict]) -> list[dict]:
-        """Replace the `{broader_context}` placeholder inside *system* messages
-        with a fresh snapshot from `MemoryManager` right before the LLM call."""
-
-        import copy
-
-        from unity.memory_manager.memory_manager import (
-            MemoryManager,
-        )  # local import to avoid cycles
-
-        patched = copy.deepcopy(msgs)
-
-        try:
-            broader_ctx = MemoryManager.get_rolling_activity()
-        except Exception:
-            broader_ctx = ""
-
-        for m in patched:
-            if m.get("role") == "system" and "{broader_context}" in (
-                m.get("content") or ""
-            ):
-                m["content"] = m["content"].replace("{broader_context}", broader_ctx)
-
-        return patched

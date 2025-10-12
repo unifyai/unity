@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
-from ..common.embed_utils import EMBED_MODEL, ensure_vector_column, list_private_fields
+from ..common.embed_utils import list_private_fields
+from ..common.search_utils import table_search_top_k
 from ..common.sandbox_utils import create_sandbox_globals
 from .types.function import Function
 from .base import BaseFunctionManager
@@ -27,7 +28,6 @@ class FunctionManager(BaseFunctionManager):
     # ------------------------------------------------------------------ #
     #  Construction                                                      #
     # ------------------------------------------------------------------ #
-    _FUNC_EMB = "_function_embedding"
 
     def __init__(
         self,
@@ -634,16 +634,6 @@ class FunctionManager(BaseFunctionManager):
         return updated
 
     # 5. Semantic Search ------------------------------------------------ #
-    def _ensure_function_embedding(self) -> None:
-        """
-        Ensure that the function embedding column exists.
-        """
-        ensure_vector_column(
-            self._ctx,
-            embed_column=self._FUNC_EMB,
-            source_column="embedding_text",
-        )
-
     @functools.wraps(BaseFunctionManager.search_functions_by_similarity, updated=())
     def search_functions_by_similarity(
         self,
@@ -651,18 +641,15 @@ class FunctionManager(BaseFunctionManager):
         query: str,
         n: int = 5,
     ) -> List[Dict[str, Any]]:
-
-        self._ensure_function_embedding()
-        escaped_query = query.replace("'", "\\'")
-        logs = unify.get_logs(
+        allowed_fields = list(Function.model_fields.keys())
+        rows = table_search_top_k(
             context=self._ctx,
-            sorting={
-                f"cosine({self._FUNC_EMB}, embed('{escaped_query}', model='{EMBED_MODEL}'))": "ascending",
-            },
-            limit=n,
-            exclude_fields=list_private_fields(self._ctx),
+            references={"embedding_text": query},
+            k=n,
+            allowed_fields=allowed_fields,
+            unique_id_field="function_id",
         )
-        return [lg.entries for lg in logs]
+        return rows
 
     # ------------------------------------------------------------------ #
     #  Inverse linkage: Functions → Guidance                              #
