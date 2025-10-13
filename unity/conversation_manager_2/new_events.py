@@ -250,9 +250,8 @@ class PublishBusEvent(Event):
 # --------------------------------------------------------------------------- #
 @dataclass
 class LLMInput(Event):
-    content: list[
-        dict
-    ]
+    content: list[dict]
+
 
 @dataclass
 class UpdateContactRollingSummaryRequest(Event):
@@ -277,3 +276,20 @@ class NotificationInjectedEvent(Event):
     content: str
     source: str
     target_conversation_id: str
+
+
+# --------------------------------------------------------------------------- #
+# Unify Message Events (no-phone medium)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class UnifyMessageRecieved(Event):
+    contact: str  # contact id as string, boss is always "1"
+    content: str
+
+
+@dataclass
+class UnifyMessageSent(Event):
+    contact: str  # contact id as string, boss is always "1"
+    content: str
