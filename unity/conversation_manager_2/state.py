@@ -615,15 +615,15 @@ class ConversationManagerState:
         on_phone = self.phone_contact is contact
         details = f"""
 <bio>
-{self._add_spaces(contact.bio or "")}
+{self._add_spaces(contact.bio or "No bio set")}
 </bio>
 
 <response_policy>
-{self._add_spaces(contact.response_policy or "")}
+{self._add_spaces(contact.response_policy or "No response poilcy set")}
 </response_policy>
 
 <rolling_summary>
-{self._add_spaces(contact.rolling_summary or "")}
+{self._add_spaces(contact.rolling_summary or "No rolling summary yet")}
 </rolling_summary>""".strip()
         for t_name, t in contact.threads.items():
             if t:
@@ -631,9 +631,13 @@ class ConversationManagerState:
         threads = "\n\n".join(threads)
         return f"""
 <contact contact_id="{contact.contact_id}" first_name="{contact.first_name}" surname="{contact.surname}" is_boss="{contact.is_boss}" phone_number="{contact.phone_number or ""}" email_address="{contact.email_address or ""}" on_phone="{on_phone}">
-{self._add_spaces(details)}
+    <contact_details>
+{self._add_spaces(details, 8)}
+    </contact_details>
 
-{self._add_spaces(threads)}
+    <threads>
+{self._add_spaces(threads, 8)}
+    </threads>
 </contact>""".strip()
 
     def _render_thread_message(self, message: Message | EmailMessage):
