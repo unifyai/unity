@@ -268,9 +268,10 @@ class ConversationManager:
                                 PhoneCallSent(contact=contact.phone_number).to_json(),
                             )
                 elif action["action_name"] == "send_unify_message":
-                    # Boss-only chat; contact id is always "1"
+                    # Boss-only chat; contact id is always 1
                     content = action["message"]
-                    event = UnifyMessageSent(contact="1", content=content)
+                    event = UnifyMessageSent(contact=1, content=content)
+                    self.publish_transcript
                     await self.event_broker.publish(
                         "app:comms:unify_message_sent",
                         event.to_json(),
@@ -417,7 +418,9 @@ class ConversationManager:
                     "email"
                     if "email" in event_name
                     else (
-                        "unify_message" if "unify" in event_name else "whatsapp_message"
+                        "unify_message"
+                        if "unifymessage" in event_name
+                        else "whatsapp_message"
                     )
                 )
             )

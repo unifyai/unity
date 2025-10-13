@@ -69,7 +69,7 @@ class SendUnifyMessage(BaseModel):
 
     action_name: Literal["send_unify_message"]
     message: str
-    contact_id: Literal["1"] = "1"
+    contact_id: Literal[1] = 1
 
 
 def build_dynamic_response_models(
