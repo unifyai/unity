@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
 if TYPE_CHECKING:
-    from unity.common._async_tool.tools_data import ToolsData
+    from unity.common.tool_spec import ToolSpec
 
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
@@ -454,35 +454,41 @@ def get_system_msg_hint() -> str:
 
 async def get_dummy_tool(
     semantic_cache_result: SemanticCacheResult,
-    tools: "ToolsData",
+    tools: Mapping[str, ToolSpec],
 ):
     history = _simplify_tool_trajectory(semantic_cache_result.tool_trajectory)
     loop = asyncio.get_running_loop()
     with ThreadPoolExecutor(thread_name_prefix="semantic_cache") as executor:
-        awaitables = []
-        for tool_call in history:
-            if (tool_name := tool_call.get("name")) in tools.normalized:
+        awaitables_map = {}
+        for idx, tool_call in enumerate(history):
+            if (tool_name := tool_call.get("name")) in tools:
                 # Only re-call tools that are read-only
-                if not tools.normalized[tool_name].read_only:
+                if not tools[tool_name].read_only:
                     continue
-                fn = tools.normalized[tool_name].fn
+                fn = tools[tool_name].fn
                 try:
                     args = json.loads(tool_call.get("arguments")) or {}
                 except Exception:
                     continue
                 if inspect.iscoroutinefunction(fn):
-                    awaitables.append(loop.create_task(fn(**args)))
+                    task = loop.create_task(fn(**args))
                 else:
-                    awaitables.append(
-                        loop.run_in_executor(executor, functools.partial(fn, **args)),
+                    task = loop.run_in_executor(
+                        executor,
+                        functools.partial(fn, **args),
                     )
-        results = await asyncio.gather(*awaitables, return_exceptions=True)
-        for tool_call, result in zip(history, results):
+                awaitables_map[idx] = task
+        ordered_indices = list(awaitables_map.keys())
+        results = await asyncio.gather(
+            *[awaitables_map[i] for i in ordered_indices],
+            return_exceptions=True,
+        )
+        for idx, result in zip(ordered_indices, results):
             if isinstance(result, Exception):
                 continue
 
-            tool_call["result_status"] = "new"
-            tool_call["result"] = result
+            history[idx]["result_status"] = "new"
+            history[idx]["result"] = result
 
     call_id = f"call_SemanticSearchCallIdPlaceholder"
     request = {
