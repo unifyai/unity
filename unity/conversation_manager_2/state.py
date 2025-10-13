@@ -504,6 +504,9 @@ class ConversationManagerState:
             contact = self.inverted_contacts_map.get(contact_id)
             if contact:
                 return contact
+            contact = self.inverted_contacts_map.get(str(contact_id))
+            if contact:
+                return contact
 
         if phone_number:
             contact = self.phone_contacts_map.get(phone_number)
