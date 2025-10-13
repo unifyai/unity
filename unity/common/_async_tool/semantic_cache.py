@@ -8,12 +8,11 @@ import logging
 
 from dataclasses import dataclass
 import threading
-from typing import TYPE_CHECKING, Any, Mapping, TypedDict, Callable
+from typing import Any, Mapping, TypedDict, Callable
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
-if TYPE_CHECKING:
-    from unity.common.tool_spec import ToolSpec
+from unity.common.tool_spec import ToolSpec
 
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
