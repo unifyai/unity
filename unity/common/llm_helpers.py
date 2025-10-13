@@ -352,6 +352,22 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     if ann in TYPE_MAP:
         return {"type": TYPE_MAP[ann]}
 
+    # Builtin container types without typing metadata
+    # Treat builtin dict/list/set/tuple as generic JSON containers rather than strings
+    # so tools like `images: dict | None` surface to the LLM with the correct types.
+    if ann is dict:
+        # Unknown key/value types → allow arbitrary properties
+        return {"type": "object", "additionalProperties": True}
+    if ann is list:
+        # Unknown item type → generic array
+        return {"type": "array"}
+    if ann is set:
+        # Sets map naturally to arrays with unique items
+        return {"type": "array", "uniqueItems": True}
+    if ann is tuple:
+        # Tuples as heterogeneous arrays; without metadata fall back to generic array
+        return {"type": "array"}
+
     # Enum
     if isinstance(ann, type) and issubclass(ann, Enum):
         return {"type": "string", "enum": [member.value for member in ann]}
@@ -364,7 +380,7 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     if origin is dict or origin is Dict:
         args = get_args(ann)
         if len(args) < 2:
-            return {"type": "object"}
+            return {"type": "object", "additionalProperties": True}
         _, value_type = args
         return {
             "type": "object",
