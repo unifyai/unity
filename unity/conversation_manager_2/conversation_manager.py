@@ -6,6 +6,7 @@ from jinja2 import Template
 import json
 import contextlib
 from pathlib import Path
+from typing import Callable, Optional
 
 from unity.conversation_manager_2.debug_logger import log_job_startup, mark_job_done
 from unity.conversation_manager_2.new_events import *
@@ -58,6 +59,7 @@ class ConversationManager:
         conv_context_length: int = 50,
         project_name: str = "Assistants",
         stop: asyncio.Event = None,
+        user_turn_end_callback: Optional[Callable[[], str]] = None,
     ):
         # events & state(history)
         self.conv_context_length = conv_context_length
@@ -107,6 +109,12 @@ class ConversationManager:
         self.call_proc = None
         # self.summarizing = False
 
+        # filler callback when user finishes speaking (phone/gmeet only)
+        self.user_turn_end_callback: Optional[Callable[[], str]] = (
+            user_turn_end_callback
+        )
+        self._add_filler_next: bool = False
+
     async def run_llm(self):
         self.state.snapshot()
         # print(DUMMY_EVENT_BUS)
@@ -130,6 +138,26 @@ class ConversationManager:
         if self.state.mode in ["call", "gmeet"]:
             print("running...")
             first_chunk = True
+
+            # Inject a short filler before streaming begins, if requested
+            if self._add_filler_next and self.user_turn_end_callback:
+                filler_text = ""
+                try:
+                    filler_text = self.user_turn_end_callback() or ""
+                except Exception:
+                    filler_text = ""
+                if filler_text:
+                    await self.event_broker.publish(
+                        "app:call:response_gen",
+                        json.dumps({"type": "start_gen"}),
+                    )
+                    await self.event_broker.publish(
+                        "app:call:response_gen",
+                        json.dumps({"type": "gen_chunk", "chunk": filler_text}),
+                    )
+                    first_chunk = False
+                # reset flag regardless
+                self._add_filler_next = False
             async for event in stream_llm_call(
                 self.openai_client,
                 system_message,
@@ -538,6 +566,8 @@ class ConversationManager:
             await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneUtterance):
+            # next response should include a short filler if a callback is set
+            self._add_filler_next = True
             asyncio.create_task(self.publish_transcript(event))
             await self.schedule_llm_run(0, cancel_running=True)
 
@@ -609,3 +639,7 @@ class ConversationManager:
         mark_job_done(self.state.job_name)
         self.cleanup_call_proc()
         self.stop.set()
+
+    # Convenience setter to allow late binding of the callback
+    def set_user_turn_end_callback(self, callback: Callable[[], str]) -> None:
+        self.user_turn_end_callback = callback
