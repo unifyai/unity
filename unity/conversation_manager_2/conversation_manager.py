@@ -59,7 +59,7 @@ class ConversationManager:
         conv_context_length: int = 50,
         project_name: str = "Assistants",
         stop: asyncio.Event = None,
-        user_turn_end_callback: Optional[Callable[[], str]] = None,
+        user_turn_end_callback: Optional[Callable[[list[dict]], str]] = None,
     ):
         # events & state(history)
         self.conv_context_length = conv_context_length
@@ -110,7 +110,7 @@ class ConversationManager:
         # self.summarizing = False
 
         # filler callback when user finishes speaking (phone/gmeet only)
-        self.user_turn_end_callback: Optional[Callable[[], str]] = (
+        self.user_turn_end_callback: Optional[Callable[[list[dict]], str]] = (
             user_turn_end_callback
         )
         self._add_filler_next: bool = False
@@ -143,7 +143,7 @@ class ConversationManager:
             if self._add_filler_next and self.user_turn_end_callback:
                 filler_text = ""
                 try:
-                    filler_text = self.user_turn_end_callback() or ""
+                    filler_text = self.user_turn_end_callback(self.chat_history) or ""
                 except Exception:
                     filler_text = ""
                 if filler_text:
@@ -641,5 +641,11 @@ class ConversationManager:
         self.stop.set()
 
     # Convenience setter to allow late binding of the callback
-    def set_user_turn_end_callback(self, callback: Callable[[], str]) -> None:
+    def set_user_turn_end_callback(self, callback: Callable[[list[dict]], str]) -> None:
+        """Set or replace the callback invoked at user turn end (phone).
+
+        The callback receives the current chat_history (list of messages) and
+        should return a short filler string to be injected just before the
+        assistant's next streamed response begins.
+        """
         self.user_turn_end_callback = callback
