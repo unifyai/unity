@@ -189,8 +189,14 @@ class ManagersWorker:
 
     async def _log_message(self, event: LogMessageInput) -> None:
         """Log a message via TranscriptManager."""
+        # Wait until initialization completes to avoid dropping logs that arrive early
+        while not self._initialized:
+            await asyncio.sleep(1)
+            print("[ManagersWorker] Not initialized yet, waiting to log message")
         if not self._transcript_manager:
-            print("[ManagersWorker] Not initialized, cannot log message")
+            print(
+                "[ManagersWorker] TranscriptManager missing after init; cannot log message",
+            )
             return
 
         try:
@@ -286,7 +292,9 @@ class ManagersWorker:
             print(f"[ManagersWorker] Error creating contact: {e}")
 
     async def _update_contact_rolling_summary(
-        self, contacts_ids: list[int], transcripts: list[str]
+        self,
+        contacts_ids: list[int],
+        transcripts: list[str],
     ):
         print(transcripts)
         tasks = [
@@ -295,13 +303,14 @@ class ManagersWorker:
         ]
         await asyncio.gather(*tasks)
         contacts = await asyncio.to_thread(
-            self._contact_manager.get_contact_info, contacts_ids
+            self._contact_manager.get_contact_info,
+            contacts_ids,
         )
         print(contacts)
         event = UpdateContactRollingSummaryResponse(
             rolling_summaries=[
                 (c["contact_id"], c["rolling_summary"]) for c in contacts.values()
-            ]
+            ],
         )
         await self._event_broker.publish("app:managers:output", event.to_json())
 
@@ -328,8 +337,9 @@ class ManagersWorker:
             print("REACHED")
             asyncio.create_task(
                 self._update_contact_rolling_summary(
-                    event.contacts_ids, event.transcripts
-                )
+                    event.contacts_ids,
+                    event.transcripts,
+                ),
             )
         else:
             print(f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}")
