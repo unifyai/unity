@@ -285,7 +285,7 @@ class ConversationManager:
         # asyncio.create_task(self.publish_bus_events(event))
         self.state.chat_history.append({"role": "assistant", "content": out})
         # DUMMY_EVENT_BUS.append(LLMOutput(content=out))
-        event = LLMInput(content=self.state.chat_history)
+        event = LLMInput(chat_history=self.state.chat_history)
         asyncio.create_task(self.publish_bus_events(event))
 
         print("**NUMBER OF MESSAGES **", len(self.state.chat_history))
