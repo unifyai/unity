@@ -66,12 +66,27 @@ def ensure_derived_column(
     - By default, scopes placeholders to a local alias `lg` referencing the
       provided `context` when `referenced_logs_context` is not specified.
     """
-    # Attempt creation under a process-local lock to avoid races. We intentionally
-    # do not pre-read fields here to minimise backend calls; the server will
-    # reject duplicates and we treat those as success.
+    # Fast path: if field already exists, return without locking or logging
+    try:
+        fields = unify.get_fields(context=context)
+        if key in fields:
+            return
+    except Exception:
+        # If introspection fails, fall through to locked creation
+        pass
+
+    # Attempt creation under a process-local lock to avoid races. We do a
+    # second existence check once inside the critical section (double-checked locking).
     lock = _get_column_lock(context, key)
     with lock:
         try:
+            try:
+                fields = unify.get_fields(context=context)
+                if key in fields:
+                    return
+            except Exception:
+                pass
+
             referenced_logs = {}
             if from_ids:
                 # Instruct backend to scope the operation to a subset of log entries
@@ -90,16 +105,17 @@ def ensure_derived_column(
                 referenced_logs=referenced_logs,
                 derived=derived,
             )
-            print(f"{response}")
+            # Be quiet in normal operation; tests assert no failure logs appear.
+            # print(f"{response}")
         except unify.RequestError as e:
-            print(f"Failed to create derived column: {e.response.text}")
             body = getattr(e.response, "text", "") or ""
+            # Treat duplicate/exists as success and do not emit error output
             if (
                 "already exists" in body
                 or "duplicate key value violates unique constraint" in body
             ):
                 return
-
+            # For other errors, re-raise
             raise e
 
 
