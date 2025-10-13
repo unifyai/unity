@@ -279,6 +279,7 @@ class TranscriptManager(BaseTranscriptManager):
             preprocess_msgs=inject_broader_context,
             tool_policy=effective_tool_policy,
             semantic_cache=use_semantic_cache,
+            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),

@@ -135,6 +135,7 @@ async def async_tool_loop_inner(
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
     semantic_cache: Optional[bool] = False,
+    semantic_cache_namespace: Optional[str] = None,
     images: Optional[dict[str, Any]] = None,
 ) -> str:
     r"""
@@ -382,7 +383,10 @@ async def async_tool_loop_inner(
     semantic_closest_match = None
     last_valid_user_history = []
     if semantic_cache:
-        if semantic_closest_match := sc.search_semantic_cache(message):
+        if semantic_closest_match := sc.search_semantic_cache(
+            message,
+            semantic_cache_namespace,
+        ):
             msgs = await sc.get_dummy_tool(semantic_closest_match, tools_data)
             if log_steps == "full":
                 logger.info(
@@ -1952,6 +1956,7 @@ async def async_tool_loop_inner(
                 _initial_user_message,
                 last_valid_user_history,
                 client.messages,
+                namespace=semantic_cache_namespace,
                 previous_tool_trajectory=(
                     semantic_closest_match.tool_trajectory
                     if semantic_closest_match

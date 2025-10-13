@@ -700,6 +700,7 @@ def start_async_tool_loop(
     max_parallel_tool_calls: Optional[int] = None,
     handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
     semantic_cache: Optional[bool] = False,
+    semantic_cache_namespace: Optional[str] = None,
     images: Optional[dict[str, "ImageHandle"]] = None,
     evented: Optional[bool] = None,
 ) -> AsyncToolLoopHandle:
@@ -764,6 +765,7 @@ def start_async_tool_loop(
                 response_format=response_format,
                 max_parallel_tool_calls=max_parallel_tool_calls,
                 semantic_cache=semantic_cache,
+                semantic_cache_namespace=semantic_cache_namespace,
                 images=images,
             )
         except asyncio.CancelledError:

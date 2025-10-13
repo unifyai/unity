@@ -580,6 +580,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             preprocess_msgs=inject_broader_context,
             response_format=response_format,
             semantic_cache=use_semantic_cache,
+            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
