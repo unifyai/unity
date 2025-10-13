@@ -7,7 +7,7 @@ from typing import Any
 from typing import Optional
 import logging
 import aiohttp
-import requests
+from unify.utils import http
 from pydantic import BaseModel, PydanticUserError
 import asyncio
 import functools
@@ -467,14 +467,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
             headers = {
                 "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
             }
-            from ..common.http import request as http_request
 
-            result = http_request(
+            result = http.request(
                 method,
                 url,
                 json=payload,
                 headers=headers,
                 timeout=300,
+                raise_for_status=False,
             )
             if result.status_code >= 400:
                 raise RuntimeError(
@@ -509,9 +509,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
             for prefix_folder in ["home/install", "home/deb"]:
                 try:
                     # Request signed URLs for all files under the prefix
-                    from ..common.http import get as http_get
 
-                    dl_resp = http_get(
+                    dl_resp = http.get(
                         dl_endpoint,
                         params={
                             "user_id": user_id,
@@ -523,6 +522,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         },
                         headers=headers,
                         timeout=60,
+                        raise_for_status=False,
                     )
                     if dl_resp.status_code >= 400:
                         print(
@@ -550,7 +550,11 @@ class MagnitudeBrowserBackend(BrowserBackend):
                                 "/" + rel_from_assistant
                             )  # starts with home/install or home/deb
                             os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                            bin_resp = http_get(url, timeout=300)
+                            bin_resp = http.get(
+                                url,
+                                timeout=300,
+                                raise_for_status=False,
+                            )
                             if bin_resp.status_code >= 400:
                                 print(
                                     f"Warning: download content failed for {full_path}: {bin_resp.status_code}",
@@ -661,11 +665,12 @@ class MagnitudeBrowserBackend(BrowserBackend):
                             "staging": "staging" in orchestra_url,
                             "content_type": "application/octet-stream",
                         }
-                        up_resp = requests.post(
+                        up_resp = http.post(
                             up_endpoint,
                             json=req,
                             headers=headers,
                             timeout=60,
+                            raise_for_status=False,
                         )
                         if up_resp.status_code >= 400:
                             print(
@@ -684,11 +689,12 @@ class MagnitudeBrowserBackend(BrowserBackend):
                             "Content-Length": str(total),
                             "Content-Range": f"bytes 0-{total-1}/{total}",
                         }
-                        put_resp = requests.put(
+                        put_resp = http.put(
                             upload_url,
                             data=data,
                             headers=put_headers,
                             timeout=600,
+                            raise_for_status=False,
                         )
                         if put_resp.status_code not in (200, 201, 204):
                             print(

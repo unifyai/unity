@@ -17,6 +17,7 @@ from typing import Callable, Optional
 import json
 import queue
 import requests
+from unify.utils import http
 import redis
 from playwright.sync_api import Error as PWError
 from playwright.sync_api import sync_playwright
@@ -102,10 +103,11 @@ class BrowserWorker(threading.Thread):
             return []
         payload = {"base64_image": base64.b64encode(png_bytes).decode("utf-8")}
         try:
-            response = requests.post(
+            response = http.post(
                 OMNIPARSER_URL,
                 json=payload,
                 timeout=20,
+                raise_for_status=False,
             )  # Increased timeout
             response.raise_for_status()
             result = response.json()

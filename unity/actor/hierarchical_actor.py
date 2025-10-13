@@ -3392,11 +3392,11 @@ class HierarchicalActor(BaseActor):
             return agent_server_url
 
         try:
-            import requests
+            from unify.utils import http
 
             url = f"{orchestra_url.rstrip('/')}/assistant"
             headers = {"Authorization": f"Bearer {unify_key}"}
-            resp = requests.get(url, headers=headers, timeout=30)
+            resp = http.get(url, headers=headers, timeout=30, raise_for_status=False)
             if not (200 <= resp.status_code < 300):
                 return agent_server_url
             try:
