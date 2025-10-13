@@ -387,7 +387,10 @@ async def async_tool_loop_inner(
             message,
             semantic_cache_namespace,
         ):
-            msgs = await sc.get_dummy_tool(semantic_closest_match, tools_data)
+            msgs = await sc.get_dummy_tool(
+                semantic_closest_match,
+                tools_data.normalized,
+            )
             if log_steps == "full":
                 logger.info(
                     f"Semantic cache hit ({semantic_closest_match.closest_user_message}): {json.dumps(msgs[1]['content'], indent=2)}",
