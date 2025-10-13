@@ -81,6 +81,7 @@ async def main(local: bool = False, project_name: str = "Assistants"):
         os.getenv("VOICE_ID", None),
         project_name=project_name,
         stop=stop,
+        user_turn_end_callback=None,
     )
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
