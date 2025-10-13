@@ -36,6 +36,7 @@ events_map: dict[str, Event] = {
     # "whatsapp": WhatsappMessageRecievedEvent,
     "msg": SMSRecieved,
     "email": EmailRecieved,
+    "unify_message": UnifyMessageRecieved,
 }
 
 
@@ -154,6 +155,20 @@ class CommsManager:
                             )
                     except Exception as e:
                         print(f"Failed scheduling attachment download: {e}")
+
+                elif thread == "unify_message":
+                    # No phone/email; boss contact id is always "1"
+                    topic = 1
+                    task = asyncio.run_coroutine_threadsafe(
+                        self.message_queue.publish(
+                            f"app:comms:{thread}_message",
+                            events_map[thread](
+                                content=content,
+                                contact=topic,
+                            ).to_json(),
+                        ),
+                        self.loop,
+                    )
 
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()

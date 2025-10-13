@@ -1,4 +1,3 @@
-from datetime import timedelta
 import os
 import asyncio
 
@@ -268,6 +267,15 @@ class ConversationManager:
                                 "app:comms:call_initiated",
                                 PhoneCallSent(contact=contact.phone_number).to_json(),
                             )
+                elif action["action_name"] == "send_unify_message":
+                    # Boss-only chat; contact id is always 1
+                    content = action["message"]
+                    event = UnifyMessageSent(contact=1, content=content)
+                    self.publish_transcript
+                    await self.event_broker.publish(
+                        "app:comms:unify_message_sent",
+                        event.to_json(),
+                    )
         # obviously all ops here should be "atomic", but that's an edge case for
         # another day...
         self.state.commit()
@@ -301,7 +309,7 @@ class ConversationManager:
                 )
                 print(event)
                 asyncio.create_task(
-                    self.event_broker.publish("app:managers:input", event.to_json())
+                    self.event_broker.publish("app:managers:input", event.to_json()),
                 )
                 self.state.summarizing = True
                 print("sent")
@@ -406,7 +414,15 @@ class ConversationManager:
             else (
                 "sms_message"
                 if "sms" in event_name
-                else ("email" if "email" in event_name else "whatsapp_message")
+                else (
+                    "email"
+                    if "email" in event_name
+                    else (
+                        "unify_message"
+                        if "unifymessage" in event_name
+                        else "whatsapp_message"
+                    )
+                )
             )
         )
         role = (
@@ -422,7 +438,9 @@ class ConversationManager:
             **self.state.email_contacts_map,
             **self.state.phone_contacts_map,
         }
-        if event.contact in contacts_map:
+        if isinstance(event, (UnifyMessageSent, UnifyMessageRecieved)):
+            contact_id = 1
+        elif event.contact in contacts_map:
             contact_id = contacts_map[event.contact].contact_id
         if role == "Assistant":
             sender_id, receiver_ids = 0, [contact_id]
@@ -547,7 +565,17 @@ class ConversationManager:
             # otherwise (whatsapp, sms, email) just schedule another llm run after 2 seconds
             # if there is no response at the moment, if there is a response, cancel it, and scheduel
             # check if there is a scheduled response, reschedule
-            if isinstance(event, (SMSSent, SMSRecieved, EmailSent, EmailRecieved)):
+            if isinstance(
+                event,
+                (
+                    SMSSent,
+                    SMSRecieved,
+                    EmailSent,
+                    EmailRecieved,
+                    UnifyMessageSent,
+                    UnifyMessageRecieved,
+                ),
+            ):
                 asyncio.create_task(self.publish_transcript(event))
                 await self.schedule_llm_run(2, cancel_running=True)
 
