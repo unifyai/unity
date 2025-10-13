@@ -285,11 +285,11 @@ class NotificationInjectedEvent(Event):
 
 @dataclass
 class UnifyMessageRecieved(Event):
-    contact: str  # contact id as string, boss is always "1"
+    contact: int
     content: str
 
 
 @dataclass
 class UnifyMessageSent(Event):
-    contact: str  # contact id as string, boss is always "1"
+    contact: int
     content: str
