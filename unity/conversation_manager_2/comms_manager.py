@@ -57,50 +57,56 @@ class CommsManager:
             thread = data["thread"]
             event = data["event"]
             print(f"Received message from {thread}: {message.data.decode('utf-8')}")
-            if thread == "startup":
-                global subscription_id, startup_subscription_id
+            if thread in ["startup", "assistant_update"]:
+                if thread == "startup":
+                    global subscription_id, startup_subscription_id
 
-                # acknowledge message and cancel startup subscription
-                message.ack()
-                while startup_subscription_id not in self.subscribers:
-                    time.sleep(0.1)
-                self.subscribers[startup_subscription_id].cancel()
-                self.subscribers.pop(startup_subscription_id)
+                    # acknowledge message and cancel startup subscription
+                    message.ack()
+                    while startup_subscription_id not in self.subscribers:
+                        time.sleep(0.1)
+                    self.subscribers[startup_subscription_id].cancel()
+                    self.subscribers.pop(startup_subscription_id)
 
-                # subscribe to the assistant's subscription
-                os.environ["ASSISTANT_ID"] = event["assistant_id"]
-                subscription_id = (
-                    "unity-"
-                    + (
-                        os.getenv("ASSISTANT_ID")
-                        if os.getenv("ASSISTANT_ID")
-                        else "default-assistant"
-                    )
-                    + ("-staging" if os.getenv("STAGING") else "")
-                ) + "-sub"
-                self.subscribe_to_topic(subscription_id)
+                    # subscribe to the assistant's subscription
+                    os.environ["ASSISTANT_ID"] = event["assistant_id"]
+                    subscription_id = (
+                        "unity-"
+                        + (
+                            os.getenv("ASSISTANT_ID")
+                            if os.getenv("ASSISTANT_ID")
+                            else "default-assistant"
+                        )
+                        + ("-staging" if os.getenv("STAGING") else "")
+                    ) + "-sub"
+                    self.subscribe_to_topic(subscription_id)
 
                 # publish
+                details = {
+                    "api_key": event["api_key"],
+                    "medium": event["medium"],
+                    "assistant_id": event["assistant_id"],
+                    "user_id": event["user_id"],
+                    "assistant_name": event["assistant_name"],
+                    "assistant_age": event["assistant_age"],
+                    "assistant_region": event["assistant_region"],
+                    "assistant_about": event["assistant_about"],
+                    "assistant_number": event["assistant_number"],
+                    "assistant_email": event["assistant_email"],
+                    "user_name": event["user_name"],
+                    "user_number": event["user_number"],
+                    "user_whatsapp_number": event["user_whatsapp_number"],
+                    "user_email": event["user_email"],
+                    "voice_provider": event["voice_provider"],
+                    "voice_id": event["voice_id"],
+                }
                 task = asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
-                        "app:comms:start_up",
-                        StartupEvent(
-                            api_key=event["api_key"],
-                            medium=event["medium"],
-                            assistant_id=event["assistant_id"],
-                            user_id=event["user_id"],
-                            assistant_name=event["assistant_name"],
-                            assistant_age=event["assistant_age"],
-                            assistant_region=event["assistant_region"],
-                            assistant_about=event["assistant_about"],
-                            assistant_number=event["assistant_number"],
-                            assistant_email=event["assistant_email"],
-                            user_name=event["user_name"],
-                            user_number=event["user_number"],
-                            user_whatsapp_number=event["user_whatsapp_number"],
-                            user_email=event["user_email"],
-                            voice_provider=event["voice_provider"],
-                            voice_id=event["voice_id"],
+                        f"app:comms:{thread}",
+                        (
+                            StartupEvent(**details)
+                            if thread == "startup"
+                            else AssistantUpdateEvent(**details)
                         ).to_json(),
                     ),
                     self.loop,
