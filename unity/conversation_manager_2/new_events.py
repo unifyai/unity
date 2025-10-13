@@ -271,7 +271,7 @@ class PublishBusEvent(Event):
 # --------------------------------------------------------------------------- #
 @dataclass
 class LLMInput(Event):
-    content: list[dict]
+    chat_history: list[dict]
 
 
 @dataclass

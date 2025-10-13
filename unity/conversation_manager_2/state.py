@@ -166,7 +166,7 @@ class ConversationManagerState:
                 for ev in reversed(e.events):
                     if ev["event_name"] == "LLMInput":
                         print("found history")
-                        self.chat_history = ev["payload"]["content"]
+                        self.chat_history = ev["payload"]["chat_history"]
                         break
 
             case UpdateContactRollingSummaryResponse() as e:
