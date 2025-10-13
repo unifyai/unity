@@ -184,6 +184,62 @@ class CommsManager:
                         self.loop,
                     )
                 message.ack()
+            elif thread == "log_pre_hire_chats":
+                try:
+                    assistant_id = event.get("assistant_id", "")
+                    body = event.get("body", []) or []
+
+                    def _map_sender_id(val):
+                        if isinstance(val, int):
+                            return max(0, val)
+                        if isinstance(val, str):
+                            v = val.lower().strip()
+                            return 0 if v in ("assistant", "system", "bot", "ai") else 1
+                        return 1
+
+                    published = 0
+                    for item in body:
+                        try:
+                            role = item.get("role")
+                            msg_content = item.get("msg", "")
+                            if not isinstance(msg_content, str):
+                                msg_content = str(msg_content)
+
+                            sender_id = _map_sender_id(role)
+                            receiver_ids = [1] if sender_id == 0 else [0]
+
+                            payload = LogMessageInput(
+                                medium="unify_message",
+                                sender_id=sender_id,
+                                receiver_ids=receiver_ids,
+                                content=msg_content,
+                                exchange_id=0,
+                                call_utterance_timestamp="",
+                                call_url="",
+                                metadata={
+                                    "source": "pre_hire",
+                                    "assistant_id": assistant_id,
+                                },
+                            )
+
+                            asyncio.run_coroutine_threadsafe(
+                                self.message_queue.publish(
+                                    "app:managers:input",
+                                    payload.to_json(),
+                                ),
+                                self.loop,
+                            )
+                            published += 1
+                        except Exception as inner_e:
+                            print(f"Skipping malformed pre-hire item: {inner_e}")
+
+                    print(
+                        f"Logged {published} pre-hire chat message(s) for assistant {assistant_id}",
+                    )
+                    message.ack()
+                except Exception as e:
+                    print(f"Error processing pre-hire logs: {e}")
+                    message.nack()
             elif "call" in thread:
                 try:
                     # Publish contacts
