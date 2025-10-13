@@ -156,6 +156,9 @@ class ConversationManagerState:
             case StartupEvent() as e:
                 payload = e.to_dict()["payload"]
                 self.set_details(payload)
+            case AssistantUpdateEvent() as e:
+                payload = e.to_dict()["payload"]
+                self.set_details(payload)
 
             case GetBusEventsOutput() as e:
                 # TODO: should also grab the latest messages ~50 messages
