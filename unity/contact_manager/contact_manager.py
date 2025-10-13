@@ -648,6 +648,7 @@ class ContactManager(BaseContactManager):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
+        images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
@@ -697,14 +698,26 @@ class ContactManager(BaseContactManager):
             else rolling_summary_in_prompts
         )
 
-        client.set_system_message(
-            build_ask_prompt(
-                tools=tools,
-                num_contacts=self._num_contacts(),
-                columns=self._list_columns(),
-                include_activity=include_activity,
-            ),
+        _ask_prompt = build_ask_prompt(
+            tools=tools,
+            num_contacts=self._num_contacts(),
+            columns=self._list_columns(),
+            include_activity=include_activity,
         )
+        # If live images are present, append concise vision guidance so the model
+        # remembers how to use the dynamic helpers and arg-scoped mappings.
+        if images:
+            _ask_prompt = (
+                _ask_prompt
+                + "\n\nVision inputs\n-------------\n"
+                + "Live images have been provided with the user message. You may use:"
+                + "\n- `live_images_overview()` to see aligned spans and captions"
+                + "\n- `ask_image(image_id, question, images=None)` to query an image (optionally appending images with source-scoped keys like `this[:]`)"
+                + "\n- `attach_image_raw(image_id, note=None)` to attach an image as chat vision context"
+                + "\n- `align_images_for(args={...}, hints=[{ 'arg': 'question', 'substring': '...', 'image_id': 42 }])` to compute arg-scoped mappings"
+                + "\nWhen calling inner tools that accept an `images` field, pass a mapping such as { 'question[10:23]': 42 }."
+            )
+        client.set_system_message(_ask_prompt)
 
         use_semantic_cache = is_semantic_cache_enabled()
         # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
@@ -723,6 +736,7 @@ class ContactManager(BaseContactManager):
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
+            images=images,
         )
 
         if _return_reasoning_steps:
@@ -748,6 +762,7 @@ class ContactManager(BaseContactManager):
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
+        images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
@@ -795,14 +810,24 @@ class ContactManager(BaseContactManager):
             else rolling_summary_in_prompts
         )
 
-        client.set_system_message(
-            build_update_prompt(
-                tools,
-                num_contacts=self._num_contacts(),
-                columns=self._list_columns(),
-                include_activity=include_activity,
-            ),
+        _upd_prompt = build_update_prompt(
+            tools,
+            num_contacts=self._num_contacts(),
+            columns=self._list_columns(),
+            include_activity=include_activity,
         )
+        if images:
+            _upd_prompt = (
+                _upd_prompt
+                + "\n\nVision inputs\n-------------\n"
+                + "Live images have been provided with the user message. You may use:"
+                + "\n- `live_images_overview()` to see aligned spans and captions"
+                + "\n- `ask_image(image_id, question, images=None)` to query an image (optionally appending images with source-scoped keys)"
+                + "\n- `attach_image_raw(image_id, note=None)` to attach an image as chat vision context"
+                + "\n- `align_images_for(args={...}, hints=[{ 'arg': 'question', 'substring': '...', 'image_id': 42 }])` to compute arg-scoped mappings"
+                + "\nWhen calling inner tools that accept an `images` field, pass a mapping such as { 'question[10:23]': 42 }."
+            )
+        client.set_system_message(_upd_prompt)
         handle = start_async_tool_loop(
             client,
             text,
@@ -812,6 +837,7 @@ class ContactManager(BaseContactManager):
             parent_chat_context=parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             preprocess_msgs=inject_broader_context,
+            images=images,
         )
 
         if _return_reasoning_steps:
