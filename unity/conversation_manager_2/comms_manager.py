@@ -85,7 +85,7 @@ class CommsManager:
                 # publish
                 details = {
                     "api_key": event["api_key"],
-                    "medium": event["medium"],
+                    "medium": event.get("medium", "assistant_update"),
                     "assistant_id": event["assistant_id"],
                     "user_id": event["user_id"],
                     "assistant_name": event["assistant_name"],
