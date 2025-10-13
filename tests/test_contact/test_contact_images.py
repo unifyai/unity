@@ -87,3 +87,37 @@ async def test_lookup_contact_via_image(contact_manager_scenario) -> None:
         "filter_contacts was called, but none of the expected substrings ('david', 'smith', "
         "'david.smith@gmail.com') were present in the filter expression."
     )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_update_contact_from_image(contact_manager_scenario) -> None:
+    cm, _ = contact_manager_scenario
+
+    # Build a real ImageHandle from the provided PNG asset
+    manager = ImageManager()
+    b64 = _load_contact_card_png_b64()
+    ih = ImageHandle(
+        manager=manager,
+        image=Image(image_id=502, caption="contact card", data=b64),
+    )
+
+    # Seed the live-images mapping onto the initial user message
+    images = {"[0:5]": ih}
+
+    # Instruct the model to add the person from the image into contacts
+    user_msg = "please add this person to the contact list"
+
+    handle = await cm.update(user_msg, images=images)
+    await handle.result()
+
+    # Verify David Smith is now present with correct full name and email
+    matches = cm._filter_contacts(
+        filter="email_address == 'david.smith@gmail.com'",
+        limit=1,
+    )
+    assert matches, "Expected contact to be created from image details"
+    c = matches[0]
+    assert (c.first_name or "").lower() == "david"
+    assert (c.surname or "").lower() == "smith"
+    assert (c.email_address or "").lower() == "david.smith@gmail.com"
