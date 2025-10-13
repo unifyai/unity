@@ -501,7 +501,12 @@ class ConversationManagerState:
                 "at least one contact_id, phone number or email_address must be provided to infer contact",
             )
         if contact_id:
+            print("INVERTED CONTACTS MAP", self.inverted_contacts_map)
+            print("CONTACT ID", contact_id, type(contact_id))
             contact = self.inverted_contacts_map.get(contact_id)
+            if contact:
+                return contact
+            contact = self.inverted_contacts_map.get(str(contact_id))
             if contact:
                 return contact
 
