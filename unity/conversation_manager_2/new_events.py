@@ -297,3 +297,20 @@ class NotificationInjectedEvent(Event):
     content: str
     source: str
     target_conversation_id: str
+
+
+# --------------------------------------------------------------------------- #
+# Unify Message Events (no-phone medium)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class UnifyMessageRecieved(Event):
+    contact: int
+    content: str
+
+
+@dataclass
+class UnifyMessageSent(Event):
+    contact: int
+    content: str

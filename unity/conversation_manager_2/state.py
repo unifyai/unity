@@ -3,7 +3,6 @@ from dataclasses import dataclass
 import os
 from typing import Literal, Optional
 from collections import deque
-import asyncio
 
 from pydantic import Field
 from unity.conversation_manager_2.actions import build_dynamic_response_models
@@ -20,7 +19,8 @@ class Contact(ContactType):
             "sms": deque(maxlen=50),
             "email": deque(maxlen=50),
             "phone": deque(maxlen=50),
-        }
+            "unify_message": deque(maxlen=50),
+        },
     )
 
     @property
@@ -313,6 +313,34 @@ class ConversationManagerState:
                         e.timestamp,
                     ),
                 )
+            case UnifyMessageRecieved() as e:
+                contact = self.get_contact(contact_id=e.contact)
+                self.push_message(
+                    contact,
+                    "unify_message",
+                    Message(contact.full_name, e.content, e.timestamp),
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Unify message recieved from '{contact.full_name}'",
+                        e.timestamp,
+                    ),
+                )
+            case UnifyMessageSent() as e:
+                contact = self.get_contact(contact_id=e.contact)
+                self.push_message(
+                    contact,
+                    "unify_message",
+                    Message("You", e.content, e.timestamp),
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Unify message sent to '{contact.full_name}'",
+                        e.timestamp,
+                    ),
+                )
             case EmailRecieved() as e:
                 contact = self.get_contact(email_address=e.contact)
                 self.push_message(
@@ -416,7 +444,7 @@ class ConversationManagerState:
             include_call=self.assistant_number not in [None, ""],
         )
         available_actions = list(
-            self.dynamic_response_models["call"].model_json_schema()["$defs"].keys()
+            self.dynamic_response_models["call"].model_json_schema()["$defs"].keys(),
         )
         print("Dynamic response models built.")
         print(f"Available actions: {available_actions}")
@@ -438,7 +466,7 @@ class ConversationManagerState:
     def push_message(
         self,
         contact: Contact,
-        thread: Literal["sms", "email", "phone"],
+        thread: Literal["sms", "email", "phone", "unify_message"],
         message: Message | EmailMessage,
     ):
         if contact.contact_id not in self.active_conversations:
@@ -510,7 +538,7 @@ class ConversationManagerState:
             rolling_summary=rolling_summary,
             respond_to=respond_to,
             response_policy=response_policy,
-            is_boss=contact_id == 1,
+            is_boss=str(contact_id) == "1",
         )
         self.inverted_contacts_map[contact_id] = contact
         if email_address:
@@ -536,7 +564,9 @@ class ConversationManagerState:
         print("curernt contacts", self.inverted_contacts_map)
         if contact_id != "-1":  # update branch
             contact = self.get_contact(
-                contact_id, phone_number, email_address=email_address
+                contact_id,
+                phone_number,
+                email_address=email_address,
             )
             if contact:
                 # TODO: pop old emails or phone numbers if they exist

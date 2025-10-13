@@ -64,6 +64,14 @@ class MakeCall(BaseModel):
     phone_number: str
 
 
+class SendUnifyMessage(BaseModel):
+    """Send a message to the boss chat (no-phone medium)"""
+
+    action_name: Literal["send_unify_message"]
+    message: str
+    contact_id: Literal[1] = 1
+
+
 def build_dynamic_response_models(
     include_email: bool = True,
     include_sms: bool = True,
@@ -89,6 +97,8 @@ def build_dynamic_response_models(
         available_actions.append(SendSMS)
     if include_call:
         available_actions.append(MakeCall)
+    # Unify message is always available for text mode
+    available_actions.append(SendUnifyMessage)
 
     # Create dynamic Union of available actions
     ActionsUnion = Union[tuple(available_actions)]
