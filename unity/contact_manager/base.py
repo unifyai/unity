@@ -33,6 +33,7 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing contact list** (read‑only) and obtain a live
@@ -80,6 +81,14 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
             Optional duplex channels.  When supplied the LLM can ask the human
             follow-up questions via *up_q* and must read answers from
             *down_q*.
+        images : dict[str, Any] | None
+            Optional live images aligned to the initial user message. Keys are span
+            strings of the form "[start:end]" referring to character indices within
+            the user message. Values are image handle objects (e.g. `ImageHandle`) or
+            numeric ids resolvable to handles. When provided, dynamic helper tools
+            such as `live_images_overview`, `ask_image`, `attach_image_raw`, and the
+            utility `align_images_for` will be exposed to the model for working with
+            vision inputs.
 
         Returns
         -------
@@ -98,6 +107,7 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
         """
         Apply a **mutation** request – create, edit, delete or merge contacts –
@@ -124,6 +134,14 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         _return_reasoning_steps, parent_chat_context,
         clarification_up_q, clarification_down_q
             Same semantics as in :py:meth:`ask`.
+        images : dict[str, Any] | None
+            Optional live images aligned to the initial user message. Keys are span
+            strings of the form "[start:end]" referring to character indices within
+            the user message. Values are image handle objects (e.g. `ImageHandle`) or
+            numeric ids resolvable to handles. When provided, dynamic helper tools
+            such as `live_images_overview`, `ask_image`, `attach_image_raw`, and the
+            utility `align_images_for` will be exposed to the model for working with
+            vision inputs.
 
         Returns
         -------
