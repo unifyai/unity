@@ -50,23 +50,6 @@ class FileManager(BaseFileManager):
     - Exposes unified tools for read-only inspection and safe rename/move
     """
 
-    @staticmethod
-    def _extract_filesystem_type(adapter_name: str) -> str:
-        """
-        Extract the filesystem type from an adapter name, stripping path details.
-
-        Examples:
-            "Local[/tmp/path]" -> "Local"
-            "CodeSandbox[sbx-123]" -> "CodeSandbox"
-            "Interact" -> "Interact"
-
-        This is useful for LLM prompts where we want the type but not implementation details.
-        """
-        if not adapter_name:
-            return "Unknown"
-        # Split on '[' and take the first part (the type)
-        return adapter_name.split("[")[0].strip() or adapter_name
-
     def __init__(
         self,
         adapter: Optional[BaseFileSystemAdapter] = None,
@@ -97,13 +80,7 @@ class FileManager(BaseFileManager):
         except Exception:
             raw_alias = "files"
 
-        def _sanitize_alias(s: str) -> str:
-            out = s
-            for ch in (" ", "[", "]", "/", "\\", ":"):
-                out = out.replace(ch, "_")
-            return out or "files"
-
-        self._fs_alias = _sanitize_alias(str(raw_alias))
+        self._fs_alias = self._sanitize_ctx_component(str(raw_alias))
 
         # Extract clean filesystem type for LLM prompts (without path/details)
         self._fs_type = self._extract_filesystem_type(raw_alias)
@@ -176,6 +153,43 @@ class FileManager(BaseFileManager):
             include_class_name=False,
         )
         self.add_tools("organize", organize_tools)
+
+    @staticmethod
+    def _sanitize_ctx_component(value: Any) -> str:
+        """
+        Uniform sanitizer for any single context path component.
+
+        Rules:
+        - Only allow [a-zA-Z0-9_-]
+        - Replace everything else with '_'
+        - Truncate to 64 chars to keep paths readable
+        - Fallback to 'item' when empty
+        """
+        try:
+            import re as _re
+
+            cleaned = _re.sub(r"[^a-zA-Z0-9_-]", "_", str(value))
+            cleaned = cleaned[:64]
+            return cleaned or "item"
+        except Exception:
+            return "item"
+
+    @staticmethod
+    def _extract_filesystem_type(adapter_name: str) -> str:
+        """
+        Extract the filesystem type from an adapter name, stripping path details.
+
+        Examples:
+            "Local[/tmp/path]" -> "Local"
+            "CodeSandbox[sbx-123]" -> "CodeSandbox"
+            "Interact" -> "Interact"
+
+        This is useful for LLM prompts where we want the type but not implementation details.
+        """
+        if not adapter_name:
+            return "Unknown"
+        # Split on '[' and take the first part (the type)
+        return adapter_name.split("[")[0].strip() or adapter_name
 
     # ---------- Adapter wrappers (bytes + identifiers only) ----------------- #
     def _adapter_list(self) -> List[str]:
@@ -742,9 +756,18 @@ class FileManager(BaseFileManager):
                                 metadata=result.get("metadata"),
                                 description=result.get("description"),
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"Error creating file: {e}")
+                        try:
+                            # Per-table ingestion (spreadsheets)
+                            self._ingest_tables_for_file(
+                                filename=name,
+                                document=document,
+                            )
+                        except Exception as e:
+                            print(f"Error ingesting tables for file {name}: {e}")
                 except Exception as e:
+                    print(f"Error parsing file: {e}")
                     for fp in file_paths:
                         name = filename_to_path[fp]
                         try:
@@ -766,8 +789,15 @@ class FileManager(BaseFileManager):
                                     metadata=result.get("metadata"),
                                     description=result.get("description"),
                                 )
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                print(f"Error creating file {name}: {e}")
+                            try:
+                                self._ingest_tables_for_file(
+                                    filename=name,
+                                    document=document,
+                                )
+                            except Exception as e:
+                                print(f"Error ingesting tables for file {name}: {e}")
                         except Exception as indiv_e:
                             err = self._create_result_dict(
                                 name,
@@ -786,8 +816,8 @@ class FileManager(BaseFileManager):
                                     metadata={},
                                     description="",
                                 )
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                print(f"Error creating file {name}: {e}")
         finally:
             # Clean up temporary directory and all files within it
             if temp_dir:
@@ -887,8 +917,15 @@ class FileManager(BaseFileManager):
                                 metadata=result.get("metadata"),
                                 description=result.get("description"),
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f"Error creating file {name}: {e}")
+                        try:
+                            self._ingest_tables_for_file(
+                                filename=name,
+                                document=document,
+                            )
+                        except Exception as e:
+                            print(f"Error ingesting tables for file {name}: {e}")
                         yield result
                 else:
                     # Fallback: sequential parse in async generator
@@ -912,10 +949,11 @@ class FileManager(BaseFileManager):
                                     metadata=result.get("metadata"),
                                     description=result.get("description"),
                                 )
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                print(f"Error creating file {name}: {e}")
                             yield result
                         except Exception as indiv_e:
+                            print(f"Error creating file {name}: {indiv_e}")
                             yield self._create_result_dict(
                                 name,
                                 None,
@@ -929,8 +967,8 @@ class FileManager(BaseFileManager):
 
                 try:
                     shutil.rmtree(temp_dir)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"Error cleaning up temporary directory: {e}")
 
     def _open_bytes_by_filename(self, filename: str) -> bytes:
         """Return file bytes by consulting Unify metadata first, falling back to adapter."""
@@ -942,7 +980,8 @@ class FileManager(BaseFileManager):
                 limit=1,
                 from_fields=["filename", "metadata"],
             )
-        except Exception:
+        except Exception as e:
+            print(f"Error opening bytes by filename: {e}")
             rows = []
         if rows:
             try:
@@ -955,8 +994,8 @@ class FileManager(BaseFileManager):
                     p = _Path(str(src))
                     if p.exists() and p.is_file():
                         return p.read_bytes()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Error reading bytes by filename: {e}")
         # Fallback to adapter if present
         if self._adapter is not None:
             return self._adapter.open_bytes(filename)
@@ -1026,7 +1065,8 @@ class FileManager(BaseFileManager):
                 from_fields=self._allowed_fields(),
                 exclude_fields=list_private_fields(self._ctx),
             )
-        except Exception:
+        except Exception as e:
+            print(f"Error filtering files: {e}")
             logs = []
         rows = [FileRow(**lg.entries) for lg in logs]
         return rows
@@ -1126,6 +1166,71 @@ class FileManager(BaseFileManager):
                 "filename": filename,
             },
         }
+
+    # ---------- Per-table ingestion for spreadsheets (CSV/XLSX/Sheets) ----- #
+    def _ingest_tables_for_file(self, *, filename: str, document: Any) -> None:
+        """
+        Create one sub-context per extracted table and log its rows.
+
+        Context naming: <FilesCtx>/Tables__<fs_alias>/<safe_filename>/<safe_table_label>
+        Schema: dynamic per table – inferred from detected column names (str), with
+        an auto-incrementing unique key `row_id`.
+        """
+        try:
+            import unify
+            from unity.knowledge_manager.types import ColumnType
+        except Exception:
+            ColumnType = None  # type: ignore
+
+        safe = self._sanitize_ctx_component
+
+        tables = getattr(getattr(document, "metadata", None), "tables", []) or []
+        if not tables:
+            return
+
+        # Only ingest when structured rows/columns are available
+        for idx, tbl in enumerate(tables, start=1):
+            columns = getattr(tbl, "columns", None)
+            rows = getattr(tbl, "rows", None)
+            if not rows:
+                continue
+
+            # Derive column names. If missing, synthesize generic headers
+            if not columns:
+                # Try to infer number of cols from first row
+                num_cols = len(rows[0]) if rows and len(rows) > 0 else 0
+                columns = [f"col_{i+1}" for i in range(num_cols)]
+
+            # Build a stable table context name
+            sheet_name = getattr(tbl, "sheet_name", None)
+            table_label = f"{idx:02d}_{sheet_name}" if sheet_name else f"{idx:02d}"
+            table_ctx = f"{self._ctx}/Tables__{self._fs_alias}/{safe(filename)}/{safe(table_label)}"
+            try:
+                unify.create_context(
+                    table_ctx,
+                    unique_keys={"row_id": "int"},
+                    auto_counting={"row_id": None},
+                    description=(
+                        f"Rows for table #{idx} from file '{filename}'"
+                        + (f" (sheet: {sheet_name})" if sheet_name else "")
+                    ),
+                )
+            except Exception as e:
+                print(f"Error creating table context: {e}")
+
+            # Rely on backend to infer fields/types from logged rows; do not create fields explicitly
+            # since we cannot differentiate between ambiguous entries e.g. "2025-01-01" can be a date or a string
+
+            for r in rows:
+                try:
+                    entry = {
+                        str(col): (str(val) if val is not None else "")
+                        for col, val in zip(columns, r)
+                    }
+                    unify.log(context=table_ctx, **entry, new=True, mutable=True)
+                except Exception as e:
+                    print(f"Error logging table row: {e}")
+                    continue
 
     # ---------- High-level importers (delegated to adapter) ---------------- #
     def import_file(self, file_path: Any) -> str:

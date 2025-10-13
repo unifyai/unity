@@ -2679,6 +2679,70 @@ class DoclingParser(GenericParser[Document]):
                             except Exception:
                                 pass
 
+                            # Extract a structured representation directly from TableData
+                            columns = None
+                            row_values = None
+                            n_rows = None
+                            n_cols = None
+                            try:
+                                data = getattr(table, "data", None)
+                                if data is not None:
+                                    n_rows = int(getattr(data, "num_rows", 0) or 0)
+                                    n_cols = int(getattr(data, "num_cols", 0) or 0)
+
+                                    # Build grid from table data
+                                    grid = (
+                                        list(getattr(data, "grid", []))
+                                        if hasattr(data, "grid")
+                                        else []
+                                    )
+
+                                    # Count header rows based on column_header flags
+                                    num_headers = 0
+                                    for row in grid:
+                                        any_header = any(
+                                            getattr(cell, "column_header", False)
+                                            for cell in row
+                                        )
+                                        if any_header:
+                                            num_headers += 1
+                                        else:
+                                            break
+
+                                    # Compose columns from header rows (concatenate with '.')
+                                    if num_headers > 0 and n_cols > 0:
+                                        cols: list[str] = ["" for _ in range(n_cols)]
+                                        for i in range(num_headers):
+                                            for j, cell in enumerate(grid[i]):
+                                                try:
+                                                    col_name = cell._get_text(doc=docling_doc)  # type: ignore[attr-defined]
+                                                except Exception:
+                                                    col_name = getattr(cell, "text", "")
+                                                if cols[j] != "":
+                                                    col_name = f".{col_name}"
+                                                cols[j] += str(col_name or "")
+                                        columns = [str(c) for c in cols]
+
+                                    # Data rows follow header rows
+                                    data_rows = grid[num_headers:] if grid else []
+                                    if data_rows:
+                                        row_values = []
+                                        for r in data_rows:
+                                            vals: list[str] = []
+                                            for cell in r:
+                                                try:
+                                                    txt = cell._get_text(doc=docling_doc)  # type: ignore[attr-defined]
+                                                except Exception:
+                                                    txt = getattr(cell, "text", "")
+                                                vals.append(
+                                                    "" if txt is None else str(txt),
+                                                )
+                                            row_values.append(vals)
+                                        # Override n_rows to reflect number of data rows
+                                        n_rows = len(row_values)
+                            except Exception:
+                                pass
+
                             tables.append(
                                 DocumentTable(
                                     page=page_num,
@@ -2691,6 +2755,10 @@ class DoclingParser(GenericParser[Document]):
                                     ),
                                     section_path=section_path,
                                     sheet_name=sheet_name,
+                                    columns=columns,
+                                    rows=row_values,
+                                    num_rows=n_rows,
+                                    num_cols=n_cols,
                                 ),
                             )
                         except Exception:

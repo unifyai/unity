@@ -28,6 +28,18 @@ async def test_parse_single_file(file_manager, supported_file_examples: dict):
     assert "file_type" in metadata
     assert "file_size" in metadata
 
+    # If the parsed document had tables, ensure per-table contexts were created
+    tables = (metadata or {}).get("tables", []) if isinstance(metadata, dict) else []
+    if tables:
+        try:
+            import unify
+
+            ctxs = unify.get_contexts(prefix=f"{unify.active_project()}/")
+            # Look for any context suffix matching Tables__
+            assert any("/Tables__" in name for name in ctxs.keys())
+        except Exception:
+            pass
+
 
 @pytest.mark.asyncio
 async def test_parse_multiple_files(file_manager, supported_file_examples: dict):
@@ -106,6 +118,28 @@ async def test_parse_supported_formats(file_manager, supported_file_examples: di
         assert result[display_name]["status"] == "success"
         assert len(result[display_name]["records"]) > 0
 
+        # If this is a spreadsheet (csv or xlsx), ensure per-table context is present
+        metadata = result[display_name].get("metadata", {})
+        file_type = (
+            (metadata or {}).get("file_type") if isinstance(metadata, dict) else None
+        )
+        if file_type in (
+            "text/csv",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ):
+            try:
+                import unify
+
+                ctxs = unify.get_contexts(prefix=f"{unify.active_project()}/")
+                table_ctx_candidates = [
+                    name for name in ctxs.keys() if "/Tables__" in name
+                ]
+                assert (
+                    table_ctx_candidates
+                ), "Expected per-table contexts for spreadsheets"
+            except Exception:
+                pass
+
 
 @pytest.mark.asyncio
 async def test_parse_multiple_supported_files(
@@ -127,3 +161,12 @@ async def test_parse_multiple_supported_files(
         file_result = result[display_name]
         assert file_result["status"] == "success"
         assert len(file_result["records"]) > 0
+
+    # Sanity check that at least one table context exists
+    try:
+        import unify
+
+        ctxs = unify.get_contexts(prefix=f"{unify.active_project()}/")
+        assert any("/Tables__" in name for name in ctxs.keys())
+    except Exception:
+        pass

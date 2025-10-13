@@ -88,6 +88,12 @@ class DocumentTable(BaseModel):
     section_path: Optional[List[str]] = None
     # Optional sheet/tab name for spreadsheet files (CSV/XLSX)
     sheet_name: Optional[str] = None
+    # Optional lightweight structured representation to support per-table ingestion
+    # When available, these fields describe the logical table after header resolution
+    columns: Optional[List[str]] = None  # final column names after header detection
+    rows: Optional[List[List[str]]] = None  # row-major values, coerced to strings
+    num_rows: Optional[int] = None
+    num_cols: Optional[int] = None
 
 
 class DocumentSentence(BaseModel):
