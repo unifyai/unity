@@ -218,3 +218,35 @@ def test_optional_dict_parameter_collapses_without_string() -> None:
     assert "anyOf" not in refs_schema
     assert refs_schema["type"] == "object"
     assert refs_schema["additionalProperties"]["type"] == "string"
+
+
+# --------------------------------------------------------------------------- #
+#  BUILTIN dict HANDLING (images: dict | None)                                #
+# --------------------------------------------------------------------------- #
+def _tool_with_optional_builtin_mapping(
+    images: dict | None = None,
+) -> None:  # pragma: no cover - schema only
+    return None
+
+
+def test_optional_builtin_dict_parameter_is_object_without_string() -> None:
+    """
+    Optional[builtin dict] should surface as a plain object to the LLM.
+    Prior to the fix, builtin dict could degrade to "string" in unions,
+    leading the model to send serialized strings for images.
+    """
+
+    schema = llmh.method_to_schema(_tool_with_optional_builtin_mapping)
+    params = schema["function"]["parameters"]["properties"]
+    images_schema = params["images"]
+
+    assert "anyOf" not in images_schema
+    assert images_schema["type"] == "object"
+    # Unknown value types → allow arbitrary properties
+    assert images_schema.get("additionalProperties") is True
+
+
+def test_annotation_to_schema_builtin_dict_maps_to_object() -> None:
+    s = llmh.annotation_to_schema(dict)
+    assert s["type"] == "object"
+    assert s.get("additionalProperties") is True
