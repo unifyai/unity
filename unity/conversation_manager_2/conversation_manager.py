@@ -113,7 +113,53 @@ class ConversationManager:
         self.user_turn_end_callback: Optional[Callable[[list[dict]], str]] = (
             user_turn_end_callback
         )
-        self._add_filler_next: bool = False
+        # filler task lifecycle (for user-turn-end interjection)
+        self._filler_task: asyncio.Task | None = None
+        self._filler_started: asyncio.Event = asyncio.Event()
+        self._filler_done: asyncio.Event = asyncio.Event()
+
+    async def _run_filler_once(self):
+        """Run a single filler start_gen -> gen_chunk -> end_gen cycle.
+
+        Starts non-blocking, marks started before emitting, and guarantees a
+        well-formed sequence even under cancellation.
+        """
+        try:
+            if not self.user_turn_end_callback:
+                return
+
+            # Compute filler text first; avoid blocking after start
+            filler_text = ""
+            try:
+                filler_text = self.user_turn_end_callback(self.chat_history) or ""
+            except Exception:
+                filler_text = ""
+
+            # Signal started and emit sequence
+            print("running filler task...")
+            self._filler_started.set()
+            await self.event_broker.publish(
+                "app:call:response_gen",
+                json.dumps({"type": "start_gen"}),
+            )
+            if filler_text:
+                await self.event_broker.publish(
+                    "app:call:response_gen",
+                    json.dumps({"type": "gen_chunk", "chunk": filler_text}),
+                )
+            await self.event_broker.publish(
+                "app:call:response_gen",
+                json.dumps({"type": "end_gen"}),
+            )
+            print("filler task done")
+        except asyncio.CancelledError:
+            # If cancelled before start, nothing was emitted; if after start, we've
+            # already emitted start_gen; we won't try to force-close here to avoid
+            # duplicate end_gen under races.
+            raise
+        finally:
+            self._filler_done.set()
+            self._filler_task = None
 
     async def run_llm(self):
         self.state.snapshot()
@@ -139,25 +185,17 @@ class ConversationManager:
             print("running...")
             first_chunk = True
 
-            # Inject a short filler before streaming begins, if requested
-            if self._add_filler_next and self.user_turn_end_callback:
-                filler_text = ""
-                try:
-                    filler_text = self.user_turn_end_callback(self.chat_history) or ""
-                except Exception:
-                    filler_text = ""
-                if filler_text:
-                    await self.event_broker.publish(
-                        "app:call:response_gen",
-                        json.dumps({"type": "start_gen"}),
-                    )
-                    await self.event_broker.publish(
-                        "app:call:response_gen",
-                        json.dumps({"type": "gen_chunk", "chunk": filler_text}),
-                    )
-                    first_chunk = False
-                # reset flag regardless
-                self._add_filler_next = False
+            # Coordinate with filler task: cancel if not started; wait if started
+            if self._filler_task and not self._filler_task.done():
+                if not self._filler_started.is_set():
+                    # LLM wins; cancel filler before it starts streaming
+                    self._filler_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await self._filler_task
+                    self._filler_task = None
+                else:
+                    # Filler already started streaming; wait for its end_gen
+                    await self._filler_done.wait()
             async for event in stream_llm_call(
                 self.openai_client,
                 system_message,
@@ -563,11 +601,25 @@ class ConversationManager:
             self.state.mode = "text"
             self.call_contact = None
             self.cleanup_call_proc()
+            # cancel any running filler task when call ends
+            if self._filler_task and not self._filler_task.done():
+                self._filler_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._filler_task
+                self._filler_task = None
             await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, PhoneUtterance):
-            # next response should include a short filler if a callback is set
-            self._add_filler_next = True
+            # schedule filler concurrently so it doesn't block the LLM call
+            if self._filler_task and not self._filler_task.done():
+                self._filler_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._filler_task
+            self._filler_started = asyncio.Event()
+            self._filler_done = asyncio.Event()
+            if self.user_turn_end_callback:
+                print("starting filler task...")
+                self._filler_task = asyncio.create_task(self._run_filler_once())
             asyncio.create_task(self.publish_transcript(event))
             await self.schedule_llm_run(0, cancel_running=True)
 
