@@ -4,6 +4,7 @@ import json
 import os
 import aiohttp
 import requests
+from unify.utils import http
 
 # Configuration
 EVENT_SERVER_HOST = "127.0.0.1"
@@ -248,11 +249,12 @@ async def admin_update_assistant(
 # dispatch agent
 def dispatch_agent(agent_name: str):
     try:
-        response = requests.post(
+        response = http.post(
             f"{unity_comms_url}/phone/dispatch-agent",
             headers=admin_headers,
             json={"agent_name": agent_name},
             timeout=1,
+            raise_for_status=False,
         )
         if response.status_code != 200:
             print(f"Failed to dispatch agent. {response.text}")
