@@ -650,7 +650,7 @@ class ConversationManager:
             # unify_message assumes boss contact, create first on startup to avoid errors
             if payload["medium"] == "unify_message":
                 self.state.update_or_create_new_contact(
-                    "1",
+                    1,
                     payload["user_name"].split(" ")[0],
                     (
                         payload["user_name"].split(" ")[1]

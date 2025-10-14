@@ -26,7 +26,7 @@ class SendEmail(BaseModel):
     """Comms method to send emails"""
 
     action_name: Literal["send_email"]
-    contact_id: str = Field(
+    contact_id: int = Field(
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
@@ -41,7 +41,7 @@ class SendSMS(BaseModel):
     """Comms method to send sms"""
 
     action_name: Literal["send_sms"]
-    contact_id: str = Field(
+    contact_id: int = Field(
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
@@ -55,7 +55,7 @@ class MakeCall(BaseModel):
     """Comms method to make outbound calls"""
 
     action_name: Literal["make_call"]
-    contact_id: str = Field(
+    contact_id: int = Field(
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
