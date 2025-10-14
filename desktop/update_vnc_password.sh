@@ -13,7 +13,9 @@ mkdir -p "$(dirname "$PASSFILE")"
 
 # Write new password atomically
 x11vnc -storepasswd "${UNIFY_KEY}" "${TMPFILE}"
+chmod 600 "${TMPFILE}"
 mv -f "${TMPFILE}" "${PASSFILE}"
+chmod 600 "${PASSFILE}"
 
 # Restart x11vnc to pick up new password
 pkill x11vnc || true
