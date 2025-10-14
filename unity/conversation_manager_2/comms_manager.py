@@ -69,6 +69,23 @@ class CommsManager:
                     self.subscribers[startup_subscription_id].cancel()
                     self.subscribers.pop(startup_subscription_id)
 
+                    # Update VNC password and restart x11vnc using UNIFY_KEY (atomic swap)
+                    try:
+                        import subprocess
+
+                        env = os.environ.copy()
+                        env["UNIFY_KEY"] = event.get("api_key", "") or env.get(
+                            "UNIFY_KEY",
+                            "",
+                        )
+                        subprocess.run(
+                            ["/bin/bash", "/app/desktop/update_vnc_password.sh"],
+                            check=True,
+                            env=env,
+                        )
+                    except Exception as e:
+                        print(f"Failed to update VNC password: {e}")
+
                     # subscribe to the assistant's subscription
                     os.environ["ASSISTANT_ID"] = event["assistant_id"]
                     subscription_id = (

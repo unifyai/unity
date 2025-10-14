@@ -9,7 +9,14 @@ printf "# Minimal Fluxbox init\n" > ~/.fluxbox/init
 # Start window manager, VNC server and noVNC proxy
 fluxbox 2>/dev/null &
 DISPLAY=:99 xsetroot -cursor_name left_ptr
-x11vnc -display :99 -nopw -forever -shared -bg -rfbport 5900 \
+# Ensure VNC auth file exists (initialize with random password)
+mkdir -p /root/.vnc
+if [ ! -f /root/.vnc/passwd ]; then
+  x11vnc -storepasswd "$(head -c 32 /dev/urandom | base64)" /root/.vnc/passwd
+fi
+
+# Start x11vnc with rfbauth
+x11vnc -display :99 -rfbauth /root/.vnc/passwd -forever -shared -bg -rfbport 5900 \
        -rfbportv6 0 -noxdamage -nowf -nocursorshape -cursor arrow -nodpms
 
 /usr/libexec/xdg-desktop-portal &
