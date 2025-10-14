@@ -544,6 +544,18 @@ class ConversationManager:
             ).to_json(),
         )
 
+    async def publish_contact_update(self, contact: dict):
+        await self.event_broker.publish(
+            "app:managers:input",
+            UpdateContactEvent(
+                contact_id=contact["contact_id"],
+                first_name=contact["first_name"],
+                surname=contact["surname"],
+                email_address=contact["email_address"],
+                phone_number=contact["phone_number"],
+            ).to_json(),
+        )
+
     async def handle_event(self, event: Event):
         # update state
         self.state.update_state(event)
@@ -636,6 +648,11 @@ class ConversationManager:
             }
             await self.publish_startup()
             asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
+
+        elif isinstance(event, AssistantUpdateEvent):
+            await self.publish_contact_update(
+                self.state.inverted_contacts_map[0].model_dump()
+            )
 
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)

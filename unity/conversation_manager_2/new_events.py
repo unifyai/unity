@@ -233,7 +233,16 @@ class GetContactsInput(Event):
 
 
 @dataclass
-class CreateContactInput(Event):
+class CreateContactEvent(Event):
+    first_name: str
+    surname: str
+    email_address: str
+    phone_number: str
+
+
+@dataclass
+class UpdateContactEvent(Event):
+    contact_id: int
     first_name: str
     surname: str
     email_address: str

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from dotenv import load_dotenv
 import threading
 from datetime import datetime
 import os
 from typing import Optional
-
 import redis.asyncio as redis
+
+load_dotenv()
 
 import unity
 from unity.memory_manager.memory_manager import MemoryManager
@@ -278,7 +280,7 @@ class ManagersWorker:
             return
 
         try:
-            await self._contact_manager._create_contact(
+            self._contact_manager._create_contact(
                 first_name=contact["first_name"],
                 surname=contact["surname"],
                 phone_number=contact["phone_number"],
@@ -290,6 +292,24 @@ class ManagersWorker:
             await self._get_contacts()
         except Exception as e:
             print(f"[ManagersWorker] Error creating contact: {e}")
+
+    async def _update_contact(self, contact: dict) -> None:
+        """Update a contact in the ContactManager."""
+        if not self._contact_manager:
+            print("[ManagersWorker] Not initialized, cannot update contact")
+            return
+
+        try:
+            self._contact_manager._update_contact(
+                contact_id=contact["contact_id"],
+                first_name=contact["first_name"],
+                surname=contact["surname"],
+                phone_number=contact["phone_number"],
+                email_address=contact["email_address"],
+            )
+            await self._get_contacts()
+        except Exception as e:
+            print(f"[ManagersWorker] Error updating contact: {e}")
 
     async def _update_contact_rolling_summary(
         self,
@@ -331,8 +351,10 @@ class ManagersWorker:
             asyncio.create_task(self._log_message(event))
         elif isinstance(event, GetContactsInput):
             asyncio.create_task(self._get_contacts())
-        elif isinstance(event, CreateContactInput):
+        elif isinstance(event, CreateContactEvent):
             asyncio.create_task(self._create_contact(event.to_dict()["payload"]))
+        elif isinstance(event, UpdateContactEvent):
+            asyncio.create_task(self._update_contact(event.to_dict()["payload"]))
         elif isinstance(event, UpdateContactRollingSummaryRequest):
             print("REACHED")
             asyncio.create_task(
