@@ -9,7 +9,7 @@ import logging
 
 from dataclasses import dataclass
 import threading
-from typing import Any, Mapping, TypedDict, Callable
+from typing import Any, Mapping, TypedDict, Callable, List
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
@@ -19,8 +19,45 @@ from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
 from ..llm_helpers import _dumps
 
+
+_SEMANTIC_CACHE_SAVER: "_SemanticCacheSaver | None" = None
 _USER_MESSAGE_EMBEDDING_FIELD_NAME = "_user_message_emb"
 logger = logging.getLogger(__name__)
+
+
+class CleanToolCall(TypedDict):
+    index: int
+    name: str
+    arguments: str
+    result: str
+
+
+@dataclass
+class SemanticCacheResult:
+    original_user_message: str
+    closest_user_message: str
+    tool_trajectory: List[CleanToolCall]
+
+
+class _Config:
+    threshold: float = 0.2
+    top_k: int = 1
+    embedding_model: str = "text-embedding-3-small"
+    _model: str = "gpt-5@openai"
+    _reasoning_effort = "high"
+    _context: str = "Cache"
+
+    @property
+    def context(self):
+        from unity import ASSISTANT_CONTEXT
+
+        return f"{ASSISTANT_CONTEXT}/{self._context}"
+
+    def get_client(self):
+        return unify.Unify(self._model, reasoning_effort=self._reasoning_effort)
+
+
+_CONFIG = _Config()
 
 
 class _SemanticCacheSaver:
@@ -185,10 +222,15 @@ class _SemanticCacheSaver:
             )
         return result
 
-    def _clean_tool_trajectory(self, user_message, msgs, previous_tool_trajectory=None):
+    def _clean_tool_trajectory(
+        self,
+        user_message,
+        msgs,
+        previous_tool_trajectory=None,
+    ) -> List[CleanToolCall]:
 
         class PruneToolsResponseFormat(BaseModel):
-            call_indices: list[int]
+            call_indices: List[int]
 
         global _CONFIG
 
@@ -209,28 +251,29 @@ class _SemanticCacheSaver:
 
             if msg.get("tool_calls") is not None:
                 for tool_call in msg.get("tool_calls"):
-                    if (id := tool_call.get("id")) in _flatten_tools.keys():
-                        if _flatten_tools[id].get("name") == "semantic_search":
+                    if (call_id := tool_call.get("id")) in _flatten_tools.keys():
+                        if _flatten_tools[call_id].get("name") == "semantic_search":
                             continue
 
-                        request = tool_call
+                        name = tool_call["function"]["name"]
+                        arguments = tool_call["function"]["arguments"]
+                        result = _flatten_tools[call_id]["content"]
 
-                        response = _flatten_tools[id]
-                        response.pop("tool_call_id")
-
-                        pair = ToolCallPair(
-                            request=request,
-                            response=response,
+                        cleaned_trajectory.append(
+                            {
+                                "index": -1,
+                                "name": name,
+                                "arguments": arguments,
+                                "result": result,
+                            },
                         )
 
-                        cleaned_trajectory.append(pair)
-
-        cleaned_trajectory = _simplify_tool_trajectory(cleaned_trajectory)
         if previous_tool_trajectory:
             cleaned_trajectory = [*previous_tool_trajectory, *cleaned_trajectory]
-            # re-index the tool calls
-            for idx, tool_call in enumerate(cleaned_trajectory):
-                tool_call["index"] = idx
+
+        # index the tool calls
+        for idx, tool_call in enumerate(cleaned_trajectory):
+            tool_call["index"] = idx
 
         client = _CONFIG.get_client()
         client.set_system_message(
@@ -247,9 +290,9 @@ class _SemanticCacheSaver:
         res = PruneToolsResponseFormat.model_validate_json(res)
 
         cleaned_trajectory = [
-            tool_call_pair
-            for tool_call_pair in cleaned_trajectory
-            if tool_call_pair["index"] not in res.call_indices
+            tool_call
+            for tool_call in cleaned_trajectory
+            if tool_call["index"] not in res.call_indices
         ]
 
         # re-index the tool calls
@@ -320,68 +363,6 @@ class _SemanticCacheSaver:
             return False
 
         return True
-
-
-_SEMANTIC_CACHE_SAVER = None
-
-
-class _Config:
-    threshold: float = 0.2
-    top_k: int = 1
-    embedding_model: str = "text-embedding-3-small"
-    _model: str = "gpt-5@openai"
-    _reasoning_effort = "high"
-    _context: str = "Cache"
-
-    @property
-    def context(self):
-        from unity import ASSISTANT_CONTEXT
-
-        return f"{ASSISTANT_CONTEXT}/{self._context}"
-
-    def get_client(self):
-        return unify.Unify(self._model, reasoning_effort=self._reasoning_effort)
-
-
-class ToolCallPair(TypedDict):
-    request: Mapping[str, Any]
-    response: Mapping[str, Any]
-
-
-class ToolTrajectory(TypedDict):
-    index: int
-    name: str
-    arguments: str
-    result: str
-
-
-@dataclass
-class SemanticCacheResult:
-    original_user_message: str
-    closest_user_message: str
-    tool_trajectory: list[ToolTrajectory]
-
-
-_CONFIG = _Config()
-
-
-def _simplify_tool_trajectory(tool_trajectory: list[ToolCallPair]):
-    ret = []
-    for idx, tool_call_pair in enumerate(tool_trajectory):
-        name = tool_call_pair["request"]["function"]["name"]
-        arguments = tool_call_pair["request"]["function"]["arguments"]
-        result = tool_call_pair["response"]["content"]
-
-        ret.append(
-            {
-                "index": idx,
-                "name": name,
-                "arguments": arguments,
-                "result": result,
-            },
-        )
-
-    return ret
 
 
 def search_semantic_cache(
