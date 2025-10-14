@@ -323,3 +323,41 @@ class UnifyMessageRecieved(Event):
 class UnifyMessageSent(Event):
     contact: int
     content: str
+
+
+# --------------------------------------------------------------------------- #
+# Unify Call (browser voice) Events
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class UnifyCallStarted(Event):
+    """A browser-based voice call session has started (no phone number).
+
+    "contact" should reference the boss/user contact id (typically 1).
+    """
+
+    contact: int
+
+
+@dataclass
+class UnifyCallUtterance(Event):
+    """User utterance during a browser-based voice call session."""
+
+    contact: int
+    content: str
+
+
+@dataclass
+class AssistantUnifyCallUtterance(Event):
+    """Assistant utterance during a browser-based voice call session."""
+
+    contact: int
+    content: str
+
+
+@dataclass
+class UnifyCallEnded(Event):
+    """The browser-based voice call session has ended."""
+
+    contact: int

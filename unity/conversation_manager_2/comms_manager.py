@@ -257,6 +257,38 @@ class CommsManager:
                 except Exception as e:
                     print(f"Error processing pre-hire logs: {e}")
                     message.nack()
+            elif "unify_call" in thread:
+                try:
+                    # Optionally publish contacts if provided
+                    contacts = event.get("contacts", [])
+                    if contacts:
+                        asyncio.run_coroutine_threadsafe(
+                            self.message_queue.publish(
+                                f"app:comms:contacts",
+                                GetContactsOutput(contacts=contacts).to_json(),
+                            ),
+                            self.loop,
+                        )
+
+                    # unify_call: event without a kind means "started"
+                    # always addresses the boss contact (id=1)
+                    contact_id = 1
+                    payload = UnifyCallStarted(contact=contact_id)
+                    topic = "app:comms:unify_call_started"
+
+                    if payload and topic:
+                        asyncio.run_coroutine_threadsafe(
+                            self.message_queue.publish(
+                                topic,
+                                payload.to_json(),
+                            ),
+                            self.loop,
+                        )
+                    message.ack()
+
+                except Exception as e:
+                    print(f"Error processing unify_call event: {e}")
+                    message.nack()
             elif "call" in thread:
                 try:
                     # Publish contacts

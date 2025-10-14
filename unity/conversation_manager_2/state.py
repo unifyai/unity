@@ -19,6 +19,7 @@ class Contact(ContactType):
             "sms": deque(maxlen=50),
             "email": deque(maxlen=50),
             "phone": deque(maxlen=50),
+            "unify_call": deque(maxlen=50),
             "unify_message": deque(maxlen=50),
         },
     )
@@ -101,15 +102,21 @@ class ConversationManagerState:
 
         self.notifs: list[Notification] = []
 
-        self.mode: Literal["text", "call", "gmeet"] = "text"
+        self.mode: Literal["text", "call", "gmeet", "unify_call"] = "text"
         self.events = []
         self.last_snapshot_time = datetime.now()
         self.phone_contact: Optional[Contact] = None
+        self.unify_call_contact: Optional[Contact] = None
 
         # call details
         self.call_exchange_id = UNASSIGNED
         self.call_start_timestamp = None
         self.conference_name = ""
+
+        # unify_call details
+        self.unify_call_exchange_id = UNASSIGNED
+        self.unify_call_start_timestamp = None
+        self.unify_session_id = ""
 
         # assistant details
         self.job_name = job_name
@@ -291,6 +298,72 @@ class ConversationManagerState:
                 )
                 self.phone_contact = None
 
+            # unify_call lifecycle
+            case UnifyCallStarted() as e:
+                self.mode = "unify_call"
+                # unify_call always targets boss contact (id=1)
+                contact = self.get_contact(contact_id=1)
+                self.unify_call_contact = contact
+                self.unify_call_start_timestamp = e.timestamp
+                self.push_message(
+                    contact,
+                    "unify_call",
+                    Message(contact.full_name, "<Unify call started...>", e.timestamp),
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Unify Call started with '{contact.full_name}'",
+                        e.timestamp,
+                    ),
+                )
+
+            case UnifyCallUtterance() as e:
+                contact = self.get_contact(contact_id=1)
+                self.push_message(
+                    contact,
+                    "unify_call",
+                    Message(contact.full_name, e.content, e.timestamp),
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Unify Call Utterance received from '{contact.full_name}'",
+                        e.timestamp,
+                    ),
+                )
+
+            case AssistantUnifyCallUtterance() as e:
+                contact = self.get_contact(contact_id=1)
+                self.push_message(
+                    contact,
+                    "unify_call",
+                    Message("You", e.content, e.timestamp),
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Unify Call Utterance sent to '{contact.full_name}'",
+                        e.timestamp,
+                    ),
+                )
+
+            case UnifyCallEnded() as e:
+                contact = self.get_contact(contact_id=1)
+                self.push_message(
+                    contact,
+                    "unify_call",
+                    Message(contact.full_name, "<Unify Call Ended...>", e.timestamp),
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Unify Call Ended with '{contact.full_name}'",
+                        e.timestamp,
+                    ),
+                )
+                self.unify_call_contact = None
+
             case SMSRecieved() as e:
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
@@ -391,6 +464,11 @@ class ConversationManagerState:
                 # Whatsapp: Managing different kinds of chat such as groups, etc.
                 if e.medium == "phone_call" and self.call_exchange_id == UNASSIGNED:
                     self.call_exchange_id = e.exchange_id
+                if (
+                    e.medium == "unify_call"
+                    and self.unify_call_exchange_id == UNASSIGNED
+                ):
+                    self.unify_call_exchange_id = e.exchange_id
 
     def snapshot(self):
         self._current_snapshot_time = datetime.now()
