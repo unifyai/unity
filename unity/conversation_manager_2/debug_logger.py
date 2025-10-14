@@ -29,25 +29,21 @@ def log_job_startup(
     try:
         # Resolve liveview URL via comms infra service
         liveview_url = None
-        try:
-            comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
-            admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
-            if comms_url and admin_key and job_name:
-                svc = f"unity-svc-{job_name}"
-                resp = requests.get(
-                    f"{comms_url}/infra/job/service/ip",
-                    params={"service_name": svc},
-                    headers={"Authorization": f"Bearer {admin_key}"},
-                    timeout=7,
-                )
-                if resp.ok:
-                    data = resp.json() or {}
-                    addr = ((data or {}).get("external") or {}).get("address")
-                    if isinstance(addr, str) and addr:
-                        liveview_url = f"http://{addr}:6080/vnc.html"
-        except Exception:
-            # Non-fatal; proceed without liveview_url
-            pass
+        comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
+        admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
+        if comms_url and admin_key and job_name:
+            svc = f"unity-svc-{job_name}"
+            resp = requests.get(
+                f"{comms_url}/infra/job/service/ip",
+                params={"service_name": svc},
+                headers={"Authorization": f"Bearer {admin_key}"},
+                timeout=7,
+            )
+            if resp.ok:
+                data = resp.json() or {}
+                addr = ((data or {}).get("external") or {}).get("address")
+                if isinstance(addr, str) and addr:
+                    liveview_url = f"http://{addr}:6080/vnc.html"
 
         unify.create_logs(
             project="Debug",
