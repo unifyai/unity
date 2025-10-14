@@ -59,6 +59,13 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         question in natural language and allow this `ask` method to determine
         the best method to answer it.
 
+        Visual inputs policy
+        --------------------
+        • When any relevant visual inputs (images) are available, include them via
+          the ``images`` argument for this call.
+        • Prefer a curated subset of images aligned to the question. If curation is
+          not straightforward, include all available live images rather than none.
+
         Examples
         --------
         • Good: "Who is the contact living in Berlin working as a product designer?"
@@ -126,6 +133,13 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
           when a clarification channel is available.
         • When no clarification tool exists, proceed with sensible defaults or
           best‑guess values and state those assumptions in the final reply.
+
+        Visual inputs policy
+        --------------------
+        • When any relevant visual inputs (images) are available, include them via
+          the ``images`` argument for this call.
+        • Prefer a curated subset of images aligned to the request. If curation is
+          not straightforward, include all available live images rather than none.
 
         Parameters
         ----------
