@@ -1,6 +1,7 @@
 import unify
 import json
 import inspect
+import copy
 import asyncio
 import functools
 import atexit
@@ -187,14 +188,11 @@ class _SemanticCacheSaver:
     def _clean_tool_trajectory(self, user_message, msgs, previous_tool_trajectory=None):
 
         class PruneToolsResponseFormat(BaseModel):
-            indices: list[int]
+            call_indices: list[int]
 
         global _CONFIG
 
         cleaned_trajectory = []
-        if previous_tool_trajectory:
-            cleaned_trajectory.extend(previous_tool_trajectory)
-
         _flatten_tools = {}
 
         for msg in msgs:
@@ -216,7 +214,6 @@ class _SemanticCacheSaver:
                             continue
 
                         request = tool_call
-                        request.pop("id")
 
                         response = _flatten_tools[id]
                         response.pop("tool_call_id")
@@ -225,13 +222,21 @@ class _SemanticCacheSaver:
                             request=request,
                             response=response,
                         )
+
                         cleaned_trajectory.append(pair)
+
+        cleaned_trajectory = _simplify_tool_trajectory(cleaned_trajectory)
+        if previous_tool_trajectory:
+            cleaned_trajectory = [*previous_tool_trajectory, *cleaned_trajectory]
+            # re-index the tool calls
+            for idx, tool_call in enumerate(cleaned_trajectory):
+                tool_call["index"] = idx
 
         client = _CONFIG.get_client()
         client.set_system_message(
             """
             You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
-            you should return indicies of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
+            you should return indices of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
             """,
         )
         res = client.generate(
@@ -243,9 +248,13 @@ class _SemanticCacheSaver:
 
         cleaned_trajectory = [
             tool_call_pair
-            for idx, tool_call_pair in enumerate(cleaned_trajectory)
-            if idx not in res.indices
+            for tool_call_pair in cleaned_trajectory
+            if tool_call_pair["index"] not in res.call_indices
         ]
+
+        # re-index the tool calls
+        for idx, tool_call in enumerate(cleaned_trajectory):
+            tool_call["index"] = idx
 
         return cleaned_trajectory
 
@@ -339,11 +348,18 @@ class ToolCallPair(TypedDict):
     response: Mapping[str, Any]
 
 
+class ToolTrajectory(TypedDict):
+    index: int
+    name: str
+    arguments: str
+    result: str
+
+
 @dataclass
 class SemanticCacheResult:
     original_user_message: str
     closest_user_message: str
-    tool_trajectory: list[ToolCallPair]
+    tool_trajectory: list[ToolTrajectory]
 
 
 _CONFIG = _Config()
@@ -351,17 +367,17 @@ _CONFIG = _Config()
 
 def _simplify_tool_trajectory(tool_trajectory: list[ToolCallPair]):
     ret = []
-    for tool_call_pair in tool_trajectory:
+    for idx, tool_call_pair in enumerate(tool_trajectory):
         name = tool_call_pair["request"]["function"]["name"]
         arguments = tool_call_pair["request"]["function"]["arguments"]
         result = tool_call_pair["response"]["content"]
 
         ret.append(
             {
+                "index": idx,
                 "name": name,
                 "arguments": arguments,
                 "result": result,
-                "result_status": "cached",
             },
         )
 
@@ -455,11 +471,13 @@ async def get_dummy_tool(
     semantic_cache_result: SemanticCacheResult,
     tools: Mapping[str, ToolSpec],
 ):
-    history = _simplify_tool_trajectory(semantic_cache_result.tool_trajectory)
+    history = copy.deepcopy(semantic_cache_result.tool_trajectory)
     loop = asyncio.get_running_loop()
     with ThreadPoolExecutor(thread_name_prefix="semantic_cache") as executor:
         awaitables_map = {}
         for idx, tool_call in enumerate(history):
+            history[idx]["result_status"] = "cached"  # type: ignore
+
             if (tool_name := tool_call.get("name")) in tools:
                 # Only re-call tools that are read-only
                 if not tools[tool_name].read_only:
