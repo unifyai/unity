@@ -212,12 +212,21 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         1. `_tool_interject_conversation(text: str)` -> Sends a message to the user. Returns a dictionary with the timestamp of when the message was sent.
         2. `_tool_get_latest_user_messages(delay: float, since_ts: float)` -> Waits, then checks for new user messages from the transcript.
 
-        YOUR WORKFLOW (LLM-Orchestrated Polling):
-        ### Your Strategy:
-        1.  **Analyze the existing conversation first.** Use `_tool_get_latest_user_messages` to see if the user has already provided the answer in their recent messages.
-        2.  **If you find a clear answer, or you are highly confident you can infer the answer, your task is complete.** Do not use any more tools. Simply provide the answer in the correct format.
-        3.  **If the answer is not in the transcript and you cannot infer it with high confidence**, you must then ask the user the question directly using `_tool_interject_conversation`.
-        4.  **After you have asked the question**, you must patiently wait for a response by repeatedly calling `_tool_get_latest_user_messages` with a delay until a new message appears that answers your question.
+        ### 🏛️ The Golden Rule: Infer, Don't Ask
+        Your primary goal is to create a seamless, human-like conversation by using the information already provided. **DO NOT** ask the user a question if their previous statements already contain a reasonable answer. Your default behavior should be to infer, not to ask for confirmation.
+
+        ### Your Decision-Making Process:
+        1.  **Analyze the Transcript (Mandatory First Step):** Use `_tool_get_latest_user_messages` to review the full conversation history.
+        2.  **Deduce the Answer:** Scrutinize the user's messages. If the transcript contains information that directly or implicitly answers your mission's question, you **MUST** use that information to formulate the final answer.
+        3.  **Provide the Answer:** Once you have deduced the answer, your task is complete. Immediately call `final_answer` with the correct structured response. Do not use any more tools.
+        4.  **Ask Only as a Last Resort:** Only if, after careful analysis, the answer is genuinely missing or the user's intent is truly ambiguous, should you use `_tool_interject_conversation` to ask the user for the necessary information. After asking, use `_tool_get_latest_user_messages` to wait for their reply.
+
+        ### ✅ Example: Proactive Inference
+        - **Scenario:** The transcript already contains information that answers your question.
+        - **Your Mission:** Extract the answer from the transcript rather than re-asking.
+        - **CORRECT ACTION:** Read the existing messages, identify the answer, and immediately respond with it.
+        - **INCORRECT ACTION:** Asking the user for information they've already provided is redundant and frustrating.
+        - **Key Insight:** Be smart about what's already in the conversation history before polling for new messages.
 
         **CRITICAL**: As soon as you have a confident answer, either from the initial analysis or from the user's direct reply, you must stop using tools and provide the final answer.
         - You are in control of the polling loop. Be patient and persistent.
