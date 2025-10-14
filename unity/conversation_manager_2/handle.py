@@ -4,7 +4,7 @@ import asyncio
 import json
 import uuid
 import time
-from typing import Optional, Type, TypeVar
+from typing import Optional, Type, TypeVar, Literal
 from datetime import datetime, timezone
 import os
 import redis.asyncio as redis
@@ -67,16 +67,19 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         delay: float = 2.0,
         max_messages: int = 20,
         since_ts: float | None = None,
+        sender_filter: Literal["user", "assistant", "all"] = "user",
     ) -> dict:
         """
-        Polls the durable transcript store for recent user messages in this conversation.
+        Polls the durable transcript store for recent messages in this conversation.
         """
         if delay > 0:
             await asyncio.sleep(delay)
 
-        clauses = [f"sender_id != 0"]  # 0 is the assistant id
-        # if since_ts is not None:
-        #     clauses.append(f"timestamp >= '{_to_iso(since_ts)}'")
+        clauses = []
+        if sender_filter == "user":
+            clauses.append("sender_id != 0")  # 0 is the assistant id
+        elif sender_filter == "assistant":
+            clauses.append("sender_id == 0")
 
         filter_expr = " and ".join(clauses)
         logger.info(f'TOOL: Polling transcript with filter: "{filter_expr}"')
@@ -116,6 +119,20 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             "messages": messages,
             "count": len(messages),
         }
+
+    async def get_full_transcript(
+        self,
+        max_messages: int = 50,
+    ) -> dict:
+        """
+        Retrieves the full conversation transcript from the rolling window,
+        including both user and assistant messages.
+        """
+        return await self._tool_get_latest_user_messages(
+            delay=0,
+            max_messages=max_messages,
+            sender_filter="all",
+        )
 
     # ─────────────────────────────────────────────────────────────
     # Conversation-Specific Operations

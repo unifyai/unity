@@ -49,6 +49,32 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
         self._paused = False
         self._final_result = "Conversation is active."
 
+    async def get_full_transcript(self, **kwargs) -> dict:
+        """Simulates retrieving the full conversation transcript."""
+        if self._stopped:
+            return {"status": "error", "message": "Handle is stopped."}
+
+        # The stateful LLM will generate a plausible transcript based on the scenario description.
+        prompt = (
+            "Based on the conversation scenario, provide a plausible, recent transcript "
+            "that includes both user and assistant messages. Return it as a JSON object "
+            'with a "messages" key, like {"messages": [{"role": "user", "content": "..."}, ...]}.'
+        )
+        response = await self._llm.generate(prompt)
+
+        try:
+            cleaned_str = response.strip()
+            if cleaned_str.startswith("```json"):
+                cleaned_str = cleaned_str[7:].strip()
+            if cleaned_str.startswith("```"):
+                cleaned_str = cleaned_str[3:].strip()
+            if cleaned_str.endswith("```"):
+                cleaned_str = cleaned_str[:-3].strip()
+
+            return json.loads(cleaned_str)
+        except json.JSONDecodeError:
+            raise ValueError(f"Failed to parse LLM response into JSON: {response}")
+
     def _build_system_message(self) -> str:
         """Builds a detailed system message for the stateful LLM, instructing it on how to simulate the conversation."""
         return f"""You are a simulated ConversationManager. Your role is to maintain the state of a conversation and respond to steering commands.
