@@ -14,6 +14,8 @@ from tests.helpers import SETTINGS
 async def test_max_steps_exceeded():
     client = unify.AsyncUnify(
         os.getenv("UNIFY_MODEL", "gpt-5@openai"),
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -36,6 +38,8 @@ async def test_max_steps_exceeded():
 async def test_timeout_exceeded(monkeypatch):
     client = unify.AsyncUnify(
         os.getenv("UNIFY_MODEL", "gpt-5@openai"),
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -93,6 +97,8 @@ async def test_prunes_over_quota_tool_calls(monkeypatch):
 
     client = unify.AsyncUnify(
         os.getenv("UNIFY_MODEL", "gpt-5@openai"),
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -155,6 +161,8 @@ async def test_prunes_over_quota_serial_calls(monkeypatch):
 
     client = unify.AsyncUnify(
         os.getenv("UNIFY_MODEL", "gpt-5@openai"),
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -210,6 +218,8 @@ async def test_timeout_graceful_termination(monkeypatch):
     cancel_flag = {}
     client = unify.AsyncUnify(
         os.getenv("UNIFY_MODEL", "gpt-5@openai"),
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -237,6 +247,8 @@ async def test_max_steps_graceful_termination(monkeypatch):
     cancel_flag = {}
     client = unify.AsyncUnify(
         os.getenv("UNIFY_MODEL", "gpt-5@openai"),
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -272,6 +284,8 @@ def new_client() -> unify.AsyncUnify:
     """
     return unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

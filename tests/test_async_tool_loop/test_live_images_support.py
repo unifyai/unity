@@ -76,6 +76,8 @@ async def test_live_images_helpers_exposed_with_alignment_description(
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -127,6 +129,8 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -171,6 +175,8 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -245,6 +251,8 @@ async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

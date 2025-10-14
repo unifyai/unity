@@ -109,6 +109,8 @@ async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-def
 def client():
     return unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

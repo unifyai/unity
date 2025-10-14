@@ -31,6 +31,8 @@ async def test_structured_output_response_format() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -86,6 +88,8 @@ async def test_no_additional_formatting_roundtrip() -> None:  # noqa: D401
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

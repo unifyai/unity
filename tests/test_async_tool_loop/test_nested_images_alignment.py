@@ -59,6 +59,8 @@ async def test_align_images_for_helper_builds_arg_scoped_mapping() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -120,6 +122,8 @@ async def test_inner_tool_receives_and_resolves_arg_scoped_images() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -171,6 +175,8 @@ async def test_invalid_arg_or_span_entries_are_dropped() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -220,6 +226,8 @@ async def test_no_implicit_images_pass_when_omitted() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -266,6 +274,8 @@ async def test_images_value_may_be_handle_objects() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

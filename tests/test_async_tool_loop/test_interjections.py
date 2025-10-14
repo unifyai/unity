@@ -65,6 +65,8 @@ def new_client() -> unify.AsyncUnify:
     """
     return unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

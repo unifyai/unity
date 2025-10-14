@@ -63,6 +63,8 @@ async def test_guard_triggers_early_stop_and_returns_early_response(monkeypatch)
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -118,6 +120,8 @@ async def test_guard_allows_normal_completion_when_no_mutation(monkeypatch):
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

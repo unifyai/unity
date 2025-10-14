@@ -98,6 +98,8 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 def client():
     return unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
