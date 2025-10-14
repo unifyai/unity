@@ -42,7 +42,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         self,
         event_broker: redis.Redis,
         conversation_id: str,
-        contact_id: str,
+        contact_id: int,
         *,
         transcript_manager: TranscriptManager | None = None,
     ):
