@@ -704,24 +704,16 @@ class ContactManager(BaseContactManager):
             columns=self._list_columns(),
             include_activity=include_activity,
         )
-        # If live images are present, append concise vision guidance so the model
-        # remembers how to use the dynamic helpers and arg-scoped mappings.
-        if images:
-            _ask_prompt = (
-                _ask_prompt
-                + "\n\nVision inputs\n-------------\n"
-                + "Live images have been provided with the user message. You may use:"
-                + "\n- `live_images_overview()` to see aligned spans and captions"
-                + "\n- `ask_image(image_id, question, images=None)` to query an image (optionally appending images with source-scoped keys like `this[:]`)"
-                + "\n- `attach_image_raw(image_id, note=None)` to attach an image as chat vision context"
-                + "\n- `align_images_for(args={...}, hints=[{ 'arg': 'question', 'substring': '...', 'image_id': 42 }])` to compute arg-scoped mappings"
-                + "\nWhen calling inner tools that accept an `images` field, pass a mapping such as { 'question[10:23]': 42 }."
-            )
         client.set_system_message(_ask_prompt)
 
         use_semantic_cache = is_semantic_cache_enabled()
-        # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-        tool_policy_fn = None if use_semantic_cache else self._default_ask_tool_policy
+        if use_semantic_cache:
+            # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
+            tool_policy_fn = None
+        elif images:
+            tool_policy_fn = self._ask_tool_policy_with_images
+        else:
+            tool_policy_fn = self._default_ask_tool_policy
 
         handle = start_async_tool_loop(
             client,
@@ -817,17 +809,6 @@ class ContactManager(BaseContactManager):
             columns=self._list_columns(),
             include_activity=include_activity,
         )
-        if images:
-            _upd_prompt = (
-                _upd_prompt
-                + "\n\nVision inputs\n-------------\n"
-                + "Live images have been provided with the user message. You may use:"
-                + "\n- `live_images_overview()` to see aligned spans and captions"
-                + "\n- `ask_image(image_id, question, images=None)` to query an image (optionally appending images with source-scoped keys)"
-                + "\n- `attach_image_raw(image_id, note=None)` to attach an image as chat vision context"
-                + "\n- `align_images_for(args={...}, hints=[{ 'arg': 'question', 'substring': '...', 'image_id': 42 }])` to compute arg-scoped mappings"
-                + "\nWhen calling inner tools that accept an `images` field, pass a mapping such as { 'question[10:23]': 42 }."
-            )
         client.set_system_message(_upd_prompt)
         handle = start_async_tool_loop(
             client,
@@ -1876,6 +1857,26 @@ class ContactManager(BaseContactManager):
         """Require ask on the first step; auto thereafter."""
         if step_index < 1 and "ask" in current_tools:
             return ("required", {"ask": current_tools["ask"]})
+        return ("auto", current_tools)
+
+    @staticmethod
+    def _ask_tool_policy_with_images(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """On step 0, require one of search_contacts/ask_image/attach_image_raw; auto thereafter.
+
+        This ensures the model begins by either running a semantic query, asking
+        a provided image a question, or attaching image context; subsequent steps
+        can proceed freely.
+        """
+        if step_index < 1:
+            allowed_first_turn: Dict[str, Any] = {}
+            for name in ("search_contacts", "ask_image", "attach_image_raw"):
+                if name in current_tools:
+                    allowed_first_turn[name] = current_tools[name]
+            if allowed_first_turn:
+                return ("required", allowed_first_turn)
         return ("auto", current_tools)
 
     @staticmethod
