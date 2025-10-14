@@ -44,6 +44,7 @@ class ManagersWorker:
 
         # State flags
         self._initialized = False
+        self._event_counter = 0
         self._init_lock = asyncio.Lock()
         self._stop_event = threading.Event()
 
@@ -179,6 +180,8 @@ class ManagersWorker:
 
     async def _publish_bus_event(self, event: Event) -> None:
         """Publish an event to the EventBus."""
+        self._event_counter += 1
+        print(f"[ManagersWorker] Event counter: {self._event_counter}")
         while not self._initialized:
             await asyncio.sleep(1)
             print("[ManagersWorker] Not initialized yet, cannot publish bus event")
@@ -188,6 +191,9 @@ class ManagersWorker:
         bus_event.payload.pop("message_id", None)
         print("Publishing bus event", bus_event)
         await EVENT_BUS.publish(bus_event)
+        if self._event_counter % 50 == 0:
+            print("[ManagersWorker] Updating contacts after 50 events")
+            await self._get_contacts()
 
     async def _log_message(self, event: LogMessageInput) -> None:
         """Log a message via TranscriptManager."""
