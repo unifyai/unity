@@ -304,17 +304,17 @@ async def async_tool_loop_inner(
                     prefix="⬇️",
                 )
             logger.info(f"System Message: {client.system_message}\n", prefix="📋")
-        logger.info(f"User Message: {message}\n", prefix="🧑‍💻")
-        # Log any images aligned to the initial user message
+        # Combine user message + any aligned images into a single log entry
         try:
+            combined_lines = [f"User Message: {message}"]
             if images:
                 for _iid, _span, _substr in get_source_log_entries("user_message"):
-                    logger.info(
-                        f"Image id={_iid}, span={_span}, substring={_substr!r}",
-                        prefix="🖼️",
+                    combined_lines.append(
+                        f"🖼️ Image id={_iid}, span={_span}, substring={_substr!r}",
                     )
+            logger.info("\n".join(combined_lines) + "\n", prefix="🧑‍💻")
         except Exception:
-            pass
+            logger.info(f"User Message: {message}\n", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
