@@ -375,3 +375,64 @@ async def test_get_dummy_tool_result_status():
 
         if tool_call["name"] == "say_goodbye":
             assert tool_call["result_status"] == "cached"
+
+
+@pytest.mark.asyncio
+async def test_get_dummy_tool_parse_arguments():
+    @read_only
+    def echo(msgs):
+        return msgs
+
+    tools = normalise_tools({"echo": echo})
+
+    res = SemanticCacheResult(
+        original_user_message="",
+        closest_user_message="",
+        tool_trajectory=[
+            {
+                "index": 0,
+                "name": "echo",
+                "arguments": json.dumps({"msgs": ["Hello", "World"]}),
+                "result": "",
+            },
+        ],
+    )
+
+    res = await sc.get_dummy_tool(res, tools)
+    trajectory = json.loads(res[1]["content"])
+    assert len(trajectory) == 1
+    assert trajectory[0]["name"] == "echo"
+    assert trajectory[0]["arguments"] == json.dumps({"msgs": ["Hello", "World"]})
+    assert trajectory[0]["result"] == ["Hello", "World"]
+    assert trajectory[0]["result_status"] == "new"
+
+
+@pytest.mark.asyncio
+async def test_get_dummy_tool_parse_arguments_cached():
+    @read_only
+    def echo():
+        pass
+
+    tools = normalise_tools({"echo": echo})
+
+    res = SemanticCacheResult(
+        original_user_message="",
+        closest_user_message="",
+        tool_trajectory=[
+            {
+                "index": 0,
+                "name": "echo",
+                "arguments": json.dumps(
+                    {"msgs": "Invalid"},
+                ),  # Simulate out-dated arguments
+                "result": "Hello!",
+            },
+        ],
+    )
+
+    res = await sc.get_dummy_tool(res, tools)
+    trajectory = json.loads(res[1]["content"])
+    assert len(trajectory) == 1
+    assert trajectory[0]["name"] == "echo"
+    assert trajectory[0]["result"] == "Hello!"
+    assert trajectory[0]["result_status"] == "cached"
