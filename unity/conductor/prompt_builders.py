@@ -103,6 +103,11 @@ def build_ask_prompt(
         "Issue a second WebSearcher.ask only if the first response clearly indicates missing coverage or ambiguity that requires a new targeted fetch.",
         "Use multiple WebSearcher.ask calls in parallel only when the user asks genuinely unrelated sub-questions; otherwise keep to one call and let WebSearcher fan-out internally.",
         "If refinement is needed, prefer a single follow-up via clarification rather than issuing multiple WebSearcher.ask calls in parallel.",
+        "\nConversationManagerHandle Tools",
+        "-----------------------",
+        "The ConversationManagerHandle is always active. You can read from and steer the live conversation.",
+        f"- Use `{cm_transcript_fname}` to get a complete snapshot of the recent conversation.",
+        f"- Use `{cm_ask_fname}` to ask the user a direct question through the active conversation channel (e.g., email, SMS).",
     ]
 
     # Mention Actor availability (read-only surface cannot invoke it)
@@ -193,6 +198,12 @@ def build_request_prompt(
     task_execute_fname = _tool_name(tools, "taskscheduler_execute")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
     actor_act_fname = _tool_name(tools, "actor_act")
+    cm_ask_fname = _tool_name(tools, "conversationmanagerhandle_ask")
+    cm_interject_fname = _tool_name(tools, "conversationmanagerhandle_interject")
+    cm_transcript_fname = _tool_name(
+        tools,
+        "conversationmanagerhandle_get_full_transcript",
+    )
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
@@ -206,12 +217,15 @@ def build_request_prompt(
             "KnowledgeManager.ask": knowledge_ask_fname,
             "GuidanceManager.ask": guidance_ask_fname,
             "TaskScheduler.ask": task_ask_fname,
+            "ConversationManagerHandle.ask": cm_ask_fname,
+            "ConversationManagerHandle.get_full_transcript": cm_transcript_fname,
             # Write / action helpers
             "ContactManager.update": contact_update_fname,
             "KnowledgeManager.update": knowledge_update_fname,
             "GuidanceManager.update": guidance_update_fname,
             "TaskScheduler.update": task_update_fname,
             "TaskScheduler.execute": task_execute_fname,
+            "ConversationManagerHandle.interject": cm_interject_fname,
         },
         tools,
     )
@@ -251,6 +265,23 @@ def build_request_prompt(
         f"- If the user says 'run', 'start', 'execute', 'begin', or 'launch' a task, you MUST call `{task_execute_fname}` exactly once.",
         f"- Do NOT use `{task_update_fname}` as a substitute for starting a task. Only use `{task_update_fname}` to create a missing task or to adjust fields prior to execution, then call `{task_execute_fname}`.",
         f"- If a start time is mentioned (e.g., 'today at 16:00'), still route through `{task_execute_fname}` and shape queues/order as needed before calling it; do not replace execution with an update-only flow.",
+        "\nSteering the Live Conversation",
+        "----------------------------------------------",
+        "In addition to your other tools, you have a direct connection to the live, ongoing conversation with the user, managed by a front-line assistant.",
+        "Your role is to act as a 'bigger brain', ensuring the user gets accurate and efficient help by monitoring this conversation and steering it when necessary.",
+        "**Your Decision Framework: When to Ask vs. When to Interject**",
+        f"First, always use `{cm_transcript_fname}()` to get a snapshot of the conversation. After reviewing the transcript, choose your action:",
+        f"**1. Use `{cm_ask_fname}` to Delegate a Question:**",
+        "   - **When:** The conversation is stalled because the user's request is **ambiguous**, and the front-line assistant needs more information to proceed.",
+        "   - **Your Action:** Formulate the *best possible clarifying question* and use `ask` to have the front-line assistant deliver it.",
+        "   - **Example:** The transcript shows the user wants to 'schedule a service.' You should call:",
+        f"     `{cm_ask_fname}(question='Of course. Are you trying to schedule a maintenance appointment, a delivery, or something else?')`",
+        f"**2. Use `{cm_interject_fname}` to Provide a Correction:**",
+        "   - **When:** The front-line assistant has provided **factually incorrect** information.",
+        "   - **Your Action:** First, use your own powerful tools (`TaskScheduler_ask`, `ContactManager_ask`) to find the ground truth. Then, use `interject` to provide the correct answer directly to the user.",
+        "   - **Example:** The assistant tells the user a task is 'not found', but you find it is 'in progress'. You should call:",
+        f"     `{cm_interject_fname}(message='I found that task for you. The \\'Alpha Project kickoff\\' is currently in progress.')`",
+        "**Core Principle:** Your intervention should be seamless. The user should perceive a single, helpful assistant.",
     ]
 
     if actor_act_fname:
