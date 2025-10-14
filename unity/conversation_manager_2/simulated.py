@@ -22,7 +22,7 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
     def __init__(
         self,
         assistant_id: str,
-        contact_id: str,
+        contact_id: int,
         *,
         description: str = "A simulated conversation between an AI assistant and a user.",
         simulation_guidance: Optional[str] = None,
