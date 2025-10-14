@@ -29,6 +29,7 @@ from .images import (
     build_live_image_tools,
     refresh_overview_doc_if_present,
     append_source_scoped_images_with_text,
+    get_source_log_entries,
 )
 from ..llm_helpers import method_to_schema, _dumps
 from .loop_config import (
@@ -304,6 +305,16 @@ async def async_tool_loop_inner(
                 )
             logger.info(f"System Message: {client.system_message}\n", prefix="📋")
         logger.info(f"User Message: {message}\n", prefix="🧑‍💻")
+        # Log any images aligned to the initial user message
+        try:
+            if images:
+                for _iid, _span, _substr in get_source_log_entries("user_message"):
+                    logger.info(
+                        f"Image id={_iid}, span={_span}, substring={_substr!r}",
+                        prefix="🖼️",
+                    )
+        except Exception:
+            pass
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -551,11 +562,20 @@ async def async_tool_loop_inner(
 
         # Append any images sent alongside the clarification request
         with suppress(Exception):
-            append_source_scoped_images_with_text(
+            _src_label = append_source_scoped_images_with_text(
                 images_from_child,
                 "clar_request",
                 question_text,
             )
+            try:
+                if _src_label:
+                    for _iid, _span, _substr in get_source_log_entries(_src_label):
+                        logger.info(
+                            f"Image id={_iid}, span={_span}, substring={_substr!r}",
+                            prefix="🖼️",
+                        )
+            except Exception:
+                pass
 
     async def _handle_notification(src_task: asyncio.Task, payload: Any) -> None:
         call_id = tools_data.info[src_task].call_id
@@ -610,11 +630,20 @@ async def async_tool_loop_inner(
                 )
             except Exception:
                 base_text = ""
-            append_source_scoped_images_with_text(
+            _src_label = append_source_scoped_images_with_text(
                 images_from_child,
                 "notification",
                 base_text,
             )
+            try:
+                if _src_label:
+                    for _iid, _span, _substr in get_source_log_entries(_src_label):
+                        logger.info(
+                            f"Image id={_iid}, span={_span}, substring={_substr!r}",
+                            prefix="🖼️",
+                        )
+            except Exception:
+                pass
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
@@ -844,11 +873,22 @@ async def async_tool_loop_inner(
 
                 # If images accompany this interjection, accept source-scoped keys and append
                 with suppress(Exception):
-                    append_source_scoped_images_with_text(
+                    _src_label = append_source_scoped_images_with_text(
                         _incoming_images,
                         "interjection",
                         _msg_text,
                     )
+                    try:
+                        if _src_label:
+                            for _iid, _span, _substr in get_source_log_entries(
+                                _src_label,
+                            ):
+                                logger.info(
+                                    f"Image id={_iid}, span={_span}, substring={_substr!r}",
+                                    prefix="🖼️",
+                                )
+                    except Exception:
+                        pass
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -1505,11 +1545,22 @@ async def async_tool_loop_inner(
                                 reason_txt = payload.get("reason")
                             except Exception:
                                 reason_txt = ""
-                            append_source_scoped_images_with_text(
+                            _src_label = append_source_scoped_images_with_text(
                                 payload.get("images"),
                                 "stop",
                                 reason_txt or "",
                             )
+                            try:
+                                if _src_label:
+                                    for _iid, _span, _substr in get_source_log_entries(
+                                        _src_label,
+                                    ):
+                                        logger.info(
+                                            f"Image id={_iid}, span={_span}, substring={_substr!r}",
+                                            prefix="🖼️",
+                                        )
+                            except Exception:
+                                pass
 
                         tool_msg = create_tool_call_message(
                             name=pretty_name,
@@ -1666,11 +1717,22 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the clarification answer
                         with suppress(Exception):
-                            append_source_scoped_images_with_text(
+                            _src_label = append_source_scoped_images_with_text(
                                 args.get("images") if isinstance(args, dict) else None,
                                 "clar_answer",
                                 ans,
                             )
+                            try:
+                                if _src_label:
+                                    for _iid, _span, _substr in get_source_log_entries(
+                                        _src_label,
+                                    ):
+                                        logger.info(
+                                            f"Image id={_iid}, span={_span}, substring={_substr!r}",
+                                            prefix="🖼️",
+                                        )
+                            except Exception:
+                                pass
                         # Always publish a tool reply acknowledging the clarify helper
                         tool_reply_msg = create_tool_call_message(
                             name=name,
@@ -1740,11 +1802,22 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the interjection helper
                         with suppress(Exception):
-                            append_source_scoped_images_with_text(
+                            _src_label = append_source_scoped_images_with_text(
                                 payload.get("images"),
                                 "interjection",
                                 new_text,
                             )
+                            try:
+                                if _src_label:
+                                    for _iid, _span, _substr in get_source_log_entries(
+                                        _src_label,
+                                    ):
+                                        logger.info(
+                                            f"Image id={_iid}, span={_span}, substring={_substr!r}",
+                                            prefix="🖼️",
+                                        )
+                            except Exception:
+                                pass
 
                         # ― emit a tool message so the chat log stays tidy ---
                         tool_msg = create_tool_call_message(
