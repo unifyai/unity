@@ -42,6 +42,8 @@ async def test_interject_dynamic_helper_appends_images() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -90,6 +92,8 @@ async def test_stop_dynamic_helper_appends_images() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -145,6 +149,8 @@ async def test_clarify_helpers_append_images_for_request_and_answer() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -186,6 +192,8 @@ async def test_notification_payload_appends_images() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -225,6 +233,8 @@ async def test_notification_payload_appends_images() -> None:
 async def test_ask_image_with_images_param_appends_log() -> None:
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -293,6 +303,8 @@ async def test_dynamic_sources_multi_append_overview() -> None:
     # Real LLM client and image setup
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -391,6 +403,8 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
     # Real client – drive the model to call ask_image 3 times and produce final colour
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

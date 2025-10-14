@@ -210,6 +210,8 @@ async def test_cond_supports_optional_clarification_channels():
             assert isinstance(q, str) and q.strip()
             client = unify.AsyncUnify(
                 "o4-mini@openai",
+                reasoning_effort="high",
+                service_tier="priority",
                 cache=True,
                 traced=False,
             )

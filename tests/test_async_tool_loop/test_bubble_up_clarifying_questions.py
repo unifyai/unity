@@ -28,6 +28,8 @@ def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
     return unify.AsyncUnify(
         endpoint="gpt-5@openai",
         system_message=system_message,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

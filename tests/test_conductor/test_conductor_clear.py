@@ -4,6 +4,7 @@ import json
 import pytest
 import unify
 import contextlib
+from tests.helpers import SETTINGS
 
 from unity.conductor.simulated import SimulatedConductor
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
@@ -86,7 +87,8 @@ async def test_conductor_clear_requires_confirmation_then_calls_clear_with_targe
             "gpt-5@openai",
             reasoning_effort="high",
             service_tier="priority",
-            cache=True,
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
         )
         client.set_system_message(
             (

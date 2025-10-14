@@ -42,6 +42,8 @@ async def test_basic_event_flow() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     ).set_system_message(
@@ -98,6 +100,8 @@ async def test_interjection_publishes_user_event() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

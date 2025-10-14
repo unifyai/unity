@@ -30,6 +30,8 @@ def new_client() -> unify.AsyncUnify:
     """Utility to get a fresh client with env-controlled caching / tracing."""
     return unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
