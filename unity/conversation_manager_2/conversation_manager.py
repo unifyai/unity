@@ -646,6 +646,20 @@ class ConversationManager:
                 "medium": payload["medium"],
                 **self.state.get_details(),
             }
+
+            # unify_message assumes boss contact, create first on startup to avoid errors
+            if payload["medium"] == "unify_message":
+                self.state.update_or_create_new_contact(
+                    "1",
+                    payload["user_name"].split(" ")[0],
+                    (
+                        payload["user_name"].split(" ")[1]
+                        if len(payload["user_name"].split(" ")) > 1
+                        else ""
+                    ),
+                    email_address=payload["user_email"],
+                )
+
             await self.publish_startup()
             asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
 
