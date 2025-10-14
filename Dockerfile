@@ -102,6 +102,9 @@ RUN apt-get update && apt-get install -y \
     libmanette-0.2-0 \
     && rm -rf /var/lib/apt/lists/*
 
+# Ensure desktop scripts are executable
+RUN chmod +x /app/desktop/desktop.sh /app/desktop/display.sh /app/desktop/device.sh /app/desktop/update_vnc_password.sh /app/desktop/startup.sh /app/entrypoint.sh || true
+
 # Build agent-service
 WORKDIR /app/agent-service
 RUN npm ci

@@ -14,6 +14,7 @@ mkdir -p /root/.vnc
 if [ ! -f /root/.vnc/passwd ]; then
   x11vnc -storepasswd "$(head -c 32 /dev/urandom | base64)" /root/.vnc/passwd
 fi
+chmod 600 /root/.vnc/passwd || true
 
 # Start x11vnc with rfbauth
 x11vnc -display :99 -rfbauth /root/.vnc/passwd -forever -shared -bg -rfbport 5900 \
