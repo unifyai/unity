@@ -159,6 +159,13 @@ class ConversationManagerState:
             case AssistantUpdateEvent() as e:
                 payload = e.to_dict()["payload"]
                 self.set_details(payload)
+                self.update_or_create_new_contact(
+                    contact_id=0,
+                    first_name=payload["assistant_name"],
+                    surname="",
+                    email_address=payload["assistant_email"],
+                    phone_number=payload["assistant_number"],
+                )
 
             case GetBusEventsOutput() as e:
                 # TODO: should also grab the latest messages ~50 messages
@@ -314,7 +321,7 @@ class ConversationManagerState:
                     ),
                 )
             case UnifyMessageRecieved() as e:
-                contact = self.get_contact(contact_id=e.contact)
+                contact = self.get_contact(contact_id=int(e.contact))
                 self.push_message(
                     contact,
                     "unify_message",
@@ -328,7 +335,7 @@ class ConversationManagerState:
                     ),
                 )
             case UnifyMessageSent() as e:
-                contact = self.get_contact(contact_id=e.contact)
+                contact = self.get_contact(contact_id=int(e.contact))
                 self.push_message(
                     contact,
                     "unify_message",
@@ -424,7 +431,8 @@ class ConversationManagerState:
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.build_response_model()
-        os.environ["UNIFY_KEY"] = payload.pop("api_key")
+        if payload.pop("api_key", None):
+            os.environ["UNIFY_KEY"] = payload.pop("api_key")
         os.environ["USER_ID"] = self.user_id
         os.environ["USER_NAME"] = self.user_name
         os.environ["USER_NUMBER"] = self.user_number
@@ -491,7 +499,7 @@ class ConversationManagerState:
     # contacts helpers
     def get_contact(
         self,
-        contact_id: Optional[str] = None,
+        contact_id: Optional[int] = None,
         phone_number: Optional[str] = None,
         email_address: Optional[str] = None,
     ) -> Contact:
@@ -502,9 +510,6 @@ class ConversationManagerState:
             )
         if contact_id:
             contact = self.inverted_contacts_map.get(contact_id)
-            if contact:
-                return contact
-            contact = self.inverted_contacts_map.get(str(contact_id))
             if contact:
                 return contact
 
@@ -519,7 +524,7 @@ class ConversationManagerState:
 
     def create_new_contact(
         self,
-        contact_id: str,
+        contact_id: int,
         first_name: str,
         surname: Optional[str] = None,
         email_address: Optional[str] = None,
@@ -552,7 +557,7 @@ class ConversationManagerState:
 
     def update_or_create_new_contact(
         self,
-        contact_id: str,
+        contact_id: int,
         first_name: str,
         surname: Optional[str] = None,
         email_address: Optional[str] = None,
@@ -565,7 +570,7 @@ class ConversationManagerState:
     ):
         contact = None
         print("curernt contacts", self.inverted_contacts_map)
-        if contact_id != "-1":  # update branch
+        if contact_id != -1:  # update branch
             contact = self.get_contact(
                 contact_id,
                 phone_number,

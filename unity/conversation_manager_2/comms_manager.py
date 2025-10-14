@@ -59,11 +59,11 @@ class CommsManager:
             event = data["event"]
             print(f"Received message from {thread}: {message.data.decode('utf-8')}")
             if thread in ["startup", "assistant_update"]:
+                message.ack()
                 if thread == "startup":
                     global subscription_id, startup_subscription_id
 
                     # acknowledge message and cancel startup subscription
-                    message.ack()
                     while startup_subscription_id not in self.subscribers:
                         time.sleep(0.1)
                     self.subscribers[startup_subscription_id].cancel()
