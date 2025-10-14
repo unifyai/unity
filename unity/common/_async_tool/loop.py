@@ -1368,7 +1368,20 @@ async def async_tool_loop_inner(
 
             if log_steps:
                 with suppress(Exception):
-                    logger.info(f"{json.dumps(msg, indent=4)}\n", prefix="🤖")
+                    # Pretty-print tool_call arguments in assistant messages for readability
+                    from .utils import (
+                        try_parse_json as _try_parse_json,
+                    )  # local import to avoid cycles
+
+                    _msg_for_logging = copy.deepcopy(msg)
+                    _tcs = _msg_for_logging.get("tool_calls") or []
+                    for _tc in _tcs:
+                        _fn = _tc.get("function", {})
+                        _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
+                    logger.info(
+                        f"{json.dumps(_msg_for_logging, indent=4)}\n",
+                        prefix="🤖",
+                    )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
             if timer.has_exceeded_time():
@@ -1893,6 +1906,8 @@ async def async_tool_loop_inner(
                             coro = fn(**merged_kwargs)
                         else:
                             coro = asyncio.to_thread(fn, **merged_kwargs)
+
+                        # (Argument pretty-printing now handled in assistant message logs only)
 
                         call_dict = {
                             "id": call["id"],

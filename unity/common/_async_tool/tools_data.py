@@ -288,6 +288,8 @@ class ToolsData:
         except Exception:
             pass
 
+        # (Argument pretty-printing now handled in assistant message logs only)
+
         # Build coroutine
         if asyncio.iscoroutinefunction(fn):
             coro = fn(**merged_kwargs)
@@ -674,6 +676,14 @@ class ToolsData:
                     for item in tool_msg_for_logging["content"]
                     if item.get("type") != "image_url"
                 ]
+            # If the content is a JSON string (from tool result), parse it so indenting applies
+            try:
+                from .utils import try_parse_json as _try_parse_json  # local import
+
+                _c = tool_msg_for_logging.get("content")
+                tool_msg_for_logging["content"] = _try_parse_json(_c)
+            except Exception:
+                pass
             self._logger.info(
                 f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
                 prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
