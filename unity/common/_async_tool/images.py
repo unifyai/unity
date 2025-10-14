@@ -715,3 +715,34 @@ def refresh_overview_doc_if_present(normalized_tools: dict) -> None:
         fn.__doc__ = base_doc + (sep + "\n".join(prior_lines) if prior_lines else "")
     except Exception:
         return
+
+
+# ── Lightweight helpers for logging image attachments ───────────────────────
+def get_source_log_entries(source_label: str) -> list[tuple[int, str, str]]:
+    """
+    Return a list of (image_id, span_key, substring) for images recorded under
+    the given source label in LIVE_IMAGES_LOG.
+
+    This is intentionally lightweight: it reads the existing per-loop logs and
+    derives substrings using the already-recorded base text for that source.
+    """
+    entries: list[tuple[int, str, str]] = []
+    try:
+        base_text_map = LIVE_IMAGES_SOURCE_TEXTS.get() or {}
+        base_text = str(base_text_map.get(source_label, ""))
+        for rec in LIVE_IMAGES_LOG.get() or []:
+            try:
+                src, iid_s, span_key = rec.split(":", 2)
+                if src != source_label:
+                    continue
+                substring = ""
+                try:
+                    substring = substring_from_span(base_text, span_key)
+                except Exception:
+                    substring = ""
+                entries.append((int(iid_s), span_key, substring))
+            except Exception:
+                continue
+    except Exception:
+        return []
+    return entries
