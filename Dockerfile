@@ -127,7 +127,7 @@ ENV MKL_NUM_THREADS=1
 ENV TOKENIZERS_PARALLELISM=false
 
 # Expose the ports that the applications use
-EXPOSE 8000 6379
+EXPOSE 8000 6379 6080
 
 # Use Tini as init system to handle signals properly
 ENTRYPOINT ["/usr/bin/tini", "--"]
