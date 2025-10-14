@@ -1,12 +1,14 @@
 import unify
 import asyncio
 import pytest
+import random
+import json
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common._async_tool import semantic_cache as sc
 from tests.helpers import _handle_project
-from unity.common._async_tool.semantic_cache import _Config
-from unity.common.tool_spec import read_only
+from unity.common._async_tool.semantic_cache import _Config, SemanticCacheResult
+from unity.common.tool_spec import read_only, normalise_tools
 
 
 @pytest.fixture(autouse=True)
@@ -287,8 +289,8 @@ async def test_prune_tools():
 
     assert len(cleaned) == 1, f"Expected 1 tool call, got {len(cleaned)}"
     assert (
-        cleaned[0]["request"]["function"]["name"] == "find_contact"
-    ), f"Expected find_contact, got {cleaned[0]['request']['function']['name']}"
+        cleaned[0]["name"] == "find_contact"
+    ), f"Expected find_contact, got {cleaned[0]['name']}"
 
 
 @pytest.mark.asyncio
@@ -322,3 +324,54 @@ async def test_tool_call_signature_updated():
     )
     res = await handle.result()
     assert "Hello from Unify!" in res
+
+
+@pytest.mark.asyncio
+async def test_get_dummy_tool_result_status():
+    @read_only
+    def say_hello():
+        return f"Hello!"
+
+    def say_goodbye():
+        return f"Goodbye!"
+
+    tools = {
+        "say_hello": say_hello,
+        "say_goodbye": say_goodbye,
+    }
+
+    tools = normalise_tools(tools)
+
+    def _create_tool_trajectory(n):
+        ret = []
+
+        for i in range(n):
+            name = random.choice(list(tools.keys()))
+            ret.append(
+                {
+                    "index": i,
+                    "name": name,
+                    "arguments": "{}",
+                    "result": tools[name].fn(),
+                },
+            )
+
+        return ret
+
+    number_of_calls = 10
+
+    res = SemanticCacheResult(
+        original_user_message="",
+        closest_user_message="",
+        tool_trajectory=_create_tool_trajectory(number_of_calls),
+    )
+
+    semantic_closest_match = await sc.get_dummy_tool(res, tools)
+    trajectory = json.loads(semantic_closest_match[1]["content"])
+    assert len(trajectory) == number_of_calls
+    for tool_call in trajectory:
+        if tool_call["name"] == "say_hello":
+            assert tool_call["result_status"] == "new"
+
+        if tool_call["name"] == "say_goodbye":
+            assert tool_call["result_status"] == "cached"
