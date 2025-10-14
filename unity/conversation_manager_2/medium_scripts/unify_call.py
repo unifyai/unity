@@ -168,6 +168,7 @@ async def entrypoint(ctx: agents.JobContext):
         ),
     )
 
+    # Worker has started and connected – publish UnifyCallStarted
     await event_broker.publish(
         "app:comms:unify_call_started",
         UnifyCallStarted(contact=contact_id).to_json(),
@@ -225,26 +226,30 @@ if __name__ == "__main__":
     voice_provider = "cartesia"
     voice_id = ""
     contact_id = 1
+    agent_name = f"unity_unify_call_{contact_id}"
 
-if len(sys.argv) > 1:
-    # optional overrides: voice_provider, voice_id (contact is fixed to 1)
-    if len(sys.argv) > 1:
-        voice_provider = sys.argv[1]
-    if len(sys.argv) > 2:
-        voice_id = sys.argv[2]
+    # Parse optional args passed after the "dev" subcommand
+    # Example invocation from run_script:
+    #   unify_call.py dev <voice_provider> <voice_id> <agent_name>
+    if len(sys.argv) > 1 and sys.argv[1] == "dev":
+        if len(sys.argv) > 2:
+            voice_provider = sys.argv[2]
+        if len(sys.argv) > 3:
+            voice_id = sys.argv[3]
+        if len(sys.argv) > 4:
+            agent_name = sys.argv[4]
+        # Trim argv so livekit agents CLI doesn't see extra args
+        sys.argv = sys.argv[:2]
 
     os.environ["UNIFY_CONTACT_ID"] = str(contact_id)
     os.environ["VOICE_PROVIDER"] = voice_provider
     if voice_id:
         os.environ["VOICE_ID"] = voice_id
 
-    agent_name = f"unity_unify_call_{contact_id}"
-
     # dispatch agent
-    if True:
-        print("[unify_call] Dispatching agent")
-        dispatch_agent(agent_name)
-        print("[unify_call] Agent dispatched")
+    print("[unify_call] Dispatching agent")
+    dispatch_agent(agent_name)
+    print("[unify_call] Agent dispatched")
 
     agents.cli.run_app(
         agents.WorkerOptions(

@@ -123,6 +123,7 @@ def build_dynamic_response_models(
     return {
         "call": DynamicResponsePhone,
         "gmeet": DynamicResponsePhone,
+        "unify_call": DynamicResponsePhone,
         "text": DynamicResponse,
     }
 

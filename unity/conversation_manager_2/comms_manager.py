@@ -273,8 +273,16 @@ class CommsManager:
                     # unify_call: event without a kind means "started"
                     # always addresses the boss contact (id=1)
                     contact_id = 1
-                    payload = UnifyCallStarted(contact=contact_id)
-                    topic = "app:comms:unify_call_started"
+                    agent_name = (
+                        event.get("agent_name")
+                        or event.get("room")
+                        or event.get("room_name")
+                    )
+                    payload = UnifyCallReceived(
+                        contact=contact_id,
+                        agent_name=agent_name,
+                    )
+                    topic = "app:comms:unify_call_received"
 
                     if payload and topic:
                         asyncio.run_coroutine_threadsafe(

@@ -16,7 +16,7 @@ def dispatch_agent(agent_name: str):
             headers=admin_headers,
             json={"agent_name": agent_name},
             timeout=1,
-            raise_for_status=False,
+            # raise_for_status=False,
         )
         if response.status_code != 200:
             print(f"Failed to dispatch agent. {response.text}")

@@ -529,7 +529,15 @@ class ConversationManager:
             **self.state.email_contacts_map,
             **self.state.phone_contacts_map,
         }
-        if isinstance(event, (UnifyMessageSent, UnifyMessageRecieved)):
+        if isinstance(
+            event,
+            (
+                UnifyMessageSent,
+                UnifyMessageRecieved,
+                UnifyCallUtterance,
+                AssistantUnifyCallUtterance,
+            ),
+        ):
             contact_id = 1
         elif event.contact in contacts_map:
             contact_id = contacts_map[event.contact].contact_id
@@ -639,25 +647,28 @@ class ConversationManager:
                     str(False),
                 )
 
-        elif isinstance(event, UnifyCallStarted):
-            # start the unify_call worker and then run LLM
-            if self.scheduled_response and not self.scheduled_response.done():
-                self.scheduled_response.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self.scheduled_response
-            if self.current_response and not self.current_response.done():
-                await self.current_response
-
-            target_path = (
-                Path(__file__).parent.resolve() / "medium_scripts" / "unify_call.py"
-            )
-            self.call_proc = run_script(
-                str(target_path),
-                "dev",
-                self.state.voice_provider,
-                self.state.voice_id if self.state.voice_id else "",
-            )
-            await self.schedule_llm_run(0, cancel_running=True)
+        elif isinstance(event, UnifyCallReceived):
+            # start worker once, then wait for UnifyCallStarted to kick LLM
+            if not getattr(self, "call_proc", None):
+                target_path = (
+                    Path(__file__).parent.resolve() / "medium_scripts" / "unify_call.py"
+                )
+                agent_name = (
+                    event.agent_name
+                    if isinstance(event, UnifyCallReceived) and event.agent_name
+                    else (
+                        f"unity_{self.state.assistant_id}_web"
+                        if self.state.assistant_id
+                        else "unity_unify_call_1"
+                    )
+                )
+                self.call_proc = run_script(
+                    str(target_path),
+                    "dev",
+                    self.state.voice_provider,
+                    self.state.voice_id if self.state.voice_id else "",
+                    agent_name,
+                )
 
         elif isinstance(event, UnifyCallEnded):
             self.state.mode = "text"
@@ -675,6 +686,10 @@ class ConversationManager:
                 except Exception as e:
                     print(f"Error terminating unify_call process: {e}")
                 self.call_proc = None
+            await self.schedule_llm_run(0, cancel_running=True)
+
+        elif isinstance(event, UnifyCallStarted):
+            # Agent connected, begin LLM
             await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, UnifyCallUtterance):

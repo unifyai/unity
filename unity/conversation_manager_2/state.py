@@ -333,6 +333,10 @@ class ConversationManagerState:
                     ),
                 )
 
+            case UnifyCallReceived() as e:
+                # mark call as active (no additional UI thread message)
+                self.mode = "unify_call"
+
             case AssistantUnifyCallUtterance() as e:
                 contact = self.get_contact(contact_id=1)
                 self.push_message(

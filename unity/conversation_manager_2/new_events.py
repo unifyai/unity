@@ -341,6 +341,14 @@ class UnifyCallStarted(Event):
 
 
 @dataclass
+class UnifyCallReceived(Event):
+    """Frontend/worker confirmed agent connected to room; begin LLM."""
+
+    contact: int
+    agent_name: str | None = None
+
+
+@dataclass
 class UnifyCallUtterance(Event):
     """User utterance during a browser-based voice call session."""
 

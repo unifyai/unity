@@ -45,6 +45,10 @@ async def main(local: bool = False, project_name: str = "Assistants"):
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
+    # Ensure Unify traced logging is disabled outside the main thread
+    # (avoids ValueError: signal only works in main thread)
+    os.environ.setdefault("UNIFY_TRACED", "false")
+
     stop = asyncio.Event()
 
     # passes events around, uses redis
@@ -55,6 +59,8 @@ async def main(local: bool = False, project_name: str = "Assistants"):
 
     # Run ManagersWorker on a background thread via asyncio.to_thread
     def run_managers_worker():
+        # Also enforce UNIFY_TRACED=false in the worker thread
+        os.environ["UNIFY_TRACED"] = "false"
         # Create a fresh Redis client bound to the thread's event loop
         managers_worker._event_broker = create_event_broker()
         asyncio.run(managers_worker.wait_for_events())
