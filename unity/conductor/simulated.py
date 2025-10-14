@@ -25,6 +25,8 @@ from ..skill_manager.simulated import SimulatedSkillManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
 from ..web_searcher.simulated import SimulatedWebSearcher
 from ..actor.simulated import SimulatedActor
+from ..conversation_manager_2.base import BaseConversationManagerHandle
+from ..conversation_manager_2.simulated import SimulatedConversationManagerHandle
 
 __all__ = [
     "SimulatedConductor",
@@ -57,6 +59,7 @@ class SimulatedConductor(Conductor):
         task_scheduler: Optional[BaseTaskScheduler] = None,
         web_searcher: Optional[BaseWebSearcher] = None,
         actor: Optional[BaseActor] = None,
+        conversation_manager: Optional[BaseConversationManagerHandle] = None,
     ) -> None:
         # Instantiate simulated components unless caller provided overrides
         _actor = (
@@ -151,6 +154,16 @@ class SimulatedConductor(Conductor):
             )
         )
 
+        _conversation_manager = (
+            conversation_manager
+            if conversation_manager is not None
+            else SimulatedConversationManagerHandle(
+                assistant_id="simulated-assistant",
+                contact_id="simulated-contact",
+                description=description,
+                simulation_guidance=simulation_guidance,
+            )
+        )
         # Delegate to the real Conductor with our simulated defaults
         super().__init__(
             description=description,
@@ -166,4 +179,5 @@ class SimulatedConductor(Conductor):
             task_scheduler=_task_scheduler,
             web_searcher=_web_searcher,
             actor=_actor,
+            conversation_manager=_conversation_manager,
         )

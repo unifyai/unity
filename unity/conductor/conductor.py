@@ -13,6 +13,9 @@ import inspect
 
 from typing import Callable, Dict
 
+from ..conversation_manager_2.base import BaseConversationManagerHandle
+from ..conversation_manager_2.handle import ConversationManagerHandle
+from ..conversation_manager_2.event_broker import get_event_broker
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     ToolSpec,
@@ -76,6 +79,7 @@ class Conductor:
         task_scheduler: Optional[BaseTaskScheduler] = None,
         web_searcher: Optional[BaseWebSearcher] = None,
         actor: Optional[BaseActor] = None,
+        conversation_manager: Optional[BaseConversationManagerHandle] = None,
     ) -> None:
         """
         Args:
@@ -144,6 +148,16 @@ class Conductor:
 
         self._web_searcher = web_searcher if web_searcher is not None else WebSearcher()
 
+        self._cm_handle = (
+            conversation_manager
+            if conversation_manager is not None
+            else ConversationManagerHandle(
+                event_broker=get_event_broker(),
+                conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
+                contact_id=os.getenv("CONTACT_ID", "1"),
+            )
+        )
+
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore
 
@@ -162,6 +176,9 @@ class Conductor:
             self._skill_manager.ask,
             self._task_scheduler.ask,
             self._web_searcher.ask,
+            self._cm_handle.ask,
+            self._cm_handle.interject,
+            self._cm_handle.get_full_transcript,
             include_class_name=True,
         )
 
