@@ -723,7 +723,7 @@ class FunctionManager(BaseFunctionManager):
                 "content": ent.get("content"),
             }
             if include_images:
-                rec["images"] = ent.get("images") or {}
+                rec["images"] = ent.get("images") or []
             out.append(rec)
         return out
 
@@ -740,9 +740,33 @@ class FunctionManager(BaseFunctionManager):
         )
         image_ids: List[int] = []
         for g in guids:
-            for _, img_id in (g.get("images") or {}).items():
+            imgs = g.get("images") or []
+            # Support either raw list (ImageRefs) or a dict with root
+            if isinstance(imgs, dict) and "root" in imgs:
+                imgs = imgs.get("root") or []
+            if not isinstance(imgs, list):
+                continue
+            for ref in imgs:
                 try:
-                    image_ids.append(int(img_id))
+                    if isinstance(ref, dict):
+                        # AnnotatedImageRef shape: {"raw_image_ref": {"image_id": X}, "annotation": ...}
+                        if "raw_image_ref" in ref and isinstance(
+                            ref["raw_image_ref"],
+                            dict,
+                        ):
+                            iid = int(ref["raw_image_ref"].get("image_id"))
+                            image_ids.append(iid)
+                        elif "image_id" in ref:
+                            image_ids.append(int(ref.get("image_id")))
+                    else:
+                        # If objects leaked through, try attribute access
+                        iid = getattr(
+                            getattr(ref, "raw_image_ref", ref),
+                            "image_id",
+                            None,
+                        )
+                        if iid is not None:
+                            image_ids.append(int(iid))
                 except Exception:
                     continue
         # Preserve order while de-duplicating
