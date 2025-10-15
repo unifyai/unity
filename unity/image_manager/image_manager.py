@@ -14,11 +14,6 @@ from google.oauth2 import service_account
 from google.cloud.exceptions import NotFound
 
 
-from ..common.async_tool_loop import (
-    start_async_tool_loop,
-    SteerableToolHandle,
-    TOOL_LOOP_LINEAGE,
-)
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from ..common.semantic_search import backfill_rows, fetch_top_k_by_references
@@ -128,20 +123,23 @@ class ImageHandle:
         question: str,
         *,
         _return_reasoning_steps: bool = False,
-    ) -> SteerableToolHandle:
+    ) -> str | tuple[str, list[dict]]:
         """
-        Ask a high-level question about this image using a small tool loop.
+        Ask a high-level question about this image with a single LLM call.
 
-        The loop sends the underlying image to the model as an image block.
-        If the image is stored as a GCS URL, it generates a temporary signed URL
+        Sends the underlying image to the model as an image block alongside the
+        `question`, and returns the model's textual answer directly (no nested
+        tool-use loop).
+        If the image is stored as a GCS URL, a temporary signed URL is generated
         to make it accessible to the vision model.
         """
-
-        # Use a vision-capable default
+        # Single-call client
         client = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
         # Build a succinct system message tailored to image Q&A
@@ -162,13 +160,13 @@ class ImageHandle:
         content_block: dict
 
         # Check if the data string is a GCS URL
-        is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
-            "https://storage.googleapis.com/",
+        is_gcs_url = isinstance(data_str, str) and (
+            data_str.startswith("gs://")
+            or data_str.startswith("https://storage.googleapis.com/")
         )
 
         if is_gcs_url:
             try:
-
                 parsed_url = urlparse(data_str)
                 bucket_name = ""
                 object_path = ""
@@ -206,7 +204,6 @@ class ImageHandle:
                 }
 
             except Exception as e:
-                # If signing fails, raise an error as the image is inaccessible
                 raise RuntimeError(
                     f"Failed to generate signed URL for GCS image: {e}",
                 ) from e
@@ -255,26 +252,12 @@ class ImageHandle:
             ],
         )
 
-        handle = start_async_tool_loop(
-            client=client,
-            message=question,
-            tools={},
-            loop_id=f"ImageHandle.ask({self.image_id})",
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            max_consecutive_failures=1,
-            timeout=90,
-        )
+        # Single shot – no nested tool loop
+        answer = await client.generate(user_message=question)
 
         if _return_reasoning_steps:
-            original_result = handle.result
-
-            async def wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
-
-            handle.result = wrapped_result  # type: ignore[assignment]
-
-        return handle
+            return answer, client.messages
+        return answer
 
 
 class ImageManager(BaseImageManager):
