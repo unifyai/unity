@@ -1,5 +1,6 @@
 import os
 import asyncio
+import logging
 
 # import threading
 from jinja2 import Template
@@ -24,6 +25,20 @@ from unity.transcript_manager.types.message import UNASSIGNED
 import redis.asyncio as redis
 from openai import AsyncOpenAI
 
+
+logger = logging.getLogger(__name__)
+
+# Set logging level and add handler if not already configured
+log_level = os.getenv("CONVERSATION_MANAGER_LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level, logging.INFO))
+
+# Ensure we have a console handler to actually display logs
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)s: %(message)s")
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
 with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
     SYS = f.read()
@@ -601,8 +616,14 @@ class ConversationManager:
         if isinstance(event, NotificationInjectedEvent):
             # Check if this notification is intended for this CM instance
             if event.target_conversation_id == self.state.assistant_id:
-                print(f"INFO: Received steering notification: '{event.content}'")
+                logger.info(f"INFO: Received steering notification: '{event.content}'")
                 await self.schedule_llm_run(delay=0.1, cancel_running=True)
+            return
+
+        if isinstance(event, NotificationUnpinnedEvent):
+            if event.target_conversation_id == self.state.assistant_id:
+                logger.info(f"Unpinning interjection: {event.interjection_id}")
+                # State update is handled by state.update_state(event)
             return
 
         # every interaction with the managers worker happens through the conversation

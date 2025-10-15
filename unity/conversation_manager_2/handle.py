@@ -15,7 +15,7 @@ from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHan
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.common.tool_spec import ToolSpec
 from .base import BaseConversationManagerHandle
-from .new_events import NotificationInjectedEvent
+from .new_events import NotificationInjectedEvent, NotificationUnpinnedEvent
 import logging
 
 T = TypeVar("T", bound=[BaseModel, Enum])
@@ -143,6 +143,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         content: str,
         *,
         source: str = "system",
+        interjection_id: Optional[str] = None,
+        pinned: bool = False,
     ) -> dict:
         """
         Sends a notification to the live conversation by publishing an event.
@@ -150,11 +152,17 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         if self._stopped:
             return {"status": "error", "message": "Handle is stopped."}
 
+        # Generate ID if not provided
+        if interjection_id is None:
+            interjection_id = str(uuid.uuid4().hex[:12])
+
         # Include target conversation ID so CM knows if the event is for it
         event = NotificationInjectedEvent(
             content=content,
             source=source,
             target_conversation_id=self.conversation_id,
+            interjection_id=interjection_id,
+            pinned=pinned,
         )
         # Publish to unified steering channel (picked up by app:comms:* subscription)
         await self.event_broker.publish(self._steering_channel, event.to_json())
@@ -162,7 +170,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         return {
             "status": "ok",
             "message": "Notification event published.",
-            "notification_id": f"notif_{uuid.uuid4().hex[:8]}",
+            "interjection_id": interjection_id,
         }
 
     # ─────────────────────────────────────────────────────────────
@@ -221,12 +229,29 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         3.  **Provide the Answer:** Once you have deduced the answer, your task is complete. Immediately call `final_answer` with the correct structured response. Do not use any more tools.
         4.  **Ask Only as a Last Resort:** Only if, after careful analysis, the answer is genuinely missing or the user's intent is truly ambiguous, should you use `_tool_interject_conversation` to ask the user for the necessary information. After asking, use `_tool_get_latest_user_messages` to wait for their reply.
 
-        ### ✅ Example: Proactive Inference
-        - **Scenario:** The transcript already contains information that answers your question.
-        - **Your Mission:** Extract the answer from the transcript rather than re-asking.
-        - **CORRECT ACTION:** Read the existing messages, identify the answer, and immediately respond with it.
-        - **INCORRECT ACTION:** Asking the user for information they've already provided is redundant and frustrating.
-        - **Key Insight:** Be smart about what's already in the conversation history before polling for new messages.
+        ### ✅ Example: Proactive Inference in Action
+
+        **Scenario:** Your mission is to determine "Is this issue urgent or can it wait?"
+        Expected response format: `{{"urgency": "emergency" | "urgent" | "routine"}}`
+
+        **Recent Transcript:**
+        - Agent: "Can you describe what's happening?"
+        - User: "Water is spraying everywhere from under the sink."
+        - User: "It's already soaked through to the room below and getting worse by the minute."
+
+        **❌ INCORRECT Behavior (Missing Obvious Context):**
+        1. Call `_tool_interject_conversation("Would you say this is urgent?")`
+        2. Wait for response
+        - **Problem:** The user described active flooding causing damage! Any reasonable person would recognize this as urgent. Asking explicitly shows you're not paying attention to context.
+
+        **✅ CORRECT Behavior (Common-Sense Inference):**
+        1. Call `_tool_get_latest_user_messages` to review transcript
+        2. Analyze: "Water spraying + spreading to other rooms + getting worse = active damage in progress"
+        3. Apply reasoning: "This isn't explicitly stated as 'urgent,' but active water damage that's spreading is clearly an emergency"
+        4. Immediately call `final_answer` with `{{"urgency": "emergency"}}`
+        - **Result:** Natural conversation that demonstrates understanding, not just keyword matching.
+
+        **Key Principle:** Use common sense and contextual reasoning. Don't treat the conversation like a form-filling exercise. If the situation obviously implies an answer, trust your inference and provide it confidently.
 
         **CRITICAL**: As soon as you have a confident answer, either from the initial analysis or from the user's direct reply, you must stop using tools and provide the final answer.
         - You are in control of the polling loop. Be patient and persistent.
@@ -344,9 +369,55 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         handle.result = _wrapped_result
         return handle
 
-    async def interject(self, message: str) -> None:
-        """A simplified interjection that sends a notification."""
-        await self.send_notification(message, source="interjection")
+    async def interject(
+        self,
+        message: str,
+        *,
+        pinned: bool = False,
+        interjection_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Send an interjection to the conversation.
+
+        Args:
+            message: The message content to inject
+            pinned: If True, the interjection persists for the entire session
+            interjection_id: Optional explicit ID (auto-generated if not provided)
+
+        Returns:
+            Dict with status and the interjection_id
+        """
+        return await self.send_notification(
+            message,
+            source="interjection",
+            interjection_id=interjection_id,
+            pinned=pinned,
+        )
+
+    async def unpin_interjection(self, interjection_id: str) -> dict:
+        """
+        Unpin a previously pinned interjection.
+
+        Args:
+            interjection_id: The ID of the interjection to unpin
+
+        Returns:
+            Dict with status indicating success
+        """
+        if self._stopped:
+            return {"status": "error", "message": "Handle is stopped."}
+
+        event = NotificationUnpinnedEvent(
+            interjection_id=interjection_id,
+            target_conversation_id=self.conversation_id,
+        )
+        await self.event_broker.publish(self._steering_channel, event.to_json())
+
+        return {
+            "status": "ok",
+            "message": f"Unpin request sent for interjection {interjection_id}",
+            "interjection_id": interjection_id,
+        }
 
     def stop(self, reason: Optional[str] = None) -> str:
         """Stops the handle."""

@@ -10,6 +10,7 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
+from unity.image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 
 
 PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
@@ -32,7 +33,7 @@ def test_get_images_for_message_returns_metadata_only_tm():
         ],
     )
 
-    # Log a message that references the image via images mapping
+    # Log a message that references the image via ImageRefs
     msg = Message(
         medium="whatsapp_call",
         sender_id=101,
@@ -40,7 +41,7 @@ def test_get_images_for_message_returns_metadata_only_tm():
         timestamp=datetime.now(timezone.utc),
         content="Video conference: screen looks one colour",
         exchange_id=424242,
-        images={"[0:1]": int(img_id)},
+        images=ImageRefs.model_validate([RawImageRef(image_id=int(img_id))]),
     )
     tm.log_messages(msg)
     tm.join_published()
@@ -122,7 +123,7 @@ async def test_ask_can_use_images_for_color_question_tm():
                 "Zoe on video conference: my screen is one colour, what is happening?"
             ),
             exchange_id=777001,
-            images={"[0:1]": int(img_id)},
+            images=ImageRefs.model_validate([RawImageRef(image_id=int(img_id))]),
         ),
     )
     tm.join_published()
@@ -197,7 +198,7 @@ async def test_ask_boot_option_and_fourth_item_tm():
         "and click “Install Ubuntu” (or “Try Ubuntu” if you just want to explore)."
     )
 
-    # Log the walkthrough message with images mapped to spans
+    # Log the walkthrough message with annotated image references
     tm.log_messages(
         Message(
             medium="unify_message",
@@ -206,10 +207,18 @@ async def test_ask_boot_option_and_fourth_item_tm():
             timestamp=datetime.now(timezone.utc),
             content=user_message,
             exchange_id=88001,
-            images={
-                "[52:147]": int(grub_id),
-                "[182:314]": int(wizard_id),
-            },
+            images=ImageRefs.model_validate(
+                [
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(grub_id)),
+                        annotation="GRUB boot menu screenshot for boot selection",
+                    ),
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(wizard_id)),
+                        annotation="Ubuntu installer wizard screenshot",
+                    ),
+                ],
+            ),
         ),
     )
     tm.join_published()
@@ -279,7 +288,7 @@ async def test_compare_two_screens_requires_raw_context_tm():
         "and click “Install Ubuntu” (or “Try Ubuntu” if you just want to explore)."
     )
 
-    # Log the walkthrough message with images mapped to spans
+    # Log the walkthrough message with annotated image references
     tm.log_messages(
         Message(
             medium="unify_message",
@@ -288,10 +297,18 @@ async def test_compare_two_screens_requires_raw_context_tm():
             timestamp=datetime.now(timezone.utc),
             content=user_message,
             exchange_id=99001,
-            images={
-                "[52:147]": int(grub_id),
-                "[182:314]": int(wizard_id),
-            },
+            images=ImageRefs.model_validate(
+                [
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(grub_id)),
+                        annotation="GRUB boot menu screenshot",
+                    ),
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(wizard_id)),
+                        annotation="Ubuntu installer wizard screenshot",
+                    ),
+                ],
+            ),
         ),
     )
     tm.join_published()

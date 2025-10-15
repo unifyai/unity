@@ -1,8 +1,8 @@
 from enum import StrEnum
-from pydantic import BaseModel, Field, model_validator, field_validator
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
-import re
 from typing import Literal
+from ...image_manager.types import ImageRefs
 
 UNASSIGNED = -1
 
@@ -43,11 +43,11 @@ class Message(BaseModel):
         description="ID of the conversation thread this message belongs to",
         ge=-1,
     )
-    images: dict[str, int] = Field(
-        default_factory=dict,
+    images: ImageRefs = Field(
+        default_factory=lambda: ImageRefs.model_validate([]),
         description=(
-            "Mapping of json.dumps strings like '[x:y]' → image_id (int). "
-            "Supports negative indices and open-ended ranges (e.g., '[6:]', '[:10]')."
+            "List of image references aligned to the text by freeform explanation. "
+            "Use ImageRefs with RawImageRef and AnnotatedImageRef entries."
         ),
     )
     call_utterance_timestamp: str = Field(
@@ -62,38 +62,6 @@ class Message(BaseModel):
         default_factory=dict,
         description="Mapping of timestamps to screen share annotation objects, capturing key visual events.",
     )
-
-    @field_validator("images", mode="before")
-    @classmethod
-    def _validate_images(cls, v):
-        """Ensure images is a dict[str, int] with keys like "[x:y]".
-
-        Rules:
-        - Key must strictly match "[x:y]" with optional negative or open ends.
-          Regex: ^\[\s*(-?\d+)?\s*:\s*(-?\d+)?\s*\]$
-        - Value must be coercible to int (image_id).
-        - None → {}.
-        """
-        if v is None:
-            return {}
-        if not isinstance(v, dict):
-            raise TypeError("images must be a dict[str, int]")
-        pattern = re.compile(r"^\[\s*(-?\d+)?\s*:\s*(-?\d+)?\s*\]$")
-        out: dict[str, int] = {}
-        for k, val in v.items():
-            if not isinstance(k, str):
-                raise ValueError("images keys must be strings like '[x:y]'")
-            if not pattern.fullmatch(k):
-                raise ValueError(
-                    f"images key '{k}' must match '[x:y]' with optional negative or open bounds",
-                )
-            try:
-                out[k] = int(val)
-            except Exception as exc:
-                raise ValueError(
-                    f"images value for key '{k}' must be an integer image_id",
-                ) from exc
-        return out
 
     @model_validator(mode="before")
     @classmethod

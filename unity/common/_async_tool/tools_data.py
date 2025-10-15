@@ -24,7 +24,6 @@ from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
 from ..llm_helpers import method_to_schema, _collect_images, _strip_image_keys, _dumps
 from contextlib import suppress
-from .images import normalize_arg_scoped_images
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -262,16 +261,9 @@ class ToolsData:
         allowed_call_args = _normalise_kwargs_for_bound_method(fn, call_args)
         merged_kwargs = {**allowed_call_args, **filtered_extras}
 
-        # ── Normalise arg-scoped image mapping for inner tool calls via images module
-        if "images" in params and isinstance(merged_kwargs.get("images"), dict):
-            try:
-                merged_kwargs = normalize_arg_scoped_images(
-                    merged_kwargs,
-                    tool_name=name,
-                    param_names=set(params.keys()),
-                )
-            except Exception:
-                pass
+        # Legacy arg-scoped image normalization removed; inner tools should accept ImageRefs explicitly.
+
+        # (Argument pretty-printing now handled in assistant message logs only)
 
         # Build coroutine
         if asyncio.iscoroutinefunction(fn):
@@ -659,6 +651,14 @@ class ToolsData:
                     for item in tool_msg_for_logging["content"]
                     if item.get("type") != "image_url"
                 ]
+            # If the content is a JSON string (from tool result), parse it so indenting applies
+            try:
+                from .utils import try_parse_json as _try_parse_json  # local import
+
+                _c = tool_msg_for_logging.get("content")
+                tool_msg_for_logging["content"] = _try_parse_json(_c)
+            except Exception:
+                pass
             self._logger.info(
                 f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
                 prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",

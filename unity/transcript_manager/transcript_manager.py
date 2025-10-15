@@ -42,7 +42,6 @@ from ..common.search_utils import (
 import json as _json
 from ..events.event_bus import EVENT_BUS, Event
 from ..image_manager.image_manager import ImageManager
-from ..image_manager.utils import substring_from_span
 from ..common.tool_spec import read_only
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
@@ -264,9 +263,11 @@ class TranscriptManager(BaseTranscriptManager):
         else:
             effective_tool_policy = tool_policy
 
-        use_semantic_cache = is_semantic_cache_enabled()
-        # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-        effective_tool_policy = None if use_semantic_cache else effective_tool_policy
+        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        # When semantic cache read is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
+        effective_tool_policy = (
+            None if use_semantic_cache in ("read", "both") else effective_tool_policy
+        )
 
         # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_loop(
@@ -1306,11 +1307,10 @@ class TranscriptManager(BaseTranscriptManager):
         """Return image metadata (no raw data) for images referenced by a message.
 
         Output schema (list of objects):
-        - span: str  → the "[x:y]" span key
         - image_id: int
         - caption: str | None
         - timestamp: str (ISO8601)
-        - substring: str  → text extracted from the message content using the span
+        - annotation: str | None  → freeform explanation of how the image relates to the text
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
@@ -1324,30 +1324,51 @@ class TranscriptManager(BaseTranscriptManager):
             msg = Message(**logs[0].entries)
         except Exception:
             return []
-        img_map = msg.images or {}
-        if not img_map:
+        refs = getattr(msg.images, "root", None) or []
+        if not refs:
             return []
-        image_ids = [int(v) for v in img_map.values()]
+        image_ids = []
+        for ref in refs:
+            try:
+                # RawImageRef has .image_id; AnnotatedImageRef has .raw_image_ref.image_id
+                iid = (
+                    int(ref.image_id)
+                    if hasattr(ref, "image_id")
+                    else int(ref.raw_image_ref.image_id)
+                )
+                image_ids.append(iid)
+            except Exception:
+                continue
         handles = self._image_manager.get_images(image_ids)
         by_id = {h.image_id: h for h in handles}
         out: List[Dict[str, Any]] = []
-        for span, img_id in img_map.items():
-            h = by_id.get(int(img_id))
+        for ref in refs:
+            try:
+                iid = (
+                    int(ref.image_id)
+                    if hasattr(ref, "image_id")
+                    else int(ref.raw_image_ref.image_id)
+                )
+            except Exception:
+                continue
+            h = by_id.get(iid)
             if h is None:
                 continue
             try:
                 ts_str = h.timestamp.isoformat()
             except Exception:
                 ts_str = ""
-            # Compute substring based on the span range over the message content
-            substr = substring_from_span(str(msg.content), str(span))
+            annotation_val = None
+            try:
+                annotation_val = getattr(ref, "annotation", None)
+            except Exception:
+                annotation_val = None
             out.append(
                 {
-                    "span": str(span),
                     "image_id": int(h.image_id),
                     "caption": h.caption,
                     "timestamp": ts_str,
-                    "substring": substr,
+                    "annotation": annotation_val,
                 },
             )
         return out
@@ -1446,22 +1467,20 @@ class TranscriptManager(BaseTranscriptManager):
 
         Characteristics
         ---------------
-        - Batches attachment of several images linked via the message's span→image mapping.
-        - Returns metadata (spans/substrings) alongside the base64 for each image.
+        - Batches attachment of several images linked via the message's image references.
+        - Returns metadata (including optional annotations) alongside the base64 for each image.
         - Useful for multi‑image tasks where the loop should retain visual context.
 
         Parameters
         ----------
         limit : int
-            Cap on how many images are attached (order preserved by first appearance).
+            Cap on how many images are attached (order preserved by reference order).
 
         Returns
         -------
         dict
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
-            Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, the
-            list of ``spans`` that referenced this image in the message, and the
-            derived ``substrings`` from the message content for alignment.
+            Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, and optional ``annotation``.
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
@@ -1475,56 +1494,58 @@ class TranscriptManager(BaseTranscriptManager):
             msg = Message(**logs[0].entries)
         except Exception:
             return {"attached_count": 0, "images": []}
-        img_map = msg.images or {}
-        if not img_map:
+        refs = getattr(msg.images, "root", None) or []
+        if not refs:
             return {"attached_count": 0, "images": []}
-        # Preserve the order of first appearance for image ids
-        unique_ids: List[int] = list(dict.fromkeys(int(v) for v in img_map.values()))
-        # Also collect the spans per image id to compute substrings
-        spans_by_id: Dict[int, List[str]] = {}
-        for span_key, img_id in img_map.items():
-            iid = int(img_id)
-            spans_by_id.setdefault(iid, []).append(str(span_key))
+        ids_to_attach: List[int] = []
+        annotations_by_index: List[Optional[str]] = []
+        for ref in refs:
+            try:
+                iid = (
+                    int(ref.image_id)
+                    if hasattr(ref, "image_id")
+                    else int(ref.raw_image_ref.image_id)
+                )
+                ids_to_attach.append(iid)
+                ann = getattr(ref, "annotation", None)
+                annotations_by_index.append(ann if isinstance(ann, str) else None)
+            except Exception:
+                continue
+
         if limit is not None:
             try:
                 limit = int(limit)
             except Exception:
                 limit = 3
             if limit >= 0:
-                unique_ids = unique_ids[:limit]
+                ids_to_attach = ids_to_attach[:limit]
+                annotations_by_index = annotations_by_index[:limit]
 
-        handles = self._image_manager.get_images(unique_ids)
+        handles = self._image_manager.get_images(ids_to_attach)
         images: List[Dict[str, Any]] = []
-        for h in handles:
+        for idx, h in enumerate(handles):
             try:
                 raw_bytes = h.raw()
                 b64 = base64.b64encode(raw_bytes).decode("utf-8")
             except Exception:
                 continue
-            # Derive spans and substrings aligned to this image within the message content
-            spans_for_img = spans_by_id.get(int(h.image_id), [])
-            substrings = [
-                substring_from_span(str(msg.content), s) for s in spans_for_img
-            ]
+            annotation_val = (
+                annotations_by_index[idx] if idx < len(annotations_by_index) else None
+            )
             images.append(
                 {
                     "meta": {
                         "image_id": int(h.image_id),
                         "caption": h.caption,
                         "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
-                        "spans": spans_for_img,
-                        "substrings": substrings,
+                        "annotation": annotation_val,
                     },
                     "image": b64,
                 },
             )
         return {"attached_count": len(images), "images": images}
 
-    # ────────────────────────────────────────────────────────────────────
-    # Span → substring helper
-    # ────────────────────────────────────────────────────────────────────
-
-    # substring_from_span now provided by unity.image_manager.utils
+    # (Span substring helper removed – images now aligned via freeform annotations)
 
     # ────────────────────────────────────────────────────────────────────
     # Column and metrics helpers (paralleling ContactManager)

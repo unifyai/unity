@@ -32,7 +32,7 @@ from ..common.search_utils import table_search_top_k
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from ..image_manager.image_manager import ImageManager
-from ..image_manager.utils import substring_from_span
+from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.embed_utils import list_private_fields
 from ..common.filter_utils import normalize_filter_expr
 
@@ -434,11 +434,10 @@ class GuidanceManager(BaseGuidanceManager):
         """Return image metadata (no raw/base64) for images referenced by a guidance row.
 
         Output schema (list of objects):
-        - span: str  → the "[x:y]" span key
         - image_id: int
         - caption: str | None
         - timestamp: str (ISO8601)
-        - substring: str  → text extracted from the guidance content using the span
+        - annotation: str | None  → freeform explanation describing how the image relates to the text
 
         Notes
         -----
@@ -451,29 +450,52 @@ class GuidanceManager(BaseGuidanceManager):
         if not rows:
             return []
         guidance_row = rows[0]
-        img_map = guidance_row.images or {}
-        if not img_map:
+        refs: ImageRefs = guidance_row.images or ImageRefs([])
+        items = list(getattr(refs, "root", refs))
+        if not items:
             return []
-        image_ids = [int(v) for v in img_map.values()]
+        # Resolve handles for all referenced ids
+        image_ids: List[int] = []
+        annotations_by_id: Dict[int, List[str]] = {}
+        for r in items:
+            if isinstance(r, AnnotatedImageRef):
+                iid = int(r.raw_image_ref.image_id)
+                image_ids.append(iid)
+                annotations_by_id.setdefault(iid, []).append(str(r.annotation))
+            elif isinstance(r, RawImageRef):
+                iid = int(r.image_id)
+                image_ids.append(iid)
+            elif isinstance(r, dict):
+                # Best-effort parsing if entries came from raw dicts
+                if "raw_image_ref" in r and isinstance(r["raw_image_ref"], dict):
+                    iid = int(r["raw_image_ref"].get("image_id"))
+                    image_ids.append(iid)
+                    ann = r.get("annotation")
+                    if ann is not None:
+                        annotations_by_id.setdefault(iid, []).append(str(ann))
+                elif "image_id" in r:
+                    image_ids.append(int(r.get("image_id")))
+        # Preserve order while de-duplicating
+        image_ids = list(dict.fromkeys(image_ids))
         handles = self._image_manager.get_images(image_ids)
         by_id = {h.image_id: h for h in handles}
         out: List[Dict[str, Any]] = []
-        for span, img_id in img_map.items():
-            h = by_id.get(int(img_id))
+        for iid in image_ids:
+            h = by_id.get(int(iid))
             if h is None:
                 continue
             try:
                 ts_str = h.timestamp.isoformat()
             except Exception:
                 ts_str = ""
-            substr = substring_from_span(str(guidance_row.content), str(span))
+            annotation_list = annotations_by_id.get(int(h.image_id), [])
+            annotation = annotation_list[0] if annotation_list else None
             out.append(
                 {
-                    "span": str(span),
                     "image_id": int(h.image_id),
                     "caption": h.caption,
                     "timestamp": ts_str,
-                    "substring": substr,
+                    "annotation": annotation,
                 },
             )
         return out
@@ -566,8 +588,8 @@ class GuidanceManager(BaseGuidanceManager):
 
         Characteristics
         ---------------
-        - Batches attachment of several images linked via the guidance's span→image mapping.
-        - Returns metadata (spans/substrings) alongside the base64 for each image.
+        - Batches attachment of several images linked via the guidance's image references.
+        - Returns metadata (including collected annotations) alongside the base64 for each image.
         - Useful for multi‑image tasks where the loop should retain visual context.
 
         Parameters
@@ -579,22 +601,36 @@ class GuidanceManager(BaseGuidanceManager):
         -------
         dict
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
-            Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, the
-            list of ``spans`` that referenced this image in the guidance text, and
-            derived ``substrings`` from the guidance content for alignment.
+            Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, and an ``annotations`` list.
         """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return {"attached_count": 0, "images": []}
         guidance_row = rows[0]
-        img_map = guidance_row.images or {}
-        if not img_map:
+        refs: ImageRefs = guidance_row.images or ImageRefs([])
+        items = list(getattr(refs, "root", refs))
+        if not items:
             return {"attached_count": 0, "images": []}
-        unique_ids: List[int] = list(dict.fromkeys(int(v) for v in img_map.values()))
-        spans_by_id: Dict[int, List[str]] = {}
-        for span_key, img_id in img_map.items():
-            iid = int(img_id)
-            spans_by_id.setdefault(iid, []).append(str(span_key))
+        unique_ids: List[int] = []
+        annotations_by_id: Dict[int, List[str]] = {}
+        for r in items:
+            if isinstance(r, AnnotatedImageRef):
+                iid = int(r.raw_image_ref.image_id)
+                unique_ids.append(iid)
+                annotations_by_id.setdefault(iid, []).append(str(r.annotation))
+            elif isinstance(r, RawImageRef):
+                unique_ids.append(int(r.image_id))
+            elif isinstance(r, dict):
+                if "raw_image_ref" in r and isinstance(r["raw_image_ref"], dict):
+                    iid = int(r["raw_image_ref"].get("image_id"))
+                    unique_ids.append(iid)
+                    ann = r.get("annotation")
+                    if ann is not None:
+                        annotations_by_id.setdefault(iid, []).append(str(ann))
+                elif "image_id" in r:
+                    unique_ids.append(int(r.get("image_id")))
+        # Preserve original appearance order while de-duplicating
+        unique_ids = list(dict.fromkeys(unique_ids))
         if limit is not None:
             try:
                 limit = int(limit)
@@ -611,48 +647,63 @@ class GuidanceManager(BaseGuidanceManager):
                 b64 = base64.b64encode(raw_bytes).decode("utf-8")
             except Exception:
                 continue
-            spans_for_img = spans_by_id.get(int(h.image_id), [])
-            substrings = [
-                substring_from_span(str(guidance_row.content), s) for s in spans_for_img
-            ]
+            annotations = annotations_by_id.get(int(h.image_id), [])
             images.append(
                 {
                     "meta": {
                         "image_id": int(h.image_id),
                         "caption": h.caption,
                         "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
-                        "spans": spans_for_img,
-                        "substrings": substrings,
+                        "annotations": annotations,
                     },
                     "image": b64,
                 },
             )
         return {"attached_count": len(images), "images": images}
 
-    # -------------------------- Span helper ---------------------------------
-    # substring_from_span now provided by unity.image_manager.utils
-
     def _add_guidance(
         self,
         *,
         title: Optional[str] = None,
         content: Optional[str] = None,
-        images: Optional[Dict[str, int]] = None,
+        images: Optional[Any] = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
         if not title and not content and not images:
             raise ValueError(
                 "At least one field (title/content/images) must be provided.",
             )
+        # Accept ImageRefs or a raw list of refs/dicts
+        refs: ImageRefs
+        try:
+            if isinstance(images, ImageRefs):
+                refs = images
+            elif images is None:
+                refs = ImageRefs([])
+            else:
+                # Expect a list of RawImageRef/AnnotatedImageRef/dicts
+                refs = ImageRefs(images)  # type: ignore[arg-type]
+        except Exception as exc:
+            raise ValueError(
+                "Invalid images payload; expected ImageRefs-compatible list",
+            ) from exc
+
         g = Guidance(
             title=title or "",
             content=content or "",
-            images=images or {},
+            images=refs,
             function_ids=function_ids or [],
         )
+        payload = g.to_post_json()
+        # Ensure images is plain JSON (list) not a Pydantic object
+        try:
+            if isinstance(payload.get("images"), ImageRefs):
+                payload["images"] = payload["images"].model_dump(mode="json")
+        except Exception:
+            pass
         log = unify.log(
             context=self._ctx,
-            **g.to_post_json(),
+            **payload,
             new=True,
             mutable=True,
         )
@@ -667,7 +718,7 @@ class GuidanceManager(BaseGuidanceManager):
         guidance_id: int,
         title: Optional[str] = None,
         content: Optional[str] = None,
-        images: Optional[Dict[str, int]] = None,
+        images: Optional[Any] = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
         updates: Dict[str, Any] = {}
@@ -676,15 +727,22 @@ class GuidanceManager(BaseGuidanceManager):
         if content is not None:
             updates["content"] = content
         if images is not None:
-            # Validate via model field-validator by constructing minimal model
-            _ = Guidance(title=title or "tmp", content=content or "tmp", images=images)
-            updates["images"] = _.images
+            # Validate via model by constructing minimal model (accepts ImageRefs or list)
+            try:
+                refs = images if isinstance(images, ImageRefs) else ImageRefs(images)  # type: ignore[arg-type]
+            except Exception as exc:
+                raise ValueError(
+                    "Invalid images payload; expected ImageRefs-compatible list",
+                ) from exc
+            _ = Guidance(title=title or "tmp", content=content or "tmp", images=refs)
+            # Store as plain JSON-serialisable value (list of refs), not a Pydantic object
+            updates["images"] = _.model_dump(mode="json")["images"]
         if function_ids is not None:
             # Validate via model validator
             _g = Guidance(
                 title=title or "tmp",
                 content=content or "tmp",
-                images=images or {},
+                images=updates.get("images") or ImageRefs([]),
                 function_ids=function_ids,
             )
             updates["function_ids"] = _g.function_ids

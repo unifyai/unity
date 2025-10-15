@@ -75,7 +75,7 @@ def test_function_manager_image_handles_and_attachment():
     gid = gm._add_guidance(
         title="Gamma Visual",
         content="Use gamma with visual aid.",
-        images={"[0:1]": int(img_id)},
+        images=[{"image_id": int(img_id), "annotation": "visual aid"}],
         function_ids=[gamma_id],
     )["details"]["guidance_id"]
 

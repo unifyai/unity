@@ -96,13 +96,13 @@ def build_ask_prompt(
           `{filter_fname}(filter="guidance_id == 42", limit=1)`
 
         ─ Images ─
-        • List images referenced by a guidance item (metadata only; no base64). Each item also includes the substring of the guidance content corresponding to the span that linked the image.
+        • List images referenced by a guidance item (metadata only; no base64). Each item includes any freeform annotation explaining the relationship to the text.
           `{get_imgs_fname}(guidance_id=42)`
         • Ask a one‑off question about an image (text answer only; DOES NOT persist visual context)
           `{ask_image_fname}(image_id=12, question="What text is visible?")`
         • Attach a specific image for persistent visual reasoning in this loop
           `{attach_image_fname}(image_id=12, note="Need to see the layout")`
-        • Attach multiple images linked from a guidance item (limit to first 2). For each attached image, the meta includes `spans` and `substrings` derived from the guidance content for alignment.
+        • Attach multiple images linked from a guidance item (limit to first 2). For each attached image, the meta includes any collected `annotations` describing its relevance.
           `{attach_guid_imgs_fname}(guidance_id=42, limit=2)`
 
         Guidance on when to use which image tool
@@ -269,9 +269,9 @@ Tool selection
 Create / Update / Delete
 ------------------------
         • Create a new guidance entry
-        `{add_fname}(title='Setup demo', content='How to set up the product demo...', images={{'[0:10]': 12}}, function_ids=[1, 2])`
+        `{add_fname}(title='Setup demo', content='How to set up the product demo...', images=[{"raw_image_ref": {"image_id": 12}, "annotation": "overview"}], function_ids=[1, 2])`
         • Update a known guidance id
-        `{upd_fname}(guidance_id=42, content='Updated narrative...', images={{'[10:20]': 15}}, function_ids=[2, 3])`
+        `{upd_fname}(guidance_id=42, content='Updated narrative...', images=[{"image_id": 15}], function_ids=[2, 3])`
 • Delete a guidance entry
   `{del_fname}(guidance_id=77)`
         """,
