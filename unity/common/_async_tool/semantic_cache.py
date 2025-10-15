@@ -37,6 +37,7 @@ class SemanticCacheResult:
     original_user_message: str
     closest_user_message: str
     tool_trajectory: List[CleanToolCall]
+    tools_available: Mapping[str, str]
 
 
 class _Config:
@@ -107,7 +108,14 @@ class _SemanticCacheSaver:
         logger.info("Shutting down SemanticCacheSaver...")
         self._executor.shutdown(wait=True)
 
-    def _save_to_cache(self, store_context, namespace, user_message, tool_trajectory):
+    def _save_to_cache(
+        self,
+        store_context,
+        namespace,
+        user_message,
+        tool_trajectory,
+        tools_available,
+    ):
         # store_context is captured at call-time to avoid thread-local context loss
         # Ensure context exists
         context_exist = store_context in unify.get_contexts(prefix=store_context)
@@ -119,6 +127,7 @@ class _SemanticCacheSaver:
             user_message=user_message,
             namespace=namespace,
             tool_trajectory=json.dumps(tool_trajectory),
+            available_tools=tools_available,
         )
 
         embed_expr = f"embed({{logs:user_message}}, model='{_CONFIG.embedding_model}')"
@@ -309,6 +318,7 @@ class _SemanticCacheSaver:
         previous_tool_trajectory,
         store_context,
         namespace,
+        tools_available: Mapping[str, ToolSpec],
     ):
         new_user_message = self._construct_new_user_message(
             initial_user_message,
@@ -322,7 +332,17 @@ class _SemanticCacheSaver:
             previous_tool_trajectory=previous_tool_trajectory,
         )
 
-        self._save_to_cache(store_context, namespace, new_user_message, tool_trajectory)
+        _tools = {}
+        for public_name, tool in tools_available.items():
+            _tools[public_name] = tool.fn.__name__
+
+        self._save_to_cache(
+            store_context,
+            namespace,
+            new_user_message,
+            tool_trajectory,
+            _tools,
+        )
 
     def save(
         self,
@@ -331,6 +351,7 @@ class _SemanticCacheSaver:
         messages_history,
         previous_tool_trajectory,
         namespace,
+        tools_available,
     ):
         # Capture the resolved store context at submission time. This avoids
         # losing the context when executing inside a background thread where
@@ -344,6 +365,7 @@ class _SemanticCacheSaver:
             previous_tool_trajectory,
             store_context,
             namespace,
+            tools_available,
         )
 
     def wait(self, timeout: int = 360) -> bool:
@@ -400,6 +422,7 @@ def search_semantic_cache(
             original_user_message=user_message,
             closest_user_message=entries["user_message"],
             tool_trajectory=json.loads(entries["tool_trajectory"]),
+            tools_available=entries["available_tools"],
         )
 
     return None
@@ -523,6 +546,7 @@ def save_semantic_cache(
     user_message_visible_history,
     messages_history,
     namespace,
+    tools_available,
     previous_tool_trajectory=None,
 ):
     global _SEMANTIC_CACHE_SAVER
@@ -535,4 +559,5 @@ def save_semantic_cache(
         messages_history,
         previous_tool_trajectory,
         namespace,
+        tools_available,
     )

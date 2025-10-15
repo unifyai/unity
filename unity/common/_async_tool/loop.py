@@ -2014,6 +2014,7 @@ async def async_tool_loop_inner(
                 last_valid_user_history,
                 client.messages,
                 namespace=semantic_cache_namespace,
+                tools_available=tools_data.normalized,
                 previous_tool_trajectory=(
                     semantic_closest_match.tool_trajectory
                     if semantic_closest_match
