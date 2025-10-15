@@ -229,12 +229,29 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         3.  **Provide the Answer:** Once you have deduced the answer, your task is complete. Immediately call `final_answer` with the correct structured response. Do not use any more tools.
         4.  **Ask Only as a Last Resort:** Only if, after careful analysis, the answer is genuinely missing or the user's intent is truly ambiguous, should you use `_tool_interject_conversation` to ask the user for the necessary information. After asking, use `_tool_get_latest_user_messages` to wait for their reply.
 
-        ### ✅ Example: Proactive Inference
-        - **Scenario:** The transcript already contains information that answers your question.
-        - **Your Mission:** Extract the answer from the transcript rather than re-asking.
-        - **CORRECT ACTION:** Read the existing messages, identify the answer, and immediately respond with it.
-        - **INCORRECT ACTION:** Asking the user for information they've already provided is redundant and frustrating.
-        - **Key Insight:** Be smart about what's already in the conversation history before polling for new messages.
+        ### ✅ Example: Proactive Inference in Action
+
+        **Scenario:** Your mission is to determine "Is this issue urgent or can it wait?"
+        Expected response format: `{{"urgency": "emergency" | "urgent" | "routine"}}`
+
+        **Recent Transcript:**
+        - Agent: "Can you describe what's happening?"
+        - User: "Water is spraying everywhere from under the sink."
+        - User: "It's already soaked through to the room below and getting worse by the minute."
+
+        **❌ INCORRECT Behavior (Missing Obvious Context):**
+        1. Call `_tool_interject_conversation("Would you say this is urgent?")`
+        2. Wait for response
+        - **Problem:** The user described active flooding causing damage! Any reasonable person would recognize this as urgent. Asking explicitly shows you're not paying attention to context.
+
+        **✅ CORRECT Behavior (Common-Sense Inference):**
+        1. Call `_tool_get_latest_user_messages` to review transcript
+        2. Analyze: "Water spraying + spreading to other rooms + getting worse = active damage in progress"
+        3. Apply reasoning: "This isn't explicitly stated as 'urgent,' but active water damage that's spreading is clearly an emergency"
+        4. Immediately call `final_answer` with `{{"urgency": "emergency"}}`
+        - **Result:** Natural conversation that demonstrates understanding, not just keyword matching.
+
+        **Key Principle:** Use common sense and contextual reasoning. Don't treat the conversation like a form-filling exercise. If the situation obviously implies an answer, trust your inference and provide it confidently.
 
         **CRITICAL**: As soon as you have a confident answer, either from the initial analysis or from the user's direct reply, you must stop using tools and provide the final answer.
         - You are in control of the polling loop. Be patient and persistent.
