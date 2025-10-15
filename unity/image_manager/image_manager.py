@@ -26,6 +26,7 @@ from .base import BaseImageManager
 from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
 from ..common.filter_utils import normalize_filter_expr
+from ..common.data_store import DataStore
 
 
 class ImageHandle:
@@ -54,7 +55,12 @@ class ImageHandle:
         If the data is a GCS URL, it downloads the content. Otherwise, it assumes
         the data is a base64 string and decodes it.
         """
-        data_str = self._image.data
+        # Prefer locally cached base64 data from the DataStore to avoid re-downloading
+        try:
+            cached = self._manager._data_store.get(self.image_id)
+            data_str = cached.get("data") if cached is not None else self._image.data
+        except Exception:
+            data_str = self._image.data
         is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
             "https://storage.googleapis.com/",
         )
@@ -85,7 +91,27 @@ class ImageHandle:
                 if not blob.exists():
                     raise FileNotFoundError(f"Image not found at GCS URL: {data_str}")
 
-                return blob.download_as_bytes()
+                content = blob.download_as_bytes()
+                # Cache the downloaded bytes as base64 in the DataStore to prevent future downloads
+                try:
+                    import base64 as _b64
+
+                    try:
+                        self._manager._data_store.update(
+                            self.image_id,
+                            {"data": _b64.b64encode(content).decode("utf-8")},
+                        )
+                    except KeyError:
+                        # If the row isn't present yet, insert a minimal row
+                        self._manager._data_store.put(
+                            {
+                                "image_id": self.image_id,
+                                "data": _b64.b64encode(content).decode("utf-8"),
+                            },
+                        )
+                except Exception:
+                    pass
+                return content
             except Exception as exc:
                 raise RuntimeError(
                     f"Failed to download image from GCS: {data_str}",
@@ -127,7 +153,12 @@ class ImageHandle:
         )
 
         # Provide the image as a user content block (vision input).
-        data_str = self._image.data
+        # Prefer cached base64 from the DataStore when available to avoid signing/downloading again
+        try:
+            cached = self._manager._data_store.get(self.image_id)
+            data_str = cached.get("data") if cached is not None else self._image.data
+        except Exception:
+            data_str = self._image.data
         content_block: dict
 
         # Check if the data string is a GCS URL
@@ -268,6 +299,9 @@ class ImageManager(BaseImageManager):
 
         self._ctx = f"{read_ctx}/Images" if read_ctx else "Images"
 
+        # Local DataStore mirror for Images (write-through on reads/writes)
+        self._data_store = DataStore.for_context(self._ctx, key_fields=("image_id",))
+
         # Initialize the storage client
         try:
             # Assumes the credentials file is at the root of the project
@@ -305,6 +339,12 @@ class ImageManager(BaseImageManager):
             limit=limit,
             from_fields=list(self._BUILTIN_FIELDS),
         )
+        # Write-through to local DataStore mirror
+        try:
+            for lg in logs:
+                self._data_store.put(lg.entries)
+        except Exception:
+            pass
         return [Image(**lg.entries) for lg in logs]
 
     def search_images(
@@ -327,26 +367,49 @@ class ImageManager(BaseImageManager):
             unique_id_field="image_id",
             allowed_fields=list(self._BUILTIN_FIELDS),
         )
+        # Write-through to local DataStore mirror
+        try:
+            for r in filled:
+                self._data_store.put(r)
+        except Exception:
+            pass
         return [Image(**r) for r in filled]
 
     def get_images(self, image_ids: List[int]) -> List[ImageHandle]:
         """Return handles for the given image ids (missing ids are skipped)."""
         if not image_ids:
             return []
-        id_list = ", ".join(str(int(i)) for i in image_ids)
-        logs = unify.get_logs(
-            context=self._ctx,
-            filter=f"image_id in [{id_list}]",
-            limit=len(image_ids),
-            from_fields=list(self._BUILTIN_FIELDS),
-        )
+        # 1) Try local DataStore first
         by_id: Dict[int, Image] = {}
-        for lg in logs:
+        misses: List[int] = []
+        for iid in image_ids:
             try:
-                img = Image(**lg.entries)
-                by_id[int(img.image_id)] = img
+                row = self._data_store.get(int(iid))
+                if row is not None:
+                    by_id[int(iid)] = Image(**row)
+                else:
+                    misses.append(int(iid))
             except Exception:
-                continue
+                misses.append(int(iid))
+
+        # 2) Fetch any misses from backend and write-through to DataStore
+        if misses:
+            id_list = ", ".join(str(int(i)) for i in misses)
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter=f"image_id in [{id_list}]",
+                limit=len(misses),
+                from_fields=list(self._BUILTIN_FIELDS),
+            )
+            for lg in logs:
+                try:
+                    self._data_store.put(lg.entries)
+                    img = Image(**lg.entries)
+                    by_id[int(img.image_id)] = img
+                except Exception:
+                    continue
+
+        # Preserve requested order
         handles: List[ImageHandle] = []
         for req_id in image_ids:
             img = by_id.get(int(req_id))
@@ -377,6 +440,11 @@ class ImageManager(BaseImageManager):
                 mutable=None,
             )
             try:
+                # Write-through to DataStore mirror
+                try:
+                    self._data_store.put(log.entries)
+                except Exception:
+                    pass
                 out_ids.append(int(log.entries["image_id"]))
             except Exception:
                 try:
@@ -386,6 +454,10 @@ class ImageManager(BaseImageManager):
                         limit=1,
                     )
                     if last:
+                        try:
+                            self._data_store.put(last[0].entries)
+                        except Exception:
+                            pass
                         out_ids.append(int(last[0].entries.get("image_id")))
                 except Exception:
                     out_ids.append(-1)
@@ -439,6 +511,18 @@ class ImageManager(BaseImageManager):
                 entries=entries,
                 overwrite=True,
             )
+            # Refresh from backend and write-through to DataStore
+            try:
+                rows = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"image_id == {image_id}",
+                    limit=1,
+                    from_fields=list(self._BUILTIN_FIELDS),
+                )
+                if rows:
+                    self._data_store.put(rows[0].entries)
+            except Exception:
+                pass
             updated.append(image_id)
         return updated
 
@@ -465,6 +549,12 @@ class ImageManager(BaseImageManager):
             pass
 
         self._provision_storage()
+
+        # Clear local DataStore cache for this context
+        try:
+            self._data_store.clear()
+        except Exception:
+            pass
 
         # Verify the context is visible before attempting reads
         try:
