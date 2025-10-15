@@ -16,6 +16,8 @@ from unity.contact_manager.contact_manager import ContactManager
 from unity.events.event_bus import EVENT_BUS
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conversation_manager_2.new_events import *
+from unity.conductor.conductor import Conductor
+from unity.common.async_tool_loop import SteerableToolHandle
 
 
 class ManagersWorker:
@@ -41,11 +43,18 @@ class ManagersWorker:
         self._contact_manager: Optional[ContactManager] = None
         self._transcript_manager: Optional[TranscriptManager] = None
         self._memory_manager: Optional[MemoryManager] = None
+        self._conductor: Optional[Conductor] = None
 
         # State flags
         self._initialized = False
         self._init_lock = asyncio.Lock()
         self._stop_event = threading.Event()
+
+        # Conductor handle registry: incrementing int handle_id -> handle
+        self._next_handle_id: int = 0
+        self._handle_registry: dict[int, SteerableToolHandle] = {}
+        # Minimal meta for tracing (per handle_id)
+        self._handle_meta: dict[int, dict] = {}
 
     # ──────────────────────────────────────────────────────────────────
     # Message handlers
@@ -152,9 +161,16 @@ class ManagersWorker:
                 )
                 print("[ManagersWorker] MemoryManager initialized")
 
-                # contacts = self._contact_manager._filter_contacts()
-                # for c in contacts:
-                #     self._contact_manager._update_contact(c["contact_id"], rolling_summary="")
+                # 5. Initialize Conductor with existing managers
+                print("[ManagersWorker] Initializing Conductor...")
+                try:
+                    self._conductor = Conductor(
+                        contact_manager=self._contact_manager,
+                        transcript_manager=self._transcript_manager,
+                    )
+                    print("[ManagersWorker] Conductor initialized")
+                except Exception as e:
+                    print(f"[ManagersWorker] Error initializing Conductor: {e}")
 
                 self._initialized = True
                 print("[ManagersWorker] Initialization complete")
@@ -347,6 +363,173 @@ class ManagersWorker:
         ]
         await asyncio.gather(*tasks)
 
+    async def _conductor_watch_result(
+        self, handle_id: int, handle: SteerableToolHandle
+    ) -> None:
+        """Await final result and publish completion (or failure), then cleanup."""
+        # await result
+        result = await handle.result()
+        await self._event_broker.publish(
+            self._publish_channel,
+            ConductorResult(
+                handle_id=handle_id,
+                success=True,
+                result=result,
+            ).to_json(),
+        )
+
+        # cleanup registry entry
+        self._handle_registry.pop(handle_id, None)
+        self._handle_meta.pop(handle_id, None)
+
+    async def _conductor_watch_notifications(
+        self, handle_id: int, handle: SteerableToolHandle
+    ) -> None:
+        """Forward notifications as handle responses until handle completes."""
+        while not handle.done():
+            # await notification
+            try:
+                notif = await asyncio.wait_for(handle.next_notification(), timeout=30)
+            except asyncio.TimeoutError:
+                continue
+
+            # get message
+            msg = notif.get("message") if isinstance(notif, dict) else str(notif)
+
+            # publish response
+            await self._event_broker.publish(
+                self._publish_channel,
+                ConductorNotification(
+                    handle_id=handle_id,
+                    response=msg,
+                ).to_json(),
+            )
+
+    async def _conductor_watch_clarifications(
+        self, handle_id: int, handle: SteerableToolHandle
+    ) -> None:
+        """Forward clarifications to CM until handle completes."""
+
+        while not handle.done():
+            # await clarification request
+            try:
+                clar = await asyncio.wait_for(handle.next_clarification(), timeout=30)
+            except asyncio.TimeoutError:
+                continue
+
+            # get question and call id
+            q = clar.get("question") if isinstance(clar, dict) else str(clar)
+            call_id = clar.get("call_id") if isinstance(clar, dict) else None
+
+            # publish clarification request
+            await self._event_broker.publish(
+                self._publish_channel,
+                ConductorClarificationRequest(
+                    handle_id=handle_id,
+                    query=q,
+                    call_id=call_id,
+                ).to_json(),
+            )
+
+    async def _handle_conductor_request(self, event: ConductorRequest) -> None:
+        """Start a Conductor ask/request, store handle, and publish started."""
+        if not self._conductor:
+            print("[ManagersWorker] Conductor not initialized;")
+            return
+
+        if event.action_name == "ask":
+            handle = await self._conductor.ask(
+                event.query,
+                parent_chat_context=event.parent_chat_context,
+            )
+        else:
+            handle = await self._conductor.request(
+                event.query,
+                parent_chat_context=event.parent_chat_context,
+            )
+
+        # allocate handle id and register
+        handle_id = self._next_handle_id
+        self._next_handle_id += 1
+        self._handle_registry[handle_id] = {
+            "handle": handle,
+            "query": event.query,
+            "handle_actions": [],
+        }
+
+        # publish started
+        await self._event_broker.publish(
+            self._publish_channel,
+            ConductorResponse(
+                handle_id=handle_id,
+                query=event.query,
+                response=f"Started: {event.query}",
+            ).to_json(),
+        )
+
+        # spawn watchers
+        asyncio.create_task(self._conductor_watch_result(handle_id, handle))
+        asyncio.create_task(self._conductor_watch_notifications(handle_id, handle))
+        asyncio.create_task(self._conductor_watch_clarifications(handle_id, handle))
+
+    async def _handle_conductor_handle_request(
+        self, event: ConductorHandleRequest
+    ) -> None:
+        # get handle
+        handle = self._handle_registry.get(event.handle_id)
+        if not handle:
+            print(
+                f"[ManagersWorker] Unknown handle_id={event.handle_id} for intervention"
+            )
+            return
+
+        # record intervention
+        self._handle_registry[event.handle_id]["handle_actions"].append(
+            {
+                "action_name": event.action_name,
+                "query": event.query,
+            }
+        )
+
+        # perform intervention
+        match event.action_name:
+            case "ask":
+                handle.ask(
+                    event.query,
+                    parent_chat_context_cont=event.parent_chat_context,
+                )
+            case "interject":
+                handle.interject(
+                    event.query,
+                    parent_chat_context_cont=event.parent_chat_context,
+                )
+            case "stop":
+                handle.stop(reason=event.query)
+            case "pause":
+                handle.pause()
+            case "resume":
+                handle.resume()
+            case "done":
+                handle.done()
+            case "answer_clarification":
+                handle.answer_clarification(event.call_id, event.query)
+            case _:
+                print(
+                    f"[ManagersWorker] Unknown action_name={event.action_name} for intervention"
+                )
+                return
+
+        # publish response
+        await self._event_broker.publish(
+            self._publish_channel,
+            ConductorHandleResponse(
+                handle_id=event.handle_id,
+                action_name=event.action_name,
+                query=event.query,
+                response=f"Intervened: {event.action_name} {event.query}",
+            ).to_json(),
+        )
+
     # ──────────────────────────────────────────────────────────────────
     # Message processing
     # ──────────────────────────────────────────────────────────────────
@@ -378,6 +561,11 @@ class ManagersWorker:
                         event.transcripts,
                     ),
                 )
+            # Conductor bridge
+            case ConductorRequest():
+                asyncio.create_task(self._handle_conductor_request(event))
+            case ConductorHandleRequest():
+                asyncio.create_task(self._handle_conductor_handle_request(event))
             case _:
                 print(
                     f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}"

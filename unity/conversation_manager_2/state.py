@@ -105,6 +105,8 @@ class ConversationManagerState:
         self.active_conversations: dict[str, Contact] = {}
 
         self.notifs: list[Notification] = []
+        # conductor handles: cm_handle_id -> {query, status}
+        self.conductor_handles: dict[str, dict] = {}
 
         self.mode: Literal["text", "call", "gmeet"] = "text"
         self.events = []
@@ -412,6 +414,15 @@ class ConversationManagerState:
                 if e.medium == "phone_call" and self.call_exchange_id == UNASSIGNED:
                     self.call_exchange_id = e.exchange_id
 
+            case ConductorResponse() as e:
+                # Track handle locally for UI/prompting
+                self.register_conductor_handle(
+                    handle_id=e.handle_id,
+                    query=e.query,
+                )
+
+            # ToDo: Deal with the rest of the conductor events
+
     def snapshot(self):
         self._current_snapshot_time = datetime.now()
 
@@ -476,6 +487,14 @@ class ConversationManagerState:
         )
         print("Dynamic response models built.")
         print(f"Available actions: {available_actions}")
+
+    # conductor handle tracking helpers
+    def register_conductor_handle(self, cm_handle_id: str, query: str) -> None:
+        self.conductor_handles[cm_handle_id] = {"query": query, "status": "started"}
+
+    def update_conductor_handle(self, cm_handle_id: str, **kwargs) -> None:
+        if cm_handle_id in self.conductor_handles:
+            self.conductor_handles[cm_handle_id].update(kwargs)
 
     def get_details(self) -> dict:
         return {

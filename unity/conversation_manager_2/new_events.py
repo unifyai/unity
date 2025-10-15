@@ -344,3 +344,83 @@ class UnifyMessageRecieved(Event):
 class UnifyMessageSent(Event):
     contact: int
     content: str
+
+
+# --------------------------------------------------------------------------- #
+# Conductor Events
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class ConductorRequest(Event):
+    """Event to ask or request the Conductor to perform a task."""
+
+    action_name: str
+    query: str
+    parent_chat_context: list[dict]
+
+
+@dataclass
+class ConductorResponse(Event):
+    """Event to respond to a Conductor request."""
+
+    handle_id: int
+    action_name: str
+    query: str
+    response: str
+
+
+@dataclass
+class ConductorHandleRequest(Event):
+    """Event to any action on an existing Conductor handle."""
+
+    handle_id: int
+    action_name: str
+    query: str
+    parent_chat_context: list[dict]
+
+
+@dataclass
+class ConductorHandleResponse(Event):
+    """Event to respond to a Conductor handle request."""
+
+    handle_id: int
+    action_name: str
+    query: str
+    response: str
+
+
+@dataclass
+class ConductorResult(Event):
+    """Event to the result of a Conductor task."""
+
+    handle_id: int
+    success: bool
+    result: dict | str | None = None
+    error: str | None = None
+
+
+@dataclass
+class ConductorClarificationRequest(Event):
+    """Event to request clarification from the Conductor."""
+
+    handle_id: int
+    query: str
+    call_id: str
+
+
+@dataclass
+class ConductorClarificationResponse(Event):
+    """Event to respond to a Conductor clarification request."""
+
+    handle_id: int
+    response: str
+    call_id: str
+
+
+@dataclass
+class ConductorNotification(Event):
+    """Event to forward a notification from a Conductor handle."""
+
+    handle_id: int
+    response: str

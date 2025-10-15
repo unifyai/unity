@@ -6,8 +6,42 @@ from pydantic import BaseModel, Field, create_model
 
 
 # conductor
-class AskConductor(BaseModel):
-    action_name: Literal["ask_conductor"]
+class ConductorAction(BaseModel):
+    """
+    Ask or request the Conductor to perform a task.
+        "conductor_ask": read-only request
+        "conductor_request": read-write request
+    """
+
+    action_name: Literal["conductor_ask", "conductor_request"]
+    query: str
+
+
+class ConductorHandleAction(BaseModel):
+    """
+    Intervene on an existing Conductor handle.
+        handle_id: the id of the handle
+        action_name: the action to perform on the handle
+            "conductor_handle_ask": read-only request on the status of the handle
+            "conductor_handle_interject": interject a message to the handle
+            "conductor_handle_stop": stop the handle
+            "conductor_handle_pause": pause the handle
+            "conductor_handle_resume": resume the handle
+            "conductor_handle_done": check if the handle is done
+            "conductor_handle_answer_clarification": answer a clarification question
+        query: the text to send to the handle
+    """
+
+    handle_id: int
+    action_name: Literal[
+        "conductor_handle_ask",
+        "conductor_handle_interject",
+        "conductor_handle_stop",
+        "conductor_handle_pause",
+        "conductor_handle_resume",
+        "conductor_handle_done",
+        "conductor_handle_answer_clarification",
+    ]
     query: str
 
 
@@ -88,8 +122,13 @@ def build_dynamic_response_models(
     Returns:
         dict: Response models for different modes (call, gmeet, text)
     """
-    # Build list of available action types
-    available_actions = [AskConductor, WaitForNextEvent]  # Always available
+    # Build list of always available action types
+    available_actions = [
+        ConductorAction,
+        ConductorHandleAction,
+        WaitForNextEvent,
+        SendUnifyMessage,
+    ]
 
     if include_email:
         available_actions.append(SendEmail)
@@ -97,8 +136,6 @@ def build_dynamic_response_models(
         available_actions.append(SendSMS)
     if include_call:
         available_actions.append(MakeCall)
-    # Unify message is always available for text mode
-    available_actions.append(SendUnifyMessage)
 
     # Create dynamic Union of available actions
     ActionsUnion = Union[tuple(available_actions)]
