@@ -135,7 +135,7 @@ class CommsManager:
                 asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
                         f"app:comms:contacts",
-                        GetContactsOutput(contacts=contacts).to_json(),
+                        GetContactsResponse(contacts=contacts).to_json(),
                     ),
                     self.loop,
                 )
@@ -225,7 +225,7 @@ class CommsManager:
                             sender_id = _map_sender_id(role)
                             receiver_ids = [1] if sender_id == 0 else [0]
 
-                            payload = LogMessageInput(
+                            payload = LogMessageRequest(
                                 medium="unify_message",
                                 sender_id=sender_id,
                                 receiver_ids=receiver_ids,
@@ -264,7 +264,7 @@ class CommsManager:
                     asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:contacts",
-                            GetContactsOutput(contacts=contacts).to_json(),
+                            GetContactsResponse(contacts=contacts).to_json(),
                         ),
                         self.loop,
                     )

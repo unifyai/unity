@@ -451,7 +451,7 @@ class ConversationManager:
         print("publishing startup")
         await self.event_broker.publish(
             "app:managers:input",
-            ManagersStartupInput(
+            ManagersStartupRequest(
                 agent_id=self.state.assistant_id,
                 first_name=self.state.assistant_name,
                 age=self.state.assistant_age,
@@ -468,7 +468,7 @@ class ConversationManager:
     async def publish_bus_events(self, event: Event):
         await self.event_broker.publish(
             "app:managers:input",
-            PublishBusEvent(event=event.to_dict()).to_json(),
+            PublishBusEventRequest(event=event.to_dict()).to_json(),
         )
 
     async def publish_transcript(self, event: Event):
@@ -532,7 +532,7 @@ class ConversationManager:
 
         await self.event_broker.publish(
             "app:managers:input",
-            LogMessageInput(
+            LogMessageRequest(
                 medium=medium,
                 sender_id=sender_id,
                 receiver_ids=receiver_ids,
@@ -547,7 +547,7 @@ class ConversationManager:
     async def publish_contact_update(self, contact: dict):
         await self.event_broker.publish(
             "app:managers:input",
-            UpdateContactEvent(
+            UpdateContactRequest(
                 contact_id=contact["contact_id"],
                 first_name=contact["first_name"],
                 surname=contact["surname"],
@@ -556,7 +556,44 @@ class ConversationManager:
             ).to_json(),
         )
 
+    async def publish_contact_info_request(self, event: Event) -> None:
+        """
+        For events with a contact field, publish a request for fresh contact
+        info from ContactManager. The response will be handled by the normal event loop.
+        """
+        # Skip if not initialized yet
+        if not self.state.initialized:
+            return
+
+        # Skip if no contact field
+        if not hasattr(event, "contact"):
+            return
+
+        # Get contact - pass to all params and let get_contact find the match
+        if isinstance(event.contact, int):
+            contact = self.state.get_contact(contact_id=event.contact)
+        elif isinstance(event.contact, str):
+            contact = self.state.get_contact(
+                phone_number=event.contact,
+                email_address=event.contact,
+            )
+        else:
+            contact = None
+
+        if not contact:
+            return
+
+        # Request fresh contact info from ManagersWorker (fire-and-forget)
+        print(f"Requesting fresh contact info for contact_id={contact.contact_id}")
+        await self.event_broker.publish(
+            "app:managers:input",
+            ContactInfoRequest(contact_id=int(contact.contact_id)).to_json(),
+        )
+
     async def handle_event(self, event: Event):
+        # For events with a contact string field, request fresh contact info (fire-and-forget)
+        asyncio.create_task(self.publish_contact_info_request(event))
+
         # update state
         self.state.update_state(event)
 
@@ -570,8 +607,8 @@ class ConversationManager:
 
         # every interaction with the managers worker happens through the conversation
         # manager instead of the state, which is why we need to publish the events here
-        # if event.__class__.loggable:
-        #     asyncio.create_task(self.publish_bus_events(event))
+        if event.__class__.loggable:
+            asyncio.create_task(self.publish_bus_events(event))
 
         if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
             # start phone call process and wait untils its done, we should probably make sure
