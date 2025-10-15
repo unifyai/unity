@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 import pytest
 
 from tests.helpers import _handle_project
-from unity.image_manager.types.image import Image, AnnotatedImage, Images
+from unity.image_manager.types import (
+    Image,
+    RawImageRef,
+    AnnotatedImageRef,
+    ImageRefs,
+)
 from unity.image_manager.utils import make_solid_png_base64
 
 
@@ -18,9 +23,12 @@ def test_annotated_image_basic():
         data=make_solid_png_base64(4, 4, (255, 0, 0)),
     )
 
-    ann = AnnotatedImage(image=img, annotation="training set example: high relevance")
+    ann = AnnotatedImageRef(
+        raw_image_ref=RawImageRef(image=img),
+        annotation="training set example: high relevance",
+    )
 
-    assert ann.image.caption == "a red square"
+    assert ann.raw_image_ref.image.caption == "a red square"
     assert ann.annotation.startswith("training set example")
 
 
@@ -37,11 +45,16 @@ def test_images_container_mixed_types():
         caption="red",
         data=make_solid_png_base64(2, 2, (255, 0, 0)),
     )
-    annotated = AnnotatedImage(image=base2, annotation="used in alerting scenario")
+    base1_ref = RawImageRef(image=base1)
+    base2_ref = RawImageRef(image=base2)
+    annotated = AnnotatedImageRef(
+        raw_image_ref=base2_ref,
+        annotation="used in alerting scenario",
+    )
 
-    images = Images.model_validate([base1, annotated, base2])
+    images = ImageRefs.model_validate([base1_ref, annotated, base2_ref])
 
     assert len(images.root) == 3
-    assert isinstance(images.root[0], Image)
-    assert isinstance(images.root[1], AnnotatedImage)
-    assert isinstance(images.root[2], Image)
+    assert isinstance(images.root[0], RawImageRef)
+    assert isinstance(images.root[1], AnnotatedImageRef)
+    assert isinstance(images.root[2], RawImageRef)

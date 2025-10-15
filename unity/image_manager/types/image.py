@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional, List
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator, RootModel
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Image(BaseModel):
@@ -54,25 +54,3 @@ class Image(BaseModel):
             # Best‑effort; if anything goes wrong, fall back to raw payload
             pass
         return payload
-
-
-class AnnotatedImage(BaseModel):
-    """
-    Pair an `Image` with a context-specific annotation.
-
-    The `caption` on the underlying image is context-agnostic; the `annotation`
-    explains how/why the image is relevant within a particular scenario.
-    """
-
-    image: Image = Field(description="The base image record being annotated")
-    annotation: str = Field(
-        description="Context-specific relevance annotation for the image",
-    )
-
-
-class Images(RootModel[List[Image | AnnotatedImage]]):
-    """
-    Container for a list of images, which may include raw `Image` instances,
-    `AnnotatedImage` instances, or a mix of both. Ordering has no semantic
-    importance; this type is purely for transport/validation.
-    """
