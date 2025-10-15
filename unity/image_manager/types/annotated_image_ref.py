@@ -14,5 +14,5 @@ class AnnotatedImageRef(BaseModel):
         description="Reference to the underlying raw image",
     )
     annotation: str = Field(
-        description="Context-specific relevance annotation for the image, aligning it with some correspond text",
+        description="Context-specific annotation, explaining the image's relevance in relation to a corresponding request or question",
     )
