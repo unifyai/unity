@@ -4,7 +4,7 @@ import json
 import inspect
 import copy
 
-from typing import Dict, Union, Callable, Tuple, Any, Set, Optional, Literal
+from typing import Dict, Union, Callable, Tuple, Any, Set, Optional, TYPE_CHECKING, Literal
 from contextlib import suppress
 from pydantic import BaseModel
 
@@ -48,6 +48,9 @@ from .messages import (
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
 from . import semantic_cache as sc
+
+if TYPE_CHECKING:
+    from ...image_manager.types.image_refs import ImageRefs
 
 
 class LoopLogger:
@@ -137,8 +140,7 @@ async def async_tool_loop_inner(
     max_parallel_tool_calls: Optional[int] = None,
     semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
-    image_refs: Optional[list] = None,
-    image_handles: Optional[dict[int, Any]] = None,
+    images: "ImageRefs | None" = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -261,10 +263,9 @@ async def async_tool_loop_inner(
     _imglog_token = None
     # If live images are provided, set the registry for this loop's scope
     try:
-        if image_refs or image_handles:
+        if images:
             _img_token, _imglog_token = set_live_images_context(
-                image_refs,
-                image_handles,
+                images,
                 message,
             )
     except Exception:

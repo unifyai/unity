@@ -148,8 +148,7 @@ def normalize_arg_scoped_images(
 
 
 def set_live_images_context(
-    image_refs: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
-    image_handles: Optional[dict[int, Any]] = None,
+    images: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
     reference_message: Any | None = None,
 ) -> tuple[Any, Any]:
     """
@@ -158,16 +157,14 @@ def set_live_images_context(
     Returns (registry_token, log_token) to allow resetting later.
     """
     try:
-        # Seed registry with provided handles, then resolve any referenced ids
+        # Seed registry from any existing registry and resolve referenced ids
         reg_current = LIVE_IMAGES_REGISTRY.get()
         id_map: dict[int, Any] = {}
         with suppress(Exception):
             id_map.update(reg_current if isinstance(reg_current, dict) else {})
-        if isinstance(image_handles, dict):
-            id_map.update({int(k): v for k, v in image_handles.items()})
         # Resolve referenced ids to handles where missing
         # Resolve referenced ids lazily with a local import to avoid circular dependencies at module import
-        if image_refs:
+        if images:
             try:
                 from unity.image_manager.image_manager import (
                     ImageManager as _ImageManager,
@@ -175,9 +172,7 @@ def set_live_images_context(
 
                 ids_to_fetch: List[int] = []
                 refs_list = (
-                    list(image_refs.root)
-                    if isinstance(image_refs, ImageRefs)
-                    else list(image_refs)
+                    list(images.root) if isinstance(images, ImageRefs) else list(images)
                 )
                 for ref in refs_list:
                     if isinstance(ref, AnnotatedImageRef):
@@ -202,12 +197,8 @@ def set_live_images_context(
 
         # Seed log from refs under source 'user_message'
         logs: list[dict] = []
-        if image_refs is not None:
-            refs = (
-                list(image_refs.root)
-                if isinstance(image_refs, ImageRefs)
-                else list(image_refs)
-            )
+        if images is not None:
+            refs = list(images.root) if isinstance(images, ImageRefs) else list(images)
             for ref in refs:
                 if isinstance(ref, AnnotatedImageRef):
                     logs.append(
