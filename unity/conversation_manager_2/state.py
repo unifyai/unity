@@ -1,6 +1,7 @@
 from datetime import datetime
 from dataclasses import dataclass
 import os
+import logging
 from typing import Literal, Optional
 from collections import deque
 
@@ -10,6 +11,8 @@ from unity.conversation_manager_2.new_events import *
 from unity.contact_manager.types.contact import Contact as ContactType
 from unity.transcript_manager.types.message import UNASSIGNED
 from unity.conversation_manager_2.event_broker import get_event_broker
+
+logger = logging.getLogger(__name__)
 
 
 class Contact(ContactType):
@@ -49,6 +52,8 @@ class Notification:
     type: str
     content: str
     timestamp: datetime
+    pinned: bool = False
+    interjection_id: Optional[str] = None
 
 
 class ConversationManagerState:
@@ -192,8 +197,19 @@ class ConversationManagerState:
                             type=e.source,
                             content=e.content,
                             timestamp=e.timestamp,
+                            pinned=e.pinned,
+                            interjection_id=e.interjection_id,
                         ),
                     )
+
+            case NotificationUnpinnedEvent() as e:
+                # Only process if it's for this conversation
+                if e.target_conversation_id == self.assistant_id:
+                    # Find and unpin the notification
+                    for notif in self.notifs:
+                        if notif.interjection_id == e.interjection_id:
+                            notif.pinned = False
+                            break
 
             case PhoneCallRecieved() as e:
                 self.conference_name = e.conference_name
@@ -670,13 +686,41 @@ Body:
 </{thread_name}>""".strip()
 
     def _render_notifs(self):
-        return "\n".join(
-            [
-                f"""[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
-                for n in self.notifs
-                if n.timestamp > self.last_snapshot_time
-            ],
+        # Count notifications for debugging
+        pinned_notifs = [n for n in self.notifs if n.pinned]
+        regular_notifs = [n for n in self.notifs if not n.pinned and n.timestamp > self.last_snapshot_time]
+        
+        logger.debug(
+            f"📋 Rendering notifications: {len(pinned_notifs)} pinned (always visible), "
+            f"{len(regular_notifs)} regular (new since last commit)"
         )
+        
+        # Render pinned notifications (always visible)
+        pinned = "\n".join([
+            f"""[PINNED {n.type.title()} @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
+            for n in pinned_notifs
+        ])
+        
+        # Render regular notifications (only new ones)
+        regular = "\n".join([
+            f"""[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
+            for n in regular_notifs
+        ])
+        
+        # Debug log what's being shown to the LLM
+        if pinned:
+            for n in pinned_notifs:
+                logger.debug(f"  📌 PINNED (ID: {n.interjection_id}): {n.content[:60]}...")
+        if regular:
+            for n in regular_notifs:
+                logger.debug(f"  📝 REGULAR (ID: {n.interjection_id}): {n.content[:60]}...")
+        if not pinned and not regular:
+            logger.debug("  (No notifications to render)")
+        
+        # Combine with separator if both exist
+        if pinned and regular:
+            return f"{pinned}\n\n{regular}"
+        return pinned or regular
 
     def _render_contact_threads(self, contact: Contact):
         threads = []
