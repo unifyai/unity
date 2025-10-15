@@ -706,8 +706,10 @@ class ContactManager(BaseContactManager):
         )
         client.set_system_message(_ask_prompt)
 
-        use_semantic_cache = is_semantic_cache_enabled() and not images
-        if use_semantic_cache:
+        use_semantic_cache = (
+            ("both" if is_semantic_cache_enabled() else None) if not images else None
+        )
+        if use_semantic_cache in ("read", "both"):
             # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
             tool_policy_fn = None
         elif images:

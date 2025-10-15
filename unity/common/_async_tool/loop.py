@@ -4,7 +4,7 @@ import json
 import inspect
 import copy
 
-from typing import Dict, Union, Callable, Tuple, Any, Set, Optional
+from typing import Dict, Union, Callable, Tuple, Any, Set, Optional, Literal
 from contextlib import suppress
 from pydantic import BaseModel
 
@@ -135,7 +135,7 @@ async def async_tool_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    semantic_cache: Optional[bool] = False,
+    semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
     image_refs: Optional[list] = None,
     image_handles: Optional[dict[int, Any]] = None,
@@ -386,7 +386,7 @@ async def async_tool_loop_inner(
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     semantic_closest_match = None
     last_valid_user_history = []
-    if semantic_cache:
+    if semantic_cache in ("read", "both"):
         if semantic_closest_match := sc.search_semantic_cache(
             message,
             semantic_cache_namespace,
@@ -1999,7 +1999,7 @@ async def async_tool_loop_inner(
             TOOL_LOOP_LINEAGE.reset(_token)
         reset_live_images_context(_img_token, _imglog_token)
 
-        if semantic_cache:
+        if semantic_cache in ("write", "both"):
             sc.save_semantic_cache(
                 _initial_user_message,
                 last_valid_user_history,

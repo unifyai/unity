@@ -263,9 +263,11 @@ class TranscriptManager(BaseTranscriptManager):
         else:
             effective_tool_policy = tool_policy
 
-        use_semantic_cache = is_semantic_cache_enabled()
-        # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-        effective_tool_policy = None if use_semantic_cache else effective_tool_policy
+        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        # When semantic cache read is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
+        effective_tool_policy = (
+            None if use_semantic_cache in ("read", "both") else effective_tool_policy
+        )
 
         # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_loop(

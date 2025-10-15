@@ -14,6 +14,7 @@ from typing import (
     Union,
     Type,
     TYPE_CHECKING,
+    Literal,
 )
 from ..constants import LOGGER
 from .llm_helpers import short_id
@@ -699,7 +700,7 @@ def start_async_tool_loop(
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
     handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
-    semantic_cache: Optional[bool] = False,
+    semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
     image_refs: Optional[list] = None,
     image_handles: Optional[dict[int, "ImageHandle"]] = None,
