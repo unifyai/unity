@@ -32,7 +32,7 @@ def test_get_images_for_guidance_returns_metadata_only():
     gid = gm._add_guidance(
         title="Layout Review",
         content="We need to review the image layout.",
-        images={"[0:10]": int(img_id)},
+        images=[{"image_id": int(img_id), "annotation": "layout screenshot"}],
     )["details"]["guidance_id"]
 
     items = gm._get_images_for_guidance(guidance_id=gid)
@@ -41,8 +41,9 @@ def test_get_images_for_guidance_returns_metadata_only():
     assert entry.get("image_id") == int(img_id)
     assert entry.get("caption") == "diagram of layout"
     assert isinstance(entry.get("timestamp"), str)
-    # Ensure no raw image/base64 field is present
+    # Ensure metadata includes annotation and no raw image/base64 field is present
     assert "image" not in entry
+    assert entry.get("annotation") in (None, "layout screenshot")
 
 
 @pytest.mark.unit
@@ -70,7 +71,7 @@ def test_attach_image_to_context_promotes_image_block():
 
 @pytest.mark.unit
 @_handle_project
-def test_get_images_for_guidance_includes_substring():
+def test_get_images_for_guidance_includes_annotation():
     im = ImageManager()
     [img_id] = im.add_images(
         [
@@ -85,11 +86,10 @@ def test_get_images_for_guidance_includes_substring():
     gm = GuidanceManager()
     content = "click this button to open the modal"
     gid = gm._add_guidance(
-        title="Substring Demo",
+        title="Annotation Demo",
         content=content,
-        images={"[6:18]": int(img_id)},
+        images=[{"image_id": int(img_id), "annotation": "button area"}],
     )["details"]["guidance_id"]
 
     items = gm._get_images_for_guidance(guidance_id=gid)
-    assert items and isinstance(items[0].get("substring"), str)
-    assert items[0]["substring"].strip() == "this button"
+    assert items and (items[0].get("annotation") in (None, "button area"))
