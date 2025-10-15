@@ -4,7 +4,7 @@ import json
 import inspect
 import copy
 
-from typing import Dict, Union, Callable, Tuple, Any, Set, Optional
+from typing import Dict, Union, Callable, Tuple, Any, Set, Optional, Literal
 from contextlib import suppress
 from pydantic import BaseModel
 
@@ -25,10 +25,11 @@ from .tools_utils import (
 from .images import (
     set_live_images_context,
     reset_live_images_context,
-    align_images_for as _align_images_for,
     build_live_image_tools,
     refresh_overview_doc_if_present,
-    append_source_scoped_images_with_text,
+    append_image_refs_with_source,
+    get_image_log_entries,
+    has_live_images_context,
 )
 from ..llm_helpers import method_to_schema, _dumps
 from .loop_config import (
@@ -134,9 +135,10 @@ async def async_tool_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    semantic_cache: Optional[bool] = False,
+    semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
-    images: Optional[dict[str, Any]] = None,
+    image_refs: Optional[list] = None,
+    image_handles: Optional[dict[int, Any]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -259,8 +261,12 @@ async def async_tool_loop_inner(
     _imglog_token = None
     # If live images are provided, set the registry for this loop's scope
     try:
-        if images:
-            _img_token, _imglog_token = set_live_images_context(images, message)
+        if image_refs or image_handles:
+            _img_token, _imglog_token = set_live_images_context(
+                image_refs,
+                image_handles,
+                message,
+            )
     except Exception:
         _img_token = None
         _imglog_token = None
@@ -303,7 +309,18 @@ async def async_tool_loop_inner(
                     prefix="⬇️",
                 )
             logger.info(f"System Message: {client.system_message}\n", prefix="📋")
-        logger.info(f"User Message: {message}\n", prefix="🧑‍💻")
+        # Combine user message + any aligned images into a single log entry
+        try:
+            combined_lines = [f"User Message: {message}"]
+            logs = get_image_log_entries()
+            if logs:
+                for _iid, _annotation in logs:
+                    combined_lines.append(
+                        f"🖼️ Image id={_iid}, annotation={_annotation!r}",
+                    )
+            logger.info("\n".join(combined_lines) + "\n", prefix="🧑‍💻")
+        except Exception:
+            logger.info(f"User Message: {message}\n", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -351,29 +368,16 @@ async def async_tool_loop_inner(
     # -----------------------------------------------------------------------
 
     # ── Live image helpers (optional) ─────────────────────────────────────────
-    # When a mapping of span→ImageHandle is supplied, expose three helper tools:
-    #   • live_images_overview() – docstring lists images, spans, substrings, captions
-    #   • ask_image(image_id, question) – returns a nested handle for image Q&A
-    #   • attach_image_raw(image_id, note=None) – attaches the image as vision context
-    # The docstring for `live_images_overview` is visible every turn; calling it is
-    # not required and it's a cheap no-op.
-
-    # Use shared text extraction helper from tools_utils instead of local duplicate
-
-    # Build live image helpers only when images were supplied and non-empty
+    # Build live image helpers when any image context is present
     live_image_tools: Dict[str, Callable] = {}
-    if images:
+    if has_live_images_context():
         live_image_tools = build_live_image_tools(
             reference_message=message,
-            images=images,
             append_user_messages=_msg_dispatcher.append_msgs,
         )
 
-    # ── Helper to prepare arg-scoped images mapping for inner tool calls ─────
-    align_images_for = _align_images_for
-
-    # Only add align_images_for when images are actually provided
-    general_helpers = {"align_images_for": align_images_for} if images else {}
+    # Legacy `align_images_for` removed in ImageRefs model – no general helpers needed
+    general_helpers = {}
 
     # Merge helpers (if any) with base tools before normalisation
     tools = {**tools, **(live_image_tools or {}), **general_helpers}
@@ -382,7 +386,7 @@ async def async_tool_loop_inner(
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
     semantic_closest_match = None
     last_valid_user_history = []
-    if semantic_cache:
+    if semantic_cache in ("read", "both"):
         if semantic_closest_match := sc.search_semantic_cache(
             message,
             semantic_cache_namespace,
@@ -551,11 +555,15 @@ async def async_tool_loop_inner(
 
         # Append any images sent alongside the clarification request
         with suppress(Exception):
-            append_source_scoped_images_with_text(
-                images_from_child,
-                "clar_request",
-                question_text,
-            )
+            append_image_refs_with_source(images_from_child)
+            try:
+                for _iid, _annotation in get_image_log_entries():
+                    logger.info(
+                        f"Image id={_iid}, annotation={_annotation!r}",
+                        prefix="🖼️",
+                    )
+            except Exception:
+                pass
 
     async def _handle_notification(src_task: asyncio.Task, payload: Any) -> None:
         call_id = tools_data.info[src_task].call_id
@@ -600,21 +608,17 @@ async def async_tool_loop_inner(
         # Append images provided with the notification payload
         with suppress(Exception):
             images_from_child = (
-                payload.get("images") if isinstance(payload, dict) else None
+                payload.get("image_refs") if isinstance(payload, dict) else None
             )
+            append_image_refs_with_source(images_from_child)
             try:
-                base_text = (
-                    payload.get("message")
-                    if isinstance(payload, dict)
-                    else str(payload)
-                )
+                for _iid, _annotation in get_image_log_entries():
+                    logger.info(
+                        f"Image id={_iid}, annotation={_annotation!r}",
+                        prefix="🖼️",
+                    )
             except Exception:
-                base_text = ""
-            append_source_scoped_images_with_text(
-                images_from_child,
-                "notification",
-                base_text,
-            )
+                pass
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
@@ -795,7 +799,7 @@ async def async_tool_loop_inner(
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
                     _ctx_cont = extra.get("parent_chat_context_continuted")
-                    _incoming_images = extra.get("images")
+                    _incoming_images = extra.get("image_refs")
                     with suppress(Exception):
                         _ctx_str = (
                             json.dumps(_ctx_cont, indent=2)
@@ -844,11 +848,15 @@ async def async_tool_loop_inner(
 
                 # If images accompany this interjection, accept source-scoped keys and append
                 with suppress(Exception):
-                    append_source_scoped_images_with_text(
-                        _incoming_images,
-                        "interjection",
-                        _msg_text,
-                    )
+                    append_image_refs_with_source(_incoming_images)
+                    try:
+                        for _iid, _annotation in get_image_log_entries():
+                            logger.info(
+                                f"Image id={_iid}, annotation={_annotation!r}",
+                                prefix="🖼️",
+                            )
+                    except Exception:
+                        pass
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -1071,7 +1079,7 @@ async def async_tool_loop_inner(
 
             # Refresh live-images overview with the latest appended images
             try:
-                if images:
+                if has_live_images_context():
                     refresh_overview_doc_if_present(tools_data.normalized)
             except Exception:
                 pass
@@ -1328,7 +1336,20 @@ async def async_tool_loop_inner(
 
             if log_steps:
                 with suppress(Exception):
-                    logger.info(f"{json.dumps(msg, indent=4)}\n", prefix="🤖")
+                    # Pretty-print tool_call arguments in assistant messages for readability
+                    from .utils import (
+                        try_parse_json as _try_parse_json,
+                    )  # local import to avoid cycles
+
+                    _msg_for_logging = copy.deepcopy(msg)
+                    _tcs = _msg_for_logging.get("tool_calls") or []
+                    for _tc in _tcs:
+                        _fn = _tc.get("function", {})
+                        _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
+                    logger.info(
+                        f"{json.dumps(_msg_for_logging, indent=4)}\n",
+                        prefix="🤖",
+                    )
 
             # ── timeout guard (post-LLM) ───────────────────────────────
             if timer.has_exceeded_time():
@@ -1505,11 +1526,17 @@ async def async_tool_loop_inner(
                                 reason_txt = payload.get("reason")
                             except Exception:
                                 reason_txt = ""
-                            append_source_scoped_images_with_text(
-                                payload.get("images"),
-                                "stop",
-                                reason_txt or "",
+                            append_image_refs_with_source(
+                                payload.get("image_refs"),
                             )
+                            try:
+                                for _iid, _annotation in get_image_log_entries():
+                                    logger.info(
+                                        f"Image id={_iid}, annotation={_annotation!r}",
+                                        prefix="🖼️",
+                                    )
+                            except Exception:
+                                pass
 
                         tool_msg = create_tool_call_message(
                             name=pretty_name,
@@ -1666,11 +1693,21 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the clarification answer
                         with suppress(Exception):
-                            append_source_scoped_images_with_text(
-                                args.get("images") if isinstance(args, dict) else None,
-                                "clar_answer",
-                                ans,
+                            append_image_refs_with_source(
+                                (
+                                    args.get("image_refs")
+                                    if isinstance(args, dict)
+                                    else None
+                                ),
                             )
+                            try:
+                                for _iid, _annotation in get_image_log_entries():
+                                    logger.info(
+                                        f"Image id={_iid}, annotation={_annotation!r}",
+                                        prefix="🖼️",
+                                    )
+                            except Exception:
+                                pass
                         # Always publish a tool reply acknowledging the clarify helper
                         tool_reply_msg = create_tool_call_message(
                             name=name,
@@ -1740,11 +1777,17 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the interjection helper
                         with suppress(Exception):
-                            append_source_scoped_images_with_text(
-                                payload.get("images"),
-                                "interjection",
-                                new_text,
+                            append_image_refs_with_source(
+                                payload.get("image_refs"),
                             )
+                            try:
+                                for _iid, _annotation in get_image_log_entries():
+                                    logger.info(
+                                        f"Image id={_iid}, annotation={_annotation!r}",
+                                        prefix="🖼️",
+                                    )
+                            except Exception:
+                                pass
 
                         # ― emit a tool message so the chat log stays tidy ---
                         tool_msg = create_tool_call_message(
@@ -1820,6 +1863,8 @@ async def async_tool_loop_inner(
                             coro = fn(**merged_kwargs)
                         else:
                             coro = asyncio.to_thread(fn, **merged_kwargs)
+
+                        # (Argument pretty-printing now handled in assistant message logs only)
 
                         call_dict = {
                             "id": call["id"],
@@ -1954,7 +1999,7 @@ async def async_tool_loop_inner(
             TOOL_LOOP_LINEAGE.reset(_token)
         reset_live_images_context(_img_token, _imglog_token)
 
-        if semantic_cache:
+        if semantic_cache in ("write", "both"):
             sc.save_semantic_cache(
                 _initial_user_message,
                 last_valid_user_history,

@@ -103,7 +103,7 @@ async def test_update_contact_from_image(contact_manager_scenario) -> None:
     )
 
     # Seed the live-images mapping onto the initial user message
-    images = {"[0:5]": ih}
+    images = {"[11:22]": ih}
 
     # Instruct the model to add the person from the image into contacts
     user_msg = "please add this person to the contact list"

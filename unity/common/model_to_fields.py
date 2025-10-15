@@ -52,6 +52,17 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
         origin_or_self = origin or py_t
 
         if isinstance(origin_or_self, type) and issubclass(origin_or_self, BaseModel):
+            # Pydantic v2 RootModel[T]: infer from the root field's annotation (if available)
+            try:
+                if getattr(origin_or_self, "__pydantic_root_model__", False):
+                    root_field = getattr(origin_or_self, "model_fields", {}).get("root")
+                    if root_field is not None:
+                        return infer_column_type(root_field.annotation)
+                    # Fallback if root metadata is unavailable
+                    return ColumnType.list
+            except Exception:
+                pass
+            # Regular BaseModel → dict
             return ColumnType.dict
         if origin_or_self in (dict, Mapping):
             return ColumnType.dict

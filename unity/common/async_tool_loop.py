@@ -14,6 +14,7 @@ from typing import (
     Union,
     Type,
     TYPE_CHECKING,
+    Literal,
 )
 from ..constants import LOGGER
 from .llm_helpers import short_id
@@ -508,7 +509,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         message: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
-        images: dict | None = None,
+        image_refs: list | None = None,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"💬 [{_label}] Interject requested: {message}")
@@ -523,7 +524,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             {
                 "message": message,
                 "parent_chat_context_cont": parent_chat_context_cont,
-                "images": images,
+                "image_refs": image_refs,
             },
             ("content", "message"),
         )
@@ -533,9 +534,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             {
                 "message": message,
                 "parent_chat_context_continuted": parent_chat_context_cont,
-                "images": images,
+                "image_refs": image_refs,
             }
-            if parent_chat_context_cont is not None or images is not None
+            if parent_chat_context_cont is not None or image_refs is not None
             else message
         )
         self._early_interjects.append(payload)
@@ -699,9 +700,10 @@ def start_async_tool_loop(
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
     handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
-    semantic_cache: Optional[bool] = False,
+    semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
-    images: Optional[dict[str, "ImageHandle"]] = None,
+    image_refs: Optional[list] = None,
+    image_handles: Optional[dict[int, "ImageHandle"]] = None,
     evented: Optional[bool] = None,
 ) -> AsyncToolLoopHandle:
     """
@@ -766,7 +768,8 @@ def start_async_tool_loop(
                 max_parallel_tool_calls=max_parallel_tool_calls,
                 semantic_cache=semantic_cache,
                 semantic_cache_namespace=semantic_cache_namespace,
-                images=images,
+                image_refs=image_refs,
+                image_handles=image_handles,
             )
         except asyncio.CancelledError:
             raise

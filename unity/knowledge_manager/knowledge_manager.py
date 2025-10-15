@@ -566,8 +566,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             ),
         )
 
-        use_semantic_cache = is_semantic_cache_enabled()
-        tool_policy_fn = None if use_semantic_cache else self._default_ask_tool_policy
+        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        tool_policy_fn = (
+            None
+            if use_semantic_cache in ("read", "both")
+            else self._default_ask_tool_policy
+        )
 
         handle = start_async_tool_loop(
             client,

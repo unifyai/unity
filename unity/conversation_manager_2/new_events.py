@@ -1,4 +1,5 @@
 import json
+import uuid
 from typing import Optional, Any
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
@@ -315,6 +316,16 @@ class NotificationInjectedEvent(Event):
 
     content: str
     source: str
+    target_conversation_id: str
+    interjection_id: str = field(default_factory=lambda: str(uuid.uuid4().hex[:12]))
+    pinned: bool = False
+
+
+@dataclass
+class NotificationUnpinnedEvent(Event):
+    """Event to unpin a previously pinned interjection."""
+
+    interjection_id: str
     target_conversation_id: str
 
 

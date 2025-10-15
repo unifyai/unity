@@ -2,63 +2,38 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from contextlib import suppress
-from typing import Any
-import re
-from unity.image_manager.utils import substring_from_span
+from typing import Any, List, Optional
+
+# New typed container for image references
+from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.raw_image_ref import RawImageRef
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
+
+# from unity.image_manager.image_manager import ImageManager  # avoid import-time cycles; use local imports instead
 
 
 # Loop-scoped registry of live images (id -> ImageHandle) for validation/lookup.
-# This module is the single source of truth for image-related context.
 LIVE_IMAGES_REGISTRY: ContextVar[dict[int, Any]] = ContextVar(
     "LIVE_IMAGES_REGISTRY",
     default={},
 )
 
-# Loop-scoped log lines for image overview (source-tagged entries)
-LIVE_IMAGES_LOG: ContextVar[list[str]] = ContextVar(
+# Loop-scoped log entries for image overview.
+# Each entry: {"image_id": int, "annotation": str | None}
+LIVE_IMAGES_LOG: ContextVar[list[dict]] = ContextVar(
     "LIVE_IMAGES_LOG",
     default=[],
 )
 
-# Loop-scoped mapping of source label (e.g. "user_message", "interjection0")
-# to the base text used for span alignment so we can display substrings.
-LIVE_IMAGES_SOURCE_TEXTS: ContextVar[dict[str, str]] = ContextVar(
-    "LIVE_IMAGES_SOURCE_TEXTS",
-    default={},
-)
 
-
-# ── Helpers for arg-scoped span keys (e.g. "question[2:9]") ─────────────———
-_ARG_SPAN_RX = re.compile(
-    r"^(?P<arg>[A-Za-z_]\w*)\[(?P<start>-?\d+)?\:(?P<end>-?\d+)?\]$",
-)
-
-
-def parse_arg_scoped_span(key: str) -> tuple[str, str] | None:
-    """
-    Parse a key of the form "<arg_name>[start:end]" and return
-    (arg_name, "[start:end]") when valid; else None.
-
-    The bracket portion preserves the original indices; downstream helpers can
-    compute concrete ranges or substrings with Python-slice semantics.
-    """
-    try:
-        m = _ARG_SPAN_RX.fullmatch(str(key))
-        if not m:
-            return None
-        arg = m.group("arg")
-        span = key[key.find("[") :]
-        return arg, span
-    except Exception:
-        return None
+# NOTE: All legacy character-index alignment and span parsing has been removed.
+parse_arg_scoped_span = None  # maintained for import compatibility; not used
 
 
 def extract_alignment_text_from_value(value: Any) -> str:
     """
-    Return a best-effort string to align spans against using the shared rules:
-      - str: use as-is
-      - dict: use str(value.get("content", ""))
-      - list: if chat messages → first with role=="user"; else first text block
+    Legacy helper retained for compatibility elsewhere; returns best-effort text.
+    Alignment indices are no longer used; this is only used for logging context.
     """
     try:
         if isinstance(value, str):
@@ -66,287 +41,189 @@ def extract_alignment_text_from_value(value: Any) -> str:
         if isinstance(value, dict):
             return str(value.get("content", ""))
         if isinstance(value, list):
-            # Case 1: chat messages
-            for m in value:
-                if isinstance(m, dict) and m.get("role") == "user":
-                    c = m.get("content")
-                    if isinstance(c, list):
-                        parts: list[str] = []
-                        for it in c:
-                            if isinstance(it, dict) and it.get("type") == "text":
-                                parts.append(str(it.get("text", "")))
-                            else:
-                                parts.append(str(it))
-                        return "".join(parts)
-                    return str(c)
-            # Case 2: content blocks (no roles)
-            for it in value:
-                if isinstance(it, dict) and it.get("type") == "text":
-                    return str(it.get("text", ""))
             return str(value[0]) if value else ""
-        # Fallback best-effort stringification
         return str(value)
     except Exception:
         return ""
 
 
-# ── Helpers for source-scoped keys (e.g. "user_message[0:10]", "this[:]") ───
-_SRC_SPAN_RX = re.compile(
-    r"^(?P<src>(this|user_message|interjection\d+|ask\d+|clar_request\d+|clar_answer\d+|notification\d+))\[(?P<start>-?\d+)?\:(?P<end>-?\d+)?\]$",
-)
+# Legacy parse function removed; keep a placeholder for imports.
+parse_source_scoped_span = None
 
 
-def parse_source_scoped_span(key: str) -> tuple[str, str] | None:
+def append_image_refs_with_source(
+    image_refs: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
+) -> None:
     """
-    Parse a key of the form "<source>[start:end]" where <source> is one of:
-    this, user_message, interjectionN, askN, clar_requestN, clar_answerN, notificationN.
-    Return (source, "[start:end]") when valid; else None.
-    """
-    try:
-        m = _SRC_SPAN_RX.fullmatch(str(key))
-        if not m:
-            return None
-        source = m.group("src")
-        span = key[key.find("[") :]
-        return source, span
-    except Exception:
-        return None
+    Append a batch of ImageRefs into the loop context.
 
-
-def append_source_scoped_images(images: dict | None, default_source_label: str) -> None:
-    """
-    Append `images` (source-scoped mapping) into the loop's live image registry and log.
-
-    Behaviour
-    ---------
-    - Accepts mapping of key → value where key is either `<source>[start:end]` or omitted
-      (treated as `this[:]`), and value is an image id or an ImageHandle.
-    - Resolves ids using LIVE_IMAGES_REGISTRY, appends handles idempotently.
-    - Records a compact log entry "<source>:<id>:[start:end]" for overview display.
-    - If `<source>` is literally `this`, it is mapped to `default_source_label`.
+    - Registers handles for known image_ids (idempotent) in LIVE_IMAGES_REGISTRY.
+    - Records a log entry per image with its annotation (if any).
     """
     try:
-        if not isinstance(images, dict) or not images:
+        if image_refs is None:
             return
+        refs: List[RawImageRef | AnnotatedImageRef]
+        if isinstance(image_refs, ImageRefs):
+            refs = list(image_refs.root)
+        else:
+            refs = list(image_refs or [])
+
         reg = LIVE_IMAGES_REGISTRY.get()
         log = LIVE_IMAGES_LOG.get()
-        for k, v in images.items():
-            parsed = parse_source_scoped_span(str(k))
-            if parsed:
-                src, span = parsed
-                if src == "this":
-                    src = default_source_label
-            else:
-                src, span = default_source_label, "[:]"
+        # Resolve references to handles for any ids not already present
+        try:
+            missing_ids: List[int] = []
+            ids_in_refs: List[int] = []
+            for ref in (
+                list(image_refs.root)
+                if isinstance(image_refs, ImageRefs)
+                else list(image_refs)
+            ):
+                if isinstance(ref, AnnotatedImageRef):
+                    iid = int(ref.raw_image_ref.image_id)
+                elif isinstance(ref, RawImageRef):
+                    iid = int(ref.image_id)
+                else:
+                    continue
+                ids_in_refs.append(iid)
+                if int(iid) not in reg:
+                    missing_ids.append(int(iid))
+            if missing_ids:
+                from unity.image_manager.image_manager import (
+                    ImageManager as _ImageManager,
+                )  # local import to avoid cycles
 
-            handle = None
-            with suppress(Exception):
-                if isinstance(v, int):
-                    handle = reg.get(int(v)) if isinstance(reg, dict) else None
-                elif hasattr(v, "image_id"):
-                    handle = v
-            if handle is None:
-                continue
-            with suppress(Exception):
-                reg[int(getattr(handle, "image_id", -1))] = handle
-            with suppress(Exception):
-                log.append(f"{src}:{int(getattr(handle, 'image_id', -1))}:{span}")
+                manager = _ImageManager()
+                handles = manager.get_images(missing_ids)
+                for h in handles:
+                    try:
+                        reg[int(getattr(h, "image_id", -1))] = h
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        # Append log entry (no source)
+        with suppress(Exception):
+            for ref in refs:
+                try:
+                    if isinstance(ref, AnnotatedImageRef):
+                        image_id = int(ref.raw_image_ref.image_id)
+                        annotation = str(ref.annotation)
+                    elif isinstance(ref, RawImageRef):
+                        image_id = int(ref.image_id)
+                        annotation = None
+                    else:
+                        continue
+                    log.append(
+                        {
+                            "image_id": image_id,
+                            "annotation": annotation,
+                        },
+                    )
+                except Exception:
+                    continue
     except Exception:
         return
 
 
-def append_source_scoped_images_with_text(
-    images: dict | None,
-    prefix: str,
-    text: Any,
-) -> str | None:
-    """
-    Convenience wrapper: generate a new source label for the given prefix (e.g.,
-    "interjection" → "interjectionN"), record the base text for substring display,
-    and append the provided images under that source.
-    Returns the computed source label, or None on failure.
-    """
-    try:
-        label = default_source_label(prefix)
-        record_source_text(label, text)
-        append_source_scoped_images(images, label)
-        return label
-    except Exception:
-        return None
+# NOTE: Compatibility wrappers for source-labelled images have been removed.
 
 
-def record_source_text(source_label: str, text: Any) -> None:
-    """
-    Record a human-readable base text for a given dynamic image source label.
-
-    The text is later used to render the extracted substring alongside indices
-    (e.g., for entries like "interjection0[5:11]") in the live overview.
-    """
-    try:
-        if not source_label:
-            return
-        base_text = extract_alignment_text_from_value(text)
-        if base_text is None:
-            return
-        mapping = LIVE_IMAGES_SOURCE_TEXTS.get()
-        if not isinstance(mapping, dict):
-            mapping = {}
-        mapping = dict(mapping)
-        mapping[str(source_label)] = str(base_text)
-        LIVE_IMAGES_SOURCE_TEXTS.set(mapping)
-    except Exception:
-        return
+pass  # module-level placeholder to preserve import ordering
 
 
-def next_source_index(prefix: str) -> int:
-    """Return the next numeric index for a given source prefix based on LIVE_IMAGES_LOG."""
-    try:
-        log = LIVE_IMAGES_LOG.get()
-        if not isinstance(log, list):
-            return 0
-        return sum(1 for e in log if isinstance(e, str) and e.startswith(prefix))
-    except Exception:
-        return 0
+# Removed: next_source_index (source labels no longer used)
 
 
-def default_source_label(prefix: str) -> str:
-    """Return a default `<prefix>N` label using the next available index."""
-    return f"{prefix}{next_source_index(prefix)}"
+# Removed: default_source_label (source labels no longer used)
 
 
 def normalize_arg_scoped_images(
-    merged_kwargs: dict,
-    *,
-    tool_name: str | None = None,
-    param_names: set[str] | None = None,
-) -> dict:
-    """
-    Normalize arg-scoped images mapping in `merged_kwargs` for inner tool calls.
-
-    Behaviour mirrors prior inline implementation in tools_data:
-    - Skip entirely for the helper tool `ask_image` (expects source-scoped keys).
-    - Accept `images` mapping with keys of the form `<arg>[start:end]`.
-    - Validate that `<arg>` exists in the call arguments/parameters.
-    - Resolve value to a live image handle via LIVE_IMAGES_REGISTRY or accept handle objects.
-    - Validate spans against the referenced argument text; keep only non-empty matches.
-    - Returns the (possibly) updated `merged_kwargs` with a filtered `images` dict.
-    """
-    try:
-        if tool_name == "ask_image":
-            return merged_kwargs
-        images_val = merged_kwargs.get("images")
-        if not isinstance(images_val, dict):
-            return merged_kwargs
-
-        raw_images = dict(images_val or {})
-        registry = LIVE_IMAGES_REGISTRY.get()
-        norm_images: dict[str, Any] = {}
-        params = set(param_names or [])
-
-        for key, val in raw_images.items():
-            parsed = parse_arg_scoped_span(str(key))
-            if not parsed:
-                continue
-            arg_name, span = parsed
-
-            # Only accept if referenced arg is available in the call
-            if arg_name not in params and arg_name not in merged_kwargs:
-                continue
-
-            # Resolve id → handle or accept provided handle
-            handle = None
-            with suppress(Exception):
-                if isinstance(val, int):
-                    handle = (
-                        registry.get(int(val)) if isinstance(registry, dict) else None
-                    )
-                elif hasattr(val, "image_id"):
-                    handle = val
-                elif isinstance(val, dict):
-                    # Accept explicit id fields inside the dict
-                    _id_field = None
-                    for _k in ("image_id", "imageId", "id"):
-                        if _k in val:
-                            _id_field = val[_k]
-                            break
-                    if _id_field is not None:
-                        try:
-                            handle = (
-                                registry.get(int(_id_field))
-                                if isinstance(registry, dict)
-                                else None
-                            )
-                        except Exception:
-                            handle = None
-                    elif bool(val.get("__handle__")):
-                        # Fallback: when a single live image exists, use it
-                        if isinstance(registry, dict) and len(registry) == 1:
-                            try:
-                                handle = next(iter(registry.values()))
-                            except Exception:
-                                handle = None
-            if handle is None:
-                continue
-
-            # Validate the span against the referenced argument's text; drop if invalid/empty.
-            try:
-                align_txt = extract_alignment_text_from_value(
-                    merged_kwargs.get(arg_name),
-                )
-                if align_txt is not None:
-                    matched = substring_from_span(str(align_txt), span)
-                    if isinstance(matched, str) and matched != "":
-                        norm_images[str(key)] = handle
-            except Exception:
-                continue
-
-        merged_kwargs["images"] = norm_images
-        return merged_kwargs
-    except Exception:
-        # Best-effort; if anything goes wrong, return original
-        return merged_kwargs
+    *args,
+    **kwargs,
+):  # removed – retained for import compatibility
+    return args[0] if args else {}
 
 
-# ── Context management for live images (registry/log) ─────────────────────────
 def set_live_images_context(
-    images: dict[str, Any],
-    reference_message: Any,
+    image_refs: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
+    image_handles: Optional[dict[int, Any]] = None,
+    reference_message: Any | None = None,
 ) -> tuple[Any, Any]:
     """
-    Seed LIVE_IMAGES_REGISTRY and LIVE_IMAGES_LOG for the current loop scope.
+    Seed LIVE_IMAGES_REGISTRY and LIVE_IMAGES_LOG for the current loop scope using ImageRefs.
 
     Returns (registry_token, log_token) to allow resetting later.
     """
     try:
-        if not images:
-            return None, None
+        # Seed registry with provided handles, then resolve any referenced ids
+        reg_current = LIVE_IMAGES_REGISTRY.get()
         id_map: dict[int, Any] = {}
-        for _k, _ih in images.items():
-            with suppress(Exception):
-                _iid = int(getattr(_ih, "image_id", -1))
-                if _iid >= 0:
-                    id_map[_iid] = _ih
+        with suppress(Exception):
+            id_map.update(reg_current if isinstance(reg_current, dict) else {})
+        if isinstance(image_handles, dict):
+            id_map.update({int(k): v for k, v in image_handles.items()})
+        # Resolve referenced ids to handles where missing
+        # Resolve referenced ids lazily with a local import to avoid circular dependencies at module import
+        if image_refs:
+            try:
+                from unity.image_manager.image_manager import (
+                    ImageManager as _ImageManager,
+                )  # local import
+
+                ids_to_fetch: List[int] = []
+                refs_list = (
+                    list(image_refs.root)
+                    if isinstance(image_refs, ImageRefs)
+                    else list(image_refs)
+                )
+                for ref in refs_list:
+                    if isinstance(ref, AnnotatedImageRef):
+                        iid = int(ref.raw_image_ref.image_id)
+                    elif isinstance(ref, RawImageRef):
+                        iid = int(ref.image_id)
+                    else:
+                        continue
+                    if iid not in id_map:
+                        ids_to_fetch.append(iid)
+                if ids_to_fetch:
+                    manager = _ImageManager()
+                    handles = manager.get_images(ids_to_fetch)
+                    for h in handles:
+                        try:
+                            id_map[int(getattr(h, "image_id", -1))] = h
+                        except Exception:
+                            continue
+            except Exception:
+                pass
         reg_token = LIVE_IMAGES_REGISTRY.set(id_map)
 
-        seed_log: list[str] = []
-        with suppress(Exception):
-            for _k, _ih in images.items():
-                with suppress(Exception):
-                    _iid = int(getattr(_ih, "image_id", -1))
-                seed_log.append(f"user_message:{_iid}:{_k}")
-        log_token = LIVE_IMAGES_LOG.set(seed_log)
-
-        # Also seed source→text mapping so substrings can be shown for user_message
-        try:
-            base_text = extract_alignment_text_from_value(reference_message)
-            mapping = LIVE_IMAGES_SOURCE_TEXTS.get()
-            if not isinstance(mapping, dict):
-                mapping = {}
-            mapping = dict(mapping)
-            mapping["user_message"] = str(base_text)
-            LIVE_IMAGES_SOURCE_TEXTS.set(mapping)
-        except Exception:
-            pass
+        # Seed log from refs under source 'user_message'
+        logs: list[dict] = []
+        if image_refs is not None:
+            refs = (
+                list(image_refs.root)
+                if isinstance(image_refs, ImageRefs)
+                else list(image_refs)
+            )
+            for ref in refs:
+                if isinstance(ref, AnnotatedImageRef):
+                    logs.append(
+                        {
+                            "image_id": int(ref.raw_image_ref.image_id),
+                            "annotation": str(ref.annotation),
+                        },
+                    )
+                elif isinstance(ref, RawImageRef):
+                    logs.append(
+                        {
+                            "image_id": int(ref.image_id),
+                            "annotation": None,
+                        },
+                    )
+        log_token = LIVE_IMAGES_LOG.set(logs)
         return reg_token, log_token
     except Exception:
         return None, None
@@ -364,7 +241,6 @@ def reset_live_images_context(registry_token: Any, log_token: Any) -> None:
 # ── Helper tools for live images (overview, ask, attach) ─────────────────────
 def build_live_image_tools(
     reference_message: Any,
-    images: dict[str, Any],
     *,
     append_user_messages,
 ) -> dict[str, Any]:
@@ -380,74 +256,68 @@ def build_live_image_tools(
     id_to_handle: dict[int, Any] = {}
     listings: list[str] = []
 
-    # Build id → handle map and enriched listings
-    reference_text = extract_alignment_text_from_value(reference_message)
-    for span_key, ih in list(images.items()):
-        with _suppress(Exception):
-            img_id = int(getattr(ih, "image_id", -1))
-        if "img_id" not in locals():
-            img_id = -1
-        id_to_handle[img_id] = ih
-        substr = ""
-        with _suppress(Exception):
-            substr = substring_from_span(str(reference_text), str(span_key))
-        if "substr" not in locals():
-            substr = ""
-        with _suppress(Exception):
-            caption = getattr(ih, "caption", None)
-        if "caption" not in locals():
-            caption = None
-        listings.append(
-            f"- id={img_id}, span={span_key}, substring={substr!r}, caption={caption!r}",
-        )
+    # Build id → handle map and enriched listings from registry and logs
+    with _suppress(Exception):
+        reg = LIVE_IMAGES_REGISTRY.get() or {}
+        logs = LIVE_IMAGES_LOG.get() or []
+    for iid, ih in getattr(reg, "items", lambda: [])():
+        try:
+            id_to_handle[int(iid)] = ih
+        except Exception:
+            continue
+    # Generate listing lines using logs (uniform format, no source; include caption and timestamp)
+    for rec in logs:
+        try:
+            _iid = int(rec.get("image_id"))
+            _annotation = rec.get("annotation")
+            _caption = None
+            _ts = ""
+            with _suppress(Exception):
+                _h = id_to_handle.get(_iid)
+                _caption = getattr(_h, "caption", None)
+                _ts = getattr(getattr(_h, "timestamp", None), "isoformat", lambda: "")()
+            listings.append(
+                f"- id={_iid}, caption={_caption!r}, timestamp={_ts!r}, annotation={_annotation!r}",
+            )
+        except Exception:
+            continue
 
     overview_doc = (
-        "Live images aligned to the current user_message (visible in this description; calling is optional).\n"
+        "Live images available in the current session (calling this overview is optional).\n"
         + "\n".join(listings or ["(none)"])
         + "\n\n"
-        + "Arg-scoped image keys for inner tools\n"
-        + "-----------------------------------\n"
-        + "When calling an inner tool that accepts `images`, reference each image with an arg-scoped span key: `<arg>[start:end]`.\n"
-        + "- `<arg>` is the name of the tool's string parameter (e.g., `question`, `text`, `prompt`).\n"
-        + "- `[start:end]` uses Python-slice semantics over that parameter's text.\n"
-        + "- Values are image ids (or handles) that should align to that substring.\n\n"
-        + "Example (manual):\n"
-        + "  images = { 'question[10:23]': 42 }\n\n"
-        + "Example (recommended with helper):\n"
-        + "  align_images_for(\n"
-        + "    args={ 'question': 'Please compare the Cairo skyline images for clarity' },\n"
-        + "    hints=[ { 'arg': 'question', 'substring': 'Cairo skyline', 'image_id': 42 } ]\n"
-        + "  )  →  { 'images': { 'question[15:28]': 42 } }\n"
-        + "\n"
-        + "Source-scoped image keys for dynamic methods\n"
-        + "-------------------------------------------\n"
-        + "When sending images with dynamic methods (ask, interject, stop, clarify, notifications), use `<source>[start:end]` keys:\n"
-        + "- Supported sources: `this`, `user_message`, `interjectionN`, `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`.\n"
-        + "- `this[:]` is a shorthand that refers to the current outgoing payload (e.g., the very text of this interjection/ask/clarify/notify).\n"
-        + "- Values are image ids (or handles). These images are appended to the loop’s live registry and reflected below.\n"
+        + "Notes:\n"
+        + "- `ask_image` accepts only two arguments: `image_id` and `question`.\n"
+        + "- Some dynamic helpers (e.g. `interject_…`, `clarify_…`, `stop_…`) may accept `image_refs` using the `ImageRefs` model:\n"
+        + "  a list of `RawImageRef` (just an id) or `AnnotatedImageRef` (id + freeform annotation).\n"
+        + "  The annotation should briefly explain how the image relates to the current request.\n"
+        + "  Example: [{ 'raw_image_ref': { 'image_id': 42 }, 'annotation': 'Jenny\u2019s paint' }]\n"
     )
 
     # Merge previously appended images (if any)
     with _suppress(Exception):
-        prior = LIVE_IMAGES_LOG.get()
-    if "prior" not in locals():
-        prior = []
+        prior = LIVE_IMAGES_LOG.get() or []
     if prior:
         prior_lines = []
         for rec in prior:
-            with _suppress(Exception):
-                src, iid_s, span_key = rec.split(":", 2)
-                base_text = ""
-                try:
-                    base_text = (LIVE_IMAGES_SOURCE_TEXTS.get() or {}).get(src, "")
-                except Exception:  # pragma: no cover - defensive
-                    base_text = ""
-                _substr = ""
+            try:
+                _iid = int(rec.get("image_id"))
+                _annotation = rec.get("annotation")
+                _caption = None
+                _ts = ""
                 with _suppress(Exception):
-                    _substr = substring_from_span(str(base_text), str(span_key))
+                    _h = id_to_handle.get(_iid)
+                    _caption = getattr(_h, "caption", None)
+                    _ts = getattr(
+                        getattr(_h, "timestamp", None),
+                        "isoformat",
+                        lambda: "",
+                    )()
                 prior_lines.append(
-                    f"- source={src}, id={int(iid_s)}, span={span_key}, substring={_substr!r}",
+                    f"- id={_iid}, caption={_caption!r}, timestamp={_ts!r}, annotation={_annotation!r}",
                 )
+            except Exception:
+                continue
         if prior_lines:
             overview_doc = (
                 overview_doc
@@ -467,16 +337,10 @@ def build_live_image_tools(
         *,
         image_id: int,
         question: str,
-        images: dict | None = None,
     ) -> Any:
         ih = id_to_handle.get(int(image_id))
         if ih is None:
             return {"error": f"image_id {int(image_id)} not found"}
-        # Record source text for this ask-turn so appended images can show substrings
-        with _suppress(Exception):
-            _label = default_source_label("ask")
-            record_source_text(_label, question)
-            append_source_scoped_images(images, _label)
         try:
             return await ih.ask(question)
         except Exception as _exc:  # noqa: BLE001
@@ -592,14 +456,10 @@ def build_live_image_tools(
         "image_id : int\n"
         "    The unique id of the image (see overview).\n"
         "question : str\n"
-        "    The question to ask about the image.\n"
-        "images : dict | None\n"
-        "    Optional source-scoped images mapping to append at the time of this call.\n"
-        "    Keys use `<source>[start:end]` (see overview). Use `this[:]` to associate images with the `question` text.\n\n"
+        "    The question to ask about the image.\n\n"
         "Behaviour\n"
         "---------\n"
-        "- Resolves ids to handles, appends them to this loop’s live registry, and surfaces them in the overview.\n"
-        "- Returns a nested handle; await its result for the answer."
+        "- Returns the answer from the image handle."
     )
 
     attach_image_raw.__doc__ = (
@@ -609,14 +469,11 @@ def build_live_image_tools(
         "image_id : int\n"
         "    The unique id of the image (see overview).\n"
         "note : str | None\n"
-        "    Optional text note; if provided the note and image will be appended in one user message.\n"
-        "images : dict | None\n"
-        "    Optional source-scoped images mapping to append at the time of this call.\n"
-        "    Keys use `<source>[start:end]` (see overview). Use `this[:]` to associate images with `note` (or with an empty string when `note` is None).\n\n"
+        "    Optional text note; if provided the note and image will be appended in one user message.\n\n"
         "Behaviour\n"
         "---------\n"
         "- Idempotent per image_id (re-attaching the same id is a no-op).\n"
-        "- Resolves ids to handles, appends them to this loop’s live registry, and surfaces them in the overview."
+        "- Resolves ids to handles and surfaces them in the overview."
     )
 
     return {
@@ -626,62 +483,12 @@ def build_live_image_tools(
     }
 
 
-async def align_images_for(*, args: dict, hints: list[dict]) -> dict:
-    """
-    Prepare arg‑scoped `images` for an upcoming inner tool call, without manual counting.
-
-    Converts human-friendly substring hints into arg-scoped span keys of the form
-    `<arg>[start:end]`, which inner tools that accept `images` can consume directly.
-    """
-    out: dict[str, int] = {}
-    try:
-        arg_texts = {str(k): str(v) for k, v in dict(args or {}).items()}
-    except Exception:
-        arg_texts = {}
-
-    def _extract_id(obj: dict) -> int | None:
-        for k in ("image_id", "imageId", "id"):
-            if k in obj:
-                try:
-                    return int(obj[k])
-                except Exception:
-                    return None
-        return None
-
-    def _extract_arg(obj: dict) -> str | None:
-        for k in ("arg", "argument", "arg_name", "name"):
-            if k in obj:
-                return str(obj[k])
-        return None
-
-    def _extract_substring(obj: dict) -> str | None:
-        for k in ("substring", "text", "span_text"):
-            if k in obj:
-                return str(obj[k])
-        return None
-
-    for item in list(hints or []):
-        if not isinstance(item, dict):
-            continue
-        iid = _extract_id(item)
-        arg_name = _extract_arg(item)
-        sub = _extract_substring(item)
-        if iid is None or not arg_name or sub is None:
-            continue
-        base = arg_texts.get(arg_name)
-        if not isinstance(base, str):
-            continue
-        try:
-            start = base.find(sub)
-            if start < 0:
-                continue
-            end = start + len(sub)
-            key = f"{arg_name}[{start}:{end}]"
-            out[key] = iid
-        except Exception:
-            continue
-
-    return {"images": out}
+async def align_images_for(
+    *,
+    args: dict,
+    hints: list[dict],
+) -> dict:  # deprecated helper retained for compatibility
+    return {"image_refs": []}
 
 
 def refresh_overview_doc_if_present(normalized_tools: dict) -> None:
@@ -699,19 +506,35 @@ def refresh_overview_doc_if_present(normalized_tools: dict) -> None:
         with suppress(Exception):
             for rec in LIVE_IMAGES_LOG.get() or []:
                 try:
-                    src, iid_s, span_key = rec.split(":", 2)
-                    # Attempt to compute substring if we have source text
-                    base_text = (LIVE_IMAGES_SOURCE_TEXTS.get() or {}).get(src, "")
-                    _substr = ""
-                    try:
-                        _substr = substring_from_span(str(base_text), str(span_key))
-                    except Exception:
-                        _substr = ""
                     prior_lines.append(
-                        f"- source={src}, id={int(iid_s)}, span={span_key}, substring={_substr!r}",
+                        f"- source={rec.get('source')}, id={int(rec.get('image_id'))}, annotation={rec.get('annotation')!r}",
                     )
                 except Exception:
                     continue
         fn.__doc__ = base_doc + (sep + "\n".join(prior_lines) if prior_lines else "")
     except Exception:
         return
+
+
+# ── Lightweight helpers for logging image attachments ───────────────────────
+def get_image_log_entries() -> list[tuple[int, Optional[str]]]:
+    """Return all image log entries as (image_id, annotation)."""
+    entries: list[tuple[int, Optional[str]]] = []
+    try:
+        for rec in LIVE_IMAGES_LOG.get() or []:
+            try:
+                entries.append((int(rec.get("image_id")), rec.get("annotation")))
+            except Exception:
+                continue
+    except Exception:
+        return []
+    return entries
+
+
+def has_live_images_context() -> bool:
+    try:
+        reg = LIVE_IMAGES_REGISTRY.get()
+        logs = LIVE_IMAGES_LOG.get()
+        return bool(reg) or bool(logs)
+    except Exception:
+        return False
