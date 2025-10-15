@@ -274,15 +274,10 @@ def build_live_image_tools(
             continue
 
     overview_doc = (
-        "Live images available in the current session (calling this overview is optional).\n"
+        "Live images available in the current session:\n"
         + "\n".join(listings or ["(none)"])
-        + "\n\n"
-        + "Notes:\n"
-        + "- `ask_image` accepts only two arguments: `image_id` and `question`.\n"
-        + "- Some dynamic helpers (e.g. `interject_…`, `clarify_…`, `stop_…`) may accept `image_refs` using the `ImageRefs` model:\n"
-        + "  a list of `RawImageRef` (just an id) or `AnnotatedImageRef` (id + freeform annotation).\n"
-        + "  The annotation should briefly explain how the image relates to the current request.\n"
-        + "  Example: [{ 'raw_image_ref': { 'image_id': 42 }, 'annotation': 'Jenny\u2019s paint' }]\n"
+        + "\n"
+        + "Calling this overview 'tool' is a redundant no-op, the live images are all presented above in this dynamically updated 'tool description'"
     )
 
     # Merge previously appended images (if any)
@@ -451,6 +446,10 @@ def build_live_image_tools(
         "Behaviour\n"
         "---------\n"
         "- Returns the answer from the image handle."
+        "Notes\n"
+        "-----\n"
+        "- Favour this tool for surgical (and relatively simple) single-image questions."
+        "- Prevents 'polluting' the outer context with the full image data, in cases where this data could end up being a distraction."
     )
 
     attach_image_raw.__doc__ = (
@@ -465,6 +464,10 @@ def build_live_image_tools(
         "---------\n"
         "- Idempotent per image_id (re-attaching the same id is a no-op).\n"
         "- Resolves ids to handles and surfaces them in the overview."
+        "Notes\n"
+        "-----\n"
+        "- Favour this tool for multi-image comparative and/or queries related to the broader task in a more open-end manner."
+        "- Ensures all future reasoning in this loop has *full access* to the image data for *maximual context*, good if this data is relevant beyond the scope of a single question."
     )
 
     return {
