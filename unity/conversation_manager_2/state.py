@@ -105,7 +105,7 @@ class ConversationManagerState:
         self.active_conversations: dict[str, Contact] = {}
 
         self.notifs: list[Notification] = []
-        # conductor handles: cm_handle_id -> {query, status}
+        # conductor handles: handle_id -> {query, status}
         self.conductor_handles: dict[str, dict] = {}
 
         self.mode: Literal["text", "call", "gmeet"] = "text"
@@ -414,14 +414,27 @@ class ConversationManagerState:
                 if e.medium == "phone_call" and self.call_exchange_id == UNASSIGNED:
                     self.call_exchange_id = e.exchange_id
 
+            # conductor
             case ConductorResponse() as e:
-                # Track handle locally for UI/prompting
                 self.register_conductor_handle(
                     handle_id=e.handle_id,
                     query=e.query,
                 )
-
-            # ToDo: Deal with the rest of the conductor events
+            case ConductorHandleResponse() as e:
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name=e.action_name,
+                    query=e.query,
+                    response=e.response,
+                )
+            case ConductorClarificationRequest() as e:
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="clarification",
+                    query=e.query,
+                )
+            case ConductorResult() as e:
+                self.conductor_handles.pop(e.handle_id, None)
 
     def snapshot(self):
         self._current_snapshot_time = datetime.now()
@@ -489,12 +502,20 @@ class ConversationManagerState:
         print(f"Available actions: {available_actions}")
 
     # conductor handle tracking helpers
-    def register_conductor_handle(self, cm_handle_id: str, query: str) -> None:
-        self.conductor_handles[cm_handle_id] = {"query": query, "status": "started"}
+    def register_conductor_handle(self, handle_id: str, query: str) -> None:
+        self.conductor_handles[handle_id] = {"query": query, "handle_actions": []}
 
-    def update_conductor_handle(self, cm_handle_id: str, **kwargs) -> None:
-        if cm_handle_id in self.conductor_handles:
-            self.conductor_handles[cm_handle_id].update(kwargs)
+    def add_conductor_handle_action(
+        self, handle_id: str, action_name: str, query: str, response: str
+    ) -> None:
+        if handle_id in self.conductor_handles:
+            self.conductor_handles[handle_id]["handle_actions"].append(
+                {
+                    "action_name": action_name,
+                    "query": query,
+                    "response": response,
+                }
+            )
 
     def get_details(self) -> dict:
         return {
