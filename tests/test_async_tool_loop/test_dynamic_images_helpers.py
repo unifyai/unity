@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import pytest
 import unify
-from unity.image_manager.image_manager import ImageManager, ImageHandle
-from unity.image_manager.types.image import Image
+from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.utils import make_solid_png_base64
+from unity.image_manager.types.raw_image_ref import RawImageRef
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project, SETTINGS
@@ -15,17 +16,6 @@ from tests.test_async_tool_loop.async_helpers import (
     _wait_for_assistant_call_prefix,
     _wait_for_tool_message_prefix,
 )
-
-
-def _find_tool_name(tools: list[dict], prefix: str) -> str | None:
-    for t in tools or []:
-        try:
-            n = t.get("function", {}).get("name")
-            if isinstance(n, str) and n.startswith(prefix):
-                return n
-        except Exception:
-            continue
-    return None
 
 
 @pytest.mark.asyncio
@@ -54,11 +44,12 @@ async def test_interject_dynamic_helper_appends_images() -> None:
 
     manager = ImageManager()
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
-    ih = ImageHandle(
-        manager=manager,
-        image=Image(image_id=42, caption="blue square", data=b64_blue),
+    [img_id] = manager.add_images(
+        [
+            {"caption": "blue square", "data": b64_blue},
+        ],
     )
-    images = {"[0:5]": ih}
+    images = [RawImageRef(image_id=img_id)]
 
     h = start_async_tool_loop(
         client=client,
@@ -70,12 +61,13 @@ async def test_interject_dynamic_helper_appends_images() -> None:
         tool_policy=lambda step, available: (
             ("required", {"do_work": available["do_work"]})
             if step == 0
-            else ("auto", available)
+            else ("auto", {})
         ),
     )
 
     await _wait_for_tool_request(client, "do_work")
-    await h.interject("please proceed", images={"this[:]": ih})
+    await _wait_for_tool_message_prefix(client, "do_work")
+    await h.interject("please proceed", image_refs=[RawImageRef(image_id=img_id)])
     await _wait_for_assistant_call_prefix(client, "interject_")
     await _wait_for_tool_message_prefix(client, "interject ")
     final = await h.result()
@@ -104,11 +96,12 @@ async def test_stop_dynamic_helper_appends_images() -> None:
 
     manager = ImageManager()
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
-    ih = ImageHandle(
-        manager=manager,
-        image=Image(image_id=42, caption="blue tile", data=b64_blue),
+    [img_id] = manager.add_images(
+        [
+            {"caption": "blue tile", "data": b64_blue},
+        ],
     )
-    images = {"[0:3]": ih}
+    images = [RawImageRef(image_id=img_id)]
 
     h = start_async_tool_loop(
         client=client,
@@ -120,8 +113,10 @@ async def test_stop_dynamic_helper_appends_images() -> None:
     )
 
     await _wait_for_tool_request(client, "wait_forever")
-    await h.interject("stop", images={"this[:]": ih})
+    await _wait_for_tool_message_prefix(client, "wait_forever")
+    await h.interject("stop", image_refs=[RawImageRef(image_id=img_id)])
     await _wait_for_assistant_call_prefix(client, "stop_")
+    await _wait_for_tool_message_prefix(client, "stop ")
     assert any(
         m.get("role") == "tool"
         and isinstance(m.get("name"), str)
@@ -142,7 +137,10 @@ async def test_clarify_helpers_append_images_for_request_and_answer() -> None:
         clarification_down_q: asyncio.Queue[str],
     ) -> dict:
         await clarification_up_q.put(
-            {"question": "What is the dominant color?", "images": {"this[:]": 42}},
+            {
+                "question": "What is the dominant color?",
+                "images": [RawImageRef(image_id=img_id)],
+            },
         )
         ans = await clarification_down_q.get()
         return {"answer": ans}
@@ -161,12 +159,12 @@ async def test_clarify_helpers_append_images_for_request_and_answer() -> None:
 
     manager = ImageManager()
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
-    images = {
-        "[0:5]": ImageHandle(
-            manager=manager,
-            image=Image(image_id=42, caption="blue square", data=b64_blue),
-        ),
-    }
+    [img_id] = manager.add_images(
+        [
+            {"caption": "blue square", "data": b64_blue},
+        ],
+    )
+    images = [RawImageRef(image_id=img_id)]
 
     h = start_async_tool_loop(
         client=client,
@@ -177,6 +175,7 @@ async def test_clarify_helpers_append_images_for_request_and_answer() -> None:
         timeout=240,
     )
 
+    await _wait_for_tool_request(client, "need_clar")
     await _wait_for_assistant_call_prefix(client, "clarify_")
     await _wait_for_tool_message_prefix(client, "clarify_")
     final = await h.result()
@@ -187,7 +186,9 @@ async def test_clarify_helpers_append_images_for_request_and_answer() -> None:
 @_handle_project
 async def test_notification_payload_appends_images() -> None:
     async def notify(*, notification_up_q: asyncio.Queue[dict]) -> dict:
-        await notification_up_q.put({"message": "progress", "images": {"this[:]": 42}})
+        await notification_up_q.put(
+            {"message": "progress", "images": [RawImageRef(image_id=img_id)]},
+        )
         return {"ok": True}
 
     client = unify.AsyncUnify(
@@ -203,12 +204,12 @@ async def test_notification_payload_appends_images() -> None:
 
     manager = ImageManager()
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
-    images = {
-        "[0:2]": ImageHandle(
-            manager=manager,
-            image=Image(image_id=42, caption="blue tile", data=b64_blue),
-        ),
-    }
+    [img_id] = manager.add_images(
+        [
+            {"caption": "blue tile", "data": b64_blue},
+        ],
+    )
+    images = [RawImageRef(image_id=img_id)]
 
     h = start_async_tool_loop(
         client=client,
@@ -219,6 +220,7 @@ async def test_notification_payload_appends_images() -> None:
         timeout=240,
     )
 
+    await _wait_for_tool_request(client, "notify")
     event = await asyncio.wait_for(h.next_notification(), timeout=60)
     assert event["type"] == "notification"
     assert event["tool_name"] == "notify"
@@ -244,12 +246,12 @@ async def test_ask_image_with_images_param_appends_log() -> None:
 
     manager = ImageManager()
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
-    images = {
-        "[0:5]": ImageHandle(
-            manager=manager,
-            image=Image(image_id=42, caption="blue square", data=b64_blue),
-        ),
-    }
+    [img_id] = manager.add_images(
+        [
+            {"caption": "blue square", "data": b64_blue},
+        ],
+    )
+    images = [RawImageRef(image_id=img_id)]
 
     h = start_async_tool_loop(
         client=client,
@@ -320,12 +322,12 @@ async def test_dynamic_sources_multi_append_overview() -> None:
 
     manager = ImageManager()
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
-    images = {
-        "[0:5]": ImageHandle(
-            manager=manager,
-            image=Image(image_id=42, caption="blue square", data=b64_blue),
-        ),
-    }
+    [img_id] = manager.add_images(
+        [
+            {"caption": "blue square", "data": b64_blue},
+        ],
+    )
+    images = [RawImageRef(image_id=img_id)]
 
     h = start_async_tool_loop(
         client=client,
@@ -337,6 +339,7 @@ async def test_dynamic_sources_multi_append_overview() -> None:
     )
 
     await _wait_for_tool_request(client, "do_run")
+    await _wait_for_tool_message_prefix(client, "do_run")
     await _wait_for_assistant_call_prefix(client, "ask_image")
     await _wait_for_tool_result(client, tool_name="ask_image", min_results=1)
     await h.interject("keep going")
@@ -385,20 +388,17 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
     pos_that = user_msg.find(seg_that)
     assert pos_this >= 0 and pos_that >= 0, "Span substrings not found in user message"
 
-    # Use real ImageHandles with solid blue PNGs
+    # Use stored images and typed refs
     manager = ImageManager()
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
-    john_img = Image(image_id=301, caption="john's blue paint", data=b64_blue)
-    david_img = Image(image_id=302, caption="david's blue paint", data=b64_blue)
-    jenny_img = Image(image_id=303, caption="jenny's blue paint", data=b64_blue)
-    john_handle = ImageHandle(manager=manager, image=john_img)
-    david_handle = ImageHandle(manager=manager, image=david_img)
-    jenny_handle = ImageHandle(manager=manager, image=jenny_img)
-
-    images = {
-        f"[{pos_this}:{pos_this + len(seg_this)}]": john_handle,
-        f"[{pos_that}:{pos_that + len(seg_that)}]": david_handle,
-    }
+    [john_id, david_id, jenny_id] = manager.add_images(
+        [
+            {"caption": "john's blue paint", "data": b64_blue},
+            {"caption": "david's blue paint", "data": b64_blue},
+            {"caption": "jenny's blue paint", "data": b64_blue},
+        ],
+    )
+    images = [RawImageRef(image_id=john_id), RawImageRef(image_id=david_id)]
 
     # Real client – drive the model to call ask_image 3 times and produce final colour
     client = unify.AsyncUnify(
@@ -437,9 +437,12 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
     )
     await handle.interject(
         interjection_msg,
-        images={
-            "this[:]": jenny_handle,
-        },  # source-scoped mapping; registers the new live image
+        image_refs=[
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=jenny_id),
+                annotation="interjection",
+            ),
+        ],
     )
 
     # Wait until the third ask_image tool result is inserted (Jenny)
