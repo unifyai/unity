@@ -124,7 +124,7 @@ class EmailRecieved(Event):
     contact: str
     subject: str
     body: str
-    message_id: Optional[str]
+    message_id: Optional[str] = None
 
 
 # assistant events
