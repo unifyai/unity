@@ -361,12 +361,12 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
     ) -> dict:
         """
         Send an interjection to the conversation.
-        
+
         Args:
             message: The message content to inject
             pinned: If True, the interjection persists for the entire session
             interjection_id: Optional explicit ID (auto-generated if not provided)
-            
+
         Returns:
             Dict with status and the interjection_id
         """
@@ -380,22 +380,22 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
     async def unpin_interjection(self, interjection_id: str) -> dict:
         """
         Unpin a previously pinned interjection.
-        
+
         Args:
             interjection_id: The ID of the interjection to unpin
-            
+
         Returns:
             Dict with status indicating success
         """
         if self._stopped:
             return {"status": "error", "message": "Handle is stopped."}
-        
+
         event = NotificationUnpinnedEvent(
             interjection_id=interjection_id,
             target_conversation_id=self.conversation_id,
         )
         await self.event_broker.publish(self._steering_channel, event.to_json())
-        
+
         return {
             "status": "ok",
             "message": f"Unpin request sent for interjection {interjection_id}",
