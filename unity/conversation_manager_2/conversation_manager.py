@@ -469,7 +469,6 @@ class ConversationManager:
                 )
 
                 if msg is not None:
-                    print(msg)
                     self.last_activity_time = self.loop.time()
 
                 # there are still pending messages and no scheduled responses or currently running responses
