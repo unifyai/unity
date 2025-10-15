@@ -45,7 +45,7 @@ async def test_single_tool_exact_match():
         client,
         "Hello, how are you? call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
 
@@ -69,7 +69,7 @@ async def test_single_tool_exact_match():
         client,
         "Hello, how are you? call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
 
@@ -100,7 +100,7 @@ async def test_single_tool_no_exact_match():
         client,
         "Call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
 
@@ -124,7 +124,7 @@ async def test_single_tool_no_exact_match():
         client,
         "Could you please call the say_hello tool?",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
 
@@ -160,7 +160,7 @@ async def test_tool_with_different_arguments():
         client,
         "Can you search for a contact with the name 'John Doe'?",
         tools={"search_contact": search_contact},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
     assert "John Doe" in res
@@ -171,7 +171,7 @@ async def test_tool_with_different_arguments():
         client,
         "Can you look for a contact with the name 'Jane Doe'?",
         tools={"search_contact": search_contact, "find_contact": find_contact},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
 
@@ -199,7 +199,7 @@ async def test_tool_is_re_called():
         client,
         "How is the weather?",
         tools={"current_weather": current_weather},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
     assert "The weather is sunny" in res
@@ -212,7 +212,7 @@ async def test_tool_is_re_called():
         client,
         "How is the weather?",
         tools={"current_weather": current_weather},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
     assert "cloudy" in res.lower()
@@ -310,7 +310,7 @@ async def test_tool_call_signature_updated():
         client,
         "Call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
     assert "Hello from Unity!" in res
@@ -325,7 +325,7 @@ async def test_tool_call_signature_updated():
         client,
         "Call the say_hello tool with the argument 'Unify' and reply with the result only",
         tools={"say_hello": _say_hello_new},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
     assert "Hello from Unify!" in res
