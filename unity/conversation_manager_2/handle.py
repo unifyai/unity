@@ -15,7 +15,7 @@ from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHan
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.common.tool_spec import ToolSpec
 from .base import BaseConversationManagerHandle
-from .new_events import NotificationInjectedEvent
+from .new_events import NotificationInjectedEvent, NotificationUnpinnedEvent
 import logging
 
 T = TypeVar("T", bound=[BaseModel, Enum])
@@ -143,6 +143,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         content: str,
         *,
         source: str = "system",
+        interjection_id: Optional[str] = None,
+        pinned: bool = False,
     ) -> dict:
         """
         Sends a notification to the live conversation by publishing an event.
@@ -150,11 +152,17 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         if self._stopped:
             return {"status": "error", "message": "Handle is stopped."}
 
+        # Generate ID if not provided
+        if interjection_id is None:
+            interjection_id = str(uuid.uuid4().hex[:12])
+
         # Include target conversation ID so CM knows if the event is for it
         event = NotificationInjectedEvent(
             content=content,
             source=source,
             target_conversation_id=self.conversation_id,
+            interjection_id=interjection_id,
+            pinned=pinned,
         )
         # Publish to unified steering channel (picked up by app:comms:* subscription)
         await self.event_broker.publish(self._steering_channel, event.to_json())
@@ -162,7 +170,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         return {
             "status": "ok",
             "message": "Notification event published.",
-            "notification_id": f"notif_{uuid.uuid4().hex[:8]}",
+            "interjection_id": interjection_id,
         }
 
     # ─────────────────────────────────────────────────────────────
@@ -344,9 +352,55 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         handle.result = _wrapped_result
         return handle
 
-    async def interject(self, message: str) -> None:
-        """A simplified interjection that sends a notification."""
-        await self.send_notification(message, source="interjection")
+    async def interject(
+        self,
+        message: str,
+        *,
+        pinned: bool = False,
+        interjection_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Send an interjection to the conversation.
+        
+        Args:
+            message: The message content to inject
+            pinned: If True, the interjection persists for the entire session
+            interjection_id: Optional explicit ID (auto-generated if not provided)
+            
+        Returns:
+            Dict with status and the interjection_id
+        """
+        return await self.send_notification(
+            message,
+            source="interjection",
+            interjection_id=interjection_id,
+            pinned=pinned,
+        )
+
+    async def unpin_interjection(self, interjection_id: str) -> dict:
+        """
+        Unpin a previously pinned interjection.
+        
+        Args:
+            interjection_id: The ID of the interjection to unpin
+            
+        Returns:
+            Dict with status indicating success
+        """
+        if self._stopped:
+            return {"status": "error", "message": "Handle is stopped."}
+        
+        event = NotificationUnpinnedEvent(
+            interjection_id=interjection_id,
+            target_conversation_id=self.conversation_id,
+        )
+        await self.event_broker.publish(self._steering_channel, event.to_json())
+        
+        return {
+            "status": "ok",
+            "message": f"Unpin request sent for interjection {interjection_id}",
+            "interjection_id": interjection_id,
+        }
 
     def stop(self, reason: Optional[str] = None) -> str:
         """Stops the handle."""
