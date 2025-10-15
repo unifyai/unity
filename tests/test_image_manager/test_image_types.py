@@ -1,52 +1,32 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 import pytest
 
 from tests.helpers import _handle_project
 from unity.image_manager.types import (
-    Image,
     RawImageRef,
     AnnotatedImageRef,
     ImageRefs,
 )
-from unity.image_manager.utils import make_solid_png_base64
 
 
 @pytest.mark.unit
 @_handle_project
 def test_annotated_image_basic():
-    img = Image(
-        timestamp=datetime.now(timezone.utc),
-        caption="a red square",
-        data=make_solid_png_base64(4, 4, (255, 0, 0)),
-    )
-
     ann = AnnotatedImageRef(
-        raw_image_ref=RawImageRef(image=img),
+        raw_image_ref=RawImageRef(image_id=123),
         annotation="training set example: high relevance",
     )
 
-    assert ann.raw_image_ref.image.caption == "a red square"
+    assert ann.raw_image_ref.image_id == 123
     assert ann.annotation.startswith("training set example")
 
 
 @pytest.mark.unit
 @_handle_project
 def test_images_container_mixed_types():
-    base1 = Image(
-        timestamp=datetime.now(timezone.utc),
-        caption="blue",
-        data=make_solid_png_base64(2, 2, (0, 0, 255)),
-    )
-    base2 = Image(
-        timestamp=datetime.now(timezone.utc),
-        caption="red",
-        data=make_solid_png_base64(2, 2, (255, 0, 0)),
-    )
-    base1_ref = RawImageRef(image=base1)
-    base2_ref = RawImageRef(image=base2)
+    base1_ref = RawImageRef(image_id=1)
+    base2_ref = RawImageRef(image_id=2)
     annotated = AnnotatedImageRef(
         raw_image_ref=base2_ref,
         annotation="used in alerting scenario",
