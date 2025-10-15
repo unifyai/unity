@@ -18,8 +18,8 @@ LIVE_IMAGES_REGISTRY: ContextVar[dict[int, Any]] = ContextVar(
     default={},
 )
 
-# Loop-scoped log entries for image overview (source-tagged entries).
-# Each entry: {"source": str, "image_id": int, "annotation": str | None}
+# Loop-scoped log entries for image overview.
+# Each entry: {"image_id": int, "annotation": str | None}
 LIVE_IMAGES_LOG: ContextVar[list[dict]] = ContextVar(
     "LIVE_IMAGES_LOG",
     default=[],
@@ -53,10 +53,9 @@ parse_source_scoped_span = None
 
 def append_image_refs_with_source(
     image_refs: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
-    source_label: str,
 ) -> None:
     """
-    Append a batch of ImageRefs under a given source label into the loop context.
+    Append a batch of ImageRefs into the loop context.
 
     - Registers handles for known image_ids (idempotent) in LIVE_IMAGES_REGISTRY.
     - Records a log entry per image with its annotation (if any).
@@ -105,57 +104,40 @@ def append_image_refs_with_source(
         except Exception:
             pass
 
-        # Append log entry
+        # Append log entry (no source)
         with suppress(Exception):
-            log.append(
-                {
-                    "source": source_label,
-                    "image_id": image_id,
-                    "annotation": annotation,
-                },
-            )
+            for ref in refs:
+                try:
+                    if isinstance(ref, AnnotatedImageRef):
+                        image_id = int(ref.raw_image_ref.image_id)
+                        annotation = str(ref.annotation)
+                    elif isinstance(ref, RawImageRef):
+                        image_id = int(ref.image_id)
+                        annotation = None
+                    else:
+                        continue
+                    log.append(
+                        {
+                            "image_id": image_id,
+                            "annotation": annotation,
+                        },
+                    )
+                except Exception:
+                    continue
     except Exception:
         return
 
 
-def append_image_refs_with_prefix(
-    image_refs: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
-    prefix: str,
-) -> Optional[str]:
-    """Generate a new source label for the given prefix and append refs under it."""
-    try:
-        label = default_source_label(prefix)
-        append_image_refs_with_source(image_refs, label)
-        return label
-    except Exception:
-        return None
+# NOTE: Compatibility wrappers for source-labelled images have been removed.
 
 
-def record_source_text(
-    source_label: str,
-    text: Any,
-) -> None:  # no-op retained for compatibility
-    return
+pass  # module-level placeholder to preserve import ordering
 
 
-def next_source_index(prefix: str) -> int:
-    """Return the next numeric index for a given source prefix based on LIVE_IMAGES_LOG."""
-    try:
-        log = LIVE_IMAGES_LOG.get()
-        if not isinstance(log, list):
-            return 0
-        return sum(
-            1
-            for e in log
-            if isinstance(e, dict) and str(e.get("source", "")).startswith(prefix)
-        )
-    except Exception:
-        return 0
+# Removed: next_source_index (source labels no longer used)
 
 
-def default_source_label(prefix: str) -> str:
-    """Return a default `<prefix>N` label using the next available index."""
-    return f"{prefix}{next_source_index(prefix)}"
+# Removed: default_source_label (source labels no longer used)
 
 
 def normalize_arg_scoped_images(
@@ -230,7 +212,6 @@ def set_live_images_context(
                 if isinstance(ref, AnnotatedImageRef):
                     logs.append(
                         {
-                            "source": "user_message",
                             "image_id": int(ref.raw_image_ref.image_id),
                             "annotation": str(ref.annotation),
                         },
@@ -238,7 +219,6 @@ def set_live_images_context(
                 elif isinstance(ref, RawImageRef):
                     logs.append(
                         {
-                            "source": "user_message",
                             "image_id": int(ref.image_id),
                             "annotation": None,
                         },
@@ -285,16 +265,19 @@ def build_live_image_tools(
             id_to_handle[int(iid)] = ih
         except Exception:
             continue
-    # Generate listing lines using logs
+    # Generate listing lines using logs (uniform format, no source; include caption and timestamp)
     for rec in logs:
         try:
             _iid = int(rec.get("image_id"))
             _annotation = rec.get("annotation")
             _caption = None
+            _ts = ""
             with _suppress(Exception):
-                _caption = getattr(id_to_handle.get(_iid), "caption", None)
+                _h = id_to_handle.get(_iid)
+                _caption = getattr(_h, "caption", None)
+                _ts = getattr(getattr(_h, "timestamp", None), "isoformat", lambda: "")()
             listings.append(
-                f"- id={_iid}, source={rec.get('source')}, annotation={_annotation!r}, caption={_caption!r}",
+                f"- id={_iid}, caption={_caption!r}, timestamp={_ts!r}, annotation={_annotation!r}",
             )
         except Exception:
             continue
@@ -318,8 +301,20 @@ def build_live_image_tools(
         prior_lines = []
         for rec in prior:
             try:
+                _iid = int(rec.get("image_id"))
+                _annotation = rec.get("annotation")
+                _caption = None
+                _ts = ""
+                with _suppress(Exception):
+                    _h = id_to_handle.get(_iid)
+                    _caption = getattr(_h, "caption", None)
+                    _ts = getattr(
+                        getattr(_h, "timestamp", None),
+                        "isoformat",
+                        lambda: "",
+                    )()
                 prior_lines.append(
-                    f"- source={rec.get('source')}, id={int(rec.get('image_id'))}, annotation={rec.get('annotation')!r}",
+                    f"- id={_iid}, caption={_caption!r}, timestamp={_ts!r}, annotation={_annotation!r}",
                 )
             except Exception:
                 continue
@@ -522,14 +517,12 @@ def refresh_overview_doc_if_present(normalized_tools: dict) -> None:
 
 
 # ── Lightweight helpers for logging image attachments ───────────────────────
-def get_source_log_entries(source_label: str) -> list[tuple[int, Optional[str]]]:
-    """Return a list of (image_id, annotation) for images recorded under the given source label."""
+def get_image_log_entries() -> list[tuple[int, Optional[str]]]:
+    """Return all image log entries as (image_id, annotation)."""
     entries: list[tuple[int, Optional[str]]] = []
     try:
         for rec in LIVE_IMAGES_LOG.get() or []:
             try:
-                if rec.get("source") != source_label:
-                    continue
                 entries.append((int(rec.get("image_id")), rec.get("annotation")))
             except Exception:
                 continue

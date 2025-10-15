@@ -27,8 +27,8 @@ from .images import (
     reset_live_images_context,
     build_live_image_tools,
     refresh_overview_doc_if_present,
-    append_image_refs_with_prefix,
-    get_source_log_entries,
+    append_image_refs_with_source,
+    get_image_log_entries,
     has_live_images_context,
 )
 from ..llm_helpers import method_to_schema, _dumps
@@ -312,7 +312,7 @@ async def async_tool_loop_inner(
         # Combine user message + any aligned images into a single log entry
         try:
             combined_lines = [f"User Message: {message}"]
-            logs = get_source_log_entries("user_message")
+            logs = get_image_log_entries()
             if logs:
                 for _iid, _annotation in logs:
                     combined_lines.append(
@@ -555,17 +555,13 @@ async def async_tool_loop_inner(
 
         # Append any images sent alongside the clarification request
         with suppress(Exception):
-            _src_label = append_image_refs_with_prefix(
-                images_from_child,
-                "clar_request",
-            )
+            append_image_refs_with_source(images_from_child)
             try:
-                if _src_label:
-                    for _iid, _annotation in get_source_log_entries(_src_label):
-                        logger.info(
-                            f"Image id={_iid}, annotation={_annotation!r}",
-                            prefix="🖼️",
-                        )
+                for _iid, _annotation in get_image_log_entries():
+                    logger.info(
+                        f"Image id={_iid}, annotation={_annotation!r}",
+                        prefix="🖼️",
+                    )
             except Exception:
                 pass
 
@@ -614,17 +610,13 @@ async def async_tool_loop_inner(
             images_from_child = (
                 payload.get("image_refs") if isinstance(payload, dict) else None
             )
-            _src_label = append_image_refs_with_prefix(
-                images_from_child,
-                "notification",
-            )
+            append_image_refs_with_source(images_from_child)
             try:
-                if _src_label:
-                    for _iid, _annotation in get_source_log_entries(_src_label):
-                        logger.info(
-                            f"Image id={_iid}, annotation={_annotation!r}",
-                            prefix="🖼️",
-                        )
+                for _iid, _annotation in get_image_log_entries():
+                    logger.info(
+                        f"Image id={_iid}, annotation={_annotation!r}",
+                        prefix="🖼️",
+                    )
             except Exception:
                 pass
 
@@ -856,19 +848,13 @@ async def async_tool_loop_inner(
 
                 # If images accompany this interjection, accept source-scoped keys and append
                 with suppress(Exception):
-                    _src_label = append_image_refs_with_prefix(
-                        _incoming_images,
-                        "interjection",
-                    )
+                    append_image_refs_with_source(_incoming_images)
                     try:
-                        if _src_label:
-                            for _iid, _annotation in get_source_log_entries(
-                                _src_label,
-                            ):
-                                logger.info(
-                                    f"Image id={_iid}, annotation={_annotation!r}",
-                                    prefix="🖼️",
-                                )
+                        for _iid, _annotation in get_image_log_entries():
+                            logger.info(
+                                f"Image id={_iid}, annotation={_annotation!r}",
+                                prefix="🖼️",
+                            )
                     except Exception:
                         pass
 
@@ -1540,19 +1526,15 @@ async def async_tool_loop_inner(
                                 reason_txt = payload.get("reason")
                             except Exception:
                                 reason_txt = ""
-                            _src_label = append_image_refs_with_prefix(
+                            append_image_refs_with_source(
                                 payload.get("image_refs"),
-                                "stop",
                             )
                             try:
-                                if _src_label:
-                                    for _iid, _annotation in get_source_log_entries(
-                                        _src_label,
-                                    ):
-                                        logger.info(
-                                            f"Image id={_iid}, annotation={_annotation!r}",
-                                            prefix="🖼️",
-                                        )
+                                for _iid, _annotation in get_image_log_entries():
+                                    logger.info(
+                                        f"Image id={_iid}, annotation={_annotation!r}",
+                                        prefix="🖼️",
+                                    )
                             except Exception:
                                 pass
 
@@ -1711,23 +1693,19 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the clarification answer
                         with suppress(Exception):
-                            _src_label = append_image_refs_with_prefix(
+                            append_image_refs_with_source(
                                 (
                                     args.get("image_refs")
                                     if isinstance(args, dict)
                                     else None
                                 ),
-                                "clar_answer",
                             )
                             try:
-                                if _src_label:
-                                    for _iid, _annotation in get_source_log_entries(
-                                        _src_label,
-                                    ):
-                                        logger.info(
-                                            f"Image id={_iid}, annotation={_annotation!r}",
-                                            prefix="🖼️",
-                                        )
+                                for _iid, _annotation in get_image_log_entries():
+                                    logger.info(
+                                        f"Image id={_iid}, annotation={_annotation!r}",
+                                        prefix="🖼️",
+                                    )
                             except Exception:
                                 pass
                         # Always publish a tool reply acknowledging the clarify helper
@@ -1799,19 +1777,15 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the interjection helper
                         with suppress(Exception):
-                            _src_label = append_image_refs_with_prefix(
+                            append_image_refs_with_source(
                                 payload.get("image_refs"),
-                                "interjection",
                             )
                             try:
-                                if _src_label:
-                                    for _iid, _annotation in get_source_log_entries(
-                                        _src_label,
-                                    ):
-                                        logger.info(
-                                            f"Image id={_iid}, annotation={_annotation!r}",
-                                            prefix="🖼️",
-                                        )
+                                for _iid, _annotation in get_image_log_entries():
+                                    logger.info(
+                                        f"Image id={_iid}, annotation={_annotation!r}",
+                                        prefix="🖼️",
+                                    )
                             except Exception:
                                 pass
 

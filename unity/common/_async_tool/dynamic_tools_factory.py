@@ -10,7 +10,7 @@ from .tools_data import ToolsData
 from .messages import forward_handle_call
 from .tools_utils import ToolCallMetadata
 from .images import (
-    append_image_refs_with_prefix,
+    append_image_refs_with_source,
 )
 from .utils import maybe_await
 
@@ -177,10 +177,7 @@ class DynamicToolFactory:
                 )
             # Append any provided images into the live registry/log
             try:
-                append_image_refs_with_prefix(
-                    _kw.get("image_refs"),
-                    "stop",
-                )
+                append_image_refs_with_source(_kw.get("image_refs"))
             except Exception:
                 pass
             if not task.done():
@@ -239,10 +236,7 @@ class DynamicToolFactory:
                     )
                 # Append any provided images into the live registry/log
                 try:
-                    append_image_refs_with_prefix(
-                        _kw.get("image_refs"),
-                        "interjection",
-                    )
+                    append_image_refs_with_source(_kw.get("image_refs"))
                 except Exception:
                     pass
                 return {
@@ -285,10 +279,7 @@ class DynamicToolFactory:
                 await task_info.interject_queue.put(actual)
                 # Append any provided images into the live registry/log
                 try:
-                    append_image_refs_with_prefix(
-                        image_refs,
-                        "interjection",
-                    )
+                    append_image_refs_with_source(image_refs)
                 except Exception:
                     pass
                 return {
@@ -356,10 +347,7 @@ class DynamicToolFactory:
 
         async def _clarify(answer: str, image_refs: list | None = None) -> Dict[str, str]:  # type: ignore[valid-type]
             try:
-                append_image_refs_with_prefix(
-                    image_refs,
-                    "clar_answer",
-                )
+                append_image_refs_with_source(image_refs)
             except Exception:
                 pass
             return {
