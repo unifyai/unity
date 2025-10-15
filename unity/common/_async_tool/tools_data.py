@@ -24,7 +24,6 @@ from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
 from ..llm_helpers import method_to_schema, _collect_images, _strip_image_keys, _dumps
 from contextlib import suppress
-from .images import normalize_arg_scoped_images, parse_arg_scoped_span
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -262,31 +261,7 @@ class ToolsData:
         allowed_call_args = _normalise_kwargs_for_bound_method(fn, call_args)
         merged_kwargs = {**allowed_call_args, **filtered_extras}
 
-        # ── Normalise arg-scoped image mapping for inner tool calls via images module
-        if "images" in params and isinstance(merged_kwargs.get("images"), dict):
-            try:
-                merged_kwargs = normalize_arg_scoped_images(
-                    merged_kwargs,
-                    tool_name=name,
-                    param_names=set(params.keys()),
-                )
-            except Exception:
-                pass
-
-        # ── Lightweight logging of arg-scoped images passed to base tools
-        try:
-            if self._logger.log_steps and isinstance(merged_kwargs.get("images"), dict):
-                for _k, _v in merged_kwargs["images"].items():
-                    parsed = parse_arg_scoped_span(str(_k))
-                    if not parsed:
-                        continue
-                    _arg, _span = parsed
-                    self._logger.info(
-                        f"Image id={int(getattr(_v, 'image_id', -1))}, arg={_arg}, span={_span}",
-                        prefix="🖼️",
-                    )
-        except Exception:
-            pass
+        # Legacy arg-scoped image normalization removed; inner tools should accept ImageRefs explicitly.
 
         # (Argument pretty-printing now handled in assistant message logs only)
 
