@@ -149,7 +149,7 @@ class ConversationManagerState:
             self.events.append(event)
         match event:
             # startup events
-            case ManagersStartupOutput() as e:
+            case ManagersStartupResponse() as e:
                 if not e.initialized:
                     raise Exception("Managers failed to initialize")
                 self.initialized = bool(e.initialized)
@@ -167,7 +167,7 @@ class ConversationManagerState:
                     phone_number=payload["assistant_number"],
                 )
 
-            case GetBusEventsOutput() as e:
+            case GetBusEventsResponse() as e:
                 # TODO: should also grab the latest messages ~50 messages
                 # and populate their contacts in the active conversations
                 for ev in reversed(e.events):
@@ -381,11 +381,15 @@ class ConversationManagerState:
             case Error() as e:
                 self.push_notif(Notification("error", e.message, e.timestamp))
 
-            case GetContactsOutput() as e:
+            case GetContactsResponse() as e:
                 for c in e.contacts:
                     self.create_new_contact(**c)
 
-            case LogMessageOutput() as e:
+            case ContactInfoResponse() as e:
+                # Update contact with fresh data from ContactManager
+                self.update_or_create_new_contact(**e.contact_details)
+
+            case LogMessageResponse() as e:
                 # ToDo: Get this working for email and whatsapp as well
                 # Email: Replying to the same thread
                 # Whatsapp: Managing different kinds of chat such as groups, etc.

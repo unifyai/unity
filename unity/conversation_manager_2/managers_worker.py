@@ -164,7 +164,7 @@ class ManagersWorker:
 
             await self._event_broker.publish(
                 self._publish_channel,
-                ManagersStartupOutput(initialized=self._initialized).to_json(),
+                ManagersStartupResponse(initialized=self._initialized).to_json(),
             )
 
     async def _get_bus_events(self) -> None:
@@ -172,7 +172,7 @@ class ManagersWorker:
         bus_events = await EVENT_BUS.search(filter='type == "Comms"', limit=50)
         await self._event_broker.publish(
             self._publish_channel,
-            GetBusEventsOutput(
+            GetBusEventsResponse(
                 events=[Event.from_bus_event(e).to_dict() for e in bus_events][::-1],
             ).to_json(),
         )
@@ -189,7 +189,7 @@ class ManagersWorker:
         print("Publishing bus event", bus_event)
         await EVENT_BUS.publish(bus_event)
 
-    async def _log_message(self, event: LogMessageInput) -> None:
+    async def _log_message(self, event: LogMessageRequest) -> None:
         """Log a message via TranscriptManager."""
         # Wait until initialization completes to avoid dropping logs that arrive early
         while not self._initialized:
@@ -239,7 +239,7 @@ class ManagersWorker:
             if message:
                 await self._event_broker.publish(
                     self._publish_channel,
-                    LogMessageOutput(
+                    LogMessageResponse(
                         medium=medium,
                         exchange_id=message.exchange_id,
                     ).to_json(),
@@ -263,7 +263,7 @@ class ManagersWorker:
             # Publish reply as Event envelope
             await self._event_broker.publish(
                 self._publish_channel,
-                GetContactsOutput(contacts=contacts).to_json(),
+                GetContactsResponse(contacts=contacts).to_json(),
             )
 
             print(f"[ManagersWorker] Fetched {len(contacts)} contacts")
@@ -272,6 +272,30 @@ class ManagersWorker:
 
         except Exception as e:
             print(f"[ManagersWorker] Error fetching contacts: {e}")
+
+    async def _get_contact_by_id(self, contact_id: int) -> None:
+        """Fetch a single contact by ID and publish back."""
+        if not self._contact_manager:
+            print("[ManagersWorker] Not initialized, cannot get contact")
+            return
+
+        try:
+            # get contact info from ContactManager
+            contacts = self._contact_manager.get_contact_info([contact_id])
+
+            if contact_id in contacts:
+                # publish updated contact details
+                contact = contacts[contact_id]
+                await self._event_broker.publish(
+                    self._publish_channel,
+                    ContactInfoResponse(contact_details=contact).to_json(),
+                )
+                print(f"[ManagersWorker] Fetched contact {contact_id}")
+            else:
+                print(f"[ManagersWorker] Contact {contact_id} not found")
+
+        except Exception as e:
+            print(f"[ManagersWorker] Error fetching contact: {e}")
 
     async def _create_contact(self, contact: dict) -> None:
         """Create a contact in the ContactManager."""
@@ -322,17 +346,6 @@ class ManagersWorker:
             for cid, t in zip(contacts_ids, transcripts)
         ]
         await asyncio.gather(*tasks)
-        contacts = await asyncio.to_thread(
-            self._contact_manager.get_contact_info,
-            contacts_ids,
-        )
-        print(contacts)
-        event = UpdateContactRollingSummaryResponse(
-            rolling_summaries=[
-                (c["contact_id"], c["rolling_summary"]) for c in contacts.values()
-            ],
-        )
-        await self._event_broker.publish("app:managers:output", event.to_json())
 
     # ──────────────────────────────────────────────────────────────────
     # Message processing
@@ -340,31 +353,35 @@ class ManagersWorker:
 
     async def _process_message(self, event: Event) -> None:
         """Process a single Event from the queue."""
-        # Route to handlers using isinstance
-        if isinstance(event, ManagersStartupInput):
-            asyncio.create_task(self._startup(event.to_dict()["payload"]))
-        elif isinstance(event, GetBusEventsInput):
-            asyncio.create_task(self._get_bus_events())
-        elif isinstance(event, PublishBusEvent):
-            asyncio.create_task(self._publish_bus_event(event))
-        elif isinstance(event, LogMessageInput):
-            asyncio.create_task(self._log_message(event))
-        elif isinstance(event, GetContactsInput):
-            asyncio.create_task(self._get_contacts())
-        elif isinstance(event, CreateContactEvent):
-            asyncio.create_task(self._create_contact(event.to_dict()["payload"]))
-        elif isinstance(event, UpdateContactEvent):
-            asyncio.create_task(self._update_contact(event.to_dict()["payload"]))
-        elif isinstance(event, UpdateContactRollingSummaryRequest):
-            print("REACHED")
-            asyncio.create_task(
-                self._update_contact_rolling_summary(
-                    event.contacts_ids,
-                    event.transcripts,
-                ),
-            )
-        else:
-            print(f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}")
+        match event:
+            case ManagersStartupRequest():
+                asyncio.create_task(self._startup(event.to_dict()["payload"]))
+            case GetBusEventsRequest():
+                asyncio.create_task(self._get_bus_events())
+            case PublishBusEventRequest():
+                asyncio.create_task(self._publish_bus_event(event))
+            case LogMessageRequest():
+                asyncio.create_task(self._log_message(event))
+            case GetContactsRequest():
+                asyncio.create_task(self._get_contacts())
+            case ContactInfoRequest():
+                asyncio.create_task(self._get_contact_by_id(event.contact_id))
+            case CreateContactRequest():
+                asyncio.create_task(self._create_contact(event.to_dict()["payload"]))
+            case UpdateContactRequest():
+                asyncio.create_task(self._update_contact(event.to_dict()["payload"]))
+            case UpdateContactRollingSummaryRequest():
+                print("REACHED")
+                asyncio.create_task(
+                    self._update_contact_rolling_summary(
+                        event.contacts_ids,
+                        event.transcripts,
+                    ),
+                )
+            case _:
+                print(
+                    f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}"
+                )
 
     async def _queue_processor(self) -> None:
         """Worker task that processes messages from the queue in FIFO order."""

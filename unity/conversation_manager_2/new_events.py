@@ -196,7 +196,7 @@ class Error(Event):
 
 # managers worker events
 @dataclass
-class ManagersStartupInput(Event):
+class ManagersStartupRequest(Event):
     agent_id: str
     first_name: str
     age: str
@@ -210,13 +210,13 @@ class ManagersStartupInput(Event):
 
 
 @dataclass
-class ManagersStartupOutput(Event):
+class ManagersStartupResponse(Event):
     loggable: ClassVar[bool] = False
     initialized: bool
 
 
 @dataclass
-class LogMessageInput(Event):
+class LogMessageRequest(Event):
     medium: str
     sender_id: int
     receiver_ids: list[int]
@@ -228,12 +228,33 @@ class LogMessageInput(Event):
 
 
 @dataclass
-class GetContactsInput(Event):
+class LogMessageResponse(Event):
+    medium: str
+    exchange_id: int
+
+
+@dataclass
+class GetContactsRequest(Event):
     pass
 
 
 @dataclass
-class CreateContactEvent(Event):
+class GetContactsResponse(Event):
+    contacts: list[dict[str, Any]]
+
+
+@dataclass
+class ContactInfoRequest(Event):
+    contact_id: int
+
+
+@dataclass
+class ContactInfoResponse(Event):
+    contact_details: dict[str, Any]
+
+
+@dataclass
+class CreateContactRequest(Event):
     first_name: str
     surname: str
     email_address: str
@@ -241,7 +262,7 @@ class CreateContactEvent(Event):
 
 
 @dataclass
-class UpdateContactEvent(Event):
+class UpdateContactRequest(Event):
     contact_id: int
     first_name: str
     surname: str
@@ -250,28 +271,17 @@ class UpdateContactEvent(Event):
 
 
 @dataclass
-class LogMessageOutput(Event):
-    medium: str
-    exchange_id: int
-
-
-@dataclass
-class GetContactsOutput(Event):
-    contacts: list[dict[str, Any]]
-
-
-@dataclass
-class GetBusEventsInput(Event):
+class GetBusEventsRequest(Event):
     pass
 
 
 @dataclass
-class GetBusEventsOutput(Event):
+class GetBusEventsResponse(Event):
     events: list[dict[str, Any]]
 
 
 @dataclass
-class PublishBusEvent(Event):
+class PublishBusEventRequest(Event):
     event: dict[str, Any]
 
 
