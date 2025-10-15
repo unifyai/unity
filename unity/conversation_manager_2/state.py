@@ -688,35 +688,47 @@ Body:
     def _render_notifs(self):
         # Count notifications for debugging
         pinned_notifs = [n for n in self.notifs if n.pinned]
-        regular_notifs = [n for n in self.notifs if not n.pinned and n.timestamp > self.last_snapshot_time]
-        
+        regular_notifs = [
+            n
+            for n in self.notifs
+            if not n.pinned and n.timestamp > self.last_snapshot_time
+        ]
+
         logger.debug(
             f"📋 Rendering notifications: {len(pinned_notifs)} pinned (always visible), "
-            f"{len(regular_notifs)} regular (new since last commit)"
+            f"{len(regular_notifs)} regular (new since last commit)",
         )
-        
+
         # Render pinned notifications (always visible)
-        pinned = "\n".join([
-            f"""[PINNED {n.type.title()} @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
-            for n in pinned_notifs
-        ])
-        
+        pinned = "\n".join(
+            [
+                f"""[PINNED {n.type.title()} @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
+                for n in pinned_notifs
+            ],
+        )
+
         # Render regular notifications (only new ones)
-        regular = "\n".join([
-            f"""[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
-            for n in regular_notifs
-        ])
-        
+        regular = "\n".join(
+            [
+                f"""[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
+                for n in regular_notifs
+            ],
+        )
+
         # Debug log what's being shown to the LLM
         if pinned:
             for n in pinned_notifs:
-                logger.debug(f"  📌 PINNED (ID: {n.interjection_id}): {n.content[:60]}...")
+                logger.debug(
+                    f"  📌 PINNED (ID: {n.interjection_id}): {n.content[:60]}...",
+                )
         if regular:
             for n in regular_notifs:
-                logger.debug(f"  📝 REGULAR (ID: {n.interjection_id}): {n.content[:60]}...")
+                logger.debug(
+                    f"  📝 REGULAR (ID: {n.interjection_id}): {n.content[:60]}...",
+                )
         if not pinned and not regular:
             logger.debug("  (No notifications to render)")
-        
+
         # Combine with separator if both exist
         if pinned and regular:
             return f"{pinned}\n\n{regular}"
