@@ -303,11 +303,12 @@ def build_live_image_tools(
         "Live images available in the current session (calling this overview is optional).\n"
         + "\n".join(listings or ["(none)"])
         + "\n\n"
-        + "When calling inner tools or dynamic helpers, pass `image_refs` using the `ImageRefs` model:\n"
-        + "- A list of `RawImageRef` (just an id) or `AnnotatedImageRef` (id + freeform annotation).\n"
-        + "- The annotation should briefly explain how the image relates to the current request.\n"
-        + "Example:\n"
-        + "  image_refs = [{ 'raw_image_ref': { 'image_id': 42 }, 'annotation': 'Jenny's paint' }]\n"
+        + "Notes:\n"
+        + "- `ask_image` accepts only two arguments: `image_id` and `question`.\n"
+        + "- Some dynamic helpers (e.g. `interject_…`, `clarify_…`, `stop_…`) may accept `image_refs` using the `ImageRefs` model:\n"
+        + "  a list of `RawImageRef` (just an id) or `AnnotatedImageRef` (id + freeform annotation).\n"
+        + "  The annotation should briefly explain how the image relates to the current request.\n"
+        + "  Example: [{ 'raw_image_ref': { 'image_id': 42 }, 'annotation': 'Jenny\u2019s paint' }]\n"
     )
 
     # Merge previously appended images (if any)
@@ -341,15 +342,10 @@ def build_live_image_tools(
         *,
         image_id: int,
         question: str,
-        image_refs: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None = None,
     ) -> Any:
         ih = id_to_handle.get(int(image_id))
         if ih is None:
             return {"error": f"image_id {int(image_id)} not found"}
-        # Append any provided refs under a per-ask label
-        with _suppress(Exception):
-            _label = default_source_label("ask")
-            append_image_refs_with_source(image_refs, _label)
         try:
             return await ih.ask(question)
         except Exception as _exc:  # noqa: BLE001
@@ -465,12 +461,9 @@ def build_live_image_tools(
         "image_id : int\n"
         "    The unique id of the image (see overview).\n"
         "question : str\n"
-        "    The question to ask about the image.\n"
-        "image_refs : ImageRefs | None\n"
-        "    Optional additional images to append at the time of this call (freeform annotations supported).\n\n"
+        "    The question to ask about the image.\n\n"
         "Behaviour\n"
         "---------\n"
-        "- Appends any provided images to this loop’s live registry and surfaces them in the overview.\n"
         "- Returns the answer from the image handle."
     )
 
