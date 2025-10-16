@@ -44,7 +44,11 @@ def log_job_startup(
                 addr = ((data or {}).get("external") or {}).get("address")
                 if isinstance(addr, str) and addr:
                     liveview_url = f"http://{addr}:6080/vnc.html"
+    except Exception as e:
+        print(f"Error resolving liveview URL for job {job_name}: {e}")
+        traceback.print_exc()
 
+    try:
         unify.create_logs(
             project="AssistantJobs",
             context="startup_events",
