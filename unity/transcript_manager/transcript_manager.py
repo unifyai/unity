@@ -1310,7 +1310,7 @@ class TranscriptManager(BaseTranscriptManager):
         - image_id: int
         - caption: str | None
         - timestamp: str (ISO8601)
-        - annotation: str | None  → freeform explanation of how the image relates to the text
+        - annotation: str  → freeform explanation of how the image relates to the text
         """
         logs = unify.get_logs(
             context=self._transcripts_ctx,
@@ -1327,16 +1327,10 @@ class TranscriptManager(BaseTranscriptManager):
         refs = getattr(msg.images, "root", None) or []
         if not refs:
             return []
-        image_ids = []
+        image_ids: List[int] = []
         for ref in refs:
             try:
-                # RawImageRef has .image_id; AnnotatedImageRef has .raw_image_ref.image_id
-                iid = (
-                    int(ref.image_id)
-                    if hasattr(ref, "image_id")
-                    else int(ref.raw_image_ref.image_id)
-                )
-                image_ids.append(iid)
+                image_ids.append(int(ref.raw_image_ref.image_id))
             except Exception:
                 continue
         handles = self._image_manager.get_images(image_ids)
@@ -1344,11 +1338,7 @@ class TranscriptManager(BaseTranscriptManager):
         out: List[Dict[str, Any]] = []
         for ref in refs:
             try:
-                iid = (
-                    int(ref.image_id)
-                    if hasattr(ref, "image_id")
-                    else int(ref.raw_image_ref.image_id)
-                )
+                iid = int(ref.raw_image_ref.image_id)
             except Exception:
                 continue
             h = by_id.get(iid)
@@ -1358,17 +1348,12 @@ class TranscriptManager(BaseTranscriptManager):
                 ts_str = h.timestamp.isoformat()
             except Exception:
                 ts_str = ""
-            annotation_val = None
-            try:
-                annotation_val = getattr(ref, "annotation", None)
-            except Exception:
-                annotation_val = None
             out.append(
                 {
                     "image_id": int(h.image_id),
                     "caption": h.caption,
                     "timestamp": ts_str,
-                    "annotation": annotation_val,
+                    "annotation": ref.annotation,
                 },
             )
         return out
@@ -1498,17 +1483,11 @@ class TranscriptManager(BaseTranscriptManager):
         if not refs:
             return {"attached_count": 0, "images": []}
         ids_to_attach: List[int] = []
-        annotations_by_index: List[Optional[str]] = []
+        annotations_by_index: List[str] = []
         for ref in refs:
             try:
-                iid = (
-                    int(ref.image_id)
-                    if hasattr(ref, "image_id")
-                    else int(ref.raw_image_ref.image_id)
-                )
-                ids_to_attach.append(iid)
-                ann = getattr(ref, "annotation", None)
-                annotations_by_index.append(ann if isinstance(ann, str) else None)
+                ids_to_attach.append(int(ref.raw_image_ref.image_id))
+                annotations_by_index.append(ref.annotation)
             except Exception:
                 continue
 
@@ -1530,7 +1509,7 @@ class TranscriptManager(BaseTranscriptManager):
             except Exception:
                 continue
             annotation_val = (
-                annotations_by_index[idx] if idx < len(annotations_by_index) else None
+                annotations_by_index[idx] if idx < len(annotations_by_index) else ""
             )
             images.append(
                 {
