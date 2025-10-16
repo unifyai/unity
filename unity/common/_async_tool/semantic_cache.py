@@ -334,7 +334,8 @@ class _SemanticCacheSaver:
 
         _tools = {}
         for public_name, tool in tools_available.items():
-            _tools[public_name] = tool.fn.__name__
+            if tool.read_only:  # only save read-only tools to the cache
+                _tools[public_name] = tool.fn.__name__
 
         self._save_to_cache(
             store_context,
@@ -485,22 +486,15 @@ async def _handle_manager_tool(base, usermessage, namespace):
     for public_name, tool_name in result.tools_available.items():
         try:
             tools[public_name] = getattr(base.__self__, tool_name)
-        except Exception as e:
+        except Exception:
             continue
     tools = normalise_tools(tools)
-    try:
-        # TODO: Refactor out the calling part
-        result = await get_dummy_tool(result, tools)
-    except Exception as e:
-        raise e
-    return result[1]["content"]
+    result = await _rexecute_tools(result.tool_trajectory, tools)
+    return result
 
 
-async def get_dummy_tool(
-    semantic_cache_result: SemanticCacheResult,
-    tools: Mapping[str, ToolSpec],
-):
-    history = copy.deepcopy(semantic_cache_result.tool_trajectory)
+async def _rexecute_tools(tool_trajectory, tools):
+    history = copy.deepcopy(tool_trajectory)
     loop = asyncio.get_running_loop()
     with ThreadPoolExecutor(thread_name_prefix="semantic_cache") as executor:
         awaitables_map = {}
@@ -514,6 +508,7 @@ async def get_dummy_tool(
                     task = loop.create_task(
                         _handle_manager_tool(base, arg, "ContactManager.ask"),
                     )
+                    awaitables_map[idx] = task
                     continue
 
                 # Only re-call tools that are read-only
@@ -544,6 +539,14 @@ async def get_dummy_tool(
             history[idx]["result_status"] = "new"
             history[idx]["result"] = result
 
+    return history
+
+
+async def get_dummy_tool(
+    semantic_cache_result: SemanticCacheResult,
+    tools: Mapping[str, ToolSpec],
+):
+    history = await _rexecute_tools(semantic_cache_result.tool_trajectory, tools)
     call_id = f"call_SemanticSearchCallIdPlaceholder"
     request = {
         "content": None,
