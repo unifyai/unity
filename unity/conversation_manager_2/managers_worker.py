@@ -87,7 +87,15 @@ class ManagersWorker:
                             "profile_photo": None,
                             "country": None,
                             "user_last_name": "",
-                            **payload,
+                            "phone": payload["phone"] or None,
+                            "email": payload["email"] or None,
+                            "user_phone": payload["user_phone"] or None,
+                            "user_whatsapp_number": payload["user_whatsapp_number"]
+                            or None,
+                            "assistant_whatsapp_number": payload[
+                                "assistant_whatsapp_number"
+                            ]
+                            or None,
                         },
                     )
                 print("[ManagersWorker] Unity initialized")
