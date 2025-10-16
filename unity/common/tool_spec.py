@@ -19,6 +19,7 @@ class ToolSpec:
     # revealing quota details to the LLM.
     max_total_calls: Optional[int] = None
     read_only: Optional[bool] = None
+    manager_tool: Optional[bool] = None
 
     # Let a ToolSpec be invoked like the underlying callable (nice for tests)
     def __call__(self, *a, **kw):  # pragma: no cover
@@ -34,11 +35,21 @@ def normalise_tools(
         if isinstance(v, ToolSpec):
             out[n] = v
         else:
-            out[n] = ToolSpec(fn=v, read_only=getattr(v, "_tool_spec_read_only", None))
+            out[n] = ToolSpec(
+                fn=v,
+                read_only=getattr(v, "_tool_spec_read_only", None),
+                manager_tool=getattr(v, "_tool_spec_manager_tool", None),
+            )
     return out
 
 
 def read_only(fn: Callable) -> Callable:
     """Mark a tool as read-only; eligible for semantic-cache re-execution."""
     setattr(fn, "_tool_spec_read_only", True)
+    return fn
+
+
+def manager_tool(fn: Callable) -> Callable:
+    """Mark a tool as a manager tool; used to call other tools."""
+    setattr(fn, "_tool_spec_manager_tool", True)
     return fn
