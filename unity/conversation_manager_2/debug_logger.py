@@ -8,8 +8,8 @@ import unify
 
 
 api_key = os.environ.get("SHARED_UNIFY_KEY")
-if "Debug" not in unify.list_projects(api_key=api_key):
-    unify.create_project("Debug", api_key=api_key)
+if "AssistantJobs" not in unify.list_projects(api_key=api_key):
+    unify.create_project("AssistantJobs", api_key=api_key)
 
 
 def log_job_startup(
@@ -46,7 +46,7 @@ def log_job_startup(
                     liveview_url = f"http://{addr}:6080/vnc.html"
 
         unify.create_logs(
-            project="Debug",
+            project="AssistantJobs",
             context="startup_events",
             params={},
             entries={
@@ -76,7 +76,7 @@ def log_job_startup(
 def mark_job_done(job_name: str):
     try:
         job_log = unify.get_logs(
-            project="Debug",
+            project="AssistantJobs",
             context="startup_events",
             filter=f"job_name == '{job_name}'",
             api_key=api_key,
