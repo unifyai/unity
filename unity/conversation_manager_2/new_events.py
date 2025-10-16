@@ -124,7 +124,7 @@ class EmailRecieved(Event):
     contact: str
     subject: str
     body: str
-    message_id: Optional[str]
+    message_id: Optional[str] = None
 
 
 # assistant events
@@ -336,11 +336,11 @@ class NotificationUnpinnedEvent(Event):
 
 @dataclass
 class UnifyMessageRecieved(Event):
-    contact: int
+    contact: str
     content: str
 
 
 @dataclass
 class UnifyMessageSent(Event):
-    contact: int
+    contact: str
     content: str
