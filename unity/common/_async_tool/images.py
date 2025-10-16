@@ -148,8 +148,7 @@ def normalize_arg_scoped_images(
 
 
 def set_live_images_context(
-    image_refs: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
-    image_handles: Optional[dict[int, Any]] = None,
+    images: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
     reference_message: Any | None = None,
 ) -> tuple[Any, Any]:
     """
@@ -158,16 +157,14 @@ def set_live_images_context(
     Returns (registry_token, log_token) to allow resetting later.
     """
     try:
-        # Seed registry with provided handles, then resolve any referenced ids
+        # Seed registry from any existing registry and resolve referenced ids
         reg_current = LIVE_IMAGES_REGISTRY.get()
         id_map: dict[int, Any] = {}
         with suppress(Exception):
             id_map.update(reg_current if isinstance(reg_current, dict) else {})
-        if isinstance(image_handles, dict):
-            id_map.update({int(k): v for k, v in image_handles.items()})
         # Resolve referenced ids to handles where missing
         # Resolve referenced ids lazily with a local import to avoid circular dependencies at module import
-        if image_refs:
+        if images:
             try:
                 from unity.image_manager.image_manager import (
                     ImageManager as _ImageManager,
@@ -175,9 +172,7 @@ def set_live_images_context(
 
                 ids_to_fetch: List[int] = []
                 refs_list = (
-                    list(image_refs.root)
-                    if isinstance(image_refs, ImageRefs)
-                    else list(image_refs)
+                    list(images.root) if isinstance(images, ImageRefs) else list(images)
                 )
                 for ref in refs_list:
                     if isinstance(ref, AnnotatedImageRef):
@@ -202,12 +197,8 @@ def set_live_images_context(
 
         # Seed log from refs under source 'user_message'
         logs: list[dict] = []
-        if image_refs is not None:
-            refs = (
-                list(image_refs.root)
-                if isinstance(image_refs, ImageRefs)
-                else list(image_refs)
-            )
+        if images is not None:
+            refs = list(images.root) if isinstance(images, ImageRefs) else list(images)
             for ref in refs:
                 if isinstance(ref, AnnotatedImageRef):
                     logs.append(
@@ -283,15 +274,10 @@ def build_live_image_tools(
             continue
 
     overview_doc = (
-        "Live images available in the current session (calling this overview is optional).\n"
+        "Live images available in the current session:\n"
         + "\n".join(listings or ["(none)"])
-        + "\n\n"
-        + "Notes:\n"
-        + "- `ask_image` accepts only two arguments: `image_id` and `question`.\n"
-        + "- Some dynamic helpers (e.g. `interject_…`, `clarify_…`, `stop_…`) may accept `image_refs` using the `ImageRefs` model:\n"
-        + "  a list of `RawImageRef` (just an id) or `AnnotatedImageRef` (id + freeform annotation).\n"
-        + "  The annotation should briefly explain how the image relates to the current request.\n"
-        + "  Example: [{ 'raw_image_ref': { 'image_id': 42 }, 'annotation': 'Jenny\u2019s paint' }]\n"
+        + "\n"
+        + "Calling this overview 'tool' is a redundant no-op, the live images are all presented above in this dynamically updated 'tool description'"
     )
 
     # Merge previously appended images (if any)
@@ -460,6 +446,10 @@ def build_live_image_tools(
         "Behaviour\n"
         "---------\n"
         "- Returns the answer from the image handle."
+        "Notes\n"
+        "-----\n"
+        "- Favour this tool for surgical (and relatively simple) single-image questions."
+        "- Prevents 'polluting' the outer context with the full image data, in cases where this data could end up being a distraction."
     )
 
     attach_image_raw.__doc__ = (
@@ -474,6 +464,10 @@ def build_live_image_tools(
         "---------\n"
         "- Idempotent per image_id (re-attaching the same id is a no-op).\n"
         "- Resolves ids to handles and surfaces them in the overview."
+        "Notes\n"
+        "-----\n"
+        "- Favour this tool for multi-image comparative and/or queries related to the broader task in a more open-end manner."
+        "- Ensures all future reasoning in this loop has *full access* to the image data for *maximual context*, good if this data is relevant beyond the scope of a single question."
     )
 
     return {

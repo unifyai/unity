@@ -23,7 +23,7 @@ from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
 
 if TYPE_CHECKING:
-    from ..image_manager.image_manager import ImageHandle
+    from ..image_manager.types.image_refs import ImageRefs
 
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -702,8 +702,7 @@ def start_async_tool_loop(
     handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
     semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
-    image_refs: Optional[list] = None,
-    image_handles: Optional[dict[int, "ImageHandle"]] = None,
+    images: Optional["ImageRefs"] = None,
     evented: Optional[bool] = None,
 ) -> AsyncToolLoopHandle:
     """
@@ -768,8 +767,7 @@ def start_async_tool_loop(
                 max_parallel_tool_calls=max_parallel_tool_calls,
                 semantic_cache=semantic_cache,
                 semantic_cache_namespace=semantic_cache_namespace,
-                image_refs=image_refs,
-                image_handles=image_handles,
+                images=images,
             )
         except asyncio.CancelledError:
             raise

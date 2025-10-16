@@ -4,7 +4,17 @@ import json
 import inspect
 import copy
 
-from typing import Dict, Union, Callable, Tuple, Any, Set, Optional, Literal
+from typing import (
+    Dict,
+    Union,
+    Callable,
+    Tuple,
+    Any,
+    Set,
+    Optional,
+    TYPE_CHECKING,
+    Literal,
+)
 from contextlib import suppress
 from pydantic import BaseModel
 
@@ -48,6 +58,9 @@ from .messages import (
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
 from . import semantic_cache as sc
+
+if TYPE_CHECKING:
+    from ...image_manager.types.image_refs import ImageRefs
 
 
 class LoopLogger:
@@ -137,8 +150,7 @@ async def async_tool_loop_inner(
     max_parallel_tool_calls: Optional[int] = None,
     semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
-    image_refs: Optional[list] = None,
-    image_handles: Optional[dict[int, Any]] = None,
+    images: "ImageRefs | None" = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -261,10 +273,9 @@ async def async_tool_loop_inner(
     _imglog_token = None
     # If live images are provided, set the registry for this loop's scope
     try:
-        if image_refs or image_handles:
+        if images:
             _img_token, _imglog_token = set_live_images_context(
-                image_refs,
-                image_handles,
+                images,
                 message,
             )
     except Exception:
@@ -376,11 +387,8 @@ async def async_tool_loop_inner(
             append_user_messages=_msg_dispatcher.append_msgs,
         )
 
-    # Legacy `align_images_for` removed in ImageRefs model – no general helpers needed
-    general_helpers = {}
-
     # Merge helpers (if any) with base tools before normalisation
-    tools = {**tools, **(live_image_tools or {}), **general_helpers}
+    tools = {**tools, **(live_image_tools or {})}
 
     # Initialise loop state early so preflight backfill can schedule tasks
     tools_data: ToolsData = ToolsData(tools, client=client, logger=logger)
@@ -607,9 +615,9 @@ async def async_tool_loop_inner(
 
         # Append images provided with the notification payload
         with suppress(Exception):
-            images_from_child = (
-                payload.get("image_refs") if isinstance(payload, dict) else None
-            )
+            images_from_child = None
+            if isinstance(payload, dict):
+                images_from_child = payload.get("images", payload.get("image_refs"))
             append_image_refs_with_source(images_from_child)
             try:
                 for _iid, _annotation in get_image_log_entries():
@@ -1520,23 +1528,23 @@ async def async_tool_loop_inner(
                         if task_to_cancel:
                             tools_data.pop_task(task_to_cancel)
 
-                        # Record any images provided with the stop helper and capture reason text
-                        with suppress(Exception):
-                            try:
-                                reason_txt = payload.get("reason")
-                            except Exception:
-                                reason_txt = ""
-                            append_image_refs_with_source(
-                                payload.get("image_refs"),
-                            )
-                            try:
-                                for _iid, _annotation in get_image_log_entries():
-                                    logger.info(
-                                        f"Image id={_iid}, annotation={_annotation!r}",
-                                        prefix="🖼️",
-                                    )
-                            except Exception:
-                                pass
+                    # Record any images provided with the stop helper and capture reason text
+                    with suppress(Exception):
+                        try:
+                            reason_txt = payload.get("reason")
+                        except Exception:
+                            reason_txt = ""
+                        append_image_refs_with_source(
+                            payload.get("images", payload.get("image_refs")),
+                        )
+                        try:
+                            for _iid, _annotation in get_image_log_entries():
+                                logger.info(
+                                    f"Image id={_iid}, annotation={_annotation!r}",
+                                    prefix="🖼️",
+                                )
+                        except Exception:
+                            pass
 
                         tool_msg = create_tool_call_message(
                             name=pretty_name,
@@ -1694,7 +1702,8 @@ async def async_tool_loop_inner(
                         # Record any images provided with the clarification answer
                         with suppress(Exception):
                             append_image_refs_with_source(
-                                (
+                                (args.get("images") if isinstance(args, dict) else None)
+                                or (
                                     args.get("image_refs")
                                     if isinstance(args, dict)
                                     else None
@@ -1778,7 +1787,7 @@ async def async_tool_loop_inner(
                         # Record any images provided with the interjection helper
                         with suppress(Exception):
                             append_image_refs_with_source(
-                                payload.get("image_refs"),
+                                payload.get("images", payload.get("image_refs")),
                             )
                             try:
                                 for _iid, _annotation in get_image_log_entries():
