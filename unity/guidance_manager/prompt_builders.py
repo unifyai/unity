@@ -269,9 +269,9 @@ Tool selection
 Create / Update / Delete
 ------------------------
         • Create a new guidance entry
-        `{add_fname}(title='Setup demo', content='How to set up the product demo...', images=[{"raw_image_ref": {"image_id": 12}, "annotation": "overview"}], function_ids=[1, 2])`
+        `{add_fname}(title='Setup demo', content='How to set up the product demo...', images=[{{"raw_image_ref": {{"image_id": 12}}, "annotation": "overview"}}], function_ids=[1, 2])`
         • Update a known guidance id
-        `{upd_fname}(guidance_id=42, content='Updated narrative...', images=[{"image_id": 15}], function_ids=[2, 3])`
+        `{upd_fname}(guidance_id=42, content='Updated narrative...', images=[{{"raw_image_ref": {{"image_id": 15}}, "annotation": "overview"}}], function_ids=[2, 3])`
 • Delete a guidance entry
   `{del_fname}(guidance_id=77)`
         """,
