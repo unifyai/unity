@@ -4,7 +4,8 @@ import pytest
 
 from unity.guidance_manager.guidance_manager import GuidanceManager
 from tests.helpers import _handle_project
-from unity.image_manager.types import RawImageRef, AnnotatedImageRef
+from unity.image_manager.types import AnnotatedImageRef
+from pydantic import ValidationError
 
 
 @pytest.mark.unit
@@ -21,7 +22,7 @@ def test_create_guidance():
     assert rows and rows[0].guidance_id == gid
     assert rows[0].title == "Setup demo"
     assert rows[0].content.startswith("Steps to set up")
-    # images now stored as ImageRefs
+    # images now stored as AnnotatedImageRefs
     refs = rows[0].images
     items = getattr(refs, "root", refs)
     assert isinstance(items, list) and len(items) == 0
@@ -39,7 +40,9 @@ def test_update_guidance():
     gm._update_guidance(
         guidance_id=gid,
         content="Updated walkthrough of onboarding steps for new users.",
-        images=[{"image_id": 12}],
+        images=[
+            {"raw_image_ref": {"image_id": 12}, "annotation": "onboarding screenshot"},
+        ],
     )
 
     rows = gm._filter(filter=f"guidance_id == {gid}")
@@ -49,16 +52,8 @@ def test_update_guidance():
     items = getattr(refs, "root", refs)
     assert isinstance(items, list) and len(items) == 1
     first = items[0]
-    # Accept either dict-shaped or model instance
-    if isinstance(first, dict):
-        assert (
-            int(first.get("image_id") or first.get("raw_image_ref", {}).get("image_id"))
-            == 12
-        )
-    else:
-        assert isinstance(first, (RawImageRef, AnnotatedImageRef))
-        iid = getattr(getattr(first, "raw_image_ref", first), "image_id")
-        assert int(iid) == 12
+    assert isinstance(first, AnnotatedImageRef)
+    assert int(first.raw_image_ref.image_id) == 12
 
 
 @pytest.mark.unit
@@ -102,8 +97,8 @@ def test_update_guidance_images_validation():
         content="Documentation structure and guidelines.",
     )["details"]["guidance_id"]
 
-    # Invalid images payload (not a list/ImageRefs) should raise
-    with pytest.raises(ValueError):
+    # Invalid images payload (not a list of annotated refs) should raise
+    with pytest.raises(ValidationError):
         gm._update_guidance(guidance_id=gid, images={"bad": 1})
 
 
