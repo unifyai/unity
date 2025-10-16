@@ -466,12 +466,6 @@ class ConversationManagerState:
         self.user_number = payload["user_number"]
         self.user_whatsapp_number = payload["user_whatsapp_number"]
         self.user_email = payload["user_email"]
-        self.current_user = {
-            "user_name": self.user_name,
-            "user_number": self.user_number,
-            "user_whatsapp_number": self.user_whatsapp_number,
-            "user_email": self.user_email,
-        }
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.build_response_model()
