@@ -6,7 +6,6 @@ import logging
 from jinja2 import Template
 import json
 import contextlib
-import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
