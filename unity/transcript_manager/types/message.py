@@ -2,7 +2,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 from typing import Literal
-from ...image_manager.types import ImageRefs
+from ...image_manager.types import AnnotatedImageRefs
 
 UNASSIGNED = -1
 
@@ -43,11 +43,10 @@ class Message(BaseModel):
         description="ID of the conversation thread this message belongs to",
         ge=-1,
     )
-    images: ImageRefs = Field(
-        default_factory=lambda: ImageRefs.model_validate([]),
+    images: AnnotatedImageRefs = Field(
+        default_factory=lambda: AnnotatedImageRefs.model_validate([]),
         description=(
-            "List of image references aligned to the text by freeform explanation. "
-            "Use ImageRefs with RawImageRef and AnnotatedImageRef entries."
+            "List of annotated image references aligned to the text. Each entry must be an AnnotatedImageRef."
         ),
     )
     call_utterance_timestamp: str = Field(
