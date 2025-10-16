@@ -449,8 +449,12 @@ class ConversationManagerState:
             self._render_contact(c) for c in self.active_conversations.values()
         )
         notif = self._render_notifs()
-        state = f"<notifications>\n{self._add_spaces(notif)}\n</notifications>\n<active_conversations>\n{self._add_spaces(active_convs)}\n</active_conversations>"
-
+        conductor_handles = self._render_conductor_handles()
+        state = (
+            f"<notifications>\n{self._add_spaces(notif)}\n</notifications>\n"
+            f"<active_conversations>\n{self._add_spaces(active_convs)}\n</active_conversations>\n"
+            f"<conductor_handles>\n{self._add_spaces(conductor_handles)}\n</conductor_handles>"
+        )
         return state
 
     def set_details(self, payload: dict):
