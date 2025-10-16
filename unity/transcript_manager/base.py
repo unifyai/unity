@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
+class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     *Public* contract that every concrete **transcript-manager** must satisfy.
 

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.state_managers import BaseStateManager
 
 
-class BaseSkillManager(ABC, metaclass=SingletonABCMeta):
+class BaseSkillManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Public contract for a high-level catalogue of assistant "skills".
 

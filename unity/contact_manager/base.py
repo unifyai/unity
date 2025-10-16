@@ -1,16 +1,17 @@
 # contact_manager/base.py
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import asyncio
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseContactManager(ABC, metaclass=SingletonABCMeta):
+class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     *Public* contract that every concrete **contact-manager** must satisfy.
 
