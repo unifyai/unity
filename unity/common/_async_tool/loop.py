@@ -148,7 +148,7 @@ async def async_tool_loop_inner(
     outer_handle_container: Optional[list] = None,
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
-    semantic_cache: Optional[Literal["read", "write", "both"]] = None,
+    semantic_cache: Optional[Literal["read", "write", "both", "resolve"]] = None,
     semantic_cache_namespace: Optional[str] = None,
     images: "ImageRefs | None" = None,
 ) -> str:
@@ -260,6 +260,19 @@ async def async_tool_loop_inner(
         The assistant's final plain-text reply *after* every tool result has
         been fed back into the conversation.
     """
+    if semantic_cache == "resolve":
+        result = sc.search_semantic_cache(message, semantic_cache_namespace)
+        if result is not None:
+            try:
+                history = await sc._rexecute_tools(
+                    result.tool_trajectory,
+                    normalise_tools(tools),
+                )
+            except Exception as e:
+                # Fallback to the original tool trajectory
+                history = result.tool_trajectory
+            return history
+
     # unique id / lineage
     cfg = LoopConfig(loop_id, lineage, TOOL_LOOP_LINEAGE.get([]))
     # Expose the resolved human-friendly label (with 4-hex suffix) to the outer handle

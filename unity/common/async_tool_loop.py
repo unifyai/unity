@@ -700,7 +700,7 @@ def start_async_tool_loop(
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
     handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
-    semantic_cache: Optional[Literal["read", "write", "both"]] = None,
+    semantic_cache: Optional[Literal["read", "write", "both", "resolve"]] = None,
     semantic_cache_namespace: Optional[str] = None,
     images: Optional["ImageRefs"] = None,
     evented: Optional[bool] = None,

@@ -13,7 +13,7 @@ from typing import Any, Mapping, TypedDict, Callable, List
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from unity.common.tool_spec import ToolSpec, normalise_tools
+from unity.common.tool_spec import ToolSpec
 
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
@@ -472,25 +472,8 @@ def get_system_msg_hint() -> str:
     """
 
 
-def _is_manager_tool(tool_name: str) -> bool:
-    # TODO: make this dynamic
-    return tool_name.startswith("ContactManager")
-
-
-async def _handle_manager_tool(base, usermessage, namespace):
-    result = search_semantic_cache(usermessage, namespace)
-    if not result:
-        raise Exception("No result found in semantic cache")
-    tools = {}
-
-    for public_name, tool_name in result.tools_available.items():
-        try:
-            tools[public_name] = getattr(base.__self__, tool_name)
-        except Exception:
-            continue
-    tools = normalise_tools(tools)
-    result = await _rexecute_tools(result.tool_trajectory, tools)
-    return result
+def _is_manager_tool(tool: ToolSpec) -> bool:
+    return tool.manager_tool is not None
 
 
 async def _rexecute_tools(tool_trajectory, tools):
@@ -502,12 +485,10 @@ async def _rexecute_tools(tool_trajectory, tools):
             history[idx]["result_status"] = "cached"  # type: ignore
 
             if (tool_name := tool_call.get("name")) in tools:
-                if _is_manager_tool(tool_name):
-                    arg = json.loads(tool_call.get("arguments"))["text"]
-                    base = tools[tool_name].fn
-                    task = loop.create_task(
-                        _handle_manager_tool(base, arg, "ContactManager.ask"),
-                    )
+                if _is_manager_tool(tools[tool_name]):
+                    args = json.loads(tool_call.get("arguments"))
+                    args["semantic_cache"] = "resolve"
+                    task = loop.create_task(tools[tool_name].fn(**args))
                     awaitables_map[idx] = task
                     continue
 
