@@ -432,6 +432,7 @@ class ConversationManagerState:
                     handle_id=e.handle_id,
                     action_name="clarification",
                     query=e.query,
+                    response=""
                 )
             case ConductorResult() as e:
                 self.conductor_handles.pop(e.handle_id, None)
@@ -779,6 +780,22 @@ Body:
                 threads.append(self._render_thread(t_name, t))
         threads = "\n\n".join(threads)
         return threads
+
+    def _render_conductor_handles(self):
+        handles = []
+        for handle_id, handle in self.conductor_handles.items():
+            handles.append(f"<conductor_handle handle_id=\"{handle_id}\">")
+            handles.append(f"<query>{handle['query']}</query>")
+            handles.append(f"<handle_actions>")
+            for action in handle["handle_actions"]:
+                handles.append(f"<action action_name=\"{action['action_name']}\">")
+                handles.append(f"<query>{action['query']}</query>")
+                if action["response"]:
+                    handles.append(f"<response>{action['response']}</response>")
+                handles.append(f"</action>")
+            handles.append(f"</handle_actions>")
+            handles.append(f"</conductor_handle>")
+        return "\n".join(handles)
 
     def _add_spaces(self, string: str, num_spaces: int = 4):
         ls = string.split("\n")
