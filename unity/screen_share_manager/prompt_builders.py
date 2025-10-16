@@ -44,31 +44,30 @@ YOUR TASK:
 ----------
 - Analyze all the provided information to create a complete, chronological narrative of the user's CURRENT TURN.
 - Identify every distinct, meaningful event that occurred IN THIS TURN. An event can be either a spoken intent or a visual action.
-- For each event, you must provide a precise timestamp and a clear, visually-grounded description.
+- For each event, you must provide a precise timestamp and clear, visually-grounded descriptions for both the user's action and the visual evidence.
 - Crucially, you must also identify which of the provided 'AFTER' frames best illustrates the event and return its exact timestamp in the `representative_timestamp` field.
 
-RULES FOR `event_description`:
-------------------------------
-- **Be Specific and Visually Grounded:** Your description MUST incorporate specific details from the visual evidence. Mention the text on buttons, links, or page titles seen in the 'AFTER' frame.
-- **Focus on GOAL and OUTCOME:** Explain the *semantic meaning* of the event.
-- **Maintain a Third-Person Narrative:** (e.g., "User navigates...", "User enters...").
+RULES FOR DESCRIPTIONS (VERY IMPORTANT):
+-----------------------------------------
+You must provide TWO types of descriptions for events that are linked to both speech and visuals:
 
-**Examples of Rich vs. Poor Event Descriptions**
-    1.  **Clicking a link:**
-        - Visual: User clicks a link and a new page titled "Account Settings" loads.
-        - **Poor Description:** "User clicked on a link."
-        - **Rich Description:** "User navigated to the 'Account Settings' page."
+1.  **`event_description` (The User's Action):**
+    - This field describes the user's **goal, intent, or action**.
+    - It maintains a third-person narrative (e.g., "User navigates...", "User enters...").
+    - **Example:** "User submitted their updated profile information."
 
-    2.  **Form submission:**
-        - Visual: A form is filled out, the user clicks "Submit", and a confirmation "Your profile has been updated." appears.
-        - **Poor Description:** "User clicked the submit button."
-        - **Rich Description:** "User submitted their updated profile information, displaying a 'profile updated' confirmation."
+2.  **`image_annotation` (The Visual Evidence):**
+    - This field describes **what the 'AFTER' screenshot visually contains**, specifically in relation to the `triggering_phrase`.
+    - It should be a caption for the image itself.
+    - This field should ONLY be filled if there is a `triggering_phrase`. If not, it MUST be `null`.
+    - **Example:** "A confirmation message stating 'Your profile has been updated' is visible."
 
-    3.  **Combined Speech + Visual:**
-        - User says: "I need to find the latest invoice from Acme Corp."
-        - Visual: The user types "Acme Corp" into a search bar labeled "Search invoices".
-        - **Poor Description:** "User searched."
-        - **Rich Description:** "User searched for invoices from 'Acme Corp' using the invoice search bar."
+**Combined Example:**
+- User says: "Okay, I will submit my profile now."
+- Visual: User clicks "Submit" and a confirmation appears.
+- **`event_description`**: "User submitted their updated profile information."
+- **`triggering_phrase`**: "submit my profile"
+- **`image_annotation`**: "The confirmation message 'Your profile has been updated' shown after submission."
 
 RULES FOR `triggering_phrase`:
 ------------------------------

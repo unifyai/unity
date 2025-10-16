@@ -6,6 +6,7 @@ import json
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
+from unity.image_manager.types import AnnotatedImageRef, ImageRefs, RawImageRef
 from unity.image_manager.utils import make_solid_png_base64
 from unity.screen_share_manager.types import TurnAnalysisResponse, KeyEvent
 from tests.helpers import _handle_project
@@ -193,11 +194,13 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
+    # Update the mock response to include the new field
     mock_llm_response = TurnAnalysisResponse(
         events=[
             KeyEvent(
                 timestamp=15.5,
                 event_description="User clicked the 'Submit Application' button.",
+                image_annotation="The 'Application Submitted' confirmation screen.",  # New field
                 triggering_phrase="submit the application",
                 representative_timestamp=15.5,
             )
@@ -227,15 +230,25 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
     await manager._logging_worker(log_job)
     mocks["transcript_manager"].log_messages.assert_called_once()
     logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
-    annotation = logged_message.screen_share["15.00-16.50"]
-    assert annotation.caption == "User clicked the 'Submit Application' button."
-    content = "Okay, I am ready to submit the application now."
-    phrase = "submit the application"
-    start_index = content.find(phrase)
-    end_index = start_index + len(phrase)
-    expected_key = f"[{start_index}:{end_index}]"
-    assert expected_key in logged_message.images
-    assert logged_message.images[expected_key] == 42
+
+    # Check the screen_share field (should still use event_description)
+    screen_share_annotation = logged_message.screen_share["15.00-16.50"]
+    assert (
+        screen_share_annotation.caption
+        == "User clicked the 'Submit Application' button."
+    )
+
+    # Assert the new AnnotatedImageRef structure with the new annotation
+    assert isinstance(logged_message.images, ImageRefs)
+    image_refs = logged_message.images.root
+    assert len(image_refs) == 1
+    annotated_ref = image_refs[0]
+    assert isinstance(annotated_ref, AnnotatedImageRef)
+    assert annotated_ref.raw_image_ref.image_id == 42
+    # This assertion now checks for the new, specific image annotation
+    assert (
+        annotated_ref.annotation == "The 'Application Submitted' confirmation screen."
+    )
 
 
 @pytest.mark.unit

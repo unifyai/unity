@@ -13,7 +13,11 @@ class KeyEvent(BaseModel):
     )
     event_description: str = Field(
         ...,
-        description="A concise, third-person summary of what occurred at this moment (e.g., 'User clicked the submit button').",
+        description="A concise, third-person summary of what occurred at this moment (e.g., 'User clicked the submit button'). This describes the user's action or intent.",
+    )
+    image_annotation: Optional[str] = Field(
+        None,
+        description="A description of what the representative image shows, specifically in relation to the triggering_phrase. This describes the visual evidence itself (e.g., 'A screenshot of the login form'). This should only be populated if the event is visual and linked to speech.",
     )
     representative_timestamp: float = Field(
         ...,

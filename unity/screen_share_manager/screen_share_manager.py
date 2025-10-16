@@ -19,6 +19,7 @@ from skimage.metrics import structural_similarity as ssim
 
 from unity.conversation_manager_2.event_broker import get_event_broker
 from unity.image_manager.image_manager import ImageManager
+from unity.image_manager.types import AnnotatedImageRef, ImageRefs, RawImageRef
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import (
     Medium,
@@ -107,23 +108,25 @@ class ScreenShareManager:
       ensuring that the context of the silent action is not lost and is logged
       alongside the user's subsequent thoughts.
 
-    Semantic Association (`[x:y]` Notation)
-    ---------------------------------------
+    Semantic Image Association (`AnnotatedImageRef`)
+    ------------------------------------------------
     A key feature is the ability to semantically link a visual event (a screenshot)
-    to the exact words the user spoke. This is achieved via the `triggering_phrase`
-    identified by the LLM.
+    to the user's speech. This is achieved through the `KeyEvent` data model and
+    the `AnnotatedImageRef` type.
 
-    - The LLM is prompted to find the specific text span in the user's speech
-      that corresponds to a visual action (e.g., for a click on a "Submit" button,
-      the triggering phrase might be "click this").
-    - In the `_log_turn_to_transcript` method, if a `KeyEvent` contains this
-      `triggering_phrase`, the code searches for the phrase in the full speech
-      content to find its start and end character indices.
-    - It then creates a mapping in the format `{'[start:end]': image_id}`.
-    - This mapping is stored in the `images` field of the `Message` object,
-      creating a durable, precise link between the user's words and their actions.
-      This association is only created when speech and vision events are analyzed
-      together.
+    - The AI model is prompted to identify a `triggering_phrase` (the exact words
+      in the speech that refer to an action) and an `image_annotation` (a caption
+      describing what the screenshot shows in relation to that phrase).
+    - In the `_log_turn_to_transcript` method, if a `KeyEvent` contains a
+      `triggering_phrase` and has an associated image, an `AnnotatedImageRef`
+      object is created.
+    - This object combines the `image_id` (from the `ImageManager`) with the
+      AI-generated `image_annotation`.
+    - The resulting list of `AnnotatedImageRef` objects is stored in the `images`
+      field of the `Message` object. This creates a durable, structured, and
+      semantically rich link between the user's words and the visual evidence of
+      their actions. This association is only created when speech and vision
+      events are analyzed together.
 
     Architecture for Parallelism
     ----------------------------
@@ -851,7 +854,7 @@ class ScreenShareManager:
         for ts, index in event_to_image_map.items():
             if index < len(logged_image_ids):
                 timestamp_to_image_id[ts] = logged_image_ids[index]
-        images_dict, screen_share_dict, primary_speech_event_handled = {}, {}, False
+        image_refs_list, screen_share_dict, primary_speech_event_handled = [], {}, False
         for event in all_events:
             image_id = timestamp_to_image_id.get(event.timestamp)
             (
@@ -887,22 +890,15 @@ class ScreenShareManager:
                 caption=event.event_description, image=screenshot_b64, type=event_type
             )
             if event.triggering_phrase and image_id:
-                try:
-                    start_index = speech_payload["content"].find(
-                        event.triggering_phrase
+                # Use the new image_annotation, falling back to the event_description
+                # if it's not provided by the LLM.
+                annotation_text = event.image_annotation or event.event_description
+                image_refs_list.append(
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=image_id),
+                        annotation=annotation_text,
                     )
-                    if start_index != -1:
-                        images_dict[
-                            f"[{start_index}:{start_index + len(event.triggering_phrase)}]"
-                        ] = image_id
-                    else:
-                        logger.warning(
-                            f"Triggering phrase '{event.triggering_phrase}' not found in content."
-                        )
-                except ValueError:
-                    logger.warning(
-                        f"Triggering phrase '{event.triggering_phrase}' not found in content."
-                    )
+                )
         message_to_log = Message(
             medium=Medium.PHONE_CALL,
             sender_id=speech_payload["contact_details"]["contact_id"],
@@ -910,7 +906,7 @@ class ScreenShareManager:
             timestamp=datetime.fromisoformat(speech_payload["timestamp"]),
             content=speech_payload["content"],
             screen_share=screen_share_dict,
-            images=images_dict,
+            images=ImageRefs.model_validate(image_refs_list),
         )
         logged_messages = self._transcript_manager.log_messages([message_to_log])
         if logged_messages:
