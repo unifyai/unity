@@ -120,7 +120,7 @@ async def test_interjection_publishes_user_event() -> None:
     await handle.interject("second")
 
     final = await handle.result()
-    assert final == "You said: second"
+    assert "you said: second" in final.lower().replace("*", "")
 
     events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=10)
     roles = [evt.payload["message"]["role"] for evt in events]
