@@ -346,13 +346,13 @@ class NotificationUnpinnedEvent(Event):
 
 @dataclass
 class UnifyMessageRecieved(Event):
-    contact: int
+    contact: str
     content: str
 
 
 @dataclass
 class UnifyMessageSent(Event):
-    contact: int
+    contact: str
     content: str
 
 
