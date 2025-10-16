@@ -1389,8 +1389,7 @@ class TranscriptManager(BaseTranscriptManager):
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
         handle = handles[0]
-        sub = await handle.ask(question)
-        answer = await sub.result()
+        answer = await handle.ask(question)
         if not isinstance(answer, str):
             answer = str(answer)
         return answer
