@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List
 from pydantic import BaseModel, Field, field_validator, model_validator
-from ...image_manager.types import ImageRefs
+from ...image_manager.types import AnnotatedImageRefs
 
 UNASSIGNED = -1
 
@@ -22,11 +22,10 @@ class Guidance(BaseModel):
         description="Full description of the guidance; may align with images",
         min_length=1,
     )
-    images: ImageRefs = Field(
-        default_factory=lambda: ImageRefs([]),
+    images: AnnotatedImageRefs = Field(
+        default_factory=lambda: AnnotatedImageRefs.model_validate([]),
         description=(
-            "List of image references, each either a RawImageRef or an AnnotatedImageRef "
-            "(which includes a freeform explanation for how the image relates to the text)."
+            "List of annotated image references aligned to the text. Each entry must be an AnnotatedImageRef."
         ),
     )
 
@@ -38,7 +37,7 @@ class Guidance(BaseModel):
         ),
     )
 
-    # Images are now a list-based ImageRefs container. No span or substring validation remains.
+    # Images are a list-based AnnotatedImageRefs container (persisted as a plain list in the backend).
 
     @field_validator("function_ids", mode="before")
     @classmethod

@@ -32,7 +32,12 @@ def test_get_images_for_guidance_returns_metadata_only():
     gid = gm._add_guidance(
         title="Layout Review",
         content="We need to review the image layout.",
-        images=[{"image_id": int(img_id), "annotation": "layout screenshot"}],
+        images=[
+            {
+                "raw_image_ref": {"image_id": int(img_id)},
+                "annotation": "layout screenshot",
+            },
+        ],
     )["details"]["guidance_id"]
 
     items = gm._get_images_for_guidance(guidance_id=gid)
@@ -88,7 +93,9 @@ def test_get_images_for_guidance_includes_annotation():
     gid = gm._add_guidance(
         title="Annotation Demo",
         content=content,
-        images=[{"image_id": int(img_id), "annotation": "button area"}],
+        images=[
+            {"raw_image_ref": {"image_id": int(img_id)}, "annotation": "button area"},
+        ],
     )["details"]["guidance_id"]
 
     items = gm._get_images_for_guidance(guidance_id=gid)
