@@ -121,9 +121,7 @@ class ImageHandle:
     async def ask(
         self,
         question: str,
-        *,
-        _return_reasoning_steps: bool = False,
-    ) -> str | tuple[str, list[dict]]:
+    ) -> str:
         """
         Ask a high-level question about this image with a single LLM call.
 
@@ -254,9 +252,6 @@ class ImageHandle:
 
         # Single shot – no nested tool loop
         answer = await client.generate(user_message=question)
-
-        if _return_reasoning_steps:
-            return answer, client.messages
         return answer
 
 
