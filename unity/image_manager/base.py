@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseImageManager(ABC):
+class BaseImageManager(BaseStateManager):
     """
     Public contract that every concrete image-manager must satisfy.
 
