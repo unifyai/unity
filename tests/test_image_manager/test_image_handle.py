@@ -10,7 +10,7 @@ from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
 
 
-ASSET_LOCAL = Path("tests/test_image_manager/assets/google.jpeg")
+ASSET_LOCAL = Path(__file__).parent / "assets" / "google.jpeg"
 
 
 @pytest.mark.eval
