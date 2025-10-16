@@ -453,16 +453,16 @@ class ConversationManagerState:
         self.build_response_model()
         if payload.get("api_key"):
             os.environ["UNIFY_KEY"] = payload["api_key"]
-        os.environ["USER_ID"] = self.user_id
-        os.environ["USER_NAME"] = self.user_name
-        os.environ["USER_NUMBER"] = self.user_number
-        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
-        os.environ["USER_EMAIL"] = self.user_email
-        os.environ["ASSISTANT_NAME"] = self.assistant_name
-        os.environ["ASSISTANT_NUMBER"] = self.assistant_number
-        os.environ["ASSISTANT_EMAIL"] = self.assistant_email
-        os.environ["VOICE_PROVIDER"] = self.voice_provider
-        os.environ["VOICE_ID"] = self.voice_id
+        os.environ["USER_ID"] = self.user_id or ""
+        os.environ["USER_NAME"] = self.user_name or ""
+        os.environ["USER_NUMBER"] = self.user_number or ""
+        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number or ""
+        os.environ["USER_EMAIL"] = self.user_email or ""
+        os.environ["ASSISTANT_NAME"] = self.assistant_name or ""
+        os.environ["ASSISTANT_NUMBER"] = self.assistant_number or ""
+        os.environ["ASSISTANT_EMAIL"] = self.assistant_email or ""
+        os.environ["VOICE_PROVIDER"] = self.voice_provider or ""
+        os.environ["VOICE_ID"] = self.voice_id or ""
 
     def build_response_model(self):
         """Build dynamic response models based on available actions."""
