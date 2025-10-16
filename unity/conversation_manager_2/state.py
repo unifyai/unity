@@ -451,8 +451,8 @@ class ConversationManagerState:
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.build_response_model()
-        if payload.pop("api_key", None):
-            os.environ["UNIFY_KEY"] = payload.pop("api_key")
+        if payload.get("api_key"):
+            os.environ["UNIFY_KEY"] = payload["api_key"]
         os.environ["USER_ID"] = self.user_id
         os.environ["USER_NAME"] = self.user_name
         os.environ["USER_NUMBER"] = self.user_number
