@@ -101,3 +101,33 @@ def state_manager_exists(state_manager: str) -> bool:
 
     managers = _distinct_managers_via_unify()
     return state_manager in managers
+
+
+def state_manager_method_exists(state_manager: str, method: str) -> bool:
+    """Return True if a given manager+method appears in ManagerMethod events.
+
+    This queries distinct values of the ``method`` field under the
+    ``…/Events/ManagerMethod`` context, filtered by ``manager == state_manager``
+    using ``unify.get_groups``.
+
+    Parameters
+    ----------
+    state_manager : str
+        Manager class name (e.g., "ContactManager").
+    method : str
+        Method name (e.g., "ask" or "update").
+    """
+    if not state_manager or not method:
+        return False
+
+    context = _events_manager_method_context()
+    try:
+        groups = unify.get_groups(
+            key="method",
+            context=context,
+            filter=f'manager == "{state_manager}"',
+        )
+        methods = _parse_group_values(groups)
+        return method in methods
+    except Exception:
+        return False
