@@ -9,6 +9,31 @@ from unity.common.tool_spec import ToolSpec
 from tests.helpers import SETTINGS
 
 
+# small helper: pre-seed an assistant tool_call so preflight backfill schedules it immediately
+def _preseed_tool_call(
+    client: "unify.AsyncUnify",
+    *,
+    call_id: str,
+    tool_name: str,
+    args_json: str,
+) -> None:
+    client.append_messages(
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": args_json},
+                    },
+                ],
+            },
+        ],
+    )
+
+
 # ── 1. max_steps safeguard ────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_max_steps_exceeded():
@@ -213,7 +238,7 @@ def _make_long_tool(cancel_flag: dict):
 
 
 @pytest.mark.asyncio
-async def test_timeout_graceful_termination(monkeypatch):
+async def test_timeout_graceful_termination():
     """No exception; pending tool is cancelled when timeout hits."""
     cancel_flag = {}
     client = unify.AsyncUnify(
@@ -228,11 +253,18 @@ async def test_timeout_graceful_termination(monkeypatch):
         'You are running inside an automated test. In your FIRST assistant turn, call `long_tool` with {"seconds": 5}. '
         "Keep waiting afterwards.",
     )
+    _preseed_tool_call(
+        client,
+        call_id="call_preseed_timeout",
+        tool_name="long_tool",
+        args_json='{"seconds": 5}',
+    )
+
     handle = start_async_tool_loop(
         client,
         message="go",
         tools={"long_tool": _make_long_tool(cancel_flag)},
-        timeout=0.5,  # small but allows tool scheduling before timeout
+        timeout=0.5,  # real small timeout – tool is already scheduled via backfill
         max_steps=100,
         raise_on_limit=False,
     )
@@ -242,7 +274,7 @@ async def test_timeout_graceful_termination(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_max_steps_graceful_termination(monkeypatch):
+async def test_max_steps_graceful_termination():
     """No exception; pending tool is cancelled when max_steps is exceeded."""
     cancel_flag = {}
     client = unify.AsyncUnify(
@@ -257,11 +289,18 @@ async def test_max_steps_graceful_termination(monkeypatch):
         'You are running inside an automated test. In your FIRST assistant turn, call `long_tool` with {"seconds": 5}. '
         "Keep waiting afterwards.",
     )
+    _preseed_tool_call(
+        client,
+        call_id="call_preseed_steps",
+        tool_name="long_tool",
+        args_json='{"seconds": 5}',
+    )
+
     handle = start_async_tool_loop(
         client,
         message="go",
         tools={"long_tool": _make_long_tool(cancel_flag)},
-        max_steps=6,  # allow tool to fully start, then exceed step budget
+        max_steps=3,  # real small cap – after backfill + user message, limit will be hit
         timeout=5,
         raise_on_limit=False,
     )
