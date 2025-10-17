@@ -95,7 +95,7 @@ class ContactManager(BaseContactManager):
 
         # ── public tool dictionaries ─────────────────────────────────────
         # ask-side tools are read-only, so they never change
-        self._ask_tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
                 self._filter_contacts,
@@ -103,9 +103,10 @@ class ContactManager(BaseContactManager):
                 include_class_name=False,
             ),
         }
+        self.add_tools("ask", ask_tools)
 
         # update-side tools are can read and write
-        self._update_tools: Dict[str, Callable] = {
+        update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.ask,
                 self._create_contact,
@@ -117,6 +118,8 @@ class ContactManager(BaseContactManager):
                 include_class_name=False,
             ),
         }
+        self.add_tools("update", update_tools)
+        self.build_tools()
 
         # rolling activity inclusion flag
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
@@ -654,7 +657,7 @@ class ContactManager(BaseContactManager):
 
         # Build a *live* tools-dict so the prompt never hard-codes
         # either the number of tools or their names/argspecs.
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
         if clarification_up_q is not None and clarification_down_q is not None:
 
             async def _on_request(q: str):
@@ -761,7 +764,7 @@ class ContactManager(BaseContactManager):
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._update_tools)
+        tools = dict(self.get_tools("update"))
         if clarification_up_q is not None and clarification_down_q is not None:
 
             async def _on_request(q: str):

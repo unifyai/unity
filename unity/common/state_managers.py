@@ -38,5 +38,5 @@ class BaseStateManager(ABC):
 
         return self._tools.get(method, {})
 
-    def build(self):
+    def build_tools(self):
         self._tools_frozen = True
