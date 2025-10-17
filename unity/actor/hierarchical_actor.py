@@ -503,7 +503,8 @@ class PlanSanitizer(ast.NodeTransformer):
     - Recursively applies transformations to nested functions.
     """
 
-    def __init__(self):
+    def __init__(self, plan: "HierarchicalPlan"):
+        self._plan = plan
         self._function_context: list[str] = []
         self._is_in_async_context = False
         self._defined_functions = set()
@@ -587,9 +588,11 @@ class PlanSanitizer(ast.NodeTransformer):
         return self._function_context[-1] if self._function_context else "global"
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
+        self._plan.top_level_function_names.clear()
         for sub_node in node.body:
             if isinstance(sub_node, (ast.AsyncFunctionDef, ast.FunctionDef)):
                 self._defined_functions.add(sub_node.name)
+                self._plan.top_level_function_names.add(sub_node.name)
         self.generic_visit(node)
         return node
 
@@ -1451,6 +1454,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.last_verified_screenshot: Optional[str | bytes] = None
         self.function_source_map: Dict[str, str] = {}
         self.clean_function_source_map: Dict[str, str] = {}
+        self.top_level_function_names: set[str] = set()
         self.interaction_stack: List[List[Tuple[str, str, Optional[str]]]] = []
         self.escalation_count = 0
         self._is_complete = False
@@ -2120,9 +2124,7 @@ class HierarchicalPlan(BaseActiveTask):
         if hasattr(self, "cumulative_interactions"):
             self.cumulative_interactions.extend(item.interactions)
 
-        is_top_level_function = item.func_source and not item.func_source.startswith(
-            (" ", "\t"),
-        )
+        is_top_level_function = item.function_name in self.top_level_function_names
 
         if (
             is_top_level_function
@@ -3611,7 +3613,7 @@ class HierarchicalActor(BaseActor):
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     plan.clean_function_source_map[node.name] = ast.unparse(node)
-            sanitizer = PlanSanitizer()
+            sanitizer = PlanSanitizer(plan)
             sanitized_tree = sanitizer.visit(tree)
             ast.fix_missing_locations(sanitized_tree)
             return ast.unparse(sanitized_tree)
