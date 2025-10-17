@@ -65,6 +65,7 @@ class FileManager(BaseFileManager):
         parser: Optional[BaseParser] = None,
         rolling_summary_in_prompts: bool = True,
     ) -> None:
+        super().__init__()
         self._tmp_dir = Path(tempfile.mkdtemp(prefix="unity_files_"))
         self._display_to_path: Dict[str, Path] = {}
         # Track display names that are registered as protected (read-only from the FileManager's perspective)
@@ -127,7 +128,7 @@ class FileManager(BaseFileManager):
         #  Tools exposed to LLM                                               #
         # ------------------------------------------------------------------ #
         # ask-side tools are read-only, so they never change
-        self._ask_tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.list,
                 self.exists,
@@ -140,9 +141,7 @@ class FileManager(BaseFileManager):
                 include_class_name=False,
             ),
         }
-
-        # All tools are read-only for FileManager
-        self._tools = dict(**self._ask_tools)
+        self.add_tools("ask", ask_tools)
 
         atexit.register(self._cleanup)
 
@@ -830,7 +829,7 @@ class FileManager(BaseFileManager):
         client = self._new_llm_client("gpt-5@openai")
 
         # Tools available inside the loop
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
 
         # Optional live clarification helper with event publishing
         if clarification_up_q is not None and clarification_down_q is not None:

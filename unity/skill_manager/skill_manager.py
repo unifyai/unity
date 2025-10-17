@@ -35,6 +35,7 @@ class SkillManager(BaseSkillManager):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         # Ensure the FunctionManager context exists to allow column/schema access
         self._function_manager = FunctionManager()
 
