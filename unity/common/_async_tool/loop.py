@@ -1287,6 +1287,18 @@ async def async_tool_loop_inner(
                     await interject_queue.put(interject_w.result())
                     continue  # top of loop
 
+                # 2️⃣ clarification bubbled up while the LLM was thinking →
+                #    cancel current LLM step, surface the clarification request,
+                #    then restart the loop so the next assistant turn can ingest it.
+                if done & set(clar_waiters2.keys()):
+                    if not llm_task.done():
+                        llm_task.cancel()
+                        await asyncio.gather(llm_task, return_exceptions=True)
+                    for cw in done & set(clar_waiters2.keys()):
+                        await _handle_clarification(clar_waiters2[cw], cw.result())
+                    llm_turn_required = True
+                    continue
+
                 # 2️⃣ cancellation requested
                 if cancel_waiter in done:
                     # Only escalate when the cancellation flag is actually set.
