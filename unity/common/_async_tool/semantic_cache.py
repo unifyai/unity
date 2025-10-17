@@ -228,17 +228,43 @@ class _SemanticCacheSaver:
             )
         return result
 
+    def _prune_tool_trajectory(
+        self,
+        user_message,
+        tool_trajectory,
+    ) -> List[CleanToolCall]:
+        class PruneToolsResponseFormat(BaseModel):
+            call_indices: List[int]
+
+        global _CONFIG
+        client = _CONFIG.get_client()
+        client.set_system_message(
+            """
+            You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
+            you should return indices of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
+            """,
+        )
+        res = client.generate(
+            user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(tool_trajectory, indent=2)}",
+            response_format=PruneToolsResponseFormat,
+        )
+
+        res = PruneToolsResponseFormat.model_validate_json(res)
+
+        cleaned_trajectory = [
+            tool_call
+            for tool_call in tool_trajectory
+            if tool_call["index"] not in res.call_indices
+        ]
+
+        return cleaned_trajectory
+
     def _clean_tool_trajectory(
         self,
         user_message,
         msgs,
         previous_tool_trajectory=None,
     ) -> List[CleanToolCall]:
-
-        class PruneToolsResponseFormat(BaseModel):
-            call_indices: List[int]
-
-        global _CONFIG
 
         cleaned_trajectory = []
         _flatten_tools = {}
@@ -281,25 +307,10 @@ class _SemanticCacheSaver:
         for idx, tool_call in enumerate(cleaned_trajectory):
             tool_call["index"] = idx
 
-        client = _CONFIG.get_client()
-        client.set_system_message(
-            """
-            You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
-            you should return indices of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
-            """,
+        cleaned_trajectory = self._prune_tool_trajectory(
+            user_message,
+            cleaned_trajectory,
         )
-        res = client.generate(
-            user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(cleaned_trajectory, indent=2)}",
-            response_format=PruneToolsResponseFormat,
-        )
-
-        res = PruneToolsResponseFormat.model_validate_json(res)
-
-        cleaned_trajectory = [
-            tool_call
-            for tool_call in cleaned_trajectory
-            if tool_call["index"] not in res.call_indices
-        ]
 
         # re-index the tool calls
         for idx, tool_call in enumerate(cleaned_trajectory):
