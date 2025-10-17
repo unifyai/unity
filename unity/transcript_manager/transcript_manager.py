@@ -42,7 +42,7 @@ from ..common.search_utils import (
 import json as _json
 from ..events.event_bus import EVENT_BUS, Event
 from ..image_manager.image_manager import ImageManager
-from ..common.tool_spec import read_only
+from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
@@ -179,6 +179,7 @@ class TranscriptManager(BaseTranscriptManager):
 
     @functools.wraps(BaseTranscriptManager.ask, updated=())
     @log_manager_call("TranscriptManager", "ask", payload_key="question")
+    @manager_tool
     async def ask(
         self,
         text: str,

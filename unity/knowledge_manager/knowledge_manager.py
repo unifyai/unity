@@ -33,7 +33,7 @@ from ..common.search_utils import table_search_top_k
 from ..common.context_store import TableStore
 from ..events.event_bus import EVENT_BUS, Event
 from ..common.grouping_helpers import maybe_group_rows
-from ..common.tool_spec import read_only
+from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
@@ -478,6 +478,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     @functools.wraps(BaseKnowledgeManager.ask, updated=())
     @log_manager_call("KnowledgeManager", "ask", payload_key="question")
+    @manager_tool
     async def ask(
         self,
         text: str,
