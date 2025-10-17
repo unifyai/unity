@@ -797,15 +797,15 @@ Body:
         # ToDo: get the indentation working for this
         for handle_id, handle in self.conductor_handles.items():
             handles.append(f"<conductor_handle handle_id=\"{handle_id}\">")
-            handles.append(f"<query>{handle['query']}</query>")
-            handles.append(f"<handle_actions>")
+            handles.append(f"\t<query>{handle['query']}</query>")
+            handles.append(f"\t<handle_actions>")
             for action in handle["handle_actions"]:
-                handles.append(f"<action action_name=\"{action['action_name']}\">")
-                handles.append(f"<query>{action['query']}</query>")
+                handles.append(f"\t\t<action action_name=\"{action['action_name']}\">")
+                handles.append(f"\t\t\t<query>{action['query']}</query>")
                 if action["response"]:
-                    handles.append(f"<response>{action['response']}</response>")
-                handles.append(f"</action>")
-            handles.append(f"</handle_actions>")
+                   handles.append(f"\t\t\t<response>{action['response']}</response>")
+                handles.append(f"\t\t</action>")
+            handles.append(f"\t</handle_actions>")
             handles.append(f"</conductor_handle>")
         return "\n".join(handles)
 

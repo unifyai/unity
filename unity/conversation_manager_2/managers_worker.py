@@ -471,6 +471,7 @@ class ManagersWorker:
             self._publish_channel,
             ConductorResponse(
                 handle_id=handle_id,
+                action_name=event.action_name,
                 query=event.query,
                 response=f"Started: {event.query}",
             ).to_json(),
