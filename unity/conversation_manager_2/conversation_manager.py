@@ -762,6 +762,7 @@ class ConversationManager:
                     f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown...",
                 )
                 self.stop.set()
+                await self.event_broker.aclose()
 
     def cleanup_call_proc(self):
         if hasattr(self, "call_proc") and self.call_proc:
