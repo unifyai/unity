@@ -27,9 +27,28 @@ class BaseStateManager(ABC):
         self._tools = {}
 
     def add_tools(self, method: str, tools: Dict[str, Callable]):
+        """
+        Store tools for a given manager method. must be called in manager's __init__ method.
+        Any tools added after the manager has been initialised may not be available for semantic cache re-execution.
+
+        Parameters
+        ----------
+        method : str
+            The name of the manager method to store tools for.
+        tools : Dict[str, Callable]
+            A dictionary of tools to store for the given manager method.
+        """
         self._tools[method] = tools
 
     def get_tools(self, method: Optional[str] = None) -> Dict[str, Callable]:
+        """
+        Get tools for a given manager method.
+
+        Parameters
+        ----------
+        method : Optional[str], default ``None``
+            The name of the manager method to get tools for. If ``None``, return all tools.
+        """
         if method is None:
             return self._tools
 
