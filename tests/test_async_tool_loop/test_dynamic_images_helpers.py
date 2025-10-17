@@ -279,13 +279,14 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
     Real-LLM flow:
     - Initial user message references two spans: "this paint" (John) and "that paint" (David)
       with live images aligned to those spans.
-    - The assistant should call `ask_image` twice to identify both colours, compute a 50/50 mix,
-      and wait.
+    - The assistant should call `ask_image` twice to identify both colours (from the visuals),
+      compute a 50/50 mix, and wait.
     - A user interjection then introduces Jenny's paint (with an aligned image via `images` on
       interject). The assistant should call `ask_image` once more for Jenny, then mix again and
       answer with the single final colour word.
-    - We assert three `ask_image` tool results and a final answer of "blue" (we seed all images
-      to answer BLUE deterministically).
+    - We assert three `ask_image` tool results and a final answer of "brown". This keeps the test
+      deterministic while still requiring the model to visually recognise distinct colours from
+      the images without relying on captions or system-provided colour hints.
     """
 
     # Real ImageHandles created below
@@ -295,23 +296,30 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
         "We're throwing an art party, with two guests. John has brought this paint, and David has "
         "brought that paint. We will now mix the colours together 50/50. What will be the resulting colour?"
     )
-    seg_this = "this paint"
-    seg_that = "that paint"
-    pos_this = user_msg.find(seg_this)
-    pos_that = user_msg.find(seg_that)
-    assert pos_this >= 0 and pos_that >= 0, "Span substrings not found in user message"
 
-    # Use stored images and typed refs
+    # Use stored images and typed refs (distinct colours to require real vision recognition)
     manager = ImageManager()
     b64_blue = make_solid_png_base64(2, 2, (0, 0, 255))
+    b64_yellow = make_solid_png_base64(2, 2, (255, 255, 0))
+    b64_red = make_solid_png_base64(2, 2, (255, 0, 0))
     [john_id, david_id, jenny_id] = manager.add_images(
         [
-            {"caption": "john's blue paint", "data": b64_blue},
-            {"caption": "david's blue paint", "data": b64_blue},
-            {"caption": "jenny's blue paint", "data": b64_blue},
+            {"data": b64_blue},
+            {"data": b64_yellow},
+            {"data": b64_red},
         ],
     )
-    images = [RawImageRef(image_id=john_id), RawImageRef(image_id=david_id)]
+    # Provide annotated refs to align each image with the referenced person/spans
+    images = [
+        AnnotatedImageRef(
+            raw_image_ref=RawImageRef(image_id=john_id),
+            annotation="John's paint",
+        ),
+        AnnotatedImageRef(
+            raw_image_ref=RawImageRef(image_id=david_id),
+            annotation="David's paint",
+        ),
+    ]
 
     # Real client – drive the model to call ask_image 3 times and produce final colour
     client = unify.AsyncUnify(
@@ -320,15 +328,6 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
-    )
-    client.set_system_message(
-        "You are running inside an automated test. Follow these steps exactly:\n"
-        "1️⃣  Use the `ask_image` tool to identify the colour of each image aligned to the user message.\n"
-        "    First call `ask_image` for the span 'this paint' (John). Then call `ask_image` for the span 'that paint' (David).\n"
-        "2️⃣  Compute the 50/50 paint mixture of those two colours mentally. Do not reply to the user yet.\n"
-        "3️⃣  When the user interjects with a new paint ('this' referring to Jenny's paint), call `ask_image` once for that image.\n"
-        "4️⃣  Compute a new 50/50 mixture of your earlier result with Jenny's colour.\n"
-        "5️⃣  Finally, reply with exactly the single lowercase word representing the final resulting colour, and nothing else.",
     )
 
     handle = start_async_tool_loop(
@@ -346,14 +345,15 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
     # Interject with Jenny's paint and attach her image under the interjection source
     interjection_msg = (
         "Oh Jenny just arrived, her paint looks like this. We will mix her paint with the previous mix "
-        "from John and David (again, 50/50). What will the final resultant colour be?"
+        "from John and David (again, 50/50, so 50% John+David (25 each) and 50% Jenny). "
+        "Don't worry about the intermediary John + David color mix, what will the *final* colour be?"
     )
     await handle.interject(
         interjection_msg,
         image_refs=[
             AnnotatedImageRef(
                 raw_image_ref=RawImageRef(image_id=jenny_id),
-                annotation="interjection",
+                annotation="Jennny's paint",
             ),
         ],
     )
@@ -364,8 +364,8 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
     # Finish and assert outcomes
     final = await handle.result()
 
-    # Expect exactly a single colour word – seeded BLUE makes the final still blue
-    assert final.strip().lower() == "blue"
+    # The final answer includes the word 'brown'
+    assert "brown" in final.strip().lower()
 
     tool_msgs = [
         m
