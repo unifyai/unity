@@ -218,6 +218,9 @@ async def test_notification_payload_appends_images() -> None:
         images=images,
         max_steps=10,
         timeout=240,
+        tool_policy=lambda step, available: (
+            ("required", {"notify": available["notify"]}) if step == 0 else ("auto", {})
+        ),
     )
 
     await _wait_for_tool_request(client, "notify")
@@ -225,6 +228,9 @@ async def test_notification_payload_appends_images() -> None:
     assert event["type"] == "notification"
     assert event["tool_name"] == "notify"
     assert isinstance(event.get("message"), str)
+
+    # Ensure the notify tool completes deterministically before awaiting the final answer
+    await _wait_for_tool_message_prefix(client, "check_status_")
 
     final = await h.result()
     assert final.strip().lower().endswith("done")
