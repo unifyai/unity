@@ -1,4 +1,4 @@
-# FILE: test_screen_share_manager.py
+# FILE: tests/test_screen_share_manager/test_screen_share_manager.py
 
 import asyncio
 from datetime import datetime
@@ -6,7 +6,12 @@ import json
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
-from unity.image_manager.types import AnnotatedImageRef, ImageRefs, RawImageRef
+from unity.image_manager.types import (
+    AnnotatedImageRef,
+    ImageRefs,
+    RawImageRef,
+    AnnotatedImageRefs,
+)
 from unity.image_manager.utils import make_solid_png_base64
 from unity.screen_share_manager.types import TurnAnalysisResponse, KeyEvent
 from tests.helpers import _handle_project
@@ -239,7 +244,7 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
     )
 
     # Assert the new AnnotatedImageRef structure with the new annotation
-    assert isinstance(logged_message.images, ImageRefs)
+    assert isinstance(logged_message.images, AnnotatedImageRefs)
     image_refs = logged_message.images.root
     assert len(image_refs) == 1
     annotated_ref = image_refs[0]
