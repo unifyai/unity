@@ -2295,6 +2295,7 @@ class HierarchicalPlan(BaseActiveTask):
 
             self._recovery_task = None
             self._recovery_target_ordinal = None
+            self._recovery_in_progress = False
 
     async def _cancel_verifications_after(self, ord_: int):
         """Cancels all pending verification tasks with an ordinal greater than the given one."""
