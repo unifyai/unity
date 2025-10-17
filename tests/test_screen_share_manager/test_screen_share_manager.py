@@ -1,5 +1,3 @@
-# FILE: test_screen_share_manager/test_screen_share_manager.py
-
 import asyncio
 from datetime import datetime
 import json
@@ -814,7 +812,7 @@ async def test_stability_with_concurrent_speech_and_frames(mocked_screen_share_m
     "image_pair",
     [
         ("modal_before.png", "modal_after.png"),
-        ("text_change_before.png", "text_change_after.png"),
+        ("button_active_before.png", "button_active_after.png"),
     ],
 )
 def test_visual_change_detection_significant_changes(
@@ -851,8 +849,8 @@ def test_visual_change_detection_significant_changes(
 @pytest.mark.parametrize(
     "image_pair",
     [
+        ("blinking_caret_before.png", "blinking_caret_after.png"),
         ("cursor_move_before.png", "cursor_move_after.png"),
-        ("scrollbar_before.png", "scrollbar_after.png"),
     ],
 )
 def test_visual_change_detection_insignificant_changes(
