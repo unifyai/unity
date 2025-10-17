@@ -240,6 +240,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         Initialize async components when event loop is available.
         This is called lazily from async methods.
         """
+        # Initialize async infra even if websockets are unavailable so commands always process
         if not self._async_initialized and websockets is not None:
             try:
                 # Initialize the network log queue
@@ -263,6 +264,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 logger.warning(f"⚠️ Failed to initialize async components: {e}")
         elif websockets is None and not self._async_initialized:
             logger.warning("⚠️ Websockets not available, log streaming disabled")
+            # Even without websockets, ensure command processor runs
+            if not self._network_log_queue:
+                self._network_log_queue = asyncio.Queue()
+            if not self._command_processor_task:
+                logger.info("⚙️ Starting command processor task (no websockets)")
+                self._command_processor_task = asyncio.create_task(
+                    self._process_commands(),
+                )
             self._async_initialized = True
 
     async def _start_log_stream_listener(self):
