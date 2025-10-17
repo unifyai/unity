@@ -446,7 +446,7 @@ async def test_get_dummy_tool_parse_arguments_cached():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_semantic_cache_recursive():
+async def test_semantic_cache_recursive(monkeypatch):
     class ManagerC(BaseStateManager):
         @read_only
         def _get_answer(self):
@@ -531,6 +531,16 @@ async def test_semantic_cache_recursive():
             )
             res = await handle.result()
             return res
+
+    # Patch _prune_tool_trajectory to return the tool trajectory unchanged
+    def _prune_tool_trajectory(self, user_message, tool_trajectory):
+        return tool_trajectory
+
+    monkeypatch.setattr(
+        sc._SemanticCacheSaver,
+        "_prune_tool_trajectory",
+        _prune_tool_trajectory,
+    )
 
     query = "What is the answer to the ultimate question of life, the universe, and everything?"
     manager = ManagerA()
