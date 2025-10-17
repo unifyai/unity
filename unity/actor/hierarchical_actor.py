@@ -1897,49 +1897,49 @@ class HierarchicalPlan(BaseActiveTask):
 
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
         """
-        Updates the plan's source code with a new function implementation using a
-        generic, lossless AST merge strategy.
-
-        This function merges all top-level statements, including
-        functions, classes, imports, and global assignments, ensuring that the
-        new code is seamlessly integrated without losing existing code.
+        Updates the plan's source code by rebuilding it from the clean source map
+        after patching a single function. This ensures the sanitizer always runs
+        on pristine, un-instrumented code, preserving all nested structures.
 
         Args:
-            function_name: The name of the function to replace or add.
+            function_name: The name of the function to replace.
             new_code: The full source code of the new function implementation.
         """
-        try:
-            new_tree_for_clean_map = ast.parse(textwrap.dedent(new_code))
-            for node in new_tree_for_clean_map.body:
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    self.clean_function_source_map[node.name] = ast.unparse(node)
-        except Exception as e:
-            logger.warning(f"Could not store clean source for '{function_name}': {e}")
-
-        self.action_log.append(
-            f"Updating implementation of '{function_name}'.",
-        )
+        self.action_log.append(f"Updating implementation of '{function_name}'.")
 
         try:
-            clean_source_to_parse = "\n\n".join(self.clean_function_source_map.values())
-            old_tree = ast.parse(clean_source_to_parse or "pass")
-            new_tree = ast.parse(textwrap.dedent(new_code))
+            new_function_tree = ast.parse(textwrap.dedent(new_code))
+            if not new_function_tree.body or not isinstance(
+                new_function_tree.body[0],
+                (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                raise ValueError("New code must contain a single function definition.")
+            new_function_node = new_function_tree.body[0]
 
-            final_nodes = {
-                self._get_node_key(node): node
-                for node in old_tree.body
-                if self._get_node_key(node)
-            }
+            self.clean_function_source_map[new_function_node.name] = ast.unparse(
+                new_function_node,
+            )
 
-            for node in new_tree.body:
-                key = self._get_node_key(node)
-                if key:
-                    final_nodes[key] = node
+            original_tree = ast.parse(self.plan_source_code or "pass")
+            reconstructed_parts = [
+                ast.unparse(node)
+                for node in original_tree.body
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ]
 
-            final_tree = ast.Module(body=list(final_nodes.values()), type_ignores=[])
-            ast.fix_missing_locations(final_tree)
+            for func_name in self.top_level_function_names:
+                if func_name in self.clean_function_source_map:
+                    reconstructed_parts.append(
+                        self.clean_function_source_map[func_name],
+                    )
 
-            unsanitized_code = ast.unparse(final_tree)
+            if new_function_node.name not in self.top_level_function_names:
+                reconstructed_parts.append(
+                    self.clean_function_source_map[new_function_node.name],
+                )
+
+            unsanitized_code = "\n\n".join(reconstructed_parts)
+
             self.plan_source_code = self.actor._sanitize_code(unsanitized_code, self)
             self.actor._load_plan_module(self)
 
