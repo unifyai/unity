@@ -192,9 +192,9 @@ class CodeActActor(BaseActor):
     def _get_browser_tools(self) -> Dict[str, Callable]:
         """Extracts browser-related methods from the ActionProvider."""
         return {
-            "browser_navigate": self._action_provider.browser_navigate,
-            "browser_act": self._action_provider.browser_act,
-            "browser_observe": self._action_provider.browser_observe,
+            "navigate": self._action_provider.navigate,
+            "act": self._action_provider.act,
+            "observe": self._action_provider.observe,
         }
 
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
@@ -230,9 +230,9 @@ class CodeActActor(BaseActor):
                 text_summary = "Code executed successfully with no output."
 
             browser_action_keywords = [
-                "browser_navigate",
-                "browser_act",
-                "browser_observe",
+                "navigate",
+                "act",
+                "observe",
             ]
             if any(keyword in code for keyword in browser_action_keywords):
                 try:
