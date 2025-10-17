@@ -9,7 +9,7 @@ from ..knowledge_manager.types import ColumnType
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
-from ..common.tool_spec import read_only
+from ..common.tool_spec import read_only, manager_tool
 
 import unify
 from .types.contact import Contact
@@ -641,6 +641,7 @@ class ContactManager(BaseContactManager):
     # -------#
     @functools.wraps(BaseContactManager.ask, updated=())
     @log_manager_call("ContactManager", "ask", payload_key="question")
+    @manager_tool
     async def ask(
         self,
         text: str,
