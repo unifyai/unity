@@ -159,17 +159,25 @@ class CodeActActor(BaseActor):
         timeout: float = 1000,
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
+        action_provider: Optional["ActionProvider"] = None,
     ):
         """
         Initializes the CodeActActor.
+
+        Args:
+            action_provider: Optional existing ActionProvider instance to reuse.
+                           If provided, other browser-related params are ignored.
         """
-        self._action_provider = ActionProvider(
-            session_connect_url=session_connect_url,
-            headless=headless,
-            browser_mode=browser_mode,
-            agent_mode=agent_mode,
-            agent_server_url=agent_server_url,
-        )
+        if action_provider is not None:
+            self._action_provider = action_provider
+        else:
+            self._action_provider = ActionProvider(
+                session_connect_url=session_connect_url,
+                headless=headless,
+                browser_mode=browser_mode,
+                agent_mode=agent_mode,
+                agent_server_url=agent_server_url,
+            )
         self._sandbox = CodeExecutionSandbox(action_provider=self._action_provider)
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
