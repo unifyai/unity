@@ -51,7 +51,7 @@ from ..events.manager_event_logging import (
 )
 
 
-class Conductor:
+class Conductor(BaseConductor):
     """
     Top-level façade that *can* own a maximum of *one* live plan at a time and exposes two
     different tool surfaces which include the knowledge, task list, contacts, and transcript histories:
