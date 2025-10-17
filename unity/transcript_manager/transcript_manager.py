@@ -64,6 +64,7 @@ class TranscriptManager(BaseTranscriptManager):
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
+        super().__init__()
 
         if contact_manager is not None:
             self._contact_manager = contact_manager
@@ -92,7 +93,7 @@ class TranscriptManager(BaseTranscriptManager):
                 return_with_contacts_table=True,
             )  # type: ignore[return-value]
 
-        self._tools = {
+        ask_tools = {
             **methods_to_tool_dict(
                 self._contact_manager.ask,
                 include_class_name=True,
@@ -134,7 +135,7 @@ class TranscriptManager(BaseTranscriptManager):
 
         # Image support: lazy-safe image manager and image-aware tools
         self._image_manager: ImageManager = ImageManager()
-        self._tools.update(
+        ask_tools.update(
             methods_to_tool_dict(
                 self._get_images_for_message,
                 self._ask_image,
@@ -143,6 +144,7 @@ class TranscriptManager(BaseTranscriptManager):
                 include_class_name=False,
             ),
         )
+        self.add_tools("ask", ask_tools)
 
         # ── Async logging (mirrors EventBus) ────────────────────────────────
         # Using a dedicated logger means log_create() returns immediately,
@@ -194,7 +196,7 @@ class TranscriptManager(BaseTranscriptManager):
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
-        tools = dict(self._tools)
+        tools = dict(self.get_tools("ask"))
 
         if clarification_up_q is not None and clarification_down_q is not None:
 

@@ -43,6 +43,7 @@ class GuidanceManager(BaseGuidanceManager):
     """
 
     def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
+        super().__init__()
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
         if not read_ctx:
@@ -66,7 +67,7 @@ class GuidanceManager(BaseGuidanceManager):
         self._REQUIRED_COLUMNS: set[str] = set(self._BUILTIN_FIELDS)
 
         # Public tools
-        self._ask_tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
                 self._filter,
@@ -82,7 +83,8 @@ class GuidanceManager(BaseGuidanceManager):
                 include_class_name=False,
             ),
         }
-        self._update_tools: Dict[str, Callable] = {
+        self.add_tools("ask", ask_tools)
+        update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.ask,
                 self._add_guidance,
@@ -93,7 +95,7 @@ class GuidanceManager(BaseGuidanceManager):
                 include_class_name=False,
             ),
         }
-
+        self.add_tools("update", update_tools)
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Lazy-safe image manager for resolving and attaching images
@@ -121,7 +123,7 @@ class GuidanceManager(BaseGuidanceManager):
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
         if clarification_up_q is not None and clarification_down_q is not None:
 
             async def _on_request(q: str):
@@ -213,7 +215,7 @@ class GuidanceManager(BaseGuidanceManager):
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._update_tools)
+        tools = dict(self.get_tools("update"))
         if clarification_up_q is not None and clarification_down_q is not None:
 
             async def _on_request(q: str):
