@@ -1,12 +1,14 @@
-# FILE: test_screen_share_manager/test_screen_share_manager.py
+# FILE: tests/test_screen_share_manager/test_screen_share_manager.py
 
 import asyncio
 from datetime import datetime
 import json
 from unittest.mock import patch, AsyncMock, MagicMock
 import time
+from pathlib import Path
 
 import pytest
+from PIL import Image
 from unity.image_manager.types import (
     AnnotatedImageRef,
     ImageRefs,
@@ -14,6 +16,7 @@ from unity.image_manager.types import (
     AnnotatedImageRefs,
 )
 from unity.image_manager.utils import make_solid_png_base64
+from unity.screen_share_manager.screen_share_manager import ScreenShareManager
 from unity.screen_share_manager.types import TurnAnalysisResponse, KeyEvent
 from tests.helpers import _handle_project
 
@@ -29,6 +32,18 @@ PNG_MAGENTA_B64 = (
 PNG_WHITE_B64 = (
     f"data:image/png;base64,{make_solid_png_base64(10, 10, (255, 255, 255))}"
 )
+
+# --- Asset Loading Helper ---
+ASSETS_DIR = Path(__file__).parent / "assets"
+
+
+def load_asset_image(filename: str) -> Image.Image:
+    """Loads an image from the assets directory and converts it for testing."""
+    path = ASSETS_DIR / filename
+    if not path.exists():
+        pytest.fail(f"Asset image not found: {path}")
+    # Convert to grayscale and resize to match the manager's internal processing
+    return Image.open(path).convert("L").resize((512, 288))
 
 
 @pytest.fixture
@@ -786,3 +801,74 @@ async def test_stability_with_concurrent_speech_and_frames(mocked_screen_share_m
         await listener_task
     except asyncio.CancelledError:
         pass
+
+
+# ==============================================================================
+# NEW: Visual Change Detection Accuracy Tests
+# ==============================================================================
+
+
+@pytest.mark.vision
+@_handle_project
+@pytest.mark.parametrize(
+    "image_pair",
+    [
+        ("modal_before.png", "modal_after.png"),
+        ("text_change_before.png", "text_change_after.png"),
+    ],
+)
+def test_visual_change_detection_significant_changes(
+    mocked_screen_share_manager, image_pair
+):
+    """
+    Tests that the vision pipeline correctly identifies REAL, significant UI changes.
+    Requires image assets in `tests/test_screen_share_manager/assets/`.
+    """
+    manager, _ = mocked_screen_share_manager
+    before_filename, after_filename = image_pair
+
+    img_before = load_asset_image(before_filename)
+    img_after = load_asset_image(after_filename)
+
+    # 1. MSE Pre-filter: Should pass the threshold for a real change
+    mse = manager._calculate_mse(img_before, img_after)
+    assert mse > manager.MSE_THRESHOLD
+
+    # 2. SSIM Perceptual Check: Should be below the threshold, indicating a difference
+    from skimage.metrics import structural_similarity as ssim
+    import numpy as np
+
+    score = ssim(np.array(img_before), np.array(img_after))
+    assert score < manager.SSIM_THRESHOLD
+
+    # 3. Semantic Contour Analysis: Should find significant contours
+    is_significant = manager._is_semantically_significant(img_before, img_after)
+    assert is_significant is True
+
+
+@pytest.mark.vision
+@_handle_project
+@pytest.mark.parametrize(
+    "image_pair",
+    [
+        ("cursor_move_before.png", "cursor_move_after.png"),
+        ("scrollbar_before.png", "scrollbar_after.png"),
+    ],
+)
+def test_visual_change_detection_insignificant_changes(
+    mocked_screen_share_manager, image_pair
+):
+    """
+    Tests that the vision pipeline correctly IGNORES insignificant visual noise.
+    Requires image assets in `tests/test_screen_share_manager/assets/`.
+    """
+    manager, _ = mocked_screen_share_manager
+    before_filename, after_filename = image_pair
+
+    img_before = load_asset_image(before_filename)
+    img_after = load_asset_image(after_filename)
+
+    # The full pipeline should result in the change being flagged as insignificant.
+    # We test the final semantic filter, as MSE/SSIM may or may not catch these.
+    is_significant = manager._is_semantically_significant(img_before, img_after)
+    assert is_significant is False
