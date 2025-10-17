@@ -20,6 +20,7 @@ class ConductorAction(BaseModel):
 class ConductorHandleAction(BaseModel):
     """
     Intervene on an existing Conductor handle.
+    You can't intervene on a handle that already has a result.
         handle_id: the id of the handle
         action_name: the action to perform on the handle
             "conductor_handle_ask": read-only request on the status of the handle

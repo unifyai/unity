@@ -752,6 +752,9 @@ class ConversationManager:
                 self.state.inverted_contacts_map[1].model_dump()
             )
 
+        elif isinstance(event, (ConductorResponse, ConductorResult)):
+            await self.schedule_llm_run(0, cancel_running=True)
+
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)
 

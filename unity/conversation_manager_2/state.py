@@ -442,7 +442,12 @@ class ConversationManagerState:
                     response=""
                 )
             case ConductorResult() as e:
-                self.conductor_handles.pop(e.handle_id, None)
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="result",
+                    query="",
+                    response=e.result,
+                )
 
     def snapshot(self):
         self._current_snapshot_time = datetime.now()
