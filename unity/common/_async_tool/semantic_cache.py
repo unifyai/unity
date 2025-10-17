@@ -13,7 +13,7 @@ from typing import Any, Mapping, TypedDict, Callable, List
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from unity.common.tool_spec import ToolSpec
+from unity.common.tool_spec import ToolSpec, normalise_tools
 
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
@@ -473,7 +473,24 @@ def get_system_msg_hint() -> str:
 
 
 def _is_manager_tool(tool: ToolSpec) -> bool:
-    return tool.manager_tool is not None
+    return tool.manager_tool
+
+
+async def _handle_manager_tool(tool: ToolSpec, args):
+    base = tool.fn.__self__.__class__
+    # Best-effort to get the namespace from the tool
+    namespace = f"{base.__name__}.{tool.fn.__name__}"
+    usermessage = args["text"]
+    result = search_semantic_cache(usermessage, namespace)
+    if not result:
+        raise Exception("No result found in semantic cache")
+    tools = {}
+
+    manager = base()
+    tools = manager.get_tools(tool.fn.__name__)
+    tools = normalise_tools(tools)
+    history = await _rexecute_tools(result.tool_trajectory, tools)
+    return history
 
 
 async def _rexecute_tools(tool_trajectory, tools):
@@ -486,9 +503,10 @@ async def _rexecute_tools(tool_trajectory, tools):
 
             if (tool_name := tool_call.get("name")) in tools:
                 if _is_manager_tool(tools[tool_name]):
-                    args = json.loads(tool_call.get("arguments"))
-                    args["semantic_cache"] = "resolve"
-                    task = loop.create_task(tools[tool_name].fn(**args))
+                    args = json.loads(tool_call.get("arguments")) or {}
+                    task = loop.create_task(
+                        _handle_manager_tool(tools[tool_name], args),
+                    )
                     awaitables_map[idx] = task
                     continue
 

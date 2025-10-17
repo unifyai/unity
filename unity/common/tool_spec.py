@@ -19,7 +19,7 @@ class ToolSpec:
     # revealing quota details to the LLM.
     max_total_calls: Optional[int] = None
     read_only: Optional[bool] = None
-    manager_tool: Optional[bool] = None
+    manager_tool: bool = False
 
     # Let a ToolSpec be invoked like the underlying callable (nice for tests)
     def __call__(self, *a, **kw):  # pragma: no cover
