@@ -219,9 +219,9 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
     mock_llm_response = TurnAnalysisResponse(
         events=[
             KeyEvent(
-                timestamp=15.5,
+                timestamp=15.0,  # Match the start time of the speech
                 event_description="User clicked the 'Submit Application' button.",
-                image_annotation="The 'Application Submitted' confirmation screen.",  # New field
+                image_annotation="The 'Application Submitted' confirmation screen.",
                 triggering_phrase="submit the application",
                 representative_timestamp=15.5,
             )
@@ -270,6 +270,64 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
     assert (
         annotated_ref.annotation == "The 'Application Submitted' confirmation screen."
     )
+
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_speech_event_without_triggering_phrase_is_logged_correctly(
+    mocked_screen_share_manager,
+):
+    """
+    Verifies that a speech event is still logged with the correct full duration
+    even if the LLM does not identify a `triggering_phrase`.
+    """
+    manager, mocks = mocked_screen_share_manager
+    manager.DEBOUNCE_DELAY_SEC = 0
+    # This time, the LLM response has no triggering_phrase
+    mock_llm_response = TurnAnalysisResponse(
+        events=[
+            KeyEvent(
+                timestamp=20.0,  # Match the start time of the speech
+                event_description="User expressed confusion about the form.",
+                image_annotation=None,  # No annotation without a trigger phrase
+                triggering_phrase=None,  # The key part of this test
+                representative_timestamp=20.2,
+            )
+        ]
+    )
+    mocks["analysis_client"].generate.return_value = mock_llm_response
+    speech_event_data = {
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "timestamp": datetime.now().isoformat(),
+            "content": "Hmm, I'm not sure what to do here.",
+            "start_time": 20.0,
+            "end_time": 21.5,
+        }
+    }
+    # Add a frame to the buffer to act as the representative frame
+    manager._frame_buffer.append((20.2, PNG_GREEN_B64))
+
+    manager._trigger_turn_analysis(speech_event=speech_event_data)
+    await asyncio.sleep(0.01)
+
+    assert manager._logging_queue.qsize() == 1
+    log_job = await manager._logging_queue.get()
+    await manager._logging_worker(log_job)
+
+    mocks["transcript_manager"].log_messages.assert_called_once()
+    logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
+
+    # The key assertion: the log must use the full speech duration as the key
+    assert "20.00-21.50" in logged_message.screen_share
+    # And not the point-in-time key
+    assert "20.00-20.00" not in logged_message.screen_share
+
+    annotation = logged_message.screen_share["20.00-21.50"]
+    assert annotation.caption == "User expressed confusion about the form."
+    # With no triggering phrase, no AnnotatedImageRef should be created
+    assert len(logged_message.images.root) == 0
 
 
 @pytest.mark.unit

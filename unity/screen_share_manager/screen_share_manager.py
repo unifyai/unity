@@ -868,15 +868,22 @@ class ScreenShareManager:
         for ts, index in event_to_image_map.items():
             if index < len(logged_image_ids):
                 timestamp_to_image_id[ts] = logged_image_ids[index]
-        image_refs_list, screen_share_dict, primary_speech_event_handled = [], {}, False
+
+        image_refs_list, screen_share_dict = [], {}
+        speech_key_event: Optional[KeyEvent] = None
+
+        # Find the single key event that corresponds to the speech utterance.
+        if speech_start_time is not None and all_events:
+            # The speech event is the one with the timestamp closest to the speech start time.
+            speech_key_event = min(
+                all_events, key=lambda e: abs(e.timestamp - speech_start_time)
+            )
+
+        # Process all events to build the screen_share dictionary
         for event in all_events:
             image_id = timestamp_to_image_id.get(event.timestamp)
-            (
-                rep_ts,
-                screenshot_b64,
-            ) = event.representative_timestamp, combined_frame_map.get(
-                event.representative_timestamp
-            )
+            rep_ts = event.representative_timestamp
+            screenshot_b64 = combined_frame_map.get(rep_ts)
             if not screenshot_b64 and combined_frame_map:
                 closest_ts = min(
                     combined_frame_map.keys(), key=lambda ts: abs(ts - rep_ts)
@@ -888,30 +895,26 @@ class ScreenShareManager:
                     f"Could not find screenshot for event at {event.timestamp}"
                 )
                 continue
+
             event_type = "speech" if event.triggering_phrase else "vision"
             ts_key = ""
 
-            # Identify the primary speech event based on timestamp proximity
-            # to the start of the utterance. This is more robust than relying on
-            # `triggering_phrase`.
-            is_primary_speech_event = (
-                speech_start_time is not None
-                and not primary_speech_event_handled
-                and abs(event.timestamp - speech_start_time) < 0.5  # 500ms tolerance
-            )
-
-            if is_primary_speech_event and speech_end_time is not None:
+            # If this is the identified speech event, use the full duration key
+            if (
+                event is speech_key_event
+                and speech_start_time is not None
+                and speech_end_time is not None
+            ):
                 ts_key = f"{speech_start_time:.2f}-{speech_end_time:.2f}"
-                primary_speech_event_handled = True
             else:
+                # Otherwise, it's a silent/visual event, use its own timestamp
                 ts_key = f"{event.timestamp:.2f}-{event.timestamp:.2f}"
 
             screen_share_dict[ts_key] = ScreenShareAnnotation(
                 caption=event.event_description, image=screenshot_b64, type=event_type
             )
+
             if event.triggering_phrase and image_id:
-                # Use the new image_annotation, falling back to the event_description
-                # if it's not provided by the LLM.
                 annotation_text = event.image_annotation or event.event_description
                 image_refs_list.append(
                     AnnotatedImageRef(
