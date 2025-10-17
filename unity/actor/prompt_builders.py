@@ -2837,6 +2837,7 @@ def build_interjection_prompt(
     ).strip()
 
 
+# TODO: DEPRECATED
 def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
     """Builds a streamlined set of rules for simple, non-decomposed scripts."""
     tool_reference = _build_tool_signatures(tools)
@@ -2876,6 +2877,7 @@ def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
     return rules
 
 
+# TODO: DEPRECATED
 def build_course_correction_prompt(
     last_verified_function_name: str,
     last_verified_url: str,
@@ -3144,6 +3146,7 @@ def build_precondition_prompt(
     )
 
 
+# TODO: DEPRECATED
 def build_state_verification_prompt(
     precondition: Dict[str, Any],
 ) -> str:
@@ -3176,6 +3179,7 @@ def build_state_verification_prompt(
     )
 
 
+# TODO: DEPRECATED
 def build_proactive_correction_prompt(
     precondition: Dict[str, Any],
     current_url: str,

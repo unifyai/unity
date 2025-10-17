@@ -10,6 +10,9 @@ from unity.actor.base import BaseActor
 from unity.actor.tool_loop_actor import ToolLoopPlan
 from unity.actor.action_provider import ActionProvider
 from unity.actor.prompt_builders import _build_code_act_rules_and_examples
+from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.raw_image_ref import RawImageRef
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 
 
 def build_code_act_system_prompt(
@@ -156,17 +159,25 @@ class CodeActActor(BaseActor):
         timeout: float = 1000,
         agent_mode: str = "browser",
         agent_server_url: str = "http://localhost:3000",
+        action_provider: Optional["ActionProvider"] = None,
     ):
         """
         Initializes the CodeActActor.
+
+        Args:
+            action_provider: Optional existing ActionProvider instance to reuse.
+                           If provided, other browser-related params are ignored.
         """
-        self._action_provider = ActionProvider(
-            session_connect_url=session_connect_url,
-            headless=headless,
-            browser_mode=browser_mode,
-            agent_mode=agent_mode,
-            agent_server_url=agent_server_url,
-        )
+        if action_provider is not None:
+            self._action_provider = action_provider
+        else:
+            self._action_provider = ActionProvider(
+                session_connect_url=session_connect_url,
+                headless=headless,
+                browser_mode=browser_mode,
+                agent_mode=agent_mode,
+                agent_server_url=agent_server_url,
+            )
         self._sandbox = CodeExecutionSandbox(action_provider=self._action_provider)
         self._timeout = timeout
         self._browser_tools = self._get_browser_tools()
@@ -181,9 +192,9 @@ class CodeActActor(BaseActor):
     def _get_browser_tools(self) -> Dict[str, Callable]:
         """Extracts browser-related methods from the ActionProvider."""
         return {
-            "browser_navigate": self._action_provider.browser_navigate,
-            "browser_act": self._action_provider.browser_act,
-            "browser_observe": self._action_provider.browser_observe,
+            "navigate": self._action_provider.navigate,
+            "act": self._action_provider.act,
+            "observe": self._action_provider.observe,
         }
 
     def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
@@ -219,9 +230,9 @@ class CodeActActor(BaseActor):
                 text_summary = "Code executed successfully with no output."
 
             browser_action_keywords = [
-                "browser_navigate",
-                "browser_act",
-                "browser_observe",
+                "navigate",
+                "act",
+                "observe",
             ]
             if any(keyword in code for keyword in browser_action_keywords):
                 try:
@@ -248,6 +259,7 @@ class CodeActActor(BaseActor):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         **kwargs,
     ) -> ToolLoopPlan:
         """
@@ -277,6 +289,7 @@ class CodeActActor(BaseActor):
             custom_system_prompt=system_prompt,
             tool_policy=None,
             action_provider=self._action_provider,
+            images=images,
         )
         return plan
 

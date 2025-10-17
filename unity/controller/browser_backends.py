@@ -196,7 +196,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
 
-        print(
+        logger.info(
             f"🔗 Connecting to Magnitude service at {self.agent_base_url} (Mode: {self.agent_mode})",
         )
 
@@ -215,7 +215,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._async_initialized = False
 
         except Exception as e:
-            print(f"❌ Failed to initialize MagnitudeBrowserBackend: {e}")
+            logger.info(f"❌ Failed to initialize MagnitudeBrowserBackend: {e}")
             self.stop()
             raise
 
@@ -225,7 +225,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
             try:
                 r = self._sync_request("GET", "/screenshot")
                 if r.status_code < 500:
-                    print(f"✅ Magnitude service is ready on {self.agent_base_url}")
+                    logger.info(
+                        f"✅ Magnitude service is ready on {self.agent_base_url}",
+                    )
                     break
             except Exception:
                 time.sleep(0.5)
@@ -240,6 +242,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         Initialize async components when event loop is available.
         This is called lazily from async methods.
         """
+        # Initialize async infra even if websockets are unavailable so commands always process
         if not self._async_initialized and websockets is not None:
             try:
                 # Initialize the network log queue
@@ -253,6 +256,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
                 # Start the command processor task
                 if not self._command_processor_task:
+                    logger.info("⚙️ Starting command processor task")
                     self._command_processor_task = asyncio.create_task(
                         self._process_commands(),
                     )
@@ -263,6 +267,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 logger.warning(f"⚠️ Failed to initialize async components: {e}")
         elif websockets is None and not self._async_initialized:
             logger.warning("⚠️ Websockets not available, log streaming disabled")
+            # Even without websockets, ensure command processor runs
+            if not self._network_log_queue:
+                self._network_log_queue = asyncio.Queue()
+            if not self._command_processor_task:
+                logger.info("⚙️ Starting command processor task (no websockets)")
+                self._command_processor_task = asyncio.create_task(
+                    self._process_commands(),
+                )
             self._async_initialized = True
 
     async def _start_log_stream_listener(self):
@@ -360,6 +372,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     self._command_queue.task_done()
                     continue
                 try:
+                    logger.info(f"▶️ Executing command seq={seq}, id={command_id}")
                     result = await func(*args, **kwargs)
                     if future:
                         future.set_result(result)
@@ -367,6 +380,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     if future:
                         future.set_exception(e)
                 finally:
+                    logger.info(f"✅ Completed command seq={seq}, id={command_id}")
                     self._processed_seq = seq
                     # Notify any waiting barriers after a normal command completes
                     for barrier_seq, event in list(self._barrier_events.items()):
@@ -489,7 +503,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         Load all files and folders in the assistant's data directory from a remote endpoint.
         """
         # list all files in /tmp/unify/assistant/install through the endpoint, then for each file, save in local /tmp/unify/assistant/install
-        print("🐍 PYTHON: Loading persistent installs...")
+        logger.info("🐍 PYTHON: Loading persistent installs...")
         try:
             orchestra_url = os.getenv("UNIFY_BASE_URL")
             dl_endpoint = f"{orchestra_url}/admin/file/download_url"
@@ -525,7 +539,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         raise_for_status=False,
                     )
                     if dl_resp.status_code >= 400:
-                        print(
+                        logger.info(
                             f"Warning: download_url (prefix) failed for {prefix_folder}: {dl_resp.status_code} {dl_resp.text[:200]}",
                         )
                         continue
@@ -556,21 +570,21 @@ class MagnitudeBrowserBackend(BrowserBackend):
                                 raise_for_status=False,
                             )
                             if bin_resp.status_code >= 400:
-                                print(
+                                logger.info(
                                     f"Warning: download content failed for {full_path}: {bin_resp.status_code}",
                                 )
                                 continue
                             with open(local_path, "wb") as f:
                                 f.write(bin_resp.content)
                         except Exception as e:
-                            print(
+                            logger.info(
                                 f"Warning: Could not restore item under {prefix_folder}: {e}",
                             )
                 except Exception as e:
-                    print(f"Warning: Could not list prefix {prefix_folder}: {e}")
+                    logger.info(f"Warning: Could not list prefix {prefix_folder}: {e}")
 
         except Exception as e:
-            print(f"Warning: Could not query remote files for persistence: {e}")
+            logger.info(f"Warning: Could not query remote files for persistence: {e}")
 
         # Install downloaded/custom deb files
         if os.path.exists("/tmp/unify/assistant/deb"):
@@ -585,7 +599,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         check=True,
                     )
                 except Exception as e:
-                    print(f"Warning: Could not install {deb_file}: {e}")
+                    logger.info(f"Warning: Could not install {deb_file}: {e}")
 
         # Optionally install packages recorded in apt-manual.txt if present
         try:
@@ -602,7 +616,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     check=True,
                 )
         except Exception as e:
-            print(
+            logger.info(
                 f"Warning: Could not execute apt-get install from apt-manual.txt: {e}",
             )
 
@@ -611,7 +625,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         Save all files and folders in the assistant's data directory by sending them
         to a remote endpoint for persistence.
         """
-        print("🐍 PYTHON: Saving persistent installs...")
+        logger.info("🐍 PYTHON: Saving persistent installs...")
         try:
             subprocess.run(
                 ["apt-mark", "showmanual"],
@@ -625,7 +639,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             with open("/tmp/unify/assistant/install/apt-manual.txt", "w") as f:
                 f.writelines(lines)
         except Exception as e:
-            print(f"Warning: Could not save apt manual package list: {e}")
+            logger.info(f"Warning: Could not save apt manual package list: {e}")
 
         # save files in /tmp/unify/assistant/install folder with the endpoint
         try:
@@ -673,7 +687,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                             raise_for_status=False,
                         )
                         if up_resp.status_code >= 400:
-                            print(
+                            logger.info(
                                 f"Warning: upload_url failed for {key}: {up_resp.status_code} {up_resp.text[:200]}",
                             )
                             continue
@@ -697,20 +711,20 @@ class MagnitudeBrowserBackend(BrowserBackend):
                             raise_for_status=False,
                         )
                         if put_resp.status_code not in (200, 201, 204):
-                            print(
+                            logger.info(
                                 f"Warning: upload failed for {key}: {put_resp.status_code} {put_resp.text[:200]}",
                             )
                     except Exception as e:
-                        print(f"Warning: Could not upload {key}: {e}")
+                        logger.info(f"Warning: Could not upload {key}: {e}")
         except Exception as e:
-            print(
+            logger.info(
                 f"Warning: Could not enumerate /tmp/unify/assistant/install for persistence: {e}",
             )
 
     async def act(
         self,
         instruction: str,
-        wait: bool = False,
+        wait: bool = True,
         context: dict = None,
     ) -> Any:
         """
@@ -720,13 +734,13 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
-            wait (bool): If True, the function will block and wait for the action to
-                        complete in the browser before returning. If False (default),
+            wait (bool): If True (default), the function will block and wait for the action to
+                        complete in the browser before returning. If False,
                         the command is added to a queue for background execution, and
                         the function returns immediately.
             context (dict): Internal metadata for command tracking.
 
-        ### Non-Blocking Example (`wait=False`, Default)
+        ### Non-Blocking Example (`wait=False`)
         This is ideal for sequences of actions where the plan doesn't need immediate feedback.
         ```python
         # The plan queues up all actions and continues its own execution
@@ -736,7 +750,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         await action_provider.act("Click the 'Login' button", wait=False)
         ```
 
-        ### Blocking Example (`wait=True`)
+        ### Blocking Example (`wait=True`, Default)
         Use this when the outcome of an action is required for a subsequent decision in the plan.
         ```python
         # The plan pauses until the button click is complete and the new page has loaded.
@@ -776,6 +790,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         future = asyncio.get_event_loop().create_future() if wait else None
         self._active_commands[command_id] = (instruction, context)
+        logger.info(
+            f"🧾 Queueing command seq={seq}, id={command_id}, wait={wait}, task='{instruction[:120]}'",
+        )
         await self._command_queue.put((seq, command_id, bound_func, [], {}, future))
 
         if wait:
@@ -789,7 +806,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         try:
             await self._request("POST", "/interrupt_action")
         except Exception as e:
-            print(
+            logger.info(
                 f"⚠️ Warning: Failed to send interrupt request. The browser action may continue in the background. Error: {e}",
             )
 
@@ -799,6 +816,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         response_format: Any = str,
         wait: bool = True,
         context: dict = None,
+        bypass_dom_processing: bool = False,
     ) -> Any:
         """
         Extracts structured information from the current page using the Magnitude BrowserAgent.
@@ -861,6 +879,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
                    strategy for visual interpretation.
             response_format: Optional. A Pydantic model to structure the output.
                              **Highly recommended for reliable extraction.**
+            bypass_dom_processing: Optional. If True, skips DOM manipulation and uses
+                                   screenshot-only extraction. This preserves the original
+                                   page state but may be less accurate for text-heavy content.
         """
         await self._ensure_async_initialized()
 
@@ -876,6 +897,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
         payload = {"instructions": query}
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             payload["schema"] = _safe_model_json_schema(response_format)
+        if bypass_dom_processing:
+            payload["bypassDomProcessing"] = True
 
         response = await self._request("POST", "/extract", payload)
         data = response.get("data")
@@ -888,23 +911,33 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """
         Removes all queued and active commands that were issued by a specific function.
         """
-        new_queue = asyncio.Queue()
+        # Drain existing queue items and requeue only those not from the failed function.
+        kept_items = []
+        removed_count = 0
+        original_size = self._command_queue.qsize()
         while not self._command_queue.empty():
             seq, command_id, func, args, kwargs, future = (
                 self._command_queue.get_nowait()
             )
             context = self._active_commands.get(command_id, [None, {}])[1]
             if context.get("function_name") != function_name:
-                new_queue.put_nowait((seq, command_id, func, args, kwargs, future))
+                kept_items.append((seq, command_id, func, args, kwargs, future))
             else:
-                logger.warning(
+                logger.info(
                     f"Cancelling queued command from failed function '{function_name}': {self._active_commands.get(command_id, ['unknown'])[0]}",
                 )
                 if future:
                     future.cancel()
                 self._active_commands.pop(command_id, None)
+                removed_count += 1
 
-        self._command_queue = new_queue
+        # Requeue the kept items back onto the same queue to avoid swapping the queue object
+        for item in kept_items:
+            self._command_queue.put_nowait(item)
+
+        logger.info(
+            f"🧹 Cleared {removed_count}/{original_size} queued commands for function '{function_name}'.",
+        )
 
     async def query(self, query: str, response_format: Any = str) -> Any:
         """
@@ -972,9 +1005,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
             return ""
 
     async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
-        """Navigates the browser using the dedicated /nav endpoint."""
+        """Navigates the browser to a given URL."""
         await self._ensure_async_initialized()
-        print(f"🐍 PYTHON: Navigating to URL: {url}")
+        logger.info(f"🐍 PYTHON: Navigating to URL: {url}")
 
         if self.agent_mode == "desktop":
             # Controlling virtual desktop
@@ -992,7 +1025,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 return response.get("status", "success")
             except BrowserAgentError as e:
                 if "Target page" in str(e) and attempt < max_retries - 1:
-                    print(
+                    logger.info(
                         f"⚠️ Navigation failed due to closed page, retrying (attempt {attempt + 1}/{max_retries})...",
                     )
                     await asyncio.sleep(2)
@@ -1016,11 +1049,11 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._sync_request("POST", "/stop")
         except Exception as e:
             # Don't fail stop() if the request fails
-            print(f"Warning: Failed to send stop request: {e}")
+            logger.info(f"Warning: Failed to send stop request: {e}")
 
         # If the backend started the process, terminate it
         if MagnitudeBrowserBackend._process:
-            print(
+            logger.info(
                 f"🛑 Stopping Magnitude BrowserAgent service (PID: {MagnitudeBrowserBackend._process.pid})...",
             )
             MagnitudeBrowserBackend._process.terminate()

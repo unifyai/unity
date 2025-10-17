@@ -16,7 +16,7 @@ import textwrap
 import traceback
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import typing
 import types
 import weakref
@@ -43,6 +43,9 @@ from unity.common._async_tool.loop_config import (
     LIVE_IMAGES_REGISTRY,
     LIVE_IMAGES_LOG,
 )
+from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.raw_image_ref import RawImageRef
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 
 current_run_id_var = contextvars.ContextVar("hp_run_id", default=0)
 current_interaction_sink_var = contextvars.ContextVar(
@@ -258,6 +261,7 @@ class VerificationAssessment(BaseModel):
     )
 
 
+# TODO: DEPRECATED
 class CourseCorrectionDecision(BaseModel):
     """A structured decision on whether course correction is needed."""
 
@@ -275,6 +279,7 @@ class CourseCorrectionDecision(BaseModel):
     )
 
 
+# TODO: DEPRECATED
 class StateVerificationDecision(BaseModel):
     """A structured decision on whether the current state matches the required precondition."""
 
@@ -500,7 +505,8 @@ class PlanSanitizer(ast.NodeTransformer):
     - Recursively applies transformations to nested functions.
     """
 
-    def __init__(self):
+    def __init__(self, plan: "HierarchicalPlan"):
+        self._plan = plan
         self._function_context: list[str] = []
         self._is_in_async_context = False
         self._defined_functions = set()
@@ -584,9 +590,11 @@ class PlanSanitizer(ast.NodeTransformer):
         return self._function_context[-1] if self._function_context else "global"
 
     def visit_Module(self, node: ast.Module) -> ast.Module:
+        self._plan.top_level_function_names.clear()
         for sub_node in node.body:
             if isinstance(sub_node, (ast.AsyncFunctionDef, ast.FunctionDef)):
                 self._defined_functions.add(sub_node.name)
+                self._plan.top_level_function_names.add(sub_node.name)
         self.generic_visit(node)
         return node
 
@@ -843,6 +851,51 @@ class FunctionReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class _HistoryCapturingHandleProxy(SteerableToolHandle):
+    def __init__(
+        self,
+        real_handle: SteerableToolHandle,
+        plan: "HierarchicalPlan",
+        call_repr: str,
+        cache_key: tuple,
+        meta: dict,
+    ):
+        self._real_handle = real_handle
+        self._plan = plan
+        self._call_repr = call_repr
+        self._cache_key = cache_key
+        self._meta = meta
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real_handle, name)
+
+    async def result(self) -> str:
+        final_result = await self._real_handle.result()
+
+        sub_loop_history = []
+        if hasattr(self._real_handle, "get_history"):
+            sub_loop_history = self._real_handle.get_history()
+
+        interaction_to_cache = (
+            "handle_method_call",
+            self._call_repr,
+            str(final_result),
+            sub_loop_history,
+        )
+
+        interactions_log = current_interaction_sink_var.get()
+        if interactions_log is not None:
+            interactions_log.append(interaction_to_cache)
+
+        self._plan.idempotency_cache[self._cache_key] = {
+            "result": final_result,
+            "interaction_log": interaction_to_cache,
+            "meta": self._meta,
+        }
+
+        return final_result
+
+
 class _SteerableToolHandleProxy:
     """
     A proxy for SteerableToolHandle to intercept its method calls, log
@@ -914,31 +967,70 @@ class _SteerableToolHandleProxy:
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
             output = await real_attr(*args, **kwargs)
-            interaction_to_cache = ("handle_method_call", call_repr, str(output))
-            interactions_log = current_interaction_sink_var.get()
-            if interactions_log is not None:
-                interactions_log.append(interaction_to_cache)
-            try:
-                url = await self._plan.actor.action_provider.browser.get_current_url()
-            except Exception:
-                url = None
 
-            meta = {
-                "call_stack": cache_key[0],
-                "path": cache_key[1],
-                "function": cache_key[0][-1] if cache_key[0] else None,
-                "step": self._plan.runtime.action_counter,
-                "tool": tool_name,
-                "url": url,
-                "impure": False,
-            }
+            if isinstance(output, SteerableToolHandle):
+                initial_interaction = (
+                    "handle_method_call",
+                    call_repr,
+                    f"Returned handle: {output.__class__.__name__}",
+                )
+                interactions_log = current_interaction_sink_var.get()
+                if interactions_log is not None:
+                    interactions_log.append(initial_interaction)
 
-            self._plan.idempotency_cache[cache_key] = {
-                "result": output,
-                "interaction_log": interaction_to_cache,
-                "meta": meta,
-            }
-            return output
+                try:
+                    url = (
+                        await self._plan.actor.action_provider.browser.get_current_url()
+                    )
+                except Exception:
+                    url = None
+
+                meta = {
+                    "call_stack": cache_key[0],
+                    "path": cache_key[1],
+                    "function": cache_key[0][-1] if cache_key[0] else None,
+                    "step": self._plan.runtime.action_counter,
+                    "tool": tool_name,
+                    "url": url,
+                    "impure": False,
+                }
+
+                return _HistoryCapturingHandleProxy(
+                    output,
+                    self._plan,
+                    call_repr,
+                    cache_key,
+                    meta,
+                )
+            else:
+                interaction_to_cache = ("handle_method_call", call_repr, str(output))
+                interactions_log = current_interaction_sink_var.get()
+                if interactions_log is not None:
+                    interactions_log.append(interaction_to_cache)
+
+                try:
+                    url = (
+                        await self._plan.actor.action_provider.browser.get_current_url()
+                    )
+                except Exception:
+                    url = None
+
+                meta = {
+                    "call_stack": cache_key[0],
+                    "path": cache_key[1],
+                    "function": cache_key[0][-1] if cache_key[0] else None,
+                    "step": self._plan.runtime.action_counter,
+                    "tool": tool_name,
+                    "url": url,
+                    "impure": False,
+                }
+
+                self._plan.idempotency_cache[cache_key] = {
+                    "result": output,
+                    "interaction_log": interaction_to_cache,
+                    "meta": meta,
+                }
+                return output
 
         def sync_method_wrapper(*args, **kwargs):
             self._plan.runtime.action_counter += 1
@@ -1182,6 +1274,15 @@ class _ActionProviderProxy:
                 "impure": tool_name.endswith((".navigate", ".act")),
             }
 
+            if meta["impure"]:
+                try:
+                    post_screenshot = (
+                        await self._plan.actor.action_provider.browser.get_screenshot()
+                    )
+                    meta["post_state_screenshot"] = post_screenshot
+                except Exception as e:
+                    logger.warning(f"Failed to capture post-action screenshot: {e}")
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": result_to_cache,
                 "interaction_log": interaction_to_cache,
@@ -1355,6 +1456,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.last_verified_screenshot: Optional[str | bytes] = None
         self.function_source_map: Dict[str, str] = {}
         self.clean_function_source_map: Dict[str, str] = {}
+        self.top_level_function_names: set[str] = set()
         self.interaction_stack: List[List[Tuple[str, str, Optional[str]]]] = []
         self.escalation_count = 0
         self._is_complete = False
@@ -1439,6 +1541,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.summarization_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-flash@vertex-ai",
         )
+        # TODO: DEPRECATED
         self.course_correction_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
         )
@@ -1797,49 +1900,49 @@ class HierarchicalPlan(BaseActiveTask):
 
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
         """
-        Updates the plan's source code with a new function implementation using a
-        generic, lossless AST merge strategy.
-
-        This function merges all top-level statements, including
-        functions, classes, imports, and global assignments, ensuring that the
-        new code is seamlessly integrated without losing existing code.
+        Updates the plan's source code by rebuilding it from the clean source map
+        after patching a single function. This ensures the sanitizer always runs
+        on pristine, un-instrumented code, preserving all nested structures.
 
         Args:
-            function_name: The name of the function to replace or add.
+            function_name: The name of the function to replace.
             new_code: The full source code of the new function implementation.
         """
-        try:
-            new_tree_for_clean_map = ast.parse(textwrap.dedent(new_code))
-            for node in new_tree_for_clean_map.body:
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    self.clean_function_source_map[node.name] = ast.unparse(node)
-        except Exception as e:
-            logger.warning(f"Could not store clean source for '{function_name}': {e}")
-
-        self.action_log.append(
-            f"Updating implementation of '{function_name}'.",
-        )
+        self.action_log.append(f"Updating implementation of '{function_name}'.")
 
         try:
-            clean_source_to_parse = "\n\n".join(self.clean_function_source_map.values())
-            old_tree = ast.parse(clean_source_to_parse or "pass")
-            new_tree = ast.parse(textwrap.dedent(new_code))
+            new_function_tree = ast.parse(textwrap.dedent(new_code))
+            if not new_function_tree.body or not isinstance(
+                new_function_tree.body[0],
+                (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                raise ValueError("New code must contain a single function definition.")
+            new_function_node = new_function_tree.body[0]
 
-            final_nodes = {
-                self._get_node_key(node): node
-                for node in old_tree.body
-                if self._get_node_key(node)
-            }
+            self.clean_function_source_map[new_function_node.name] = ast.unparse(
+                new_function_node,
+            )
 
-            for node in new_tree.body:
-                key = self._get_node_key(node)
-                if key:
-                    final_nodes[key] = node
+            original_tree = ast.parse(self.plan_source_code or "pass")
+            reconstructed_parts = [
+                ast.unparse(node)
+                for node in original_tree.body
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            ]
 
-            final_tree = ast.Module(body=list(final_nodes.values()), type_ignores=[])
-            ast.fix_missing_locations(final_tree)
+            for func_name in self.top_level_function_names:
+                if func_name in self.clean_function_source_map:
+                    reconstructed_parts.append(
+                        self.clean_function_source_map[func_name],
+                    )
 
-            unsanitized_code = ast.unparse(final_tree)
+            if new_function_node.name not in self.top_level_function_names:
+                reconstructed_parts.append(
+                    self.clean_function_source_map[new_function_node.name],
+                )
+
+            unsanitized_code = "\n\n".join(reconstructed_parts)
+
             self.plan_source_code = self.actor._sanitize_code(unsanitized_code, self)
             self.actor._load_plan_module(self)
 
@@ -2013,6 +2116,14 @@ class HierarchicalPlan(BaseActiveTask):
         logger.info(
             f"[V-TASK-{item.ordinal}] Verification SUCCEEDED for '{item.function_name}'. Reason: {assessment.reason}",
         )
+        if assessment.refinements:
+            logger.info(
+                f"[V-TASK-{item.ordinal}] Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
+            )
+            logger.info(
+                f"[V-TASK-{item.ordinal}] Refinements: {assessment.refinements}",
+            )
+
         self.action_log.append(
             f"Async Verification for {item.function_name}: ok - '{assessment.reason}'",
         )
@@ -2024,9 +2135,7 @@ class HierarchicalPlan(BaseActiveTask):
         if hasattr(self, "cumulative_interactions"):
             self.cumulative_interactions.extend(item.interactions)
 
-        is_top_level_function = item.func_source and not item.func_source.startswith(
-            (" ", "\t"),
-        )
+        is_top_level_function = item.function_name in self.top_level_function_names
 
         if (
             is_top_level_function
@@ -2219,11 +2328,52 @@ class HierarchicalPlan(BaseActiveTask):
                 failed_item=item,
             )
 
-            await self.actor._verify_and_correct_state(
-                plan=self,
-                target_precondition=item.pre_state,
-                context_label=f"async verification recovery for '{item.function_name}'",
+            self.action_log.append(
+                f"COURSE CORRECTION: Launching recovery agent to restore state for '{item.function_name}'.",
             )
+            logger.info(
+                f"Launching course correction agent for verification recovery of '{item.function_name}'.",
+            )
+            try:
+                target_screenshot = item.pre_state.get("screenshot")
+                current_screenshot = (
+                    await self.actor.action_provider.browser.get_screenshot()
+                )
+
+                trajectory = []
+                for interaction in item.interactions:
+                    if len(interaction) > 1:
+                        trajectory.append(interaction[1])
+                    else:
+                        trajectory.append(str(interaction))
+
+                if target_screenshot and trajectory:
+                    await self.actor._run_course_correction_agent(
+                        target_screenshot=target_screenshot,
+                        trajectory=trajectory,
+                    )
+                    self.action_log.append(
+                        "COURSE CORRECTION: Recovery agent completed successfully.",
+                    )
+                    logger.info(
+                        "Course correction for verification recovery completed successfully.",
+                    )
+                else:
+                    logger.warning(
+                        f"Missing target screenshot or trajectory for course correction. "
+                        f"target_screenshot={bool(target_screenshot)}, trajectory_len={len(trajectory)}",
+                    )
+                    self.action_log.append(
+                        "WARNING: Skipping course correction due to missing data. Proceeding with replay from current state.",
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Course correction for verification recovery failed: {e}",
+                    exc_info=True,
+                )
+                self.action_log.append(
+                    f"WARNING: Course correction failed: {e}. Proceeding with replay from current state.",
+                )
 
             self._invalidate_cache_from_function(item.function_name, item.parent_stack)
 
@@ -2242,6 +2392,7 @@ class HierarchicalPlan(BaseActiveTask):
 
             self._recovery_task = None
             self._recovery_target_ordinal = None
+            self._recovery_in_progress = False
 
     async def _cancel_verifications_after(self, ord_: int):
         """Cancels all pending verification tasks with an ordinal greater than the given one."""
@@ -2460,7 +2611,7 @@ class HierarchicalPlan(BaseActiveTask):
     async def interject(
         self,
         message: str,
-        images: Optional[dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> str:
         """
         Processes a user interjection by using an LLM to decide on the best course of action.
@@ -2565,6 +2716,8 @@ class HierarchicalPlan(BaseActiveTask):
                 )
                 keys_to_delete = set(self.idempotency_cache.keys())
 
+            target_screenshot = None
+            trajectory = []
             if keys_to_delete:
                 logger.info(
                     f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
@@ -2572,6 +2725,43 @@ class HierarchicalPlan(BaseActiveTask):
                 self.action_log.append(
                     f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
                 )
+
+                all_keys_sorted = sorted(
+                    self.idempotency_cache.keys(),
+                    key=lambda k: self.idempotency_cache[k]
+                    .get("meta", {})
+                    .get("step", 0),
+                )
+
+                last_valid_key = None
+                for key in all_keys_sorted:
+                    if key not in keys_to_delete:
+                        last_valid_key = key
+                    else:
+                        break
+
+                if last_valid_key:
+                    last_valid_entry = self.idempotency_cache.get(last_valid_key)
+                    if last_valid_entry and "meta" in last_valid_entry:
+                        target_screenshot = last_valid_entry["meta"].get(
+                            "post_state_screenshot",
+                        )
+
+                invalidated_keys_sorted = sorted(
+                    [k for k in all_keys_sorted if k in keys_to_delete],
+                    key=lambda k: self.idempotency_cache[k]
+                    .get("meta", {})
+                    .get("step", 0),
+                )
+                for key in invalidated_keys_sorted:
+                    entry = self.idempotency_cache.get(key)
+                    if entry and "interaction_log" in entry:
+                        call_repr = (
+                            entry["interaction_log"][1]
+                            if len(entry["interaction_log"]) > 1
+                            else str(entry)
+                        )
+                        trajectory.append(call_repr)
 
             invalidated_handles = set()
             for key in keys_to_delete:
@@ -2601,41 +2791,29 @@ class HierarchicalPlan(BaseActiveTask):
                     if any(f":{hid}." in meta_tool for hid in invalidated_handles):
                         self.idempotency_cache.pop(k, None)
 
-            if first_modified_function_name:
+            if trajectory and target_screenshot:
                 self.action_log.append(
-                    f"STATE VERIFICATION: Checking precondition for the first modified function: '{first_modified_function_name}'.",
+                    f"COURSE CORRECTION: Launching recovery agent to reverse {len(trajectory)} invalidated actions.",
                 )
-                logger.debug(
-                    f"Checking precondition for the first modified function: '{first_modified_function_name}'.",
+                logger.info(
+                    f"Launching course correction agent to reverse {len(trajectory)} actions.",
                 )
                 try:
-                    precondition = self.actor.function_manager.get_precondition(
-                        function_name=first_modified_function_name,
+                    await self.actor._run_course_correction_agent(
+                        target_screenshot=target_screenshot,
+                        trajectory=trajectory,
                     )
-                    if precondition and precondition.get("status") != "not_applicable":
-                        await self.actor._verify_and_correct_state(
-                            plan=self,
-                            target_precondition=precondition,
-                            context_label=f"interjection recovery for '{first_modified_function_name}'",
-                        )
-                        self.action_log.append(
-                            "STATE VERIFICATION: Precondition verified and corrected if necessary.",
-                        )
-                        logger.debug("Precondition verified and corrected!")
-                    else:
-                        self.action_log.append(
-                            "STATE VERIFICATION: No precondition found or needed for this function.",
-                        )
-                        logger.debug(
-                            "No precondition found or needed for this function.",
-                        )
+                    self.action_log.append(
+                        "COURSE CORRECTION: Recovery agent completed successfully.",
+                    )
+                    logger.info("Course correction completed successfully.")
                 except Exception as e:
                     logger.error(
-                        f"Error during proactive state verification for interjection: {e}",
+                        f"Course correction failed: {e}",
                         exc_info=True,
                     )
                     self.action_log.append(
-                        f"WARNING: Proactive state verification failed: {e}. Proceeding with replay from current state.",
+                        f"WARNING: Course correction failed: {e}. Proceeding with replay from current state.",
                     )
 
             modification_summary = ", ".join(
@@ -3446,7 +3624,7 @@ class HierarchicalActor(BaseActor):
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     plan.clean_function_source_map[node.name] = ast.unparse(node)
-            sanitizer = PlanSanitizer()
+            sanitizer = PlanSanitizer(plan)
             sanitized_tree = sanitizer.visit(tree)
             ast.fix_missing_locations(sanitized_tree)
             return ast.unparse(sanitized_tree)
@@ -3491,7 +3669,7 @@ class HierarchicalActor(BaseActor):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         persist: bool = True,
-        images: Optional[dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         **kwargs,
     ) -> HierarchicalPlan:
         """
@@ -3817,6 +3995,86 @@ class HierarchicalActor(BaseActor):
             context_label=f"function '{function_name}'",
         )
 
+    async def _run_course_correction_agent(
+        self,
+        target_screenshot: bytes,
+        trajectory: list[str],
+    ) -> None:
+        """Spawns a new CodeActActor instance as a sub-agent to perform state recovery."""
+        from .code_act_actor import CodeActActor
+        from unity.image_manager.image_manager import ImageManager
+
+        current_screenshot = await self.action_provider.browser.get_screenshot()
+
+        if isinstance(current_screenshot, str):
+            current_screenshot = base64.b64decode(current_screenshot)
+        if isinstance(target_screenshot, str):
+            target_screenshot = base64.b64decode(target_screenshot)
+
+        image_manager = ImageManager()
+        ids = image_manager.add_images(
+            [
+                {
+                    "data": base64.b64encode(current_screenshot).decode("ascii"),
+                    "caption": "Current browser state (before correction)",
+                },
+                {
+                    "data": base64.b64encode(target_screenshot).decode("ascii"),
+                    "caption": "Target browser state (after correction)",
+                },
+            ],
+        )
+        current_id, target_id = ids[0], ids[1]
+
+        images_for_sub_agent = ImageRefs(
+            [
+                AnnotatedImageRef(
+                    raw_image_ref=RawImageRef(image_id=current_id),
+                    annotation="Current state: where the browser is now",
+                ),
+                AnnotatedImageRef(
+                    raw_image_ref=RawImageRef(image_id=target_id),
+                    annotation="Target state: where the browser should be",
+                ),
+            ],
+        )
+
+        formatted_trajectory = "\n".join(f"- `{action}`" for action in trajectory)
+        correction_goal = f"""
+        ### Your Mission: Course Correction
+        Your goal is to restore the browser's state by writing and executing Python code in an iterative loop.
+
+        **CONTEXT:**
+        - **Current State:** The first image provided. This is the state you are starting from.
+        - **Target State:** The second image provided. This is the state you must return to.
+        - **Trajectory:** The following actions led from the target state to the current state. Use this as a guide for what to reverse:
+        {formatted_trajectory}
+
+        **YOUR WORKFLOW:**
+        1.  **Analyze:** Use the `live_images_overview()` tool to understand the images you've been given. Compare them to determine if a correction is needed. If they are the same, you are done.
+        2.  **Plan & Execute:** Write Python code using the `action_provider` to reverse the trajectory. This may take multiple steps. After each step, you will receive new visual feedback to guide your next action.
+        3.  **Complete:** When the browser state visually matches the target state, your work is done.
+        """
+
+        logger.info("COURSE CORRECTION: Starting recovery sub-agent...")
+
+        correction_agent = CodeActActor(
+            action_provider=self.action_provider,
+            timeout=300,
+        )
+
+        try:
+            correction_plan = await correction_agent.act(
+                description=correction_goal,
+                images=images_for_sub_agent,
+                persist=False,
+            )
+
+            await correction_plan.result()
+            logger.info("COURSE CORRECTION: Recovery sub-agent finished successfully.")
+        finally:
+            pass
+
     def _create_verify_decorator(self, plan: HierarchicalPlan):
         """
         Creates the @verify decorator for a given plan instance.
@@ -3886,7 +4144,8 @@ class HierarchicalActor(BaseActor):
                     step_cache_miss_counter = 0
                     plan.runtime.cache_miss_counter.append(0)
 
-                    if plan.runtime.execution_mode != "replay_after_modification":
+                    # TODO: remove this if preconditions are no longer needed in favor of the new sub-agent course correction
+                    if not plan.runtime.execution_mode.startswith("replay_"):
                         await self._ensure_precondition(plan, func_name)
 
                     pre_state = {
@@ -4144,387 +4403,6 @@ class HierarchicalActor(BaseActor):
             return wrapper
 
         return verify
-
-    # TODO: DEPRECATED
-    async def _execute_and_verify_step(
-        self,
-        plan: HierarchicalPlan,
-        fn: Callable,
-        func_source: str,
-        args,
-        kwargs,
-        interactions: list,
-        entry_screenshot: Optional[bytes] = None,
-        clarification_question: Optional[str] = None,
-        clarification_answer: Optional[str] = None,
-    ):
-        """
-        Executes one function call and verifies its outcome.
-
-        Args:
-            plan: The active plan instance.
-            fn: The function to execute.
-            func_source: The source code of the function.
-            args: Positional arguments for the function.
-            kwargs: Keyword arguments for the function.
-            interactions: A list to log interactions within this step.
-            entry_screenshot: Screenshot captured right when the function was entered.
-            clarification_question: An optional question that was asked to the user.
-            clarification_answer: An optional answer received from the user.
-        """
-        result = await fn(*args, **kwargs)
-        if inspect.isawaitable(result):
-            logger.warning(
-                f"Function '{fn.__name__}' returned a coroutine. "
-                f"This suggests a missing 'await' in the generated code. "
-                f"Awaiting it now to recover.",
-            )
-            result = await result
-
-        interactions_for_this_step = interactions
-        formatted_interactions = []
-        for interaction in interactions_for_this_step:
-            kind, act, obs, *logs = interaction
-            logs = logs[0] if logs else []
-
-            log_entry = f"- Action: `{act}` with result `{obs or 'N/A'}`"
-            if logs:
-                log_details = "\n".join([f"    {line}" for line in logs])
-                log_entry += f"\n  - Agent Logs:\n{log_details}"
-            formatted_interactions.append(log_entry)
-
-        interactions_str = "\n".join(formatted_interactions)
-
-        logger.info(
-            f"🕵️ VERIFICATION INPUT for '{fn.__name__}':\n"
-            f"   - Purpose: {fn.__doc__ or 'N/A'}\n"
-            f"   - Interactions:\n{interactions_str}",
-        )
-        plan.action_log.append(
-            f"VERIFICATION EVIDENCE for '{fn.__name__}':\n{interactions_str}",
-        )
-
-        was_fully_cached = plan.runtime.cache_miss_counter == 0
-
-        if was_fully_cached:
-            logger.info(
-                f"VERIFICATION SKIPPED for '{fn.__name__}' because it was fully executed from cache replay.",
-            )
-            plan.action_log.append(
-                f"Verification for {fn.__name__}: ok (Skipped for cached step)",
-            )
-            assessment = VerificationAssessment(
-                status="ok",
-                reason="Skipped verification for fully cached replay step.",
-            )
-        else:
-            final_screenshot = None
-            if "action_provider.browser" in plan.plan_source_code:
-                final_screenshot = await self.action_provider.browser.get_screenshot()
-            assessment = await self._check_state_against_goal(
-                plan,
-                fn.__name__,
-                fn.__doc__,
-                function_source_code=func_source,
-                interactions=interactions_for_this_step,
-                screenshot=final_screenshot,
-                function_return_value=result,
-                clarification_question=clarification_question,
-                clarification_answer=clarification_answer,
-            )
-        logger.info(
-            f"🕵️ VERIFICATION ASSESSMENT for '{fn.__name__}':\n{format_pydantic_model(assessment, indent=2)}",
-        )
-        plan.action_log.append(
-            f"Verification for {fn.__name__}: {assessment.status} - '{assessment.reason}'",
-        )
-
-        while assessment.status == "request_clarification":
-            if not assessment.clarification_question:
-                raise FatalVerificationError(
-                    "Verification assessment requested clarification but provided no question.",
-                )
-
-            plan.action_log.append(
-                f"Verification requires clarification: {assessment.clarification_question}",
-            )
-            user_answer = await plan.execution_namespace["request_clarification"](
-                assessment.clarification_question,
-            )
-            plan.action_log.append(f"Received user clarification: {user_answer}")
-
-            plan.action_log.append("Re-assessing function with new user context.")
-            logger.info("Re-assessing function with new user context.")
-
-            assessment = await self._check_state_against_goal(
-                plan,
-                fn.__name__,
-                fn.__doc__,
-                function_source_code=func_source,
-                interactions=interactions_for_this_step,
-                screenshot=final_screenshot,
-                function_return_value=result,
-                clarification_question=assessment.clarification_question,
-                clarification_answer=user_answer,
-            )
-            logger.info(
-                f"🕵️ RE-VERIFICATION ASSESSMENT for '{fn.__name__}':\n{format_pydantic_model(assessment, indent=2)}",
-            )
-            plan.action_log.append(
-                f"Re-Verification for {fn.__name__}: {assessment.status} - '{assessment.reason}'",
-            )
-        if assessment.status == "ok":
-            try:
-                current_url = await self.action_provider.browser.get_current_url()
-                plan.last_verified_function_name = fn.__name__
-                plan.last_verified_url = current_url
-                plan.last_verified_screenshot = (
-                    await self.action_provider.browser.get_screenshot()
-                )
-                plan.cumulative_interactions.extend(interactions_for_this_step)
-                logger.info(
-                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
-                )
-                plan.action_log.append(
-                    f"STATE CAPTURE: Stored successful state after '{fn.__name__}' at URL {current_url}.",
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Could not capture successful state after '{fn.__name__}': {e}",
-                    exc_info=True,
-                )
-
-            if func_source and self.function_manager and fn.__name__ != "main_plan":
-                try:
-                    func_tree = ast.parse(plan.clean_function_source_map[fn.__name__])
-                    func_node = func_tree.body[0]
-
-                    if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        func_node.decorator_list = [
-                            d
-                            for d in func_node.decorator_list
-                            if not (isinstance(d, ast.Name) and d.id == "verify")
-                        ]
-
-                    clean_func_source = ast.unparse(func_tree)
-                    existing_funcs = self.function_manager.list_functions(
-                        include_implementations=True,
-                    )
-                    is_duplicate = any(
-                        fn.__name__ == data.get("name")
-                        for data in existing_funcs.values()
-                    )
-
-                    precondition_prompt = prompt_builders.build_precondition_prompt(
-                        function_source_code=clean_func_source,
-                        interactions_log=json.dumps(
-                            interactions_for_this_step,
-                            indent=2,
-                        ),
-                        has_entry_screenshot=entry_screenshot is not None,
-                    )
-
-                    plan.summarization_client.set_response_format(PreconditionDecision)
-                    try:
-                        decision_str = await llm_call(
-                            plan.summarization_client,
-                            precondition_prompt,
-                            screenshot=entry_screenshot,
-                        )
-                        precondition_data = PreconditionDecision.model_validate_json(
-                            decision_str,
-                        )
-                    finally:
-                        plan.summarization_client.reset_response_format()
-
-                    preconditions_for_fm = {}
-                    if precondition_data.status == "ok" and (
-                        precondition_data.url or precondition_data.description
-                    ):
-                        preconditions_for_fm[fn.__name__] = {
-                            "url": precondition_data.url,
-                            "description": precondition_data.description,
-                        }
-
-                    if not is_duplicate:
-                        plan.action_log.append(
-                            f"Persisting verified function '{fn.__name__}' as a new skill.",
-                        )
-                        logger.info(
-                            f"Adding function '{fn.__name__}' to FunctionManager.",
-                        )
-                        self.function_manager.add_functions(
-                            implementations=[clean_func_source],
-                            preconditions=preconditions_for_fm,
-                        )
-                    else:
-                        plan.action_log.append(
-                            f"Skipping persistence for '{fn.__name__}'; identical skill already exists.",
-                        )
-                        logger.info(
-                            f"Skipping adding function '{fn.__name__}' to FunctionManager; identical function already exists.",
-                        )
-                except Exception as e:
-                    plan.action_log.append(
-                        f"WARNING: Could not persist function '{fn.__name__}': {e}",
-                    )
-                    logger.warning(
-                        f"Could not add function '{fn.__name__}' to FunctionManager: {e}",
-                    )
-            return result
-        elif assessment.status in ("reimplement_local", "replan_parent"):
-            if plan.last_verified_screenshot:
-                logger.info(
-                    "Function verification failed. Assessing if course correction is needed.",
-                )
-                plan.action_log.append(
-                    "ASSESSING STATE: Verification failed. Checking if browser state is corrupted.",
-                )
-
-                try:
-                    current_url = await self.action_provider.browser.get_current_url()
-                    correction_prompt = prompt_builders.build_course_correction_prompt(
-                        last_verified_function_name=plan.last_verified_function_name,
-                        last_verified_url=plan.last_verified_url,
-                        current_url=current_url,
-                        failed_function_name=fn.__name__,
-                        failed_function_docstring=fn.__doc__,
-                        verification_reason=assessment.reason,
-                        tools=self.tools,
-                    )
-
-                    plan.course_correction_client.reset_messages()
-                    content = [{"type": "text", "text": correction_prompt}]
-                    if plan.last_verified_screenshot:
-                        if isinstance(plan.last_verified_screenshot, str):
-                            b64_before = plan.last_verified_screenshot
-                        else:
-                            b64_before = base64.b64encode(
-                                plan.last_verified_screenshot,
-                            ).decode("utf-8")
-                        content.insert(
-                            0,
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{b64_before}",
-                                },
-                            },
-                        )
-                        content.insert(
-                            0,
-                            {
-                                "type": "text",
-                                "text": "This is the screenshot of the state BEFORE the failure (the last known good state):",
-                            },
-                        )
-
-                    if final_screenshot:
-                        if isinstance(final_screenshot, str):
-                            b64_after = final_screenshot
-                        else:
-                            b64_after = base64.b64encode(final_screenshot).decode(
-                                "utf-8",
-                            )
-                        content.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{b64_after}",
-                                },
-                            },
-                        )
-                        content.insert(
-                            len(content) - 1,
-                            {
-                                "type": "text",
-                                "text": "This is the screenshot of the state AFTER the failure (the current, potentially corrupted state):",
-                            },
-                        )
-
-                    plan.course_correction_client.set_response_format(
-                        CourseCorrectionDecision,
-                    )
-                    response_str = await plan.course_correction_client.generate(
-                        messages=[{"role": "user", "content": content}],
-                    )
-                    correction_decision = CourseCorrectionDecision.model_validate_json(
-                        response_str,
-                    )
-
-                    if (
-                        correction_decision.correction_needed
-                        and correction_decision.correction_code
-                    ):
-                        plan.action_log.append(
-                            f"COURSE CORRECTION: State deviated. Reason: {correction_decision.reason}. Running correction script.",
-                        )
-                        logger.info(
-                            f"COURSE CORRECTION: State deviated. Reason: {correction_decision.reason}. Correction script generated:\n{correction_decision.correction_code}",
-                        )
-
-                        try:
-                            await self._execute_course_correction(
-                                plan,
-                                correction_decision.correction_code,
-                            )
-                            plan.action_log.append(
-                                "COURSE CORRECTION: State restored successfully.",
-                            )
-                            logger.info(
-                                "COURSE CORRECTION: State restored successfully.",
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Course correction script FAILED to execute: {e}",
-                                exc_info=True,
-                            )
-                            plan.action_log.append(
-                                f"CRITICAL: Course correction script FAILED. Proceeding from potentially corrupted state. Error: {e}",
-                            )
-                    else:
-                        plan.action_log.append(
-                            "COURSE CORRECTION: No state deviation detected. Proceeding with reimplementation directly.",
-                        )
-                        logger.info(
-                            "COURSE CORRECTION: No state deviation detected. Proceeding with reimplementation directly.",
-                        )
-
-                except Exception as e:
-                    logger.error(
-                        f"Course correction assessment failed: {e}",
-                        exc_info=True,
-                    )
-                    plan.action_log.append(
-                        f"WARNING: Course correction assessment failed: {e}. Proceeding with reimplementation from current state.",
-                    )
-                finally:
-                    plan.course_correction_client.reset_response_format()
-
-            if assessment.status == "replan_parent":
-                raise ReplanFromParentException(
-                    f"Strategic failure in '{fn.__name__}': {assessment.reason}",
-                    failed_interactions=interactions,
-                )
-            else:
-                existing_code = plan.clean_function_source_map.get(fn.__name__)
-                await plan._handle_dynamic_implementation(
-                    fn.__name__,
-                    replan_reason=assessment.reason,
-                    status=assessment.status,
-                    failed_interactions=interactions,
-                    existing_code_for_modification=existing_code,
-                )
-                if clarification_question and clarification_answer:
-                    kwargs["clarification_question"] = clarification_question
-                    kwargs["clarification_answer"] = clarification_answer
-
-                raise _ForcedRetryException("Forced retry after local reimplementation")
-
-        elif assessment.status == "fatal_error":
-            raise FatalVerificationError(
-                f"Fatal error in '{fn.__name__}': {assessment.reason}",
-            )
 
     async def _inject_library_functions(self, base_code: str) -> str:
         if not self.function_manager:
@@ -4912,6 +4790,7 @@ class HierarchicalActor(BaseActor):
         finally:
             plan.verification_client.reset_response_format()
 
+    # TODO: DEPRECATED
     async def _execute_course_correction(self, plan: HierarchicalPlan, code: str):
         """
         Executes a dynamically generated script to correct the browser state.
