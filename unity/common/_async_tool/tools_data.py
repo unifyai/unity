@@ -660,7 +660,7 @@ class ToolsData:
             except Exception:
                 pass
             self._logger.info(
-                f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
+                f"{json.dumps(tool_msg_for_logging, indent=4)}",
                 prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
             )
 
