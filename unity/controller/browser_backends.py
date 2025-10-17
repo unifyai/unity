@@ -897,23 +897,33 @@ class MagnitudeBrowserBackend(BrowserBackend):
         """
         Removes all queued and active commands that were issued by a specific function.
         """
-        new_queue = asyncio.Queue()
+        # Drain existing queue items and requeue only those not from the failed function.
+        kept_items = []
+        removed_count = 0
+        original_size = self._command_queue.qsize()
         while not self._command_queue.empty():
             seq, command_id, func, args, kwargs, future = (
                 self._command_queue.get_nowait()
             )
             context = self._active_commands.get(command_id, [None, {}])[1]
             if context.get("function_name") != function_name:
-                new_queue.put_nowait((seq, command_id, func, args, kwargs, future))
+                kept_items.append((seq, command_id, func, args, kwargs, future))
             else:
-                logger.warning(
+                logger.info(
                     f"Cancelling queued command from failed function '{function_name}': {self._active_commands.get(command_id, ['unknown'])[0]}",
                 )
                 if future:
                     future.cancel()
                 self._active_commands.pop(command_id, None)
+                removed_count += 1
 
-        self._command_queue = new_queue
+        # Requeue the kept items back onto the same queue to avoid swapping the queue object
+        for item in kept_items:
+            self._command_queue.put_nowait(item)
+
+        logger.info(
+            f"🧹 Cleared {removed_count}/{original_size} queued commands for function '{function_name}'.",
+        )
 
     async def query(self, query: str, response_format: Any = str) -> Any:
         """
