@@ -165,7 +165,7 @@ class ScreenShareManager:
 
     def __init__(self):
         # Configuration
-        self.MSE_THRESHOLD = 100
+        self.MSE_THRESHOLD = 10
         self.SSIM_THRESHOLD = 0.80
         self.MIN_CONTOUR_AREA = 100
         self.MAX_ASPECT_RATIO = 20
@@ -577,10 +577,8 @@ class ScreenShareManager:
             if not speech_event and not visual_events_for_turn:
                 return
             logger.info("Debounce window ended. Triggering turn analysis...")
-            asyncio.create_task(
-                self._analyze_turn(
-                    speech_event, visual_events_for_turn, latest_frame_for_turn
-                )
+            await self._analyze_turn(
+                speech_event, visual_events_for_turn, latest_frame_for_turn
             )
         except asyncio.CancelledError:
             logger.info("Debounced analysis was cancelled by a newer event.")

@@ -713,7 +713,12 @@ async def test_adaptive_frame_dropping_under_heavy_load(mocked_screen_share_mana
     ]
 
     with patch.object(manager, "_b64_to_image", side_effect=slow_b64_to_image_wrapper):
-        # Run the listener in the background
+        # Manually start the manager's background tasks for the test
+        manager._sequencer_task = asyncio.create_task(manager._sequencer())
+        manager._frame_workers = [
+            asyncio.create_task(manager._frame_processing_worker())
+            for _ in range(manager.MAX_FRAME_WORKERS)
+        ]
         listener_task = asyncio.create_task(manager._listen_for_events())
 
         # Allow time for the listener to process the burst of events
@@ -739,6 +744,7 @@ async def test_adaptive_frame_dropping_under_heavy_load(mocked_screen_share_mana
 
         # Cleanup
         listener_task.cancel()
+        manager.stop()  # Use the manager's stop method for cleaner shutdown
         try:
             await listener_task
         except asyncio.CancelledError:
