@@ -1454,7 +1454,11 @@ async def async_tool_loop_inner(
                     # ── Special-case dynamic helpers ──────────────────────
                     # • wait        → acknowledge, list running tasks, no scheduling
                     # • cancel_*    → cancel underlying task & purge metadata
-                    if name == "wait":
+                    # Normalise tool-call name defensively
+                    lname = str(name or "").strip()
+                    lname_cf = lname.casefold()
+
+                    if lname_cf == "wait":
                         # Log the no-op and prune it from the transcript to avoid clutter.
                         try:
                             logger.info(
@@ -1474,7 +1478,7 @@ async def async_tool_loop_inner(
                         # The loop should now wait for any pending tools or interjections.
                         continue
 
-                    if name.startswith("stop_") and not name.startswith(
+                    elif lname_cf.startswith("stop_") and not lname_cf.startswith(
                         "_stop_tasks",
                     ):
                         # Helper names are of the form: stop_{toolName}_{safeId}
@@ -1529,40 +1533,42 @@ async def async_tool_loop_inner(
                             tools_data.pop_task(task_to_cancel)
 
                     # Record any images provided with the stop helper and capture reason text
-                    with suppress(Exception):
-                        try:
-                            reason_txt = payload.get("reason")
-                        except Exception:
-                            reason_txt = ""
-                        append_image_refs_with_source(
-                            payload.get("images", payload.get("image_refs")),
-                        )
-                        try:
-                            for _iid, _annotation in get_image_log_entries():
-                                logger.info(
-                                    f"Image id={_iid}, annotation={_annotation!r}",
-                                    prefix="🖼️",
-                                )
-                        except Exception:
-                            pass
+                    # EXTRA GUARD: ensure this ack is emitted only for stop_* helpers
+                    if lname_cf.startswith("stop_"):
+                        with suppress(Exception):
+                            try:
+                                reason_txt = payload.get("reason")
+                            except Exception:
+                                reason_txt = ""
+                            append_image_refs_with_source(
+                                payload.get("images", payload.get("image_refs")),
+                            )
+                            try:
+                                for _iid, _annotation in get_image_log_entries():
+                                    logger.info(
+                                        f"Image id={_iid}, annotation={_annotation!r}",
+                                        prefix="🖼️",
+                                    )
+                            except Exception:
+                                pass
 
-                        tool_msg = create_tool_call_message(
-                            name=pretty_name,
-                            call_id=call["id"],
-                            content=f"The tool call [{call_id_suffix}] has been stopped successfully.",
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            msg,
-                            tool_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
+                            tool_msg = create_tool_call_message(
+                                name=pretty_name,
+                                call_id=call["id"],
+                                content=f"The tool call [{call_id_suffix}] has been stopped successfully.",
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
 
-                        continue  # nothing else to schedule
+                            continue  # nothing else to schedule
 
                     # ── _pause helper ────────────────────────────────────────────────
-                    if name.startswith("pause_") and not name.startswith(
+                    elif lname_cf.startswith("pause_") and not lname_cf.startswith(
                         "_pause_tasks",
                     ):
                         call_id_suffix = name.split("_")[-1]
@@ -1570,7 +1576,7 @@ async def async_tool_loop_inner(
                             (
                                 t
                                 for t, info in tools_data.info.items()
-                                if call_id_suffix in info.call_id
+                                if str(info.call_id).endswith(call_id_suffix)
                             ),
                             None,
                         )
@@ -1613,7 +1619,7 @@ async def async_tool_loop_inner(
                         continue  # helper handled, move on
 
                     # ── _resume helper ───────────────────────────────────────────────
-                    if name.startswith("resume_") and not name.startswith(
+                    elif lname_cf.startswith("resume_") and not lname_cf.startswith(
                         "_resume_tasks",
                     ):
                         call_id_suffix = name.split("_")[-1]
@@ -1621,7 +1627,7 @@ async def async_tool_loop_inner(
                             (
                                 t
                                 for t, info in tools_data.info.items()
-                                if call_id_suffix in info.call_id
+                                if str(info.call_id).endswith(call_id_suffix)
                             ),
                             None,
                         )
@@ -1663,7 +1669,7 @@ async def async_tool_loop_inner(
                         )
                         continue  # helper handled
 
-                    if name.startswith("clarify_"):
+                    elif lname_cf.startswith("clarify_"):
                         # Helper names are of the form: clarify_{toolName}_{safeId}
                         call_id_suffix = name.split("_")[-1]
                         ans = args["answer"]
@@ -1739,7 +1745,7 @@ async def async_tool_loop_inner(
                             )
                         continue
 
-                    if name.startswith("interject_"):
+                    elif lname_cf.startswith("interject_"):
                         # helper signature mirrors downstream handle.interject (content plus any extras)
                         with suppress(Exception):
                             payload = json.loads(call["function"]["arguments"]) or {}

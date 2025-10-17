@@ -35,11 +35,12 @@ class SkillManager(BaseSkillManager):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         # Ensure the FunctionManager context exists to allow column/schema access
         self._function_manager = FunctionManager()
 
         # Expose read-only FunctionManager methods directly (no wrappers)
-        self._tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._function_manager.list_functions,
                 self._function_manager.search_functions,
@@ -48,6 +49,7 @@ class SkillManager(BaseSkillManager):
                 include_class_name=False,
             ),
         }
+        self.add_tools("ask", ask_tools)
 
         # Cache function columns for prompt readability
         try:
@@ -98,7 +100,7 @@ class SkillManager(BaseSkillManager):
     ) -> SteerableToolHandle:
         import asyncio  # local to avoid widening import surface at module import time
 
-        tools = dict(self._tools)
+        tools = dict(self.get_tools("ask"))
 
         if clarification_up_q is not None and clarification_down_q is not None:
 

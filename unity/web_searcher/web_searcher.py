@@ -29,15 +29,17 @@ class WebSearcher(BaseWebSearcher):
     """
 
     def __init__(self):
+        super().__init__()
         self.tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
         # Build the tools mapping once; copy when used
-        self._ask_tools: Dict[str, Any] = methods_to_tool_dict(
+        ask_tools: Dict[str, Any] = methods_to_tool_dict(
             self._search,
             self._extract,
             self._crawl,
             self._map,
             include_class_name=False,
         )
+        self.add_tools("ask", ask_tools)
         # Ensure any internal caches/storage are present
         self._provision_storage()
 
@@ -55,7 +57,7 @@ class WebSearcher(BaseWebSearcher):
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
         if clarification_up_q is not None and clarification_down_q is not None:
 
             async def _on_request(q: str):

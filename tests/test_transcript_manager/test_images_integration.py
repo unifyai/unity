@@ -10,7 +10,7 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
 from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
-from unity.image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
+from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, AnnotatedImageRef
 
 
 PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
@@ -33,7 +33,7 @@ def test_get_images_for_message_returns_metadata_only_tm():
         ],
     )
 
-    # Log a message that references the image via ImageRefs
+    # Log a message that references the image via AnnotatedImageRefs
     msg = Message(
         medium="whatsapp_call",
         sender_id=101,
@@ -41,7 +41,14 @@ def test_get_images_for_message_returns_metadata_only_tm():
         timestamp=datetime.now(timezone.utc),
         content="Video conference: screen looks one colour",
         exchange_id=424242,
-        images=ImageRefs.model_validate([RawImageRef(image_id=int(img_id))]),
+        images=AnnotatedImageRefs.model_validate(
+            [
+                AnnotatedImageRef(
+                    raw_image_ref=RawImageRef(image_id=int(img_id)),
+                    annotation="blue screen",
+                ),
+            ],
+        ),
     )
     tm.log_messages(msg)
     tm.join_published()
@@ -123,7 +130,14 @@ async def test_ask_can_use_images_for_color_question_tm():
                 "Zoe on video conference: my screen is one colour, what is happening?"
             ),
             exchange_id=777001,
-            images=ImageRefs.model_validate([RawImageRef(image_id=int(img_id))]),
+            images=AnnotatedImageRefs.model_validate(
+                [
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(img_id)),
+                        annotation="blue screen",
+                    ),
+                ],
+            ),
         ),
     )
     tm.join_published()
@@ -207,7 +221,7 @@ async def test_ask_boot_option_and_fourth_item_tm():
             timestamp=datetime.now(timezone.utc),
             content=user_message,
             exchange_id=88001,
-            images=ImageRefs.model_validate(
+            images=AnnotatedImageRefs.model_validate(
                 [
                     AnnotatedImageRef(
                         raw_image_ref=RawImageRef(image_id=int(grub_id)),
@@ -297,7 +311,7 @@ async def test_compare_two_screens_requires_raw_context_tm():
             timestamp=datetime.now(timezone.utc),
             content=user_message,
             exchange_id=99001,
-            images=ImageRefs.model_validate(
+            images=AnnotatedImageRefs.model_validate(
                 [
                     AnnotatedImageRef(
                         raw_image_ref=RawImageRef(image_id=int(grub_id)),

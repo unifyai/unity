@@ -124,7 +124,7 @@ class EmailRecieved(Event):
     contact: str
     subject: str
     body: str
-    message_id: Optional[str]
+    message_id: Optional[str] = None
 
 
 # assistant events
@@ -278,7 +278,17 @@ class GetBusEventsRequest(Event):
 
 @dataclass
 class GetBusEventsResponse(Event):
+    loggable: ClassVar[bool] = False
     events: list[dict[str, Any]]
+
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        return f"{self.__class__.__name__}(events_len={len(self.events)})"
 
 
 @dataclass
@@ -336,11 +346,11 @@ class NotificationUnpinnedEvent(Event):
 
 @dataclass
 class UnifyMessageRecieved(Event):
-    contact: int
+    contact: str
     content: str
 
 
 @dataclass
 class UnifyMessageSent(Event):
-    contact: int
+    contact: str
     content: str

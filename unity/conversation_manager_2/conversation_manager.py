@@ -351,7 +351,7 @@ class ConversationManager:
                 elif action["action_name"] == "send_unify_message":
                     # Boss-only chat; contact id is always 1
                     content = action["message"]
-                    event = UnifyMessageSent(contact=1, content=content)
+                    event = UnifyMessageSent(contact="1", content=content)
                     self.publish_transcript
                     await self.event_broker.publish(
                         "app:comms:unify_message_sent",
@@ -444,7 +444,6 @@ class ConversationManager:
                 )
 
                 if msg is not None:
-                    print(msg)
                     self.last_activity_time = self.loop.time()
 
                 # there are still pending messages and no scheduled responses or currently running responses
@@ -585,9 +584,9 @@ class ConversationManager:
             return
 
         # Get contact - pass to all params and let get_contact find the match
-        if isinstance(event.contact, int):
-            contact = self.state.get_contact(contact_id=event.contact)
-        elif isinstance(event.contact, str):
+        if event.contact.isnumeric():
+            contact = self.state.get_contact(contact_id=int(event.contact))
+        elif event.contact:
             contact = self.state.get_contact(
                 phone_number=event.contact,
                 email_address=event.contact,

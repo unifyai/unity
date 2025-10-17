@@ -442,17 +442,11 @@ class ConversationManagerState:
         self.user_number = payload["user_number"]
         self.user_whatsapp_number = payload["user_whatsapp_number"]
         self.user_email = payload["user_email"]
-        self.current_user = {
-            "user_name": self.user_name,
-            "user_number": self.user_number,
-            "user_whatsapp_number": self.user_whatsapp_number,
-            "user_email": self.user_email,
-        }
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.build_response_model()
-        if payload.pop("api_key", None):
-            os.environ["UNIFY_KEY"] = payload.pop("api_key")
+        if payload.get("api_key"):
+            os.environ["UNIFY_KEY"] = payload["api_key"]
         os.environ["USER_ID"] = self.user_id
         os.environ["USER_NAME"] = self.user_name
         os.environ["USER_NUMBER"] = self.user_number
@@ -566,7 +560,7 @@ class ConversationManagerState:
             rolling_summary=rolling_summary,
             respond_to=respond_to,
             response_policy=response_policy,
-            is_boss=str(contact_id) == "1",
+            is_boss=contact_id == 1,
         )
         self.inverted_contacts_map[contact_id] = contact
         if email_address:

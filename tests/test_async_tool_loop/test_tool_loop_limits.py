@@ -9,6 +9,31 @@ from unity.common.tool_spec import ToolSpec
 from tests.helpers import SETTINGS
 
 
+# small helper: pre-seed an assistant tool_call so preflight backfill schedules it immediately
+def _preseed_tool_call(
+    client: "unify.AsyncUnify",
+    *,
+    call_id: str,
+    tool_name: str,
+    args_json: str,
+) -> None:
+    client.append_messages(
+        [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": args_json},
+                    },
+                ],
+            },
+        ],
+    )
+
+
 # ── 1. max_steps safeguard ────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_max_steps_exceeded():
@@ -213,7 +238,7 @@ def _make_long_tool(cancel_flag: dict):
 
 
 @pytest.mark.asyncio
-async def test_timeout_graceful_termination(monkeypatch):
+async def test_timeout_graceful_termination():
     """No exception; pending tool is cancelled when timeout hits."""
     cancel_flag = {}
     client = unify.AsyncUnify(
@@ -228,11 +253,18 @@ async def test_timeout_graceful_termination(monkeypatch):
         'You are running inside an automated test. In your FIRST assistant turn, call `long_tool` with {"seconds": 5}. '
         "Keep waiting afterwards.",
     )
+    _preseed_tool_call(
+        client,
+        call_id="call_preseed_timeout",
+        tool_name="long_tool",
+        args_json='{"seconds": 5}',
+    )
+
     handle = start_async_tool_loop(
         client,
         message="go",
         tools={"long_tool": _make_long_tool(cancel_flag)},
-        timeout=0.5,  # small but allows tool scheduling before timeout
+        timeout=0.5,  # real small timeout – tool is already scheduled via backfill
         max_steps=100,
         raise_on_limit=False,
     )
@@ -242,7 +274,7 @@ async def test_timeout_graceful_termination(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_max_steps_graceful_termination(monkeypatch):
+async def test_max_steps_graceful_termination():
     """No exception; pending tool is cancelled when max_steps is exceeded."""
     cancel_flag = {}
     client = unify.AsyncUnify(
@@ -257,17 +289,60 @@ async def test_max_steps_graceful_termination(monkeypatch):
         'You are running inside an automated test. In your FIRST assistant turn, call `long_tool` with {"seconds": 5}. '
         "Keep waiting afterwards.",
     )
+    _preseed_tool_call(
+        client,
+        call_id="call_preseed_steps",
+        tool_name="long_tool",
+        args_json='{"seconds": 5}',
+    )
+
     handle = start_async_tool_loop(
         client,
         message="go",
         tools={"long_tool": _make_long_tool(cancel_flag)},
-        max_steps=6,  # allow tool to fully start, then exceed step budget
+        max_steps=3,  # real small cap – after backfill + user message, limit will be hit
         timeout=5,
         raise_on_limit=False,
     )
     result = await handle.result()
     assert "Terminating early" in result
-    assert cancel_flag.get("cancelled", False)
+
+    # Robust assertions not relying on coroutine body execution timing.
+    # 1) The preseeded tool call must be present in assistant tool_calls.
+    assert any(
+        m.get("role") == "assistant"
+        and m.get("tool_calls")
+        and any(tc.get("id") == "call_preseed_steps" for tc in m["tool_calls"])
+        for m in client.messages
+    )
+
+    # 2) The tool must not have produced a successful final result.
+    assert not any(
+        m.get("role") == "tool"
+        and m.get("tool_call_id") == "call_preseed_steps"
+        and "finished" in str(m.get("content") or "")
+        for m in client.messages
+    )
+
+    # 3) White-box: the scheduled asyncio.Task for the call-id is cancelled.
+    loop_task = getattr(handle, "_task", None)
+    task_info = getattr(loop_task, "task_info", {}) if loop_task is not None else {}
+    found_cancelled = False
+    if isinstance(task_info, dict):
+        for t, meta in task_info.items():
+            if getattr(meta, "call_id", None) == "call_preseed_steps":
+                if t.cancelled():
+                    found_cancelled = True
+                    break
+                if t.done():
+                    try:
+                        exc = t.exception()
+                    except Exception:
+                        exc = None
+                    if isinstance(exc, asyncio.CancelledError):
+                        found_cancelled = True
+                        break
+    assert found_cancelled
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -392,7 +467,8 @@ async def test_policy_two_required_then_auto():
     client = new_client()
     handle = start_async_tool_loop(
         client,
-        "You are part of a test. Use the tool whenever required but stop when no longer forced.",
+        "You are part of a test. You will have no other option but to call the 'counting_tool' a certain number of times. "
+        "Please run the tool when there is no other option, but **stop** calling the tool **as soon as** you're able to avoid calling the tool.",
         {"counting_tool": counting_tool},
         tool_policy=first_two_required,
     )

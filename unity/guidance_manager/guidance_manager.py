@@ -32,7 +32,7 @@ from ..common.search_utils import table_search_top_k
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from ..image_manager.image_manager import ImageManager
-from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
+from ..image_manager.types import AnnotatedImageRefs, AnnotatedImageRef
 from ..common.embed_utils import list_private_fields
 from ..common.filter_utils import normalize_filter_expr
 
@@ -43,6 +43,7 @@ class GuidanceManager(BaseGuidanceManager):
     """
 
     def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
+        super().__init__()
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
         if not read_ctx:
@@ -66,7 +67,7 @@ class GuidanceManager(BaseGuidanceManager):
         self._REQUIRED_COLUMNS: set[str] = set(self._BUILTIN_FIELDS)
 
         # Public tools
-        self._ask_tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
                 self._filter,
@@ -82,7 +83,8 @@ class GuidanceManager(BaseGuidanceManager):
                 include_class_name=False,
             ),
         }
-        self._update_tools: Dict[str, Callable] = {
+        self.add_tools("ask", ask_tools)
+        update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.ask,
                 self._add_guidance,
@@ -93,7 +95,7 @@ class GuidanceManager(BaseGuidanceManager):
                 include_class_name=False,
             ),
         }
-
+        self.add_tools("update", update_tools)
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Lazy-safe image manager for resolving and attaching images
@@ -121,7 +123,7 @@ class GuidanceManager(BaseGuidanceManager):
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
         if clarification_up_q is not None and clarification_down_q is not None:
 
             async def _on_request(q: str):
@@ -213,7 +215,7 @@ class GuidanceManager(BaseGuidanceManager):
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._update_tools)
+        tools = dict(self.get_tools("update"))
         if clarification_up_q is not None and clarification_down_q is not None:
 
             async def _on_request(q: str):
@@ -450,7 +452,9 @@ class GuidanceManager(BaseGuidanceManager):
         if not rows:
             return []
         guidance_row = rows[0]
-        refs: ImageRefs = guidance_row.images or ImageRefs([])
+        refs: AnnotatedImageRefs = (
+            guidance_row.images or AnnotatedImageRefs.model_validate([])
+        )
         items = list(getattr(refs, "root", refs))
         if not items:
             return []
@@ -458,23 +462,11 @@ class GuidanceManager(BaseGuidanceManager):
         image_ids: List[int] = []
         annotations_by_id: Dict[int, List[str]] = {}
         for r in items:
-            if isinstance(r, AnnotatedImageRef):
-                iid = int(r.raw_image_ref.image_id)
-                image_ids.append(iid)
-                annotations_by_id.setdefault(iid, []).append(str(r.annotation))
-            elif isinstance(r, RawImageRef):
-                iid = int(r.image_id)
-                image_ids.append(iid)
-            elif isinstance(r, dict):
-                # Best-effort parsing if entries came from raw dicts
-                if "raw_image_ref" in r and isinstance(r["raw_image_ref"], dict):
-                    iid = int(r["raw_image_ref"].get("image_id"))
-                    image_ids.append(iid)
-                    ann = r.get("annotation")
-                    if ann is not None:
-                        annotations_by_id.setdefault(iid, []).append(str(ann))
-                elif "image_id" in r:
-                    image_ids.append(int(r.get("image_id")))
+            if not isinstance(r, AnnotatedImageRef):
+                continue
+            iid = int(r.raw_image_ref.image_id)
+            image_ids.append(iid)
+            annotations_by_id.setdefault(iid, []).append(str(r.annotation))
         # Preserve order while de-duplicating
         image_ids = list(dict.fromkeys(image_ids))
         handles = self._image_manager.get_images(image_ids)
@@ -529,8 +521,7 @@ class GuidanceManager(BaseGuidanceManager):
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
         handle = handles[0]
-        sub = await handle.ask(question)
-        answer = await sub.result()
+        answer = await handle.ask(question)
         if not isinstance(answer, str):
             answer = str(answer)
         return answer
@@ -607,28 +598,20 @@ class GuidanceManager(BaseGuidanceManager):
         if not rows:
             return {"attached_count": 0, "images": []}
         guidance_row = rows[0]
-        refs: ImageRefs = guidance_row.images or ImageRefs([])
+        refs: AnnotatedImageRefs = (
+            guidance_row.images or AnnotatedImageRefs.model_validate([])
+        )
         items = list(getattr(refs, "root", refs))
         if not items:
             return {"attached_count": 0, "images": []}
         unique_ids: List[int] = []
         annotations_by_id: Dict[int, List[str]] = {}
         for r in items:
-            if isinstance(r, AnnotatedImageRef):
-                iid = int(r.raw_image_ref.image_id)
-                unique_ids.append(iid)
-                annotations_by_id.setdefault(iid, []).append(str(r.annotation))
-            elif isinstance(r, RawImageRef):
-                unique_ids.append(int(r.image_id))
-            elif isinstance(r, dict):
-                if "raw_image_ref" in r and isinstance(r["raw_image_ref"], dict):
-                    iid = int(r["raw_image_ref"].get("image_id"))
-                    unique_ids.append(iid)
-                    ann = r.get("annotation")
-                    if ann is not None:
-                        annotations_by_id.setdefault(iid, []).append(str(ann))
-                elif "image_id" in r:
-                    unique_ids.append(int(r.get("image_id")))
+            if not isinstance(r, AnnotatedImageRef):
+                continue
+            iid = int(r.raw_image_ref.image_id)
+            unique_ids.append(iid)
+            annotations_by_id.setdefault(iid, []).append(str(r.annotation))
         # Preserve original appearance order while de-duplicating
         unique_ids = list(dict.fromkeys(unique_ids))
         if limit is not None:
@@ -673,34 +656,15 @@ class GuidanceManager(BaseGuidanceManager):
             raise ValueError(
                 "At least one field (title/content/images) must be provided.",
             )
-        # Accept ImageRefs or a raw list of refs/dicts
-        refs: ImageRefs
-        try:
-            if isinstance(images, ImageRefs):
-                refs = images
-            elif images is None:
-                refs = ImageRefs([])
-            else:
-                # Expect a list of RawImageRef/AnnotatedImageRef/dicts
-                refs = ImageRefs(images)  # type: ignore[arg-type]
-        except Exception as exc:
-            raise ValueError(
-                "Invalid images payload; expected ImageRefs-compatible list",
-            ) from exc
-
         g = Guidance(
             title=title or "",
             content=content or "",
-            images=refs,
+            images=(
+                images if images is not None else AnnotatedImageRefs.model_validate([])
+            ),
             function_ids=function_ids or [],
         )
         payload = g.to_post_json()
-        # Ensure images is plain JSON (list) not a Pydantic object
-        try:
-            if isinstance(payload.get("images"), ImageRefs):
-                payload["images"] = payload["images"].model_dump(mode="json")
-        except Exception:
-            pass
         log = unify.log(
             context=self._ctx,
             **payload,
@@ -727,22 +691,22 @@ class GuidanceManager(BaseGuidanceManager):
         if content is not None:
             updates["content"] = content
         if images is not None:
-            # Validate via model by constructing minimal model (accepts ImageRefs or list)
-            try:
-                refs = images if isinstance(images, ImageRefs) else ImageRefs(images)  # type: ignore[arg-type]
-            except Exception as exc:
-                raise ValueError(
-                    "Invalid images payload; expected ImageRefs-compatible list",
-                ) from exc
-            _ = Guidance(title=title or "tmp", content=content or "tmp", images=refs)
-            # Store as plain JSON-serialisable value (list of refs), not a Pydantic object
+            _ = Guidance(
+                title=title or "tmp",
+                content=content or "tmp",
+                images=(
+                    images
+                    if images is not None
+                    else AnnotatedImageRefs.model_validate([])
+                ),
+            )
             updates["images"] = _.model_dump(mode="json")["images"]
         if function_ids is not None:
             # Validate via model validator
             _g = Guidance(
                 title=title or "tmp",
                 content=content or "tmp",
-                images=updates.get("images") or ImageRefs([]),
+                images=updates.get("images") or AnnotatedImageRefs.model_validate([]),
                 function_ids=function_ids,
             )
             updates["function_ids"] = _g.function_ids
