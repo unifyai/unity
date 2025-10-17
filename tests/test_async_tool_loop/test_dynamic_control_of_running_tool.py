@@ -279,10 +279,21 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
     • Exactly one `pause_…` and one `resume_…` tool-call must appear.
     """
 
+    # Gates to ensure deterministic ordering: the tool must see pause then resume
+    pause_called_gate = asyncio.Event()
+    resume_called_gate = asyncio.Event()
+
     async def pausable_fn(*, pause_event: asyncio.Event) -> str:
-        for _ in range(8):
+        # Wait until pause helper has been invoked
+        while not pause_called_gate.is_set():
             await pause_event.wait()
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.05)
+        # Then wait until resume helper has been invoked
+        await resume_called_gate.wait()
+        # Do a short bit of post-resume work
+        for _ in range(10):
+            await pause_event.wait()
+            await asyncio.sleep(0.05)
         return "yo"
 
     pausable_fn.__name__ = "pausable_fn"
@@ -312,7 +323,15 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
     # before sending the *unfreeze* command so we are sure the helper sequence
     # is pause → resume (in that order).
     await _wait_for_assistant_call_prefix(client, "pause")
+    await _wait_for_tool_message_prefix(client, "pause ")
+    # Unblock the tool after pause helper observed
+    pause_called_gate.set()
+
     await h.interject("unfreeze")
+    # Ensure resume helper is actually invoked before allowing tool to finish
+    await _wait_for_assistant_call_prefix(client, "resume")
+    await _wait_for_tool_message_prefix(client, "resume ")
+    resume_called_gate.set()
 
     final = await h.result()
     msgs = client.messages
