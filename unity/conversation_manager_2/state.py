@@ -173,6 +173,13 @@ class ConversationManagerState:
                     email_address=payload["assistant_email"],
                     phone_number=payload["assistant_number"],
                 )
+                self.update_or_create_new_contact(
+                    contact_id=1,
+                    first_name=payload["user_name"],
+                    surname="",
+                    email_address=payload["user_email"],
+                    phone_number=payload["user_number"],
+                )
 
             case GetBusEventsResponse() as e:
                 # TODO: should also grab the latest messages ~50 messages

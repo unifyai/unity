@@ -748,6 +748,9 @@ class ConversationManager:
             await self.publish_contact_update(
                 self.state.inverted_contacts_map[0].model_dump()
             )
+            await self.publish_contact_update(
+                self.state.inverted_contacts_map[1].model_dump()
+            )
 
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)
@@ -783,6 +786,7 @@ class ConversationManager:
                     f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown...",
                 )
                 self.stop.set()
+                await self.event_broker.aclose()
 
     def cleanup_call_proc(self):
         if hasattr(self, "call_proc") and self.call_proc:

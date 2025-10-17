@@ -44,7 +44,12 @@ async def test_guidance_persistent_image_context_then_reason():
     out = gm._add_guidance(
         title="Pixel Icon",
         content="Review the icon layout and color.",
-        images=[{"image_id": int(img_id), "annotation": "icon screenshot"}],
+        images=[
+            {
+                "raw_image_ref": {"image_id": int(img_id)},
+                "annotation": "icon screenshot",
+            },
+        ],
     )
     gid = out["details"]["guidance_id"]
 
@@ -115,8 +120,14 @@ async def test_guidance_boot_option_and_fourth_item_gm():
         title="Ubuntu install from USB (boot + wizard)",
         content=guidance_text,
         images=[
-            {"image_id": int(grub_id), "annotation": "GRUB boot menu"},
-            {"image_id": int(wizard_id), "annotation": "Installer wizard"},
+            {
+                "raw_image_ref": {"image_id": int(grub_id)},
+                "annotation": "GRUB boot menu",
+            },
+            {
+                "raw_image_ref": {"image_id": int(wizard_id)},
+                "annotation": "Installer wizard",
+            },
         ],
     )
     gid = int(out["details"]["guidance_id"])
@@ -191,8 +202,14 @@ async def test_guidance_compare_two_screens_requires_raw_context_gm():
         title="Compare GRUB vs Installer screens",
         content=guidance_text,
         images=[
-            {"image_id": int(grub_id), "annotation": "GRUB boot menu"},
-            {"image_id": int(wizard_id), "annotation": "Installer wizard"},
+            {
+                "raw_image_ref": {"image_id": int(grub_id)},
+                "annotation": "GRUB boot menu",
+            },
+            {
+                "raw_image_ref": {"image_id": int(wizard_id)},
+                "annotation": "Installer wizard",
+            },
         ],
     )
     gid = int(out["details"]["guidance_id"])

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
 class BaseActiveTask(SteerableToolHandle, ABC):
@@ -47,7 +48,7 @@ class BaseActiveTask(SteerableToolHandle, ABC):
         """
 
 
-class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
+class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Public contract for a task‑list manager.
 
