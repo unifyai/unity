@@ -10,6 +10,7 @@ from .utils import maybe_await
 from ...constants import LOGGER
 from contextlib import suppress
 from .tools_utils import create_tool_call_message
+from .images import append_image_refs_with_source
 
 
 # TODO: Some of these helpers should not be placed here, but in utils.py or their own files
@@ -492,6 +493,18 @@ async def schedule_missing_for_message(
                         pass
                     scheduled.append(cid)
                     continue
+
+                # If helper arguments include images, append them to the live images registry immediately
+                with suppress(Exception):
+                    payload = (
+                        json.loads(args_json or "{}")
+                        if isinstance(args_json, str)
+                        else (args_json or {})
+                    )
+                    imgs = payload.get("images") if isinstance(payload, dict) else None
+                    if imgs is None and isinstance(payload, dict):
+                        imgs = payload.get("image_refs")
+                    append_image_refs_with_source(imgs)
 
                 # Other helpers: acknowledge but do not execute during backfill
                 try:
