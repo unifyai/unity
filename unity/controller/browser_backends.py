@@ -722,7 +722,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
     async def act(
         self,
         instruction: str,
-        wait: bool = False,
+        wait: bool = True,
         context: dict = None,
     ) -> Any:
         """
@@ -732,13 +732,13 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         Args:
             instruction (str): A high-level, natural-language command describing the desired outcome.
-            wait (bool): If True, the function will block and wait for the action to
-                        complete in the browser before returning. If False (default),
+            wait (bool): If True (default), the function will block and wait for the action to
+                        complete in the browser before returning. If False,
                         the command is added to a queue for background execution, and
                         the function returns immediately.
             context (dict): Internal metadata for command tracking.
 
-        ### Non-Blocking Example (`wait=False`, Default)
+        ### Non-Blocking Example (`wait=False`)
         This is ideal for sequences of actions where the plan doesn't need immediate feedback.
         ```python
         # The plan queues up all actions and continues its own execution
@@ -748,7 +748,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         await action_provider.act("Click the 'Login' button", wait=False)
         ```
 
-        ### Blocking Example (`wait=True`)
+        ### Blocking Example (`wait=True`, Default)
         Use this when the outcome of an action is required for a subsequent decision in the plan.
         ```python
         # The plan pauses until the button click is complete and the new page has loaded.
