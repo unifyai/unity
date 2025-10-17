@@ -431,7 +431,8 @@ async def test_policy_two_required_then_auto():
     client = new_client()
     handle = start_async_tool_loop(
         client,
-        "You are part of a test. Use the tool whenever required but stop when no longer forced.",
+        "You are part of a test. You will have no other option but to call the 'counting_tool' a certain number of times. "
+        "Please run the tool when there is no other option, but **stop** calling the tool **as soon as** you're able to avoid calling the tool.",
         {"counting_tool": counting_tool},
         tool_policy=first_two_required,
     )
