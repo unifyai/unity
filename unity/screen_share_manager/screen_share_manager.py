@@ -166,7 +166,7 @@ class ScreenShareManager:
     def __init__(self):
         # Configuration
         self.MSE_THRESHOLD = 10
-        self.SSIM_THRESHOLD = 0.80
+        self.SSIM_THRESHOLD = 0.995
         self.MIN_CONTOUR_AREA = 100
         self.MAX_ASPECT_RATIO = 20
         self.DEBOUNCE_DELAY_SEC = 0.5
