@@ -57,6 +57,11 @@ def build_ask_prompt(
     task_ask_fname = _tool_name(tools, "taskscheduler_ask")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
     actor_act_fname = _tool_name(tools, "actor_act")
+    cm_ask_fname = _tool_name(tools, "conversationmanagerhandle_ask")
+    cm_transcript_fname = _tool_name(
+        tools,
+        "conversationmanagerhandle_get_full_transcript",
+    )
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
