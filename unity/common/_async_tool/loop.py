@@ -1299,6 +1299,18 @@ async def async_tool_loop_inner(
                     llm_turn_required = True
                     continue
 
+                # 3️⃣ notification bubbled up while the LLM was thinking →
+                #    cancel current LLM step, surface the notification,
+                #    then restart the loop so the next assistant turn can ingest it.
+                if done & set(notif_waiters2.keys()):
+                    if not llm_task.done():
+                        llm_task.cancel()
+                        await asyncio.gather(llm_task, return_exceptions=True)
+                    for pw in done & set(notif_waiters2.keys()):
+                        await _handle_notification(notif_waiters2[pw], pw.result())
+                    llm_turn_required = True
+                    continue
+
                 # 2️⃣ cancellation requested
                 if cancel_waiter in done:
                     # Only escalate when the cancellation flag is actually set.
