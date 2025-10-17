@@ -1,3 +1,5 @@
+# FILE: tests/test_screen_share_manager/test_screen_share_manager.py
+
 import asyncio
 from datetime import datetime
 import json
@@ -714,12 +716,7 @@ async def test_adaptive_frame_dropping_under_heavy_load(mocked_screen_share_mana
 
     with patch.object(manager, "_b64_to_image", side_effect=slow_b64_to_image_wrapper):
         # Manually start the manager's background tasks for the test
-        manager._sequencer_task = asyncio.create_task(manager._sequencer())
-        manager._frame_workers = [
-            asyncio.create_task(manager._frame_processing_worker())
-            for _ in range(manager.MAX_FRAME_WORKERS)
-        ]
-        listener_task = asyncio.create_task(manager._listen_for_events())
+        main_task = asyncio.create_task(manager.start())
 
         # Allow time for the listener to process the burst of events
         await asyncio.sleep(1.0)
@@ -740,13 +737,13 @@ async def test_adaptive_frame_dropping_under_heavy_load(mocked_screen_share_mana
         assert len(decode_calls) > 0  # Ensure some frames were processed
 
         # 3. The system remains stable (the task did not crash)
-        assert not listener_task.done()
+        assert not main_task.done()
 
         # Cleanup
-        listener_task.cancel()
+        main_task.cancel()
         manager.stop()  # Use the manager's stop method for cleaner shutdown
         try:
-            await listener_task
+            await main_task
         except asyncio.CancelledError:
             pass
 
