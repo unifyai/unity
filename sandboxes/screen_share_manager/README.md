@@ -5,7 +5,7 @@ This sandbox lets you experiment with the `ScreenShareManager` in isolation by s
 
 Demo:
 -----
-Link to a [loom video](https://www.loom.com/share/9040bec558804ef49ea0ba40dd7d5b9a?sid=19767836-0226-434a-bc9b-a465ea0eb974) walking through a sample run
+Link to a [loom video](https://www.loom.com/share/9040bec558804ef49ea0ba40dd7d5b9a?sid=19767836-0226-434a-bc9b-a465ea0eb974) walking through a sample run. Note: Some parts may be outdated, refer to the docstrings of the SreenShareManager class for the most up-to-date breakdown.
 
 Running the sandbox
 -------------------
