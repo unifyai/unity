@@ -1,12 +1,22 @@
-# FILE: test_screen_share_manager.py
+# FILE: tests/test_screen_share_manager/test_screen_share_manager.py
 
 import asyncio
 from datetime import datetime
 import json
 from unittest.mock import patch, AsyncMock, MagicMock
+import time
+from pathlib import Path
 
 import pytest
+from PIL import Image
+from unity.image_manager.types import (
+    AnnotatedImageRef,
+    ImageRefs,
+    RawImageRef,
+    AnnotatedImageRefs,
+)
 from unity.image_manager.utils import make_solid_png_base64
+from unity.screen_share_manager.screen_share_manager import ScreenShareManager
 from unity.screen_share_manager.types import TurnAnalysisResponse, KeyEvent
 from tests.helpers import _handle_project
 
@@ -22,6 +32,18 @@ PNG_MAGENTA_B64 = (
 PNG_WHITE_B64 = (
     f"data:image/png;base64,{make_solid_png_base64(10, 10, (255, 255, 255))}"
 )
+
+# --- Asset Loading Helper ---
+ASSETS_DIR = Path(__file__).parent / "assets"
+
+
+def load_asset_image(filename: str) -> Image.Image:
+    """Loads an image from the assets directory and converts it for testing."""
+    path = ASSETS_DIR / filename
+    if not path.exists():
+        pytest.fail(f"Asset image not found: {path}")
+    # Convert to grayscale and resize to match the manager's internal processing
+    return Image.open(path).convert("L").resize((512, 288))
 
 
 @pytest.fixture
@@ -193,11 +215,13 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
+    # Update the mock response to include the new field
     mock_llm_response = TurnAnalysisResponse(
         events=[
             KeyEvent(
-                timestamp=15.5,
+                timestamp=15.0,  # Match the start time of the speech
                 event_description="User clicked the 'Submit Application' button.",
+                image_annotation="The 'Application Submitted' confirmation screen.",
                 triggering_phrase="submit the application",
                 representative_timestamp=15.5,
             )
@@ -227,15 +251,83 @@ async def test_speech_event_triggers_analysis_and_logging_with_specifics(
     await manager._logging_worker(log_job)
     mocks["transcript_manager"].log_messages.assert_called_once()
     logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
-    annotation = logged_message.screen_share["15.00-16.50"]
-    assert annotation.caption == "User clicked the 'Submit Application' button."
-    content = "Okay, I am ready to submit the application now."
-    phrase = "submit the application"
-    start_index = content.find(phrase)
-    end_index = start_index + len(phrase)
-    expected_key = f"[{start_index}:{end_index}]"
-    assert expected_key in logged_message.images
-    assert logged_message.images[expected_key] == 42
+
+    # Check the screen_share field (should still use event_description)
+    screen_share_annotation = logged_message.screen_share["15.00-16.50"]
+    assert (
+        screen_share_annotation.caption
+        == "User clicked the 'Submit Application' button."
+    )
+
+    # Assert the new AnnotatedImageRef structure with the new annotation
+    assert isinstance(logged_message.images, AnnotatedImageRefs)
+    image_refs = logged_message.images.root
+    assert len(image_refs) == 1
+    annotated_ref = image_refs[0]
+    assert isinstance(annotated_ref, AnnotatedImageRef)
+    assert annotated_ref.raw_image_ref.image_id == 42
+    # This assertion now checks for the new, specific image annotation
+    assert (
+        annotated_ref.annotation == "The 'Application Submitted' confirmation screen."
+    )
+
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_speech_event_without_triggering_phrase_is_logged_correctly(
+    mocked_screen_share_manager,
+):
+    """
+    Verifies that a speech event is still logged with the correct full duration
+    even if the LLM does not identify a `triggering_phrase`.
+    """
+    manager, mocks = mocked_screen_share_manager
+    manager.DEBOUNCE_DELAY_SEC = 0
+    # This time, the LLM response has no triggering_phrase
+    mock_llm_response = TurnAnalysisResponse(
+        events=[
+            KeyEvent(
+                timestamp=20.0,  # Match the start time of the speech
+                event_description="User expressed confusion about the form.",
+                image_annotation=None,  # No annotation without a trigger phrase
+                triggering_phrase=None,  # The key part of this test
+                representative_timestamp=20.2,
+            )
+        ]
+    )
+    mocks["analysis_client"].generate.return_value = mock_llm_response
+    speech_event_data = {
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "timestamp": datetime.now().isoformat(),
+            "content": "Hmm, I'm not sure what to do here.",
+            "start_time": 20.0,
+            "end_time": 21.5,
+        }
+    }
+    # Add a frame to the buffer to act as the representative frame
+    manager._frame_buffer.append((20.2, PNG_GREEN_B64))
+
+    manager._trigger_turn_analysis(speech_event=speech_event_data)
+    await asyncio.sleep(0.01)
+
+    assert manager._logging_queue.qsize() == 1
+    log_job = await manager._logging_queue.get()
+    await manager._logging_worker(log_job)
+
+    mocks["transcript_manager"].log_messages.assert_called_once()
+    logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
+
+    # The key assertion: the log must use the full speech duration as the key
+    assert "20.00-21.50" in logged_message.screen_share
+    # And not the point-in-time key
+    assert "20.00-20.00" not in logged_message.screen_share
+
+    annotation = logged_message.screen_share["20.00-21.50"]
+    assert annotation.caption == "User expressed confusion about the form."
+    # With no triggering phrase, no AnnotatedImageRef should be created
+    assert len(logged_message.images.root) == 0
 
 
 @pytest.mark.unit
@@ -245,23 +337,25 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
     mocked_screen_share_manager,
 ):
     """
-    Tests that a silent visual event is stored and then logged together
-    with the next user utterance.
+    Tests that a silent visual event is analyzed, stored, and then logged
+    together with the next user utterance, ensuring no message is logged for
+    the silent event alone.
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
     manager.INACTIVITY_TIMEOUT_SEC = 0.1
 
-    # 1. Simulate a silent visual event
-    async with manager._state_lock:
-        manager._pending_vision_events.append(
-            {
-                "timestamp": 25.0,
-                "before_frame_b64": PNG_BLUE_B64,
-                "after_frame_b64": PNG_RED_B64,
-            }
-        )
-    manager._last_activity_time = asyncio.get_event_loop().time() - 1.0
+    # 1. Simulate a silent visual event being detected and analyzed after a timeout.
+    manager._pending_vision_events.append(
+        {
+            "timestamp": 25.0,
+            "before_frame_b64": PNG_BLUE_B64,
+            "after_frame_b64": PNG_RED_B64,
+        }
+    )
+    manager._last_activity_time = (
+        asyncio.get_event_loop().time() - 1.0
+    )  # Force timeout condition
     silent_event_analysis = TurnAnalysisResponse(
         events=[
             KeyEvent(
@@ -272,17 +366,20 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
         ]
     )
     mocks["analysis_client"].generate.return_value = silent_event_analysis
-    await manager._flush_pending_events_on_timeout()
-    await asyncio.sleep(0.01)
-    log_job_silent = await manager._logging_queue.get()
-    await manager._logging_worker(log_job_silent)
+
+    await manager._flush_pending_events_on_timeout()  # This will call _analyze_turn(speech_event=None)
+    await asyncio.sleep(0.01)  # Allow tasks to run
+
+    # Assert that NO logging job was created and events were stored.
     mocks["analysis_client"].generate.assert_called_once()
+    assert manager._logging_queue.qsize() == 0
     assert len(manager._stored_silent_key_events) == 1
     mocks["transcript_manager"].log_messages.assert_not_called()
 
     # 2. Now, simulate a subsequent user utterance
-    # FIX: Add a frame to the buffer to simulate the current screen state for the speech event
-    manager._frame_buffer.append((30.0, PNG_GREEN_B64))
+    manager._frame_buffer.append(
+        (30.0, PNG_GREEN_B64)
+    )  # Ensure there's a frame for the speech event analysis
 
     speech_event_data = {
         "payload": {
@@ -303,15 +400,24 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
         ]
     )
     mocks["analysis_client"].generate.return_value = speech_event_analysis
+
+    # This directly triggers the debounced runner, which calls _analyze_turn
     manager._trigger_turn_analysis(speech_event=speech_event_data)
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.01)  # Allow debounce (0) and analysis to run
+
+    # Assert a logging job was created
+    assert manager._logging_queue.qsize() == 1
+
     log_job_speech = await manager._logging_queue.get()
     await manager._logging_worker(log_job_speech)
 
+    # Assertions: second analysis happened, one log message created with combined events
     assert mocks["analysis_client"].generate.call_count == 2
     mocks["transcript_manager"].log_messages.assert_called_once()
     logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
     assert len(logged_message.screen_share) == 2
+    assert "25.00-25.00" in logged_message.screen_share  # From silent event
+    assert "30.00-31.00" in logged_message.screen_share  # From speech event
 
 
 @pytest.mark.unit
@@ -642,3 +748,200 @@ async def test_set_session_context_updates_summary(mocked_screen_share_manager):
         mock_build_prompt.assert_called_once()
         call_args, _ = mock_build_prompt.call_args
         assert call_args[0] == initial_context
+
+
+@pytest.mark.performance
+@_handle_project
+@pytest.mark.asyncio
+async def test_adaptive_frame_dropping_under_heavy_load(mocked_screen_share_manager):
+    """
+    Tests that the manager remains stable and adaptively drops frames when the
+    processing queue is overwhelmed by a high-frequency stream of events.
+    """
+    manager, mocks = mocked_screen_share_manager
+    # Configure for the test: smaller queue to fill up faster
+    manager.FRAME_QUEUE_SIZE = 50
+    manager.ADAPTIVE_DROP_THRESHOLD = 0.75
+    manager._frame_queue = asyncio.Queue(maxsize=manager.FRAME_QUEUE_SIZE)
+
+    # Simulate a processing delay to cause a backlog in the queue
+    original_b64_to_image = manager._b64_to_image
+    decode_calls = []
+
+    def slow_b64_to_image_wrapper(b64_string: str):
+        time.sleep(0.01)  # Artificial CPU-bound delay
+        decode_calls.append(b64_string)
+        return original_b64_to_image(b64_string)
+
+    # Simulate a rapid burst of 200 frame events
+    total_frames_sent = 200
+    frame_event = {
+        "channel": "app:comms:screen_frame",
+        "data": json.dumps({"payload": {"timestamp": 1.0, "frame_b64": PNG_BLUE_B64}}),
+    }
+    event_stream = [frame_event] * total_frames_sent
+    mocks[
+        "event_broker"
+    ].pubsub.return_value.__aenter__.return_value.get_message.side_effect = event_stream + [
+        asyncio.TimeoutError
+    ]
+
+    with patch.object(manager, "_b64_to_image", side_effect=slow_b64_to_image_wrapper):
+        # Manually start the manager's background tasks for the test
+        main_task = asyncio.create_task(manager.start())
+
+        # Allow time for the listener to process the burst of events
+        await asyncio.sleep(1.0)
+
+        # Assertions
+        # 1. The listener should have tried to process all events
+        assert (
+            mocks[
+                "event_broker"
+            ].pubsub.return_value.__aenter__.return_value.get_message.call_count
+            >= total_frames_sent
+        )
+
+        # 2. Adaptive dropping occurred: Not all frames were decoded
+        # The number of decoded frames should be significantly less than the total sent
+        # because the queue filled up, triggering the proactive dropping logic.
+        assert len(decode_calls) < total_frames_sent
+        assert len(decode_calls) > 0  # Ensure some frames were processed
+
+        # 3. The system remains stable (the task did not crash)
+        assert not main_task.done()
+
+        # Cleanup
+        main_task.cancel()
+        manager.stop()  # Use the manager's stop method for cleaner shutdown
+        try:
+            await main_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.performance
+@_handle_project
+@pytest.mark.asyncio
+async def test_stability_with_concurrent_speech_and_frames(mocked_screen_share_manager):
+    """
+    Tests that a high-priority speech event is correctly processed even when the
+    system is under a heavy, continuous load of screen frames.
+    """
+    manager, mocks = mocked_screen_share_manager
+    manager.DEBOUNCE_DELAY_SEC = 0.05
+
+    # Simulate a continuous stream of frame events with a speech event in the middle
+    speech_event_data = {
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "timestamp": datetime.now().isoformat(),
+            "content": "This is a test utterance.",
+        }
+    }
+    speech_event = {
+        "channel": "app:comms:phone_utterance",
+        "data": json.dumps(speech_event_data),
+    }
+    frame_event = {
+        "channel": "app:comms:screen_frame",
+        "data": json.dumps({"payload": {"timestamp": 1.0, "frame_b64": PNG_WHITE_B64}}),
+    }
+
+    # Create a stream of 50 frames, then speech, then 50 more frames
+    event_stream = [frame_event] * 50 + [speech_event] + [frame_event] * 50
+    # Add a final timeout to stop the loop gracefully
+    event_stream.append(asyncio.TimeoutError)
+    mocks[
+        "event_broker"
+    ].pubsub.return_value.__aenter__.return_value.get_message.side_effect = event_stream
+
+    # Run the listener as a background task
+    listener_task = asyncio.create_task(manager._listen_for_events())
+
+    # Wait long enough for the speech event to be processed and debounced
+    await asyncio.sleep(0.5)
+
+    # Assertion: The speech event should have successfully triggered an analysis
+    mocks["analysis_client"].generate.assert_called_once()
+
+    # The system should remain stable
+    assert not listener_task.done()
+
+    # Cleanup
+    listener_task.cancel()
+    try:
+        await listener_task
+    except asyncio.CancelledError:
+        pass
+
+
+# ==============================================================================
+# Visual Change Detection Accuracy Tests
+# ==============================================================================
+
+
+@pytest.mark.vision
+@_handle_project
+@pytest.mark.parametrize(
+    "image_pair",
+    [
+        ("modal_before.png", "modal_after.png"),
+        ("button_active_before.png", "button_active_after.png"),
+    ],
+)
+def test_visual_change_detection_significant_changes(
+    mocked_screen_share_manager, image_pair
+):
+    """
+    Tests that the vision pipeline correctly identifies REAL, significant UI changes.
+    Requires image assets in `tests/test_screen_share_manager/assets/`.
+    """
+    manager, _ = mocked_screen_share_manager
+    before_filename, after_filename = image_pair
+
+    img_before = load_asset_image(before_filename)
+    img_after = load_asset_image(after_filename)
+
+    # 1. MSE Pre-filter: Should pass the threshold for a real change
+    mse = manager._calculate_mse(img_before, img_after)
+    assert mse > manager.MSE_THRESHOLD
+
+    # 2. SSIM Perceptual Check: Should be below the threshold, indicating a difference
+    from skimage.metrics import structural_similarity as ssim
+    import numpy as np
+
+    score = ssim(np.array(img_before), np.array(img_after))
+    assert score < manager.SSIM_THRESHOLD
+
+    # 3. Semantic Contour Analysis: Should find significant contours
+    is_significant = manager._is_semantically_significant(img_before, img_after)
+    assert is_significant is True
+
+
+@pytest.mark.vision
+@_handle_project
+@pytest.mark.parametrize(
+    "image_pair",
+    [
+        ("blinking_caret_before.png", "blinking_caret_after.png"),
+        ("cursor_move_before.png", "cursor_move_after.png"),
+    ],
+)
+def test_visual_change_detection_insignificant_changes(
+    mocked_screen_share_manager, image_pair
+):
+    """
+    Tests that the vision pipeline correctly IGNORES insignificant visual noise.
+    Requires image assets in `tests/test_screen_share_manager/assets/`.
+    """
+    manager, _ = mocked_screen_share_manager
+    before_filename, after_filename = image_pair
+
+    img_before = load_asset_image(before_filename)
+    img_after = load_asset_image(after_filename)
+
+    # The full pipeline should result in the change being flagged as insignificant.
+    # We test the final semantic filter, as MSE/SSIM may or may not catch these.
+    is_significant = manager._is_semantically_significant(img_before, img_after)
+    assert is_significant is False

@@ -1,3 +1,5 @@
+# FILE: unity/screen_share_manager/screen_share_manager.py
+
 import asyncio
 import base64
 import io
@@ -19,6 +21,11 @@ from skimage.metrics import structural_similarity as ssim
 
 from unity.conversation_manager_2.event_broker import get_event_broker
 from unity.image_manager.image_manager import ImageManager
+from unity.image_manager.types import (
+    AnnotatedImageRef,
+    RawImageRef,
+    AnnotatedImageRefs,
+)
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import (
     Medium,
@@ -107,23 +114,25 @@ class ScreenShareManager:
       ensuring that the context of the silent action is not lost and is logged
       alongside the user's subsequent thoughts.
 
-    Semantic Association (`[x:y]` Notation)
-    ---------------------------------------
+    Semantic Image Association (`AnnotatedImageRef`)
+    ------------------------------------------------
     A key feature is the ability to semantically link a visual event (a screenshot)
-    to the exact words the user spoke. This is achieved via the `triggering_phrase`
-    identified by the LLM.
+    to the user's speech. This is achieved through the `KeyEvent` data model and
+    the `AnnotatedImageRef` type.
 
-    - The LLM is prompted to find the specific text span in the user's speech
-      that corresponds to a visual action (e.g., for a click on a "Submit" button,
-      the triggering phrase might be "click this").
-    - In the `_log_turn_to_transcript` method, if a `KeyEvent` contains this
-      `triggering_phrase`, the code searches for the phrase in the full speech
-      content to find its start and end character indices.
-    - It then creates a mapping in the format `{'[start:end]': image_id}`.
-    - This mapping is stored in the `images` field of the `Message` object,
-      creating a durable, precise link between the user's words and their actions.
-      This association is only created when speech and vision events are analyzed
-      together.
+    - The AI model is prompted to identify a `triggering_phrase` (the exact words
+      in the speech that refer to an action) and an `image_annotation` (a caption
+      describing what the screenshot shows in relation to that phrase).
+    - In the `_log_turn_to_transcript` method, if a `KeyEvent` contains a
+      `triggering_phrase` and has an associated image, an `AnnotatedImageRef`
+      object is created.
+    - This object combines the `image_id` (from the `ImageManager`) with the
+      AI-generated `image_annotation`.
+    - The resulting list of `AnnotatedImageRef` objects is stored in the `images`
+      field of the `Message` object. This creates a durable, structured, and
+      semantically rich link between the user's words and the visual evidence of
+      their actions. This association is only created when speech and vision
+      events are analyzed together.
 
     Architecture for Parallelism
     ----------------------------
@@ -156,9 +165,9 @@ class ScreenShareManager:
 
     def __init__(self):
         # Configuration
-        self.MSE_THRESHOLD = 100
-        self.SSIM_THRESHOLD = 0.80
-        self.MIN_CONTOUR_AREA = 100
+        self.MSE_THRESHOLD = 10
+        self.SSIM_THRESHOLD = 0.995
+        self.MIN_CONTOUR_AREA = 50
         self.MAX_ASPECT_RATIO = 20
         self.DEBOUNCE_DELAY_SEC = 0.5
         self.INACTIVITY_TIMEOUT_SEC = 5.0
@@ -568,10 +577,8 @@ class ScreenShareManager:
             if not speech_event and not visual_events_for_turn:
                 return
             logger.info("Debounce window ended. Triggering turn analysis...")
-            asyncio.create_task(
-                self._analyze_turn(
-                    speech_event, visual_events_for_turn, latest_frame_for_turn
-                )
+            await self._analyze_turn(
+                speech_event, visual_events_for_turn, latest_frame_for_turn
             )
         except asyncio.CancelledError:
             logger.info("Debounced analysis was cancelled by a newer event.")
@@ -599,7 +606,8 @@ class ScreenShareManager:
         latest_frame: Optional[Tuple[float, str]] = None,
     ):
         """
-        A stateless method that analyzes a turn and queues the result for logging.
+        Analyzes a turn. If it's a silent (vision-only) turn, it stores the
+        resulting events. If it's a speech turn, it queues the results for logging.
         """
         async with self._state_lock:
             self._analyses_in_flight += 1
@@ -608,20 +616,46 @@ class ScreenShareManager:
                 speech_event, visual_events, latest_frame
             )
             key_events = response.events if response else []
+
+            # If there's no speech event, this was a silent turn analysis.
+            # Store the results and do not proceed to logging.
+            if not speech_event:
+                if key_events:
+                    visual_only_events = [
+                        evt for evt in key_events if evt.triggering_phrase is None
+                    ]
+                    if visual_only_events:
+                        logger.info(
+                            f"Storing {len(visual_only_events)} silent visual event(s)."
+                        )
+                        valid_timestamps = {
+                            evt.representative_timestamp for evt in visual_only_events
+                        }
+                        filtered_frame_map = {
+                            ts: frame
+                            for ts, frame in frame_map.items()
+                            if ts in valid_timestamps
+                        }
+                        async with self._state_lock:
+                            self._stored_silent_key_events.extend(visual_only_events)
+                            self._stored_silent_frame_map.update(filtered_frame_map)
+                return  # Exit early for silent turns
+
+            # If we are here, it's a speech turn. Proceed to logging.
             if key_events:
                 async with self._state_lock:
                     for event in key_events:
                         self._recent_key_events.append(event)
                         self._unsummarized_events.append(event)
                 self._trigger_summary_update()
-            if key_events or speech_event:
-                log_job = (speech_event, key_events, frame_map)
-                try:
-                    self._logging_queue.put_nowait(log_job)
-                except asyncio.QueueFull:
-                    logger.error(
-                        "Logging queue is full. Dropping latest analysis result."
-                    )
+
+            # Always queue a job for a speech event, even if no key events were found.
+            log_job = (speech_event, key_events, frame_map)
+            try:
+                self._logging_queue.put_nowait(log_job)
+            except asyncio.QueueFull:
+                logger.error("Logging queue is full. Dropping latest analysis result.")
+
             for event in key_events:
                 await self._event_broker.publish(
                     "app:comms:screen_annotation",
@@ -637,6 +671,7 @@ class ScreenShareManager:
                 f"An unhandled exception occurred during turn analysis task: {e}",
                 exc_info=True,
             )
+            # Still log the speech event even if analysis fails
             if speech_event:
                 log_job = (speech_event, [], {})
                 try:
@@ -773,41 +808,23 @@ class ScreenShareManager:
 
     async def _log_turn_to_transcript(
         self,
-        speech_event: Optional[dict],
+        speech_event: Dict,
         key_events: List[KeyEvent],
         frame_map: Dict[float, str],
     ):
         """
         Handles the slow I/O of logging a turn to the TranscriptManager.
+        This method assumes speech_event is always provided.
         """
-        if not speech_event:
-            if key_events:
-                visual_only_events = [
-                    evt for evt in key_events if evt.triggering_phrase is None
-                ]
-                if visual_only_events:
-                    logger.info(
-                        f"Storing {len(visual_only_events)} silent visual event(s)."
-                    )
-                    valid_timestamps = {
-                        evt.representative_timestamp for evt in visual_only_events
-                    }
-                    filtered_frame_map = {
-                        ts: frame
-                        for ts, frame in frame_map.items()
-                        if ts in valid_timestamps
-                    }
-                    async with self._state_lock:
-                        self._stored_silent_key_events.extend(visual_only_events)
-                        self._stored_silent_frame_map.update(filtered_frame_map)
-            return
         async with self._state_lock:
+            # Combine the events from this turn with any previously stored silent events.
             all_events = sorted(
                 self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
             )
             self._stored_silent_key_events.clear()
             combined_frame_map = self._stored_silent_frame_map.copy()
             self._stored_silent_frame_map.clear()
+
         combined_frame_map.update(frame_map)
         speech_payload = speech_event["payload"]
         speech_start_time, speech_end_time = speech_payload.get(
@@ -851,15 +868,22 @@ class ScreenShareManager:
         for ts, index in event_to_image_map.items():
             if index < len(logged_image_ids):
                 timestamp_to_image_id[ts] = logged_image_ids[index]
-        images_dict, screen_share_dict, primary_speech_event_handled = {}, {}, False
+
+        image_refs_list, screen_share_dict = [], {}
+        speech_key_event: Optional[KeyEvent] = None
+
+        # Find the single key event that corresponds to the speech utterance.
+        if speech_start_time is not None and all_events:
+            # The speech event is the one with the timestamp closest to the speech start time.
+            speech_key_event = min(
+                all_events, key=lambda e: abs(e.timestamp - speech_start_time)
+            )
+
+        # Process all events to build the screen_share dictionary
         for event in all_events:
             image_id = timestamp_to_image_id.get(event.timestamp)
-            (
-                rep_ts,
-                screenshot_b64,
-            ) = event.representative_timestamp, combined_frame_map.get(
-                event.representative_timestamp
-            )
+            rep_ts = event.representative_timestamp
+            screenshot_b64 = combined_frame_map.get(rep_ts)
             if not screenshot_b64 and combined_frame_map:
                 closest_ts = min(
                     combined_frame_map.keys(), key=lambda ts: abs(ts - rep_ts)
@@ -871,38 +895,33 @@ class ScreenShareManager:
                     f"Could not find screenshot for event at {event.timestamp}"
                 )
                 continue
+
             event_type = "speech" if event.triggering_phrase else "vision"
             ts_key = ""
+
+            # If this is the identified speech event, use the full duration key
             if (
-                event.triggering_phrase
-                and not primary_speech_event_handled
+                event is speech_key_event
                 and speech_start_time is not None
                 and speech_end_time is not None
             ):
                 ts_key = f"{speech_start_time:.2f}-{speech_end_time:.2f}"
-                primary_speech_event_handled = True
             else:
+                # Otherwise, it's a silent/visual event, use its own timestamp
                 ts_key = f"{event.timestamp:.2f}-{event.timestamp:.2f}"
+
             screen_share_dict[ts_key] = ScreenShareAnnotation(
                 caption=event.event_description, image=screenshot_b64, type=event_type
             )
+
             if event.triggering_phrase and image_id:
-                try:
-                    start_index = speech_payload["content"].find(
-                        event.triggering_phrase
+                annotation_text = event.image_annotation or event.event_description
+                image_refs_list.append(
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=image_id),
+                        annotation=annotation_text,
                     )
-                    if start_index != -1:
-                        images_dict[
-                            f"[{start_index}:{start_index + len(event.triggering_phrase)}]"
-                        ] = image_id
-                    else:
-                        logger.warning(
-                            f"Triggering phrase '{event.triggering_phrase}' not found in content."
-                        )
-                except ValueError:
-                    logger.warning(
-                        f"Triggering phrase '{event.triggering_phrase}' not found in content."
-                    )
+                )
         message_to_log = Message(
             medium=Medium.PHONE_CALL,
             sender_id=speech_payload["contact_details"]["contact_id"],
@@ -910,7 +929,7 @@ class ScreenShareManager:
             timestamp=datetime.fromisoformat(speech_payload["timestamp"]),
             content=speech_payload["content"],
             screen_share=screen_share_dict,
-            images=images_dict,
+            images=AnnotatedImageRefs.model_validate(image_refs_list),
         )
         logged_messages = self._transcript_manager.log_messages([message_to_log])
         if logged_messages:
