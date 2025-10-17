@@ -247,7 +247,7 @@ def build_live_image_tools(
     id_to_handle: dict[int, Any] = {}
     listings: list[str] = []
 
-    # Build id → handle map and enriched listings from registry and logs
+    # Build id → handle map and enriched listings from registry and logs (initial snapshot for docs only)
     with _suppress(Exception):
         reg = LIVE_IMAGES_REGISTRY.get() or {}
         logs = LIVE_IMAGES_LOG.get() or []
@@ -324,9 +324,35 @@ def build_live_image_tools(
         image_id: int,
         question: str,
     ) -> Any:
-        ih = id_to_handle.get(int(image_id))
+        # Resolve the handle from the current registry; if absent, best-effort fetch from the manager
+        iid = int(image_id)
+        ih = None
+        try:
+            cur_reg = LIVE_IMAGES_REGISTRY.get() or {}
+            ih = cur_reg.get(iid)
+            if ih is None:
+                try:
+                    from unity.image_manager.image_manager import (
+                        ImageManager as _ImageManager,
+                    )  # local import
+
+                    _handles = _ImageManager().get_images([iid])
+                    ih = next(
+                        (h for h in _handles if int(getattr(h, "image_id", -1)) == iid),
+                        None,
+                    )
+                    if ih is not None:
+                        try:
+                            cur_reg[iid] = ih
+                        except Exception:
+                            pass
+                except Exception:
+                    ih = None
+        except Exception:
+            ih = None
+
         if ih is None:
-            return {"error": f"image_id {int(image_id)} not found"}
+            return {"error": f"image_id {iid} not found"}
         try:
             return await ih.ask(question)
         except Exception as _exc:  # noqa: BLE001
@@ -336,9 +362,36 @@ def build_live_image_tools(
         iid = int(image_id)
         if iid in attached_ids:
             return {"status": "already_attached", "image_id": iid}
-        ih = id_to_handle.get(iid)
+
+        # Resolve the handle dynamically from the current registry, with a best-effort fallback to the manager
+        ih = None
+        try:
+            cur_reg = LIVE_IMAGES_REGISTRY.get() or {}
+            ih = cur_reg.get(iid)
+            if ih is None:
+                try:
+                    from unity.image_manager.image_manager import (
+                        ImageManager as _ImageManager,
+                    )  # local import
+
+                    _handles = _ImageManager().get_images([iid])
+                    ih = next(
+                        (h for h in _handles if int(getattr(h, "image_id", -1)) == iid),
+                        None,
+                    )
+                    if ih is not None:
+                        try:
+                            cur_reg[iid] = ih
+                        except Exception:
+                            pass
+                except Exception:
+                    ih = None
+        except Exception:
+            ih = None
+
         if ih is None:
             return {"error": f"image_id {iid} not found"}
+
         try:
             data_str = ih._image.data  # type: ignore[attr-defined]
             # GCS signed URL path mirrors ImageHandle.ask
