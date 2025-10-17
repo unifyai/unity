@@ -145,6 +145,21 @@ class SteerableToolHandle(SteerableHandle):
         Falls through silently if the mapping is missing (tool may have finished).
         """
 
+    def get_history(self) -> list[dict]:
+        """Returns the conversational history of the loop.
+
+        Default implementation returns empty list. Subclasses with
+        LLM clients should override to return the full conversation
+        history including tool calls and reasoning.
+
+        Returns
+        -------
+        list[dict]
+            List of message dicts in the format used by the LLM client.
+            For handles without an LLM client, returns an empty list.
+        """
+        return []
+
 
 class AsyncToolLoopHandle(SteerableToolHandle):
     """
@@ -629,6 +644,24 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except asyncio.CancelledError:
             # When callers cancel the OUTER loop without a delegate, return a stable notice.
             return _stopped_notice
+
+    def get_history(self) -> list[dict]:
+        """Returns the full LLM conversation history including tool calls and reasoning.
+
+        This provides access to the rich internal trace of the async tool loop,
+        including assistant reasoning, tool calls, and tool outputs. This is
+        particularly valuable for understanding the
+        decision-making process within the loop.
+
+        Returns
+        -------
+        list[dict]
+            The complete message history from the LLM client, or empty list
+            if no client is available.
+        """
+        if self._client is not None:
+            return self._client.messages
+        return []
 
     # ── bottom-up event APIs ---------------------------------------------------
     @functools.wraps(SteerableToolHandle.next_clarification, updated=())
