@@ -846,6 +846,51 @@ class FunctionReplacer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class _HistoryCapturingHandleProxy(SteerableToolHandle):
+    def __init__(
+        self,
+        real_handle: SteerableToolHandle,
+        plan: "HierarchicalPlan",
+        call_repr: str,
+        cache_key: tuple,
+        meta: dict,
+    ):
+        self._real_handle = real_handle
+        self._plan = plan
+        self._call_repr = call_repr
+        self._cache_key = cache_key
+        self._meta = meta
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real_handle, name)
+
+    async def result(self) -> str:
+        final_result = await self._real_handle.result()
+
+        sub_loop_history = []
+        if hasattr(self._real_handle, "get_history"):
+            sub_loop_history = self._real_handle.get_history()
+
+        interaction_to_cache = (
+            "handle_method_call",
+            self._call_repr,
+            str(final_result),
+            sub_loop_history,
+        )
+
+        interactions_log = current_interaction_sink_var.get()
+        if interactions_log is not None:
+            interactions_log.append(interaction_to_cache)
+
+        self._plan.idempotency_cache[self._cache_key] = {
+            "result": final_result,
+            "interaction_log": interaction_to_cache,
+            "meta": self._meta,
+        }
+
+        return final_result
+
+
 class _SteerableToolHandleProxy:
     """
     A proxy for SteerableToolHandle to intercept its method calls, log
@@ -917,31 +962,70 @@ class _SteerableToolHandleProxy:
             logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
 
             output = await real_attr(*args, **kwargs)
-            interaction_to_cache = ("handle_method_call", call_repr, str(output))
-            interactions_log = current_interaction_sink_var.get()
-            if interactions_log is not None:
-                interactions_log.append(interaction_to_cache)
-            try:
-                url = await self._plan.actor.action_provider.browser.get_current_url()
-            except Exception:
-                url = None
 
-            meta = {
-                "call_stack": cache_key[0],
-                "path": cache_key[1],
-                "function": cache_key[0][-1] if cache_key[0] else None,
-                "step": self._plan.runtime.action_counter,
-                "tool": tool_name,
-                "url": url,
-                "impure": False,
-            }
+            if isinstance(output, SteerableToolHandle):
+                initial_interaction = (
+                    "handle_method_call",
+                    call_repr,
+                    f"Returned handle: {output.__class__.__name__}",
+                )
+                interactions_log = current_interaction_sink_var.get()
+                if interactions_log is not None:
+                    interactions_log.append(initial_interaction)
 
-            self._plan.idempotency_cache[cache_key] = {
-                "result": output,
-                "interaction_log": interaction_to_cache,
-                "meta": meta,
-            }
-            return output
+                try:
+                    url = (
+                        await self._plan.actor.action_provider.browser.get_current_url()
+                    )
+                except Exception:
+                    url = None
+
+                meta = {
+                    "call_stack": cache_key[0],
+                    "path": cache_key[1],
+                    "function": cache_key[0][-1] if cache_key[0] else None,
+                    "step": self._plan.runtime.action_counter,
+                    "tool": tool_name,
+                    "url": url,
+                    "impure": False,
+                }
+
+                return _HistoryCapturingHandleProxy(
+                    output,
+                    self._plan,
+                    call_repr,
+                    cache_key,
+                    meta,
+                )
+            else:
+                interaction_to_cache = ("handle_method_call", call_repr, str(output))
+                interactions_log = current_interaction_sink_var.get()
+                if interactions_log is not None:
+                    interactions_log.append(interaction_to_cache)
+
+                try:
+                    url = (
+                        await self._plan.actor.action_provider.browser.get_current_url()
+                    )
+                except Exception:
+                    url = None
+
+                meta = {
+                    "call_stack": cache_key[0],
+                    "path": cache_key[1],
+                    "function": cache_key[0][-1] if cache_key[0] else None,
+                    "step": self._plan.runtime.action_counter,
+                    "tool": tool_name,
+                    "url": url,
+                    "impure": False,
+                }
+
+                self._plan.idempotency_cache[cache_key] = {
+                    "result": output,
+                    "interaction_log": interaction_to_cache,
+                    "meta": meta,
+                }
+                return output
 
         def sync_method_wrapper(*args, **kwargs):
             self._plan.runtime.action_counter += 1
