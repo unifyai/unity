@@ -8,6 +8,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
 from unity.image_manager.types import AnnotatedImageRef, ImageRefs, RawImageRef
 from unity.image_manager.utils import make_solid_png_base64
+from unity.screen_share_manager.screen_share_manager import ScreenShareManager
 from unity.screen_share_manager.types import TurnAnalysisResponse, KeyEvent
 from tests.helpers import _handle_project
 
@@ -23,6 +24,53 @@ PNG_MAGENTA_B64 = (
 PNG_WHITE_B64 = (
     f"data:image/png;base64,{make_solid_png_base64(10, 10, (255, 255, 255))}"
 )
+
+
+@pytest.fixture
+def mocked_screen_share_manager(mocker):
+    """
+    Provides a ScreenShareManager instance with all external dependencies mocked.
+    """
+    with patch(
+        "unity.screen_share_manager.screen_share_manager.get_event_broker"
+    ) as mock_get_broker, patch(
+        "unity.screen_share_manager.screen_share_manager.unify.AsyncUnify"
+    ) as mock_unify, patch(
+        "unity.screen_share_manager.screen_share_manager.ImageManager"
+    ) as mock_image_manager, patch(
+        "unity.screen_share_manager.screen_share_manager.TranscriptManager"
+    ) as mock_transcript_manager:
+
+        # Mock clients and managers
+        mock_broker = mocker.AsyncMock()
+        mock_get_broker.return_value = mock_broker
+        mock_analysis_client = mocker.AsyncMock()
+        mock_unify.return_value = mock_analysis_client
+        mock_image_manager_instance = mocker.MagicMock()
+        mock_image_manager_instance.add_images = mocker.MagicMock(return_value=[42])
+        mock_image_manager.return_value = mock_image_manager_instance
+
+        mock_transcript_manager_instance = mocker.MagicMock()
+        # FIX: Ensure log_messages returns a truthy value to pass checks
+        mock_logged_message = mocker.MagicMock()
+        mock_logged_message.message_id = 123
+        mock_transcript_manager_instance.log_messages.return_value = [
+            mock_logged_message
+        ]
+        mock_transcript_manager.return_value = mock_transcript_manager_instance
+
+        # Create the manager instance
+        manager = ScreenShareManager()
+        manager._analysis_client = mock_analysis_client
+        manager._summary_client = mocker.AsyncMock()
+
+        mocks = {
+            "event_broker": mock_broker,
+            "analysis_client": mock_analysis_client,
+            "image_manager": mock_image_manager_instance,
+            "transcript_manager": mock_transcript_manager_instance,
+        }
+        yield manager, mocks
 
 
 @pytest.fixture
@@ -465,7 +513,11 @@ async def test_analysis_clears_pending_vision_events(mocked_screen_share_manager
     mocks["analysis_client"].generate.return_value = TurnAnalysisResponse(events=[])
     manager._trigger_turn_analysis(
         speech_event={
-            "payload": {"content": "go", "contact_details": {"contact_id": 1}}
+            "payload": {
+                "content": "go",
+                "contact_details": {"contact_id": 1},
+                "timestamp": datetime.now().isoformat(),
+            }
         }
     )
     await asyncio.sleep(0.01)
@@ -500,7 +552,11 @@ async def test_realtime_annotation_is_published_for_each_key_event(
     )
     mocks["analysis_client"].generate.return_value = mock_llm_response
     speech_event_data = {
-        "payload": {"contact_details": {"contact_id": 1}, "content": "dummy"}
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "content": "dummy",
+            "timestamp": datetime.now().isoformat(),
+        }
     }
     manager._trigger_turn_analysis(speech_event=speech_event_data)
     await asyncio.sleep(0.01)
@@ -528,7 +584,11 @@ async def test_analysis_queues_job_for_logging_worker(mocked_screen_share_manage
     mock_llm_response = TurnAnalysisResponse(events=[key_event])
     mocks["analysis_client"].generate.return_value = mock_llm_response
     speech_event_data = {
-        "payload": {"contact_details": {"contact_id": 1}, "content": "test"}
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "content": "test",
+            "timestamp": datetime.now().isoformat(),
+        }
     }
     assert manager._logging_queue.qsize() == 0
     manager._trigger_turn_analysis(speech_event=speech_event_data)
@@ -569,11 +629,15 @@ async def test_summary_is_updated_after_turn_analysis(mocked_screen_share_manage
             "payload": {
                 "contact_details": {"contact_id": 1},
                 "content": "go to billing",
+                "timestamp": datetime.now().isoformat(),
             }
         }
         manager._trigger_turn_analysis(speech_event=speech_event_data)
         await asyncio.sleep(0.01)
-        await manager._update_summary()
+        # Manually trigger the summary update for testing, as it's debounced
+        manager._trigger_summary_update()
+        # Wait for the debounced summary task to complete
+        await asyncio.sleep(3.1)
         mock_summary_client.generate.assert_called_once()
         assert manager._session_summary == "User navigated to billing."
         assert len(manager._unsummarized_events) == 0
@@ -590,7 +654,11 @@ async def test_turn_analysis_is_debounced(mocked_screen_share_manager):
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0.1
     speech_event = {
-        "payload": {"content": "test", "contact_details": {"contact_id": 1}}
+        "payload": {
+            "content": "test",
+            "contact_details": {"contact_id": 1},
+            "timestamp": datetime.now().isoformat(),
+        }
     }
     manager._trigger_turn_analysis(speech_event)
     await asyncio.sleep(0.02)
@@ -648,7 +716,13 @@ async def test_set_session_context_updates_summary(mocked_screen_share_manager):
         "unity.screen_share_manager.screen_share_manager.build_turn_analysis_prompt"
     ) as mock_build_prompt:
         manager._trigger_turn_analysis(
-            {"payload": {"content": "test", "contact_details": {"contact_id": 1}}}
+            {
+                "payload": {
+                    "content": "test",
+                    "contact_details": {"contact_id": 1},
+                    "timestamp": datetime.now().isoformat(),
+                }
+            }
         )
         await asyncio.sleep(0.01)
         await asyncio.sleep(manager.DEBOUNCE_DELAY_SEC + 0.01)
