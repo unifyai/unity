@@ -443,6 +443,24 @@ class ToolLoopPlan(BaseActiveTask):
     def done(self) -> bool:
         return self._overall_plan_completion_event.is_set()
 
+    async def next_clarification(self) -> dict:
+        """Await the next clarification question from the running internal loop."""
+        question = await self._clar_up_q_internal.get()
+        return {"question": question}
+
+    async def next_notification(self) -> dict:
+        """Await the next notification (not supported for ToolLoopPlan; waits indefinitely)."""
+        await asyncio.Event().wait()
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        """Provide an answer to the pending clarification (call_id is ignored)."""
+        await self._clar_down_q_internal.put(answer)
+
+    def get_history(self) -> list[dict]:
+        """Return the user-visible conversation history of the inner loop."""
+        return list(self.chat_history)
+
     @property
     def clarification_up_q(self) -> asyncio.Queue[str]:
         """Queue for this plan to send clarification questions upwards."""
