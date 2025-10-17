@@ -261,7 +261,31 @@ class ConversationManager:
         print(parsed_out)
         if parsed_out["actions"] is not None:
             for action in parsed_out["actions"]:
-                if action["action_name"] == "send_sms":
+                if action["action_name"].startswith("conductor_"):
+                    if action["action_name"].startswith("conductor_handle_"):
+                        # Forward an intervention to ManagersWorker for an existing handle
+                        event = ConductorHandleRequest(
+                            handle_id=action["handle_id"],
+                            action_name=action["action_name"].replace(
+                                "conductor_handle_", ""
+                            ),
+                            query=action["query"],
+                            parent_chat_context=self.state.chat_history,
+                        )
+                    else:
+                        # Create a new Conductor task via ManagersWorker
+                        event = ConductorRequest(
+                            action_name=action["action_name"].replace("conductor_", ""),
+                            query=action["query"],
+                            parent_chat_context=self.state.chat_history,
+                        )
+                    asyncio.create_task(
+                        self.event_broker.publish(
+                            "app:managers:input",
+                            event.to_json(),
+                        )
+                    )
+                elif action["action_name"] == "send_sms":
                     contact = self.state.update_or_create_new_contact(
                         action["contact_id"],
                         action["first_name"],
@@ -727,6 +751,11 @@ class ConversationManager:
             await self.publish_contact_update(
                 self.state.inverted_contacts_map[1].model_dump()
             )
+
+        elif isinstance(
+            event, (ConductorResponse, ConductorHandleResponse, ConductorResult)
+        ):
+            await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)
