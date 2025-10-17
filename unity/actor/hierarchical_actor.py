@@ -2577,6 +2577,8 @@ class HierarchicalPlan(BaseActiveTask):
                 )
                 keys_to_delete = set(self.idempotency_cache.keys())
 
+            target_screenshot = None
+            trajectory = []
             if keys_to_delete:
                 logger.info(
                     f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
@@ -2584,6 +2586,43 @@ class HierarchicalPlan(BaseActiveTask):
                 self.action_log.append(
                     f"Invalidating {len(keys_to_delete)} cache entries due to interjection.",
                 )
+
+                all_keys_sorted = sorted(
+                    self.idempotency_cache.keys(),
+                    key=lambda k: self.idempotency_cache[k]
+                    .get("meta", {})
+                    .get("step", 0),
+                )
+
+                last_valid_key = None
+                for key in all_keys_sorted:
+                    if key not in keys_to_delete:
+                        last_valid_key = key
+                    else:
+                        break
+
+                if last_valid_key:
+                    last_valid_entry = self.idempotency_cache.get(last_valid_key)
+                    if last_valid_entry and "meta" in last_valid_entry:
+                        target_screenshot = last_valid_entry["meta"].get(
+                            "post_state_screenshot",
+                        )
+
+                invalidated_keys_sorted = sorted(
+                    [k for k in all_keys_sorted if k in keys_to_delete],
+                    key=lambda k: self.idempotency_cache[k]
+                    .get("meta", {})
+                    .get("step", 0),
+                )
+                for key in invalidated_keys_sorted:
+                    entry = self.idempotency_cache.get(key)
+                    if entry and "interaction_log" in entry:
+                        call_repr = (
+                            entry["interaction_log"][1]
+                            if len(entry["interaction_log"]) > 1
+                            else str(entry)
+                        )
+                        trajectory.append(call_repr)
 
             invalidated_handles = set()
             for key in keys_to_delete:
@@ -2613,41 +2652,29 @@ class HierarchicalPlan(BaseActiveTask):
                     if any(f":{hid}." in meta_tool for hid in invalidated_handles):
                         self.idempotency_cache.pop(k, None)
 
-            if first_modified_function_name:
+            if trajectory and target_screenshot:
                 self.action_log.append(
-                    f"STATE VERIFICATION: Checking precondition for the first modified function: '{first_modified_function_name}'.",
+                    f"COURSE CORRECTION: Launching recovery agent to reverse {len(trajectory)} invalidated actions.",
                 )
-                logger.debug(
-                    f"Checking precondition for the first modified function: '{first_modified_function_name}'.",
+                logger.info(
+                    f"Launching course correction agent to reverse {len(trajectory)} actions.",
                 )
                 try:
-                    precondition = self.actor.function_manager.get_precondition(
-                        function_name=first_modified_function_name,
+                    await self.actor._run_course_correction_agent(
+                        target_screenshot=target_screenshot,
+                        trajectory=trajectory,
                     )
-                    if precondition and precondition.get("status") != "not_applicable":
-                        await self.actor._verify_and_correct_state(
-                            plan=self,
-                            target_precondition=precondition,
-                            context_label=f"interjection recovery for '{first_modified_function_name}'",
-                        )
-                        self.action_log.append(
-                            "STATE VERIFICATION: Precondition verified and corrected if necessary.",
-                        )
-                        logger.debug("Precondition verified and corrected!")
-                    else:
-                        self.action_log.append(
-                            "STATE VERIFICATION: No precondition found or needed for this function.",
-                        )
-                        logger.debug(
-                            "No precondition found or needed for this function.",
-                        )
+                    self.action_log.append(
+                        "COURSE CORRECTION: Recovery agent completed successfully.",
+                    )
+                    logger.info("Course correction completed successfully.")
                 except Exception as e:
                     logger.error(
-                        f"Error during proactive state verification for interjection: {e}",
+                        f"Course correction failed: {e}",
                         exc_info=True,
                     )
                     self.action_log.append(
-                        f"WARNING: Proactive state verification failed: {e}. Proceeding with replay from current state.",
+                        f"WARNING: Course correction failed: {e}. Proceeding with replay from current state.",
                     )
 
             modification_summary = ", ".join(
