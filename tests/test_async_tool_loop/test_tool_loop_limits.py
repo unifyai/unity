@@ -306,7 +306,43 @@ async def test_max_steps_graceful_termination():
     )
     result = await handle.result()
     assert "Terminating early" in result
-    assert cancel_flag.get("cancelled", False)
+
+    # Robust assertions not relying on coroutine body execution timing.
+    # 1) The preseeded tool call must be present in assistant tool_calls.
+    assert any(
+        m.get("role") == "assistant"
+        and m.get("tool_calls")
+        and any(tc.get("id") == "call_preseed_steps" for tc in m["tool_calls"])
+        for m in client.messages
+    )
+
+    # 2) The tool must not have produced a successful final result.
+    assert not any(
+        m.get("role") == "tool"
+        and m.get("tool_call_id") == "call_preseed_steps"
+        and "finished" in str(m.get("content") or "")
+        for m in client.messages
+    )
+
+    # 3) White-box: the scheduled asyncio.Task for the call-id is cancelled.
+    loop_task = getattr(handle, "_task", None)
+    task_info = getattr(loop_task, "task_info", {}) if loop_task is not None else {}
+    found_cancelled = False
+    if isinstance(task_info, dict):
+        for t, meta in task_info.items():
+            if getattr(meta, "call_id", None) == "call_preseed_steps":
+                if t.cancelled():
+                    found_cancelled = True
+                    break
+                if t.done():
+                    try:
+                        exc = t.exception()
+                    except Exception:
+                        exc = None
+                    if isinstance(exc, asyncio.CancelledError):
+                        found_cancelled = True
+                        break
+    assert found_cancelled
 
 
 # ─────────────────────────────────────────────────────────────────────────────
