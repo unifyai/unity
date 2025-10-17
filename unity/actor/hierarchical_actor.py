@@ -16,7 +16,7 @@ import textwrap
 import traceback
 from collections import defaultdict, OrderedDict
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import typing
 import types
 import weakref
@@ -3828,6 +3828,86 @@ class HierarchicalActor(BaseActor):
             target_precondition=precondition,
             context_label=f"function '{function_name}'",
         )
+
+    async def _run_course_correction_agent(
+        self,
+        target_screenshot: bytes,
+        trajectory: list[str],
+    ) -> None:
+        """Spawns a new CodeActActor instance as a sub-agent to perform state recovery."""
+        from .code_act_actor import CodeActActor
+        from unity.image_manager.image_manager import ImageManager
+
+        current_screenshot = await self.action_provider.browser.get_screenshot()
+
+        if isinstance(current_screenshot, str):
+            current_screenshot = base64.b64decode(current_screenshot)
+        if isinstance(target_screenshot, str):
+            target_screenshot = base64.b64decode(target_screenshot)
+
+        image_manager = ImageManager()
+        ids = image_manager.add_images(
+            [
+                {
+                    "data": base64.b64encode(current_screenshot).decode("ascii"),
+                    "caption": "Current browser state (before correction)",
+                },
+                {
+                    "data": base64.b64encode(target_screenshot).decode("ascii"),
+                    "caption": "Target browser state (after correction)",
+                },
+            ],
+        )
+        current_id, target_id = ids[0], ids[1]
+
+        images_for_sub_agent = ImageRefs(
+            [
+                AnnotatedImageRef(
+                    raw_image_ref=RawImageRef(image_id=current_id),
+                    annotation="Current state: where the browser is now",
+                ),
+                AnnotatedImageRef(
+                    raw_image_ref=RawImageRef(image_id=target_id),
+                    annotation="Target state: where the browser should be",
+                ),
+            ],
+        )
+
+        formatted_trajectory = "\n".join(f"- `{action}`" for action in trajectory)
+        correction_goal = f"""
+        ### Your Mission: Course Correction
+        Your goal is to restore the browser's state by writing and executing Python code in an iterative loop.
+
+        **CONTEXT:**
+        - **Current State:** The first image provided. This is the state you are starting from.
+        - **Target State:** The second image provided. This is the state you must return to.
+        - **Trajectory:** The following actions led from the target state to the current state. Use this as a guide for what to reverse:
+        {formatted_trajectory}
+
+        **YOUR WORKFLOW:**
+        1.  **Analyze:** Use the `live_images_overview()` tool to understand the images you've been given. Compare them to determine if a correction is needed. If they are the same, you are done.
+        2.  **Plan & Execute:** Write Python code using the `action_provider` to reverse the trajectory. This may take multiple steps. After each step, you will receive new visual feedback to guide your next action.
+        3.  **Complete:** When the browser state visually matches the target state, your work is done.
+        """
+
+        logger.info("COURSE CORRECTION: Starting recovery sub-agent...")
+
+        correction_agent = CodeActActor(
+            action_provider=self.action_provider,
+            timeout=300,
+        )
+
+        try:
+            correction_plan = await correction_agent.act(
+                description=correction_goal,
+                images=images_for_sub_agent,
+                persist=False,
+            )
+
+            await correction_plan.result()
+            logger.info("COURSE CORRECTION: Recovery sub-agent finished successfully.")
+        finally:
+            pass
 
     def _create_verify_decorator(self, plan: HierarchicalPlan):
         """
