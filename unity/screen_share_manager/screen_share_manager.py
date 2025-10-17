@@ -167,7 +167,7 @@ class ScreenShareManager:
         # Configuration
         self.MSE_THRESHOLD = 10
         self.SSIM_THRESHOLD = 0.995
-        self.MIN_CONTOUR_AREA = 100
+        self.MIN_CONTOUR_AREA = 50
         self.MAX_ASPECT_RATIO = 20
         self.DEBOUNCE_DELAY_SEC = 0.5
         self.INACTIVITY_TIMEOUT_SEC = 5.0
@@ -890,16 +890,22 @@ class ScreenShareManager:
                 continue
             event_type = "speech" if event.triggering_phrase else "vision"
             ts_key = ""
-            if (
-                event.triggering_phrase
+
+            # Identify the primary speech event based on timestamp proximity
+            # to the start of the utterance. This is more robust than relying on
+            # `triggering_phrase`.
+            is_primary_speech_event = (
+                speech_start_time is not None
                 and not primary_speech_event_handled
-                and speech_start_time is not None
-                and speech_end_time is not None
-            ):
+                and abs(event.timestamp - speech_start_time) < 0.5  # 500ms tolerance
+            )
+
+            if is_primary_speech_event and speech_end_time is not None:
                 ts_key = f"{speech_start_time:.2f}-{speech_end_time:.2f}"
                 primary_speech_event_handled = True
             else:
                 ts_key = f"{event.timestamp:.2f}-{event.timestamp:.2f}"
+
             screen_share_dict[ts_key] = ScreenShareAnnotation(
                 caption=event.event_description, image=screenshot_b64, type=event_type
             )
