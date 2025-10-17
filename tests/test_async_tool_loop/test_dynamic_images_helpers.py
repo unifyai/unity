@@ -290,10 +290,15 @@ async def test_dynamic_sources_multi_append_overview() -> None:
         notification_up_q: asyncio.Queue[dict],
     ) -> dict:
         # Emit a notification first so the loop attaches a notification entry
-        await notification_up_q.put({"message": "progress", "images": {"this[:]": 42}})
+        await notification_up_q.put(
+            {"message": "progress", "images": [RawImageRef(image_id=img_id)]},
+        )
         # Request clarification with images
         await clarification_up_q.put(
-            {"question": "What is the dominant color?", "images": {"this[:]": 42}},
+            {
+                "question": "What is the dominant color?",
+                "images": [RawImageRef(image_id=img_id)],
+            },
         )
         # Wait for interjection and clarify answer
         _ = await interject_queue.get()
