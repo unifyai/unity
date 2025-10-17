@@ -64,6 +64,7 @@ class TranscriptManager(BaseTranscriptManager):
         """
         Responsible for *searching through* the full transcripts across all communcation channels exposed to the assistant.
         """
+        super().__init__()
 
         if contact_manager is not None:
             self._contact_manager = contact_manager

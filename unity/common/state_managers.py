@@ -25,11 +25,8 @@ class BaseStateManager(ABC):
 
     def __init__(self):
         self._tools = {}
-        self._tools_frozen = False
 
     def add_tools(self, method: str, tools: Dict[str, Callable]):
-        if self._tools_frozen:
-            raise RuntimeError("Tools are frozen, cannot add more tools")
         self._tools[method] = tools
 
     def get_tools(self, method: Optional[str] = None) -> Dict[str, Callable]:
@@ -37,6 +34,3 @@ class BaseStateManager(ABC):
             return self._tools
 
         return self._tools.get(method, {})
-
-    def build_tools(self):
-        self._tools_frozen = True

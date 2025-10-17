@@ -61,6 +61,7 @@ class ContactManager(BaseContactManager):
             • ``False`` – expose the original *atomic* tools\
             • ``True``  – expose only the new *batched* variants
         """
+        super().__init__()
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]

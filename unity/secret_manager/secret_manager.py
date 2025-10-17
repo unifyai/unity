@@ -64,7 +64,7 @@ class SecretManager(BaseSecretManager):
         self._provision_storage()
 
         # Public tools
-        self._ask_tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
                 self._filter_secrets,
@@ -73,7 +73,8 @@ class SecretManager(BaseSecretManager):
                 include_class_name=False,
             ),
         }
-        self._update_tools: Dict[str, Callable] = {
+        self.add_tools("ask", ask_tools)
+        update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.ask,
                 self._create_secret,
@@ -82,6 +83,7 @@ class SecretManager(BaseSecretManager):
                 include_class_name=False,
             ),
         }
+        self.add_tools("update", update_tools)
 
         # .env sync: create file if missing and backfill existing secrets as KEY=VALUE
         try:
@@ -430,7 +432,7 @@ class SecretManager(BaseSecretManager):
         client = self._new_llm_client("gpt-5@openai")
 
         # Build tools for read-only inspection
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
         if clarification_up_q is not None and clarification_down_q is not None:
 
             async def _on_request(q: str):
@@ -518,7 +520,7 @@ class SecretManager(BaseSecretManager):
 
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._update_tools)
+        tools = dict(self.get_tools("update"))
         if clarification_up_q is not None and clarification_down_q is not None:
 
             async def _on_request(q: str):
