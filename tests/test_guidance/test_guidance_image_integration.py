@@ -85,9 +85,9 @@ async def test_guidance_boot_option_and_fourth_item_gm():
     import os
 
     here = os.path.dirname(__file__)
-    tm_dir = os.path.abspath(os.path.join(here, "..", "test_transcript_manager"))
-    grub_path = os.path.join(tm_dir, "grub_screen.jpg")
-    wizard_path = os.path.join(tm_dir, "wizard_screen.jpg")
+    images_dir = os.path.abspath(os.path.join(here, "..", "images"))
+    grub_path = os.path.join(images_dir, "grub_screen.jpg")
+    wizard_path = os.path.join(images_dir, "wizard_screen.jpg")
     with open(grub_path, "rb") as f:
         grub_bytes = f.read()
     with open(wizard_path, "rb") as f:
@@ -171,9 +171,9 @@ async def test_guidance_compare_two_screens_requires_raw_context_gm():
     import os
 
     here = os.path.dirname(__file__)
-    tm_dir = os.path.abspath(os.path.join(here, "..", "test_transcript_manager"))
-    grub_path = os.path.join(tm_dir, "grub_screen.jpg")
-    wizard_path = os.path.join(tm_dir, "wizard_screen.jpg")
+    images_dir = os.path.abspath(os.path.join(here, "..", "images"))
+    grub_path = os.path.join(images_dir, "grub_screen.jpg")
+    wizard_path = os.path.join(images_dir, "wizard_screen.jpg")
     with open(grub_path, "rb") as f:
         grub_bytes = f.read()
     with open(wizard_path, "rb") as f:
