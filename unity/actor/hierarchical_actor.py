@@ -2231,11 +2231,52 @@ class HierarchicalPlan(BaseActiveTask):
                 failed_item=item,
             )
 
-            await self.actor._verify_and_correct_state(
-                plan=self,
-                target_precondition=item.pre_state,
-                context_label=f"async verification recovery for '{item.function_name}'",
+            self.action_log.append(
+                f"COURSE CORRECTION: Launching recovery agent to restore state for '{item.function_name}'.",
             )
+            logger.info(
+                f"Launching course correction agent for verification recovery of '{item.function_name}'.",
+            )
+            try:
+                target_screenshot = item.pre_state.get("screenshot")
+                current_screenshot = (
+                    await self.actor.action_provider.browser.get_screenshot()
+                )
+
+                trajectory = []
+                for interaction in item.interactions:
+                    if len(interaction) > 1:
+                        trajectory.append(interaction[1])
+                    else:
+                        trajectory.append(str(interaction))
+
+                if target_screenshot and trajectory:
+                    await self.actor._run_course_correction_agent(
+                        target_screenshot=target_screenshot,
+                        trajectory=trajectory,
+                    )
+                    self.action_log.append(
+                        "COURSE CORRECTION: Recovery agent completed successfully.",
+                    )
+                    logger.info(
+                        "Course correction for verification recovery completed successfully.",
+                    )
+                else:
+                    logger.warning(
+                        f"Missing target screenshot or trajectory for course correction. "
+                        f"target_screenshot={bool(target_screenshot)}, trajectory_len={len(trajectory)}",
+                    )
+                    self.action_log.append(
+                        "WARNING: Skipping course correction due to missing data. Proceeding with replay from current state.",
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Course correction for verification recovery failed: {e}",
+                    exc_info=True,
+                )
+                self.action_log.append(
+                    f"WARNING: Course correction failed: {e}. Proceeding with replay from current state.",
+                )
 
             self._invalidate_cache_from_function(item.function_name, item.parent_stack)
 
