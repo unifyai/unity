@@ -10,6 +10,9 @@ from unity.actor.base import BaseActor
 from unity.actor.tool_loop_actor import ToolLoopPlan
 from unity.actor.action_provider import ActionProvider
 from unity.actor.prompt_builders import _build_code_act_rules_and_examples
+from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.raw_image_ref import RawImageRef
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 
 
 def build_code_act_system_prompt(
@@ -248,6 +251,7 @@ class CodeActActor(BaseActor):
         parent_chat_context: list[dict] | None = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         **kwargs,
     ) -> ToolLoopPlan:
         """
@@ -277,6 +281,7 @@ class CodeActActor(BaseActor):
             custom_system_prompt=system_prompt,
             tool_policy=None,
             action_provider=self._action_provider,
+            images=images,
         )
         return plan
 
