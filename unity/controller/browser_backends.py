@@ -814,6 +814,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         response_format: Any = str,
         wait: bool = True,
         context: dict = None,
+        bypass_dom_processing: bool = False,
     ) -> Any:
         """
         Extracts structured information from the current page using the Magnitude BrowserAgent.
@@ -876,6 +877,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
                    strategy for visual interpretation.
             response_format: Optional. A Pydantic model to structure the output.
                              **Highly recommended for reliable extraction.**
+            bypass_dom_processing: Optional. If True, skips DOM manipulation and uses
+                                   screenshot-only extraction. This preserves the original
+                                   page state but may be less accurate for text-heavy content.
         """
         await self._ensure_async_initialized()
 
@@ -891,6 +895,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
         payload = {"instructions": query}
         if inspect.isclass(response_format) and issubclass(response_format, BaseModel):
             payload["schema"] = _safe_model_json_schema(response_format)
+        if bypass_dom_processing:
+            payload["bypassDomProcessing"] = True
 
         response = await self._request("POST", "/extract", payload)
         data = response.get("data")
