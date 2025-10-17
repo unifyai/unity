@@ -279,23 +279,25 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
     mocked_screen_share_manager,
 ):
     """
-    Tests that a silent visual event is stored and then logged together
-    with the next user utterance.
+    Tests that a silent visual event is analyzed, stored, and then logged
+    together with the next user utterance, ensuring no message is logged for
+    the silent event alone.
     """
     manager, mocks = mocked_screen_share_manager
     manager.DEBOUNCE_DELAY_SEC = 0
     manager.INACTIVITY_TIMEOUT_SEC = 0.1
 
-    # 1. Simulate a silent visual event
-    async with manager._state_lock:
-        manager._pending_vision_events.append(
-            {
-                "timestamp": 25.0,
-                "before_frame_b64": PNG_BLUE_B64,
-                "after_frame_b64": PNG_RED_B64,
-            }
-        )
-    manager._last_activity_time = asyncio.get_event_loop().time() - 1.0
+    # 1. Simulate a silent visual event being detected and analyzed after a timeout.
+    manager._pending_vision_events.append(
+        {
+            "timestamp": 25.0,
+            "before_frame_b64": PNG_BLUE_B64,
+            "after_frame_b64": PNG_RED_B64,
+        }
+    )
+    manager._last_activity_time = (
+        asyncio.get_event_loop().time() - 1.0
+    )  # Force timeout condition
     silent_event_analysis = TurnAnalysisResponse(
         events=[
             KeyEvent(
@@ -306,17 +308,20 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
         ]
     )
     mocks["analysis_client"].generate.return_value = silent_event_analysis
-    await manager._flush_pending_events_on_timeout()
-    await asyncio.sleep(0.01)
-    log_job_silent = await manager._logging_queue.get()
-    await manager._logging_worker(log_job_silent)
+
+    await manager._flush_pending_events_on_timeout()  # This will call _analyze_turn(speech_event=None)
+    await asyncio.sleep(0.01)  # Allow tasks to run
+
+    # Assert that NO logging job was created and events were stored.
     mocks["analysis_client"].generate.assert_called_once()
+    assert manager._logging_queue.qsize() == 0
     assert len(manager._stored_silent_key_events) == 1
     mocks["transcript_manager"].log_messages.assert_not_called()
 
     # 2. Now, simulate a subsequent user utterance
-    # FIX: Add a frame to the buffer to simulate the current screen state for the speech event
-    manager._frame_buffer.append((30.0, PNG_GREEN_B64))
+    manager._frame_buffer.append(
+        (30.0, PNG_GREEN_B64)
+    )  # Ensure there's a frame for the speech event analysis
 
     speech_event_data = {
         "payload": {
@@ -337,15 +342,24 @@ async def test_silent_vision_event_is_stored_and_logged_on_next_utterance(
         ]
     )
     mocks["analysis_client"].generate.return_value = speech_event_analysis
+
+    # This directly triggers the debounced runner, which calls _analyze_turn
     manager._trigger_turn_analysis(speech_event=speech_event_data)
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.01)  # Allow debounce (0) and analysis to run
+
+    # Assert a logging job was created
+    assert manager._logging_queue.qsize() == 1
+
     log_job_speech = await manager._logging_queue.get()
     await manager._logging_worker(log_job_speech)
 
+    # Assertions: second analysis happened, one log message created with combined events
     assert mocks["analysis_client"].generate.call_count == 2
     mocks["transcript_manager"].log_messages.assert_called_once()
     logged_message = mocks["transcript_manager"].log_messages.call_args[0][0][0]
     assert len(logged_message.screen_share) == 2
+    assert "25.00-25.00" in logged_message.screen_share  # From silent event
+    assert "30.00-31.00" in logged_message.screen_share  # From speech event
 
 
 @pytest.mark.unit

@@ -606,7 +606,8 @@ class ScreenShareManager:
         latest_frame: Optional[Tuple[float, str]] = None,
     ):
         """
-        A stateless method that analyzes a turn and queues the result for logging.
+        Analyzes a turn. If it's a silent (vision-only) turn, it stores the
+        resulting events. If it's a speech turn, it queues the results for logging.
         """
         async with self._state_lock:
             self._analyses_in_flight += 1
@@ -615,20 +616,46 @@ class ScreenShareManager:
                 speech_event, visual_events, latest_frame
             )
             key_events = response.events if response else []
+
+            # If there's no speech event, this was a silent turn analysis.
+            # Store the results and do not proceed to logging.
+            if not speech_event:
+                if key_events:
+                    visual_only_events = [
+                        evt for evt in key_events if evt.triggering_phrase is None
+                    ]
+                    if visual_only_events:
+                        logger.info(
+                            f"Storing {len(visual_only_events)} silent visual event(s)."
+                        )
+                        valid_timestamps = {
+                            evt.representative_timestamp for evt in visual_only_events
+                        }
+                        filtered_frame_map = {
+                            ts: frame
+                            for ts, frame in frame_map.items()
+                            if ts in valid_timestamps
+                        }
+                        async with self._state_lock:
+                            self._stored_silent_key_events.extend(visual_only_events)
+                            self._stored_silent_frame_map.update(filtered_frame_map)
+                return  # Exit early for silent turns
+
+            # If we are here, it's a speech turn. Proceed to logging.
             if key_events:
                 async with self._state_lock:
                     for event in key_events:
                         self._recent_key_events.append(event)
                         self._unsummarized_events.append(event)
                 self._trigger_summary_update()
-            if key_events or speech_event:
-                log_job = (speech_event, key_events, frame_map)
-                try:
-                    self._logging_queue.put_nowait(log_job)
-                except asyncio.QueueFull:
-                    logger.error(
-                        "Logging queue is full. Dropping latest analysis result."
-                    )
+
+            # Always queue a job for a speech event, even if no key events were found.
+            log_job = (speech_event, key_events, frame_map)
+            try:
+                self._logging_queue.put_nowait(log_job)
+            except asyncio.QueueFull:
+                logger.error("Logging queue is full. Dropping latest analysis result.")
+
             for event in key_events:
                 await self._event_broker.publish(
                     "app:comms:screen_annotation",
@@ -644,6 +671,7 @@ class ScreenShareManager:
                 f"An unhandled exception occurred during turn analysis task: {e}",
                 exc_info=True,
             )
+            # Still log the speech event even if analysis fails
             if speech_event:
                 log_job = (speech_event, [], {})
                 try:
@@ -780,41 +808,23 @@ class ScreenShareManager:
 
     async def _log_turn_to_transcript(
         self,
-        speech_event: Optional[dict],
+        speech_event: Dict,
         key_events: List[KeyEvent],
         frame_map: Dict[float, str],
     ):
         """
         Handles the slow I/O of logging a turn to the TranscriptManager.
+        This method assumes speech_event is always provided.
         """
-        if not speech_event:
-            if key_events:
-                visual_only_events = [
-                    evt for evt in key_events if evt.triggering_phrase is None
-                ]
-                if visual_only_events:
-                    logger.info(
-                        f"Storing {len(visual_only_events)} silent visual event(s)."
-                    )
-                    valid_timestamps = {
-                        evt.representative_timestamp for evt in visual_only_events
-                    }
-                    filtered_frame_map = {
-                        ts: frame
-                        for ts, frame in frame_map.items()
-                        if ts in valid_timestamps
-                    }
-                    async with self._state_lock:
-                        self._stored_silent_key_events.extend(visual_only_events)
-                        self._stored_silent_frame_map.update(filtered_frame_map)
-            return
         async with self._state_lock:
+            # Combine the events from this turn with any previously stored silent events.
             all_events = sorted(
                 self._stored_silent_key_events + key_events, key=lambda e: e.timestamp
             )
             self._stored_silent_key_events.clear()
             combined_frame_map = self._stored_silent_frame_map.copy()
             self._stored_silent_frame_map.clear()
+
         combined_frame_map.update(frame_map)
         speech_payload = speech_event["payload"]
         speech_start_time, speech_end_time = speech_payload.get(
