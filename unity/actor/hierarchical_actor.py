@@ -43,6 +43,9 @@ from unity.common._async_tool.loop_config import (
     LIVE_IMAGES_REGISTRY,
     LIVE_IMAGES_LOG,
 )
+from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.raw_image_ref import RawImageRef
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 
 current_run_id_var = contextvars.ContextVar("hp_run_id", default=0)
 current_interaction_sink_var = contextvars.ContextVar(
@@ -2469,7 +2472,7 @@ class HierarchicalPlan(BaseActiveTask):
     async def interject(
         self,
         message: str,
-        images: Optional[dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> str:
         """
         Processes a user interjection by using an LLM to decide on the best course of action.
@@ -3500,7 +3503,7 @@ class HierarchicalActor(BaseActor):
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
         persist: bool = True,
-        images: Optional[dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         **kwargs,
     ) -> HierarchicalPlan:
         """
