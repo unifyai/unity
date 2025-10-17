@@ -1,9 +1,10 @@
-# FILE: tests/test_screen_share_manager/test_screen_share_manager.py
+# FILE: test_screen_share_manager/test_screen_share_manager.py
 
 import asyncio
 from datetime import datetime
 import json
 from unittest.mock import patch, AsyncMock, MagicMock
+import time
 
 import pytest
 from unity.image_manager.types import (
@@ -660,3 +661,128 @@ async def test_set_session_context_updates_summary(mocked_screen_share_manager):
         mock_build_prompt.assert_called_once()
         call_args, _ = mock_build_prompt.call_args
         assert call_args[0] == initial_context
+
+
+@pytest.mark.performance
+@_handle_project
+@pytest.mark.asyncio
+async def test_adaptive_frame_dropping_under_heavy_load(mocked_screen_share_manager):
+    """
+    Tests that the manager remains stable and adaptively drops frames when the
+    processing queue is overwhelmed by a high-frequency stream of events.
+    """
+    manager, mocks = mocked_screen_share_manager
+    # Configure for the test: smaller queue to fill up faster
+    manager.FRAME_QUEUE_SIZE = 50
+    manager.ADAPTIVE_DROP_THRESHOLD = 0.75
+    manager._frame_queue = asyncio.Queue(maxsize=manager.FRAME_QUEUE_SIZE)
+
+    # Simulate a processing delay to cause a backlog in the queue
+    original_b64_to_image = manager._b64_to_image
+    decode_calls = []
+
+    def slow_b64_to_image_wrapper(b64_string: str):
+        time.sleep(0.01)  # Artificial CPU-bound delay
+        decode_calls.append(b64_string)
+        return original_b64_to_image(b64_string)
+
+    # Simulate a rapid burst of 200 frame events
+    total_frames_sent = 200
+    frame_event = {
+        "channel": "app:comms:screen_frame",
+        "data": json.dumps({"payload": {"timestamp": 1.0, "frame_b64": PNG_BLUE_B64}}),
+    }
+    event_stream = [frame_event] * total_frames_sent
+    mocks[
+        "event_broker"
+    ].pubsub.return_value.__aenter__.return_value.get_message.side_effect = event_stream + [
+        asyncio.TimeoutError
+    ]
+
+    with patch.object(manager, "_b64_to_image", side_effect=slow_b64_to_image_wrapper):
+        # Run the listener in the background
+        listener_task = asyncio.create_task(manager._listen_for_events())
+
+        # Allow time for the listener to process the burst of events
+        await asyncio.sleep(1.0)
+
+        # Assertions
+        # 1. The listener should have tried to process all events
+        assert (
+            mocks[
+                "event_broker"
+            ].pubsub.return_value.__aenter__.return_value.get_message.call_count
+            >= total_frames_sent
+        )
+
+        # 2. Adaptive dropping occurred: Not all frames were decoded
+        # The number of decoded frames should be significantly less than the total sent
+        # because the queue filled up, triggering the proactive dropping logic.
+        assert len(decode_calls) < total_frames_sent
+        assert len(decode_calls) > 0  # Ensure some frames were processed
+
+        # 3. The system remains stable (the task did not crash)
+        assert not listener_task.done()
+
+        # Cleanup
+        listener_task.cancel()
+        try:
+            await listener_task
+        except asyncio.CancelledError:
+            pass
+
+
+@pytest.mark.performance
+@_handle_project
+@pytest.mark.asyncio
+async def test_stability_with_concurrent_speech_and_frames(mocked_screen_share_manager):
+    """
+    Tests that a high-priority speech event is correctly processed even when the
+    system is under a heavy, continuous load of screen frames.
+    """
+    manager, mocks = mocked_screen_share_manager
+    manager.DEBOUNCE_DELAY_SEC = 0.05
+
+    # Simulate a continuous stream of frame events with a speech event in the middle
+    speech_event_data = {
+        "payload": {
+            "contact_details": {"contact_id": 1},
+            "timestamp": datetime.now().isoformat(),
+            "content": "This is a test utterance.",
+        }
+    }
+    speech_event = {
+        "channel": "app:comms:phone_utterance",
+        "data": json.dumps(speech_event_data),
+    }
+    frame_event = {
+        "channel": "app:comms:screen_frame",
+        "data": json.dumps({"payload": {"timestamp": 1.0, "frame_b64": PNG_WHITE_B64}}),
+    }
+
+    # Create a stream of 50 frames, then speech, then 50 more frames
+    event_stream = [frame_event] * 50 + [speech_event] + [frame_event] * 50
+    # Add a final timeout to stop the loop gracefully
+    event_stream.append(asyncio.TimeoutError)
+    mocks[
+        "event_broker"
+    ].pubsub.return_value.__aenter__.return_value.get_message.side_effect = event_stream
+
+    # Run the listener as a background task
+    listener_task = asyncio.create_task(manager._listen_for_events())
+
+    # Wait long enough for the speech event to be processed and debounced
+    await asyncio.sleep(0.5)
+
+    # Assertion: The speech event should have successfully triggered an analysis
+    mocks["analysis_client"].generate.assert_called_once()
+
+    # The system should remain stable
+    assert not listener_task.done()
+
+    # Cleanup
+    listener_task.cancel()
+    try:
+        await listener_task
+    except asyncio.CancelledError:
+        pass
