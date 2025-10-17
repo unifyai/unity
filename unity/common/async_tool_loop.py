@@ -527,7 +527,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         image_refs: list | None = None,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"💬 [{_label}] Interject requested: {message}")
+        LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
         # No delegate forwarding – outer loop remains in control.
         # Record user-visible immediately
         self._append_user_visible_user(message, parent_chat_context_cont)

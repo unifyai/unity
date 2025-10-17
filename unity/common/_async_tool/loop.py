@@ -271,6 +271,25 @@ async def async_tool_loop_inner(
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
     _img_token = None
     _imglog_token = None
+    # Track already-logged image entries to avoid repeated 🖼️ spam
+    image_log_last_len: int = 0
+
+    # Helper: append image refs (if any) and log only newly appended entries
+    def _append_and_log_images_safely(images_any) -> None:
+        nonlocal image_log_last_len
+        with suppress(Exception):
+            append_image_refs_with_source(images_any)
+            try:
+                _logs = get_image_log_entries()
+                for _iid, _annotation in _logs[image_log_last_len:]:
+                    logger.info(
+                        f"Image id={_iid}, annotation={_annotation!r}",
+                        prefix="🖼️",
+                    )
+                image_log_last_len = len(_logs)
+            except Exception:
+                pass
+
     # If live images are provided, set the registry for this loop's scope
     try:
         if images:
@@ -316,10 +335,10 @@ async def async_tool_loop_inner(
         if log_steps == "full":
             if parent_chat_context:
                 logger.info(
-                    f"Parent Context: {json.dumps(parent_chat_context, indent=4)}\n",
+                    f"Parent Context: {json.dumps(parent_chat_context, indent=4)}",
                     prefix="⬇️",
                 )
-            logger.info(f"System Message: {client.system_message}\n", prefix="📋")
+            logger.info(f"System Message: {client.system_message}", prefix="📋")
         # Combine user message + any aligned images into a single log entry
         try:
             combined_lines = [f"User Message: {message}"]
@@ -329,9 +348,11 @@ async def async_tool_loop_inner(
                     combined_lines.append(
                         f"🖼️ Image id={_iid}, annotation={_annotation!r}",
                     )
-            logger.info("\n".join(combined_lines) + "\n", prefix="🧑‍💻")
+                # mark images up to current length as already logged
+                image_log_last_len = len(logs)
+            logger.info("\n".join(combined_lines), prefix="🧑‍💻")
         except Exception:
-            logger.info(f"User Message: {message}\n", prefix="🧑‍💻")
+            logger.info(f"User Message: {message}", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -548,6 +569,15 @@ async def async_tool_loop_inner(
             f"{question_text}"
         )
 
+        # Log the clarification request as a first-class event
+        try:
+            logger.info(
+                f"Clarification requested – {tool_name}: {question_text}",
+                prefix="❓",
+            )
+        except Exception:
+            pass
+
         # Forward programmatic clarification event to outer handle
         with suppress(Exception):
             outer = outer_handle_container[0] if outer_handle_container else None
@@ -562,22 +592,28 @@ async def async_tool_loop_inner(
                 )
 
         # Append any images sent alongside the clarification request
-        with suppress(Exception):
-            append_image_refs_with_source(images_from_child)
-            try:
-                for _iid, _annotation in get_image_log_entries():
-                    logger.info(
-                        f"Image id={_iid}, annotation={_annotation!r}",
-                        prefix="🖼️",
-                    )
-            except Exception:
-                pass
+        _append_and_log_images_safely(images_from_child)
 
     async def _handle_notification(src_task: asyncio.Task, payload: Any) -> None:
         call_id = tools_data.info[src_task].call_id
         tool_name = tools_data.info[src_task].name
 
         pretty = ToolsData._pretty_tool_payload(tool_name, payload)
+
+        # Emit a concise human-friendly notification log line immediately
+        try:
+            if isinstance(payload, dict):
+                _msg_txt = str(
+                    payload.get("message") or payload.get("status") or payload,
+                )
+            else:
+                _msg_txt = str(payload)
+            logger.info(
+                f"Notification from {tool_name}: {_msg_txt}",
+                prefix="🔔",
+            )
+        except Exception:
+            pass
 
         placeholder = tools_data.info[src_task].tool_reply_msg
         if placeholder is None:
@@ -618,15 +654,7 @@ async def async_tool_loop_inner(
             images_from_child = None
             if isinstance(payload, dict):
                 images_from_child = payload.get("images", payload.get("image_refs"))
-            append_image_refs_with_source(images_from_child)
-            try:
-                for _iid, _annotation in get_image_log_entries():
-                    logger.info(
-                        f"Image id={_iid}, annotation={_annotation!r}",
-                        prefix="🖼️",
-                    )
-            except Exception:
-                pass
+            _append_and_log_images_safely(images_from_child)
 
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
@@ -850,21 +878,18 @@ async def async_tool_loop_inner(
                         "any conflicting comments/requests across the different interjections."
                     )
 
+                # Log a single concise interjection line
+                try:
+                    logger.info(f"Interjection received: {_msg_text}", prefix="💬")
+                except Exception:
+                    pass
+
                 interjection_msg = {"role": "system", "content": sys_content}
                 await _msg_dispatcher.append_msgs([interjection_msg])
                 last_valid_user_history = history_lines + [f"user: {extra}"]
 
                 # If images accompany this interjection, accept source-scoped keys and append
-                with suppress(Exception):
-                    append_image_refs_with_source(_incoming_images)
-                    try:
-                        for _iid, _annotation in get_image_log_entries():
-                            logger.info(
-                                f"Image id={_iid}, annotation={_annotation!r}",
-                                prefix="🖼️",
-                            )
-                    except Exception:
-                        pass
+                _append_and_log_images_safely(_incoming_images)
 
                 # Append this interjection to the user-visible history for future context
                 with suppress(Exception):
@@ -1379,7 +1404,7 @@ async def async_tool_loop_inner(
                         _fn = _tc.get("function", {})
                         _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
                     logger.info(
-                        f"{json.dumps(_msg_for_logging, indent=4)}\n",
+                        f"{json.dumps(_msg_for_logging, indent=4)}",
                         prefix="🤖",
                     )
 
@@ -1564,17 +1589,9 @@ async def async_tool_loop_inner(
                                 reason_txt = payload.get("reason")
                             except Exception:
                                 reason_txt = ""
-                            append_image_refs_with_source(
+                            _append_and_log_images_safely(
                                 payload.get("images", payload.get("image_refs")),
                             )
-                            try:
-                                for _iid, _annotation in get_image_log_entries():
-                                    logger.info(
-                                        f"Image id={_iid}, annotation={_annotation!r}",
-                                        prefix="🖼️",
-                                    )
-                            except Exception:
-                                pass
 
                             tool_msg = create_tool_call_message(
                                 name=pretty_name,
@@ -1731,7 +1748,7 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the clarification answer
                         with suppress(Exception):
-                            append_image_refs_with_source(
+                            _append_and_log_images_safely(
                                 (args.get("images") if isinstance(args, dict) else None)
                                 or (
                                     args.get("image_refs")
@@ -1739,14 +1756,6 @@ async def async_tool_loop_inner(
                                     else None
                                 ),
                             )
-                            try:
-                                for _iid, _annotation in get_image_log_entries():
-                                    logger.info(
-                                        f"Image id={_iid}, annotation={_annotation!r}",
-                                        prefix="🖼️",
-                                    )
-                            except Exception:
-                                pass
                         # Always publish a tool reply acknowledging the clarify helper
                         tool_reply_msg = create_tool_call_message(
                             name=name,
@@ -1816,17 +1825,9 @@ async def async_tool_loop_inner(
 
                         # Record any images provided with the interjection helper
                         with suppress(Exception):
-                            append_image_refs_with_source(
+                            _append_and_log_images_safely(
                                 payload.get("images", payload.get("image_refs")),
                             )
-                            try:
-                                for _iid, _annotation in get_image_log_entries():
-                                    logger.info(
-                                        f"Image id={_iid}, annotation={_annotation!r}",
-                                        prefix="🖼️",
-                                    )
-                            except Exception:
-                                pass
 
                         # ― emit a tool message so the chat log stays tidy ---
                         tool_msg = create_tool_call_message(
