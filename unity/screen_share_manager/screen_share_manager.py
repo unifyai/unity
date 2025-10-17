@@ -820,9 +820,7 @@ class ScreenShareManager:
         speech_start_time, speech_end_time = speech_payload.get(
             "start_time"
         ), speech_payload.get("end_time")
-
-        # Collect unique frames to upload, mapping representative timestamp to frame data
-        unique_frames: Dict[float, str] = {}
+        images_to_add, event_to_image_map = [], {}
         for event in all_events:
             rep_ts = event.representative_timestamp
             screenshot_b64 = combined_frame_map.get(rep_ts)
@@ -832,51 +830,37 @@ class ScreenShareManager:
                 )
                 if abs(closest_ts - rep_ts) < 1.0:
                     screenshot_b64 = combined_frame_map[closest_ts]
-
             if screenshot_b64:
-                unique_frames[rep_ts] = screenshot_b64
-
-        # Upload unique frames and build a map from representative timestamp to image_id
-        rep_ts_to_image_id: Dict[float, int] = {}
-        if unique_frames:
-            # Prepare for batch upload, preserving order for mapping back
-            upload_timestamps = list(unique_frames.keys())
-            images_to_add = [
-                {"data": unique_frames[ts], "caption": "Screen capture"}
-                for ts in upload_timestamps
-            ]
-
-            logged_image_ids = []
-            if images_to_add:
-                for attempt in range(self.IMAGE_UPLOAD_MAX_RETRIES):
-                    try:
-                        logged_image_ids = await asyncio.to_thread(
-                            self._image_manager.add_images, images_to_add
-                        )
-                        break
-                    except Exception as e:
-                        logger.warning(
-                            f"Image upload failed on attempt {attempt + 1}/{self.IMAGE_UPLOAD_MAX_RETRIES}: {e}"
-                        )
-                        if attempt + 1 == self.IMAGE_UPLOAD_MAX_RETRIES:
-                            logger.error("Image upload failed after all retries.")
-                            break
-                        await asyncio.sleep(
-                            self.IMAGE_UPLOAD_INITIAL_BACKOFF * (2**attempt)
-                            + random.uniform(0, 1)
-                        )
-
-            if len(logged_image_ids) == len(upload_timestamps):
-                for i, ts in enumerate(upload_timestamps):
-                    rep_ts_to_image_id[ts] = logged_image_ids[i]
-            else:
-                logger.error(
-                    "Mismatch between uploaded images and timestamps. Image linking may be incorrect."
+                images_to_add.append(
+                    {"data": screenshot_b64, "caption": event.event_description}
                 )
-
+                event_to_image_map[event.timestamp] = len(images_to_add) - 1
+        logged_image_ids = []
+        if images_to_add:
+            for attempt in range(self.IMAGE_UPLOAD_MAX_RETRIES):
+                try:
+                    logged_image_ids = await asyncio.to_thread(
+                        self._image_manager.add_images, images_to_add
+                    )
+                    break
+                except Exception as e:
+                    logger.warning(
+                        f"Image upload failed on attempt {attempt + 1}/{self.IMAGE_UPLOAD_MAX_RETRIES}: {e}"
+                    )
+                    if attempt + 1 == self.IMAGE_UPLOAD_MAX_RETRIES:
+                        logger.error("Image upload failed after all retries.")
+                        break
+                    await asyncio.sleep(
+                        self.IMAGE_UPLOAD_INITIAL_BACKOFF * (2**attempt)
+                        + random.uniform(0, 1)
+                    )
+        timestamp_to_image_id = {}
+        for ts, index in event_to_image_map.items():
+            if index < len(logged_image_ids):
+                timestamp_to_image_id[ts] = logged_image_ids[index]
         image_refs_list, screen_share_dict, primary_speech_event_handled = [], {}, False
         for event in all_events:
-            image_id = rep_ts_to_image_id.get(event.representative_timestamp)
+            image_id = timestamp_to_image_id.get(event.timestamp)
             (
                 rep_ts,
                 screenshot_b64,
