@@ -450,6 +450,8 @@ def method_to_schema(
             "clarification_up_q",
             "clarification_down_q",
             "notification_up_q",
+            "pause_event",
+            "interject_queue",
         )
 
         if is_hidden:
