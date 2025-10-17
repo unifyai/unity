@@ -177,12 +177,13 @@ class TaskScheduler(BaseTaskScheduler):
         - Exposes read/write tools and mirrors selected ``ContactManager`` tools for cross‑domain workflows.
         - Maintains in‑memory pointers to the single primed task and the current active task handle (if any).
         """
+        super().__init__()
 
         # Instantiate a ContactManager once so its bound methods can act as tools
         self._contact_manager = ContactManager()
 
         # Query-only helpers – safe, read-only operations.  Include the *external* contact lookup
-        self._ask_tools = {
+        ask_tools = {
             **methods_to_tool_dict(
                 self._filter_tasks,
                 self._search_tasks,
@@ -195,9 +196,10 @@ class TaskScheduler(BaseTaskScheduler):
                 include_class_name=True,  # Retain originating class so name is ContactManager.ask
             ),
         }
+        self.add_tools("ask", ask_tools)
 
         # Write-capable helpers – every mutating operation as well as the read-only ones.
-        self._update_tools = {
+        update_tools = {
             **methods_to_tool_dict(
                 # Ask
                 self.ask,
@@ -225,6 +227,7 @@ class TaskScheduler(BaseTaskScheduler):
                 include_class_name=True,  # Retain originating class so name is ContactManager.ask
             ),
         }
+        self.add_tools("update", update_tools)
 
         # active task
         if actor is None:
@@ -427,7 +430,7 @@ class TaskScheduler(BaseTaskScheduler):
         client = new_llm_client("gpt-5@openai")
 
         # Build a live tools dictionary so the prompt reflects reality
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
 
         # Add clarification tool when queues are provided
         self._maybe_add_clarification_tool(
@@ -502,7 +505,7 @@ class TaskScheduler(BaseTaskScheduler):
         client = new_llm_client("gpt-5@openai")
 
         # Build a live tools dictionary first (prompt needs it)
-        tools = dict(self._update_tools)
+        tools = dict(self.get_tools("update"))
 
         # Bind to shared scheduler helpers to avoid duplication
         validate_queue_plan = self.validate_queue_plan

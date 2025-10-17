@@ -68,13 +68,14 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools such as joins and filters can reference it via the special
             table name ``"Contacts"``.
         """
+        super().__init__()
         if file_manager is not None:
             self._file_manager = file_manager
         else:
             self._file_manager = FileManager()
 
         # Allow ingestion/deprecation only within update/refactor flows
-        self._refactor_tools = methods_to_tool_dict(
+        refactor_tools = methods_to_tool_dict(
             # Ask
             self.ask,
             # Tables
@@ -97,17 +98,19 @@ class KnowledgeManager(BaseKnowledgeManager):
             self._ingest_documents,
             include_class_name=False,
         )
+        self.add_tools("refactor", refactor_tools)
 
-        self._multi_table_ask_tools = methods_to_tool_dict(
+        multi_table_ask_tools = methods_to_tool_dict(
             self._filter_join,
             self._search_join,
             self._filter_multi_join,
             self._search_multi_join,
             include_class_name=False,
         )
+        self.add_tools("ask.multi_table", multi_table_ask_tools)
 
         # We decide in `ask` method whether to include the multi-table tools or not
-        self._ask_tools = {
+        ask_tools = {
             **methods_to_tool_dict(
                 self._tables_overview,
                 self._filter,
@@ -115,14 +118,16 @@ class KnowledgeManager(BaseKnowledgeManager):
                 include_class_name=False,
             ),
         }
+        self.add_tools("ask", ask_tools)
 
-        self._update_tools = {
-            **self._refactor_tools,
+        update_tools = {
+            **refactor_tools,
             **methods_to_tool_dict(
                 self._add_rows,
                 include_class_name=False,
             ),
         }
+        self.add_tools("update", update_tools)
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
@@ -277,7 +282,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         # 1️⃣  Prepare toolset (and optional live clarification helper)
-        tools = dict(self._refactor_tools)
+        tools = dict(self.get_tools("refactor"))
 
         if clarification_up_q is not None and clarification_down_q is not None:
 
@@ -385,7 +390,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
-        tools = dict(self._update_tools)
+        tools = dict(self.get_tools("update"))
 
         if clarification_up_q is not None and clarification_down_q is not None:
 
@@ -500,9 +505,10 @@ class KnowledgeManager(BaseKnowledgeManager):
         include_join_info = len(tables_overview) > 1
 
         # We decide in `ask` method whether to include the multi-table tools or not
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
         if len(tables_overview) > 1:
-            tools.update(dict(self._multi_table_ask_tools))
+            multi_table_tools = dict(self.get_tools("ask.multi_table"))
+            tools.update(multi_table_tools)
 
         if clarification_up_q is not None and clarification_down_q is not None:
 
