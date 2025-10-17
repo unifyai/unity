@@ -254,6 +254,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
                 # Start the command processor task
                 if not self._command_processor_task:
+                    logger.info("⚙️ Starting command processor task")
                     self._command_processor_task = asyncio.create_task(
                         self._process_commands(),
                     )
@@ -369,6 +370,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     self._command_queue.task_done()
                     continue
                 try:
+                    logger.info(f"▶️ Executing command seq={seq}, id={command_id}")
                     result = await func(*args, **kwargs)
                     if future:
                         future.set_result(result)
@@ -376,6 +378,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     if future:
                         future.set_exception(e)
                 finally:
+                    logger.info(f"✅ Completed command seq={seq}, id={command_id}")
                     self._processed_seq = seq
                     # Notify any waiting barriers after a normal command completes
                     for barrier_seq, event in list(self._barrier_events.items()):
@@ -785,6 +788,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
         future = asyncio.get_event_loop().create_future() if wait else None
         self._active_commands[command_id] = (instruction, context)
+        logger.info(
+            f"🧾 Queueing command seq={seq}, id={command_id}, wait={wait}, task='{instruction[:120]}'",
+        )
         await self._command_queue.put((seq, command_id, bound_func, [], {}, future))
 
         if wait:
