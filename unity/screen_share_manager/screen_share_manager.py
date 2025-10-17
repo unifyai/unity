@@ -1,3 +1,5 @@
+# FILE: unity/screen_share_manager/screen_share_manager.py
+
 import asyncio
 import base64
 import io
@@ -19,7 +21,11 @@ from skimage.metrics import structural_similarity as ssim
 
 from unity.conversation_manager_2.event_broker import get_event_broker
 from unity.image_manager.image_manager import ImageManager
-from unity.image_manager.types import AnnotatedImageRef, ImageRefs, RawImageRef
+from unity.image_manager.types import (
+    AnnotatedImageRef,
+    RawImageRef,
+    AnnotatedImageRefs,
+)
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import (
     Medium,
@@ -906,7 +912,7 @@ class ScreenShareManager:
             timestamp=datetime.fromisoformat(speech_payload["timestamp"]),
             content=speech_payload["content"],
             screen_share=screen_share_dict,
-            images=ImageRefs.model_validate(image_refs_list),
+            images=AnnotatedImageRefs.model_validate(image_refs_list),
         )
         logged_messages = self._transcript_manager.log_messages([message_to_log])
         if logged_messages:
