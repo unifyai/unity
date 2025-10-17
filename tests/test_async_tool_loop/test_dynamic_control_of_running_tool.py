@@ -194,13 +194,22 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     * We measure wall-clock time: because the loop is paused for ~2 s in the
       middle, total duration must be ≥ 2 s + the tool's own 1-second workload.
     """
+    # Explicit gates to avoid timing races: tool cannot complete until
+    # the pause helper has been invoked (gate A) and then the resume helper (gate B).
+    pause_called_gate = asyncio.Event()
+    resume_called_gate = asyncio.Event()
 
     async def pausable_fn(*, pause_event: asyncio.Event) -> str:
-        # Work loop honouring pause_event; total of ~2 seconds when unpaused
-        ticks = 20
-        for _ in range(ticks):
+        # Run until the PAUSE helper has been observed.
+        while not pause_called_gate.is_set():
             await pause_event.wait()
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
+        # Do not finish until RESUME helper has been observed.
+        await resume_called_gate.wait()
+        # Perform a small amount of additional work after resume to ensure ordering.
+        for _ in range(10):
+            await pause_event.wait()
+            await asyncio.sleep(0.05)
         return "ok"
 
     pausable_fn.__name__ = "pausable_fn"
@@ -234,6 +243,9 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     # the moment the tool's pause_event has been cleared.
     await _wait_for_tool_message_prefix(client, "pause ")
 
+    # Release the tool's first gate now that pause helper has been invoked
+    pause_called_gate.set()
+
     # While paused, the final assistant reply must NOT appear. Check deterministically
     # right after the pause has been acknowledged (no fixed sleep).
     msgs_during_pause = client.messages or []
@@ -244,8 +256,13 @@ async def test_functional_tool_pause_extends_wall_clock(client):
         for m in msgs_during_pause
     ), "assistant produced final reply while tool was paused"
 
-    # Resume and finish
+    # Resume and finish – ensure the assistant calls the resume helper first
     await outer.interject("go")
+    await _wait_for_assistant_call_prefix(client, "resume")
+    await _wait_for_tool_message_prefix(client, "resume ")
+
+    # Release the tool's second gate now that resume helper has been invoked
+    resume_called_gate.set()
     final = await outer.result()
 
     # ── assertions ───────────────────────────────────────────────────────
