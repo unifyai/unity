@@ -120,7 +120,6 @@ class ContactManager(BaseContactManager):
             ),
         }
         self.add_tools("update", update_tools)
-        self.build_tools()
 
         # rolling activity inclusion flag
         self._rolling_summary_in_prompts = rolling_summary_in_prompts

@@ -145,7 +145,6 @@ class TranscriptManager(BaseTranscriptManager):
             ),
         )
         self.add_tools("ask", ask_tools)
-        self.build_tools()
 
         # ── Async logging (mirrors EventBus) ────────────────────────────────
         # Using a dedicated logger means log_create() returns immediately,

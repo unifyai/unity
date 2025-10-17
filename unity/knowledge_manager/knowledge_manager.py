@@ -68,6 +68,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools such as joins and filters can reference it via the special
             table name ``"Contacts"``.
         """
+        super().__init__()
         if file_manager is not None:
             self._file_manager = file_manager
         else:

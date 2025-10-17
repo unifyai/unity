@@ -43,6 +43,7 @@ class SecretManager(BaseSecretManager):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         # Resolve context and construct a single-table store
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
