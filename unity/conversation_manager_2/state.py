@@ -105,6 +105,8 @@ class ConversationManagerState:
         self.active_conversations: dict[str, Contact] = {}
 
         self.notifs: list[Notification] = []
+        # conductor handles: handle_id -> {query, status}
+        self.conductor_handles: dict[str, dict] = {}
 
         self.mode: Literal["text", "call", "gmeet"] = "text"
         self.events = []
@@ -419,6 +421,34 @@ class ConversationManagerState:
                 if e.medium == "phone_call" and self.call_exchange_id == UNASSIGNED:
                     self.call_exchange_id = e.exchange_id
 
+            # conductor
+            case ConductorResponse() as e:
+                self.register_conductor_handle(
+                    handle_id=e.handle_id,
+                    query=e.query,
+                )
+            case ConductorHandleResponse() as e:
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name=e.action_name,
+                    query=e.query,
+                    response=e.response,
+                )
+            case ConductorClarificationRequest() as e:
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="clarification",
+                    query=e.query,
+                    response="",
+                )
+            case ConductorResult() as e:
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="result",
+                    query="",
+                    response=e.result,
+                )
+
     def snapshot(self):
         self._current_snapshot_time = datetime.now()
 
@@ -431,8 +461,12 @@ class ConversationManagerState:
             self._render_contact(c) for c in self.active_conversations.values()
         )
         notif = self._render_notifs()
-        state = f"<notifications>\n{self._add_spaces(notif)}\n</notifications>\n<active_conversations>\n{self._add_spaces(active_convs)}\n</active_conversations>"
-
+        conductor_handles = self._render_conductor_handles()
+        state = (
+            f"<notifications>\n{self._add_spaces(notif)}\n</notifications>\n"
+            f"<active_conversations>\n{self._add_spaces(active_convs)}\n</active_conversations>\n"
+            f"<conductor_handles>\n{self._add_spaces(conductor_handles)}\n</conductor_handles>"
+        )
         return state
 
     def set_details(self, payload: dict):
@@ -477,6 +511,22 @@ class ConversationManagerState:
         )
         print("Dynamic response models built.")
         print(f"Available actions: {available_actions}")
+
+    # conductor handle tracking helpers
+    def register_conductor_handle(self, handle_id: str, query: str) -> None:
+        self.conductor_handles[handle_id] = {"query": query, "handle_actions": []}
+
+    def add_conductor_handle_action(
+        self, handle_id: str, action_name: str, query: str, response: str
+    ) -> None:
+        if handle_id in self.conductor_handles:
+            self.conductor_handles[handle_id]["handle_actions"].append(
+                {
+                    "action_name": action_name,
+                    "query": query,
+                    "response": response,
+                }
+            )
 
     def get_details(self) -> dict:
         return {
@@ -746,6 +796,23 @@ Body:
                 threads.append(self._render_thread(t_name, t))
         threads = "\n\n".join(threads)
         return threads
+
+    def _render_conductor_handles(self):
+        handles = []
+        # ToDo: get the indentation working for this
+        for handle_id, handle in self.conductor_handles.items():
+            handles.append(f'<conductor_handle handle_id="{handle_id}">')
+            handles.append(f"\t<query>{handle['query']}</query>")
+            handles.append(f"\t<handle_actions>")
+            for action in handle["handle_actions"]:
+                handles.append(f"\t\t<action action_name=\"{action['action_name']}\">")
+                handles.append(f"\t\t\t<query>{action['query']}</query>")
+                if action["response"]:
+                    handles.append(f"\t\t\t<response>{action['response']}</response>")
+                handles.append(f"\t\t</action>")
+            handles.append(f"\t</handle_actions>")
+            handles.append(f"</conductor_handle>")
+        return "\n".join(handles)
 
     def _add_spaces(self, string: str, num_spaces: int = 4):
         ls = string.split("\n")
