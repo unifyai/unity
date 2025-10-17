@@ -432,7 +432,7 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
-  const { instructions, schema } = req.body;
+  const { instructions, schema, bypassDomProcessing } = req.body;
   if (!instructions) {
     return res.status(400).json({ error: 'bad_request', message: 'Extraction instructions are required.' });
   }
@@ -441,12 +441,18 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const zodSchema: ZodTypeAny = schema ? jsonSchemaToZod(schema) : z.string();
-      const extractFn = (browserAgent as unknown as { extract: (i: string, s: ZodTypeAny) => Promise<unknown> }).extract;
-      const dataUnknown: unknown = await extractFn(instructions, zodSchema);
+      const zodSchema = schema ? jsonSchemaToZod(schema) : z.string();
 
-      // If successful, send the response and exit the loop
-      return res.json({ data: dataUnknown });
+      // If bypassDomProcessing is true, use screenshot-only extraction
+      if (bypassDomProcessing === true) {
+        const screenshot = await browserAgent!.require(BrowserConnector).getHarness().screenshot();
+        const data = await browserAgent!.models.extract(instructions, zodSchema as ZodTypeAny, screenshot, '');
+        return res.json({ data });
+      } else {
+        // Use the standard extraction method with DOM processing
+        const data = await browserAgent!.extract(instructions, zodSchema as ZodTypeAny);
+        return res.json({ data });
+      }
     } catch (err: unknown) {
       lastError = err;
       // Check if the error is related to the LLM returning invalid JSON.
