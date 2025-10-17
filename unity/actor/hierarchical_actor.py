@@ -1182,6 +1182,15 @@ class _ActionProviderProxy:
                 "impure": tool_name.endswith((".navigate", ".act")),
             }
 
+            if meta["impure"]:
+                try:
+                    post_screenshot = (
+                        await self._plan.actor.action_provider.browser.get_screenshot()
+                    )
+                    meta["post_state_screenshot"] = post_screenshot
+                except Exception as e:
+                    logger.warning(f"Failed to capture post-action screenshot: {e}")
+
             self._plan.idempotency_cache[cache_key] = {
                 "result": result_to_cache,
                 "interaction_log": interaction_to_cache,
