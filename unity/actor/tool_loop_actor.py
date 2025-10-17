@@ -18,6 +18,9 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
     SteerableToolHandle,
 )
+from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.raw_image_ref import RawImageRef
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 from ..task_scheduler.base import BaseActiveTask
 from .base import BaseActor
 from unity.controller.controller import Controller, ActionFailedError
@@ -200,12 +203,14 @@ class ToolLoopPlan(BaseActiveTask):
         custom_system_prompt: str | None = None,
         tool_policy: Optional[Callable] = None,
         action_provider: Optional["ActionProvider"] = None,  # type: ignore
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ):
         self._initial_task_description = task_description
         self._tools = tools
         self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
         self._chat_history: List[Dict[str, Any]] = []
         self._custom_system_prompt = custom_system_prompt
+        self._images = images
 
         self._clar_up_q_internal: asyncio.Queue[str] = (
             clarification_up_q or asyncio.Queue()
@@ -336,6 +341,7 @@ class ToolLoopPlan(BaseActiveTask):
                     max_steps=self.MAX_STEPS,
                     timeout=self._timeout,
                     tool_policy=self._tool_policy,
+                    images=self._images,
                 )
 
                 try:
