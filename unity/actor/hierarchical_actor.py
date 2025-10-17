@@ -261,6 +261,7 @@ class VerificationAssessment(BaseModel):
     )
 
 
+# TODO: DEPRECATED
 class CourseCorrectionDecision(BaseModel):
     """A structured decision on whether course correction is needed."""
 
@@ -278,6 +279,7 @@ class CourseCorrectionDecision(BaseModel):
     )
 
 
+# TODO: DEPRECATED
 class StateVerificationDecision(BaseModel):
     """A structured decision on whether the current state matches the required precondition."""
 
@@ -1539,6 +1541,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.summarization_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-flash@vertex-ai",
         )
+        # TODO: DEPRECATED
         self.course_correction_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
         )
@@ -2113,6 +2116,14 @@ class HierarchicalPlan(BaseActiveTask):
         logger.info(
             f"[V-TASK-{item.ordinal}] Verification SUCCEEDED for '{item.function_name}'. Reason: {assessment.reason}",
         )
+        if assessment.refinements:
+            logger.info(
+                f"[V-TASK-{item.ordinal}] Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
+            )
+            logger.info(
+                f"[V-TASK-{item.ordinal}] Refinements: {assessment.refinements}",
+            )
+
         self.action_log.append(
             f"Async Verification for {item.function_name}: ok - '{assessment.reason}'",
         )
@@ -4133,7 +4144,8 @@ class HierarchicalActor(BaseActor):
                     step_cache_miss_counter = 0
                     plan.runtime.cache_miss_counter.append(0)
 
-                    if plan.runtime.execution_mode != "replay_after_modification":
+                    # TODO: remove this if preconditions are no longer needed in favor of the new sub-agent course correction
+                    if not plan.runtime.execution_mode.startswith("replay_"):
                         await self._ensure_precondition(plan, func_name)
 
                     pre_state = {
@@ -4778,6 +4790,7 @@ class HierarchicalActor(BaseActor):
         finally:
             plan.verification_client.reset_response_format()
 
+    # TODO: DEPRECATED
     async def _execute_course_correction(self, plan: HierarchicalPlan, code: str):
         """
         Executes a dynamically generated script to correct the browser state.
