@@ -235,13 +235,13 @@ class ToolLoopPlan(BaseActiveTask):
         self._action_provider = action_provider
 
         self._plan_client = AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
+            "claude-4.5-sonnet@anthropic",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         self._ask_client = unify.AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
+            "claude-4.5-sonnet@anthropic",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
@@ -492,7 +492,12 @@ class ToolLoopPlan(BaseActiveTask):
         return False
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    async def stop(self, reason: Optional[str] = None) -> str:
+    async def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> str:
         if not self._is_valid_method("stop"):
             if self.done():
                 return await self.result()
@@ -515,7 +520,13 @@ class ToolLoopPlan(BaseActiveTask):
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
-            self._loop_handle.stop(reason)
+            try:
+                self._loop_handle.stop(
+                    reason,
+                    parent_chat_context_cont=parent_chat_context_cont,
+                )
+            except Exception:
+                self._loop_handle.stop(reason)
         elif (
             previous_state == _PlanState.IDLE
             and not self._overall_plan_completion_event.is_set()
@@ -577,7 +588,13 @@ class ToolLoopPlan(BaseActiveTask):
         return f"Plan {self._task_id} is resuming."
 
     @functools.wraps(BaseActiveTask.interject, updated=())
-    async def interject(self, message: str) -> str:
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        image_refs: list | None = None,
+    ) -> str:
         if not self._is_valid_method("interject"):
             if self.done():
                 return f"Error: Plan {self._task_id} is already done, cannot interject."
@@ -598,7 +615,14 @@ class ToolLoopPlan(BaseActiveTask):
         logger.info(
             f"ToolLoopPlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
         )
-        await self._loop_handle.interject(message)
+        try:
+            await self._loop_handle.interject(
+                message=message,
+                parent_chat_context_cont=parent_chat_context_cont,
+                image_refs=image_refs,
+            )
+        except TypeError:
+            await self._loop_handle.interject(message)
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
     @functools.wraps(BaseActiveTask.ask, updated=())
