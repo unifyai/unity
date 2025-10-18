@@ -54,7 +54,7 @@ def test_log_messages_async_auto_increment_visible_via_filter_messages():
     tm.join_published()
 
     # Fetch messages and verify id sequences start at 0 and increment by 1
-    msgs = tm._filter_messages(limit=None)
+    msgs = tm._filter_messages(limit=None)["messages"]
     assert len(msgs) == 3
 
     # Sort by timestamp to preserve insertion order
