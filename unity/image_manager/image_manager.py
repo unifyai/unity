@@ -5,7 +5,7 @@ import os
 import json
 import functools
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 import unify
@@ -22,6 +22,7 @@ from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
 from ..common.filter_utils import normalize_filter_expr
 from ..common.data_store import DataStore
+import itertools
 
 
 class ImageHandle:
@@ -36,12 +37,135 @@ class ImageHandle:
         return int(self._image.image_id)
 
     @property
+    def is_pending(self) -> bool:
+        return self._manager.is_pending_id(self.image_id)
+
+    @property
     def caption(self) -> Optional[str]:
         return self._image.caption
 
     @property
     def timestamp(self) -> datetime:
         return self._image.timestamp
+
+    def resolve(self, real_image_id: int) -> None:
+        """
+        Rebind this handle to a resolved backend image id.
+
+        Assumes the caller has already flushed the pending row and ensured the
+        DataStore now contains a row under the resolved id.
+        """
+        try:
+            self._image.image_id = int(real_image_id)
+        except Exception:
+            # Best-effort; if mutation fails, leave as-is
+            pass
+
+    def to_ref(self) -> Dict[str, Any]:
+        """
+        Produce a JSON-serializable reference for cross-process handoff.
+
+        If base64 data is available locally, include it to allow the receiver to
+        "see" the image immediately without backend reads.
+        """
+        ref: Dict[str, Any] = {
+            "ctx": self._manager._ctx,
+            "image_id": self.image_id,
+        }
+        if self.caption is not None:
+            ref["caption"] = self.caption
+        if isinstance(self._image.timestamp, datetime):
+            ref["timestamp"] = self._image.timestamp.isoformat()
+
+        # Prefer cached base64; fall back to inline data if already base64.
+        data_str: Optional[str] = None
+        try:
+            cached = self._manager._data_store.get(self.image_id)
+            if cached is not None:
+                data_str = cached.get("data")
+        except Exception:
+            data_str = None
+        if not data_str:
+            try:
+                data_str = self._image.data
+            except Exception:
+                data_str = None
+
+        if isinstance(data_str, str):
+            is_url = (
+                data_str.startswith("gs://")
+                or data_str.startswith("http://")
+                or data_str.startswith("https://")
+            )
+            if (not is_url) or data_str.startswith("data:image/"):
+                # Embed base64 or data URL directly for immediate usability
+                ref["data"] = data_str
+        return ref
+
+    def update_metadata(
+        self,
+        *,
+        caption: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
+        data: Optional[Union[bytes, bytearray, str]] = None,
+    ) -> None:
+        """
+        Update metadata for this image in-place.
+
+        - Always updates the local DataStore so pending handles remain consistent
+          and future flush_pending includes the changes.
+        - If the image is resolved (not pending), also persists to the backend
+          via ImageManager.update_images.
+        """
+        updates: Dict[str, Any] = {}
+        if caption is not None:
+            updates["caption"] = caption
+            try:
+                self._image.caption = caption
+            except Exception:
+                pass
+        if timestamp is not None:
+            updates["timestamp"] = timestamp
+            try:
+                self._image.timestamp = timestamp
+            except Exception:
+                pass
+        if data is not None:
+            if isinstance(data, (bytes, bytearray)):
+                data_b64 = base64.b64encode(data).decode("utf-8")
+            else:
+                data_b64 = data
+            updates["data"] = data_b64
+            try:
+                self._image.data = data_b64
+            except Exception:
+                pass
+
+        if not updates:
+            return
+
+        # Update local DataStore (create row if missing)
+        try:
+            try:
+                self._manager._data_store.update(self.image_id, updates)
+            except KeyError:
+                row = {"image_id": self.image_id, **updates}
+                self._manager._data_store.put(row)
+        except Exception:
+            pass
+
+        # Persist to backend when resolved
+        if not self.is_pending:
+            payload: Dict[str, Any] = {"image_id": self.image_id}
+            # Filter to supported keys
+            for k in ("caption", "timestamp", "data"):
+                if k in updates:
+                    payload[k] = updates[k]
+            try:
+                self._manager.update_images([payload])
+            except Exception:
+                # Leave local cache updated; backend sync failure tolerated
+                pass
 
     def raw(self) -> bytes:
         """
@@ -301,6 +425,11 @@ class ImageManager(BaseImageManager):
         # Ensure context/fields exist deterministically
         self._provision_storage()
 
+        # Pending id generation (process-local)
+        self._PENDING_BASE: int = 10**12
+        # Single counter per manager instance; uniqueness is sufficient per-process
+        self._pending_counter = itertools.count(self._PENDING_BASE)
+
     # ------------------------------ Reads ---------------------------------
     def filter_images(
         self,
@@ -396,6 +525,183 @@ class ImageManager(BaseImageManager):
         return handles
 
     # ------------------------------ Writes --------------------------------
+    def is_pending_id(self, image_id: Union[int, str]) -> bool:
+        try:
+            iid = int(image_id) if not isinstance(image_id, int) else image_id
+        except Exception:
+            return False
+        return iid >= self._PENDING_BASE
+
+    def stage_image(
+        self,
+        *,
+        timestamp: Optional[datetime] = None,
+        caption: Optional[str] = None,
+        data: Union[bytes, bytearray, str],
+    ) -> ImageHandle:
+        """
+        Create a pending image locally with a temporary id and seed the DataStore.
+
+        Returns an ImageHandle that can be used immediately (raw/ask) while the
+        backend upload is performed asynchronously via flush_pending.
+        """
+        temp_id = next(self._pending_counter)
+        if timestamp is None:
+            timestamp = datetime.utcnow()
+
+        if isinstance(data, (bytes, bytearray)):
+            data_b64 = base64.b64encode(data).decode("utf-8")
+        else:
+            data_b64 = data
+
+        row: Dict[str, Any] = {
+            "image_id": int(temp_id),
+            "timestamp": timestamp,
+            "caption": caption,
+            "data": data_b64,
+        }
+        try:
+            self._data_store.put(row)
+        except Exception:
+            pass
+        return ImageHandle(manager=self, image=Image(**row))
+
+    def flush_pending(self, pending_ids: List[int]) -> Dict[int, int]:
+        """
+        Upload pending images and remap their ids.
+
+        Returns a mapping of {temp_id -> real_id} for successfully uploaded rows.
+        Pending ids that fail to upload are left as-is and omitted from the mapping.
+        """
+        if not pending_ids:
+            return {}
+
+        # Collect rows in the same order as pending_ids
+        rows: List[Optional[Dict[str, Any]]] = []
+        for pid in pending_ids:
+            try:
+                row = self._data_store.get(int(pid))
+            except Exception:
+                row = None
+            rows.append(row)
+
+        payloads: List[Dict[str, Any]] = []
+        index_map: List[int] = []  # map payload index -> pending_ids index
+        for idx, r in enumerate(rows):
+            if not r:
+                continue
+            # Prepare payload for backend create – omit image_id so auto_counting allocates
+            payloads.append(
+                {
+                    "timestamp": r.get("timestamp") or datetime.utcnow(),
+                    "caption": r.get("caption"),
+                    "data": r.get("data"),
+                },
+            )
+            index_map.append(idx)
+
+        if not payloads:
+            return {}
+
+        created_ids = self.add_images(payloads)
+        mapping: Dict[int, int] = {}
+        for out_idx, real_id in enumerate(created_ids):
+            if not isinstance(real_id, int):
+                continue
+            pid = int(pending_ids[index_map[out_idx]])
+            mapping[pid] = int(real_id)
+
+            # Copy DataStore row under real id, then delete pending row
+            try:
+                src = self._data_store.get(pid)
+                if src is not None:
+                    new_row = dict(src)
+                    new_row["image_id"] = int(real_id)
+                    self._data_store.put(new_row)
+                    try:
+                        self._data_store.delete(pid)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        return mapping
+
+    def from_ref(self, ref: Union[str, Dict[str, Any]]) -> ImageHandle:
+        """
+        Construct an ImageHandle from a cross-process reference.
+
+        If the ref contains inline data, seed the DataStore immediately so the
+        resulting handle can be used without waiting for backend availability.
+        """
+        if isinstance(ref, str):
+            try:
+                ref_obj = json.loads(ref)
+            except Exception as exc:
+                raise ValueError("Invalid JSON ref string") from exc
+        else:
+            ref_obj = dict(ref or {})
+
+        iid = ref_obj.get("image_id")
+        if iid is None:
+            raise ValueError("ref must include 'image_id'")
+        try:
+            image_id = int(iid)
+        except Exception as exc:
+            raise ValueError("'image_id' must be an int") from exc
+
+        caption = ref_obj.get("caption")
+        ts_raw = ref_obj.get("timestamp")
+        if isinstance(ts_raw, str):
+            try:
+                # fromisoformat handles "YYYY-mm-ddTHH:MM:SS[.ffffff][+/-offset]"
+                timestamp = datetime.fromisoformat(ts_raw)  # type: ignore[arg-type]
+            except Exception:
+                timestamp = datetime.utcnow()
+        else:
+            timestamp = datetime.utcnow()
+
+        data_val = ref_obj.get("data")
+        if isinstance(data_val, (bytes, bytearray)):
+            data_str = base64.b64encode(data_val).decode("utf-8")
+        else:
+            data_str = data_val
+
+        # If we have inline data, seed the DataStore immediately
+        if isinstance(data_str, str) and data_str:
+            row = {
+                "image_id": image_id,
+                "timestamp": timestamp,
+                "caption": caption,
+                "data": data_str,
+            }
+            try:
+                # put or update
+                try:
+                    self._data_store.update(image_id, row)
+                except KeyError:
+                    self._data_store.put(row)
+            except Exception:
+                pass
+            return ImageHandle(manager=self, image=Image(**row))
+
+        # Otherwise, fallback to retrieving by id
+        handles = self.get_images([image_id])
+        if not handles:
+            # Seed a minimal stub to allow immediate use (no data available)
+            stub = {
+                "image_id": image_id,
+                "timestamp": timestamp,
+                "caption": caption,
+                "data": "",
+            }
+            try:
+                self._data_store.put(stub)
+            except Exception:
+                pass
+            return ImageHandle(manager=self, image=Image(**stub))
+        return handles[0]
+
     def add_images(self, items: List[Dict[str, Any]]) -> List[int]:
         """
         Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
