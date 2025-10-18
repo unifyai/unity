@@ -76,6 +76,7 @@ class TranscriptManager(BaseTranscriptManager):
         # participant contacts followed by the list of messages, avoiding
         # repeating long bios per message. Direct method calls (e.g., tests)
         # retain their original return types for backward-compat.
+        @functools.wraps(self._filter_messages, updated=())
         @read_only
         def _filter_messages(*, filter: Optional[str] = None, offset: int = 0, limit: int = 100) -> str:  # type: ignore[override]
             return self._filter_messages(  # type: ignore[misc]
@@ -85,6 +86,7 @@ class TranscriptManager(BaseTranscriptManager):
                 return_with_contacts_table=True,
             )  # type: ignore[return-value]
 
+        @functools.wraps(self._search_messages, updated=())
         @read_only
         def _search_messages(*, references: Optional[Dict[str, str]] = None, k: int = 10) -> str:  # type: ignore[override]
             return self._search_messages(  # type: ignore[misc]
