@@ -401,7 +401,11 @@ class ImageManager(BaseImageManager):
         Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
         Returns the allocated ``image_id`` values in insertion order.
         """
-        out_ids: List[int] = []
+        if not items:
+            return []
+
+        # Prepare payloads (preserve explicit_types; convert bytes → base64)
+        prepared: List[Dict[str, Any]] = []
         for raw in items or []:
             payload = dict(raw or {})
             data_val = payload.get("data")
@@ -410,36 +414,129 @@ class ImageManager(BaseImageManager):
             if isinstance(data_val, (bytes, bytearray)):
                 payload["data"] = base64.b64encode(data_val).decode("utf-8")
             img = Image(**payload)
-            # Preserve explicit_types from the model (marks data as type=image)
-            log = unify.log(
-                context=self._ctx,
-                **img.to_post_json(),
-                new=True,
-                mutable=None,
-            )
-            try:
-                # Write-through to DataStore mirror
+            prepared.append(img.to_post_json())
+
+        # Result list aligned to input order; None when a per-item create fails
+        out_ids: List[Optional[int]] = [None] * len(prepared)
+
+        # Fast path: batch create to avoid O(N) round trips and allow parallelism upstream
+        try:
+            resp = unify.create_logs(context=self._ctx, entries=prepared, batched=True)
+
+            # Helper: write-through to DataStore with a given row payload
+            def _put_row(row: Dict[str, Any]) -> None:
                 try:
-                    self._data_store.put(log.entries)
+                    self._data_store.put(row)
                 except Exception:
                     pass
-                out_ids.append(int(log.entries["image_id"]))
-            except Exception:
-                try:
-                    last = unify.get_logs(
-                        context=self._ctx,
-                        sorting={"image_id": "descending"},
-                        limit=1,
-                    )
-                    if last:
+
+            handled = False
+
+            # Case 1: list of Log objects
+            if isinstance(resp, list):
+                for i, lg in enumerate(resp):
+                    try:
+                        entries = getattr(lg, "entries", {}) or {}
+                        iid = entries.get("image_id")
+                        if iid is not None:
+                            out_ids[i] = int(iid)
+                            _put_row(entries)
+                    except Exception:
+                        continue
+                handled = True
+
+            # Case 2: dict response – handle common shapes
+            elif isinstance(resp, dict):
+                # 2a) logs field present → treat as list-of-logs
+                logs_list = resp.get("logs")
+                if isinstance(logs_list, list):
+                    for i, lg in enumerate(logs_list):
                         try:
-                            self._data_store.put(last[0].entries)
+                            entries = getattr(lg, "entries", {}) or {}
+                            iid = entries.get("image_id")
+                            if iid is not None:
+                                out_ids[i] = int(iid)
+                                _put_row(entries)
                         except Exception:
-                            pass
-                        out_ids.append(int(last[0].entries.get("image_id")))
+                            continue
+                    handled = True
+
+                # 2b) row_ids present (commonly {"image_id": [..]} or a plain list)
+                if not handled and ("row_ids" in resp):
+                    row_ids_obj = resp.get("row_ids")
+                    ids_list: Optional[List[Any]] = None
+                    if isinstance(row_ids_obj, list):
+                        ids_list = row_ids_obj
+                    elif isinstance(row_ids_obj, dict):
+                        ids_list = row_ids_obj.get("image_id")
+                        if ids_list is None and row_ids_obj:
+                            try:
+                                ids_list = next(iter(row_ids_obj.values()))
+                            except Exception:
+                                ids_list = None
+                    if isinstance(ids_list, list):
+                        for i, iid in enumerate(ids_list):
+                            try:
+                                if iid is None:
+                                    continue
+                                iid_int = int(iid)
+                                out_ids[i] = iid_int
+                                # Compose a best-effort row for the local DataStore mirror
+                                row = dict(prepared[i])
+                                row["image_id"] = iid_int
+                                _put_row(row)
+                            except Exception:
+                                continue
+                        handled = True
+
+                # 2c) log_event_ids present → fetch logs to resolve image_id values
+                if not handled:
+                    log_ids = resp.get("log_event_ids") or resp.get("log_ids")
+                    if isinstance(log_ids, list) and log_ids:
+                        fetched = unify.get_logs(
+                            context=self._ctx,
+                            from_ids=log_ids,
+                            return_ids_only=False,
+                        )
+                        try:
+                            logs_list2 = (
+                                fetched.get("logs")
+                                if isinstance(fetched, dict)
+                                else fetched
+                            )
+                        except Exception:
+                            logs_list2 = fetched
+                        if isinstance(logs_list2, list):
+                            for i, lg in enumerate(logs_list2):
+                                try:
+                                    entries = getattr(lg, "entries", {}) or {}
+                                    iid = entries.get("image_id")
+                                    if iid is not None:
+                                        out_ids[i] = int(iid)
+                                        _put_row(entries)
+                                except Exception:
+                                    continue
+                            handled = True
+
+            # If none of the above matched, leave out_ids as None entries (fallback below does not run)
+        except Exception:
+            # Fallback: per-item create; on failure return None for that entry
+            for i, payload in enumerate(prepared):
+                try:
+                    lg = unify.log(context=self._ctx, **payload, new=True, mutable=None)
+                    try:
+                        self._data_store.put(lg.entries)
+                    except Exception:
+                        pass
+                    try:
+                        out_ids[i] = int(lg.entries.get("image_id"))
+                    except Exception:
+                        out_ids[i] = None
                 except Exception:
-                    out_ids.append(-1)
-        return out_ids
+                    out_ids[i] = None
+
+        # Coerce to Python ints where available; keep None where creation failed
+        return [x if isinstance(x, int) else None for x in out_ids]  # type: ignore[return-value]
 
     def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
         """
