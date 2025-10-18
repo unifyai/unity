@@ -331,8 +331,8 @@ async def test_search_messages_contacts_table_output():
     # The messages must reference only ids present in contacts
     contact_ids_from_table = {c.get("contact_id") for c in contacts}
     for m in messages:
-        assert m["sender_id"] in contact_ids_from_table
-        for rid in m.get("receiver_ids", []) or []:
+        assert m.sender_id in contact_ids_from_table
+        for rid in getattr(m, "receiver_ids", []) or []:
             assert rid in contact_ids_from_table
 
 
