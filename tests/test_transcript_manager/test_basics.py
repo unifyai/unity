@@ -1,5 +1,4 @@
 import time
-import json
 import random
 import pytest
 from datetime import datetime, UTC
@@ -261,17 +260,11 @@ async def test_filter_messages_contacts_table_output():
         return_with_contacts_table=True,
     )
 
-    assert (
-        isinstance(result, str)
-        and "Contacts (once):" in result
-        and "\n\nMessages:\n" in result
-    )
+    assert isinstance(result, dict)
+    assert set(result.keys()) >= {"contacts", "transcripts"}
 
-    # Parse the two JSON blobs
-    head, tail = result.split("\n\nMessages:\n", 1)
-    contacts_json = head.split("Contacts (once):\n", 1)[1]
-    contacts = json.loads(contacts_json)
-    messages = json.loads(tail)
+    contacts = result["contacts"]
+    messages = result["transcripts"]
 
     # Validate uniqueness and coverage of contacts
     contact_ids_from_table = {c.get("contact_id") for c in contacts}

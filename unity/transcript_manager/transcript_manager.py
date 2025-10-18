@@ -39,7 +39,6 @@ from ..common.search_utils import (
     fetch_top_k_by_terms_with_score,
     fetch_scores_for_ids,
 )
-import json as _json
 from ..events.event_bus import EVENT_BUS, Event
 from ..image_manager.image_manager import ImageManager
 from ..common.tool_spec import read_only, manager_tool
@@ -78,22 +77,31 @@ class TranscriptManager(BaseTranscriptManager):
         # retain their original return types for backward-compat.
         @functools.wraps(self._filter_messages, updated=())
         @read_only
-        def _filter_messages(*, filter: Optional[str] = None, offset: int = 0, limit: int = 100) -> str:  # type: ignore[override]
+        def _filter_messages(
+            *,
+            filter: Optional[str] = None,
+            offset: int = 0,
+            limit: int = 100,
+        ) -> Dict[str, Any]:  # type: ignore[override]
             return self._filter_messages(  # type: ignore[misc]
                 filter=filter,
                 offset=offset,
                 limit=limit,
                 return_with_contacts_table=True,
-            )  # type: ignore[return-value]
+            )
 
         @functools.wraps(self._search_messages, updated=())
         @read_only
-        def _search_messages(*, references: Optional[Dict[str, str]] = None, k: int = 10) -> str:  # type: ignore[override]
+        def _search_messages(
+            *,
+            references: Optional[Dict[str, str]] = None,
+            k: int = 10,
+        ) -> Dict[str, Any]:  # type: ignore[override]
             return self._search_messages(  # type: ignore[misc]
                 references=references,
                 k=k,
                 return_with_contacts_table=True,
-            )  # type: ignore[return-value]
+            )
 
         ask_tools = {
             **methods_to_tool_dict(
@@ -702,7 +710,7 @@ class TranscriptManager(BaseTranscriptManager):
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
         return_with_contacts_table: bool = False,
-    ) -> List[Message] | str:
+    ) -> List[Message] | Dict[str, Any]:
         """
         Semantic search across transcript messages using one or more reference texts, ranked by the summed cosine similarity across all provided terms.
 
@@ -1165,7 +1173,7 @@ class TranscriptManager(BaseTranscriptManager):
         offset: int = 0,
         limit: int = 100,
         return_with_contacts_table: bool = False,
-    ) -> List[Message] | str:
+    ) -> List[Message] | Dict[str, Any]:
         """
         Filter transcript messages using an exact column-wise boolean expression evaluated per row.
 
@@ -1771,18 +1779,17 @@ class TranscriptManager(BaseTranscriptManager):
     # ------------------------------------------------------------------ #
     #  Formatting helper: single contacts table + messages                #
     # ------------------------------------------------------------------ #
-    def _format_contacts_and_messages(self, messages: List[Message]) -> str:
-        """Return a compact string with a single JSON contacts table then messages.
+    def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
+        """Return a dictionary with keys 'contacts' and 'transcripts'.
 
         - Collect unique contact ids from senders and receivers.
         - Fetch full contact rows via ContactManager._filter_contacts using an
           id-membership filter.
-        - Render the contacts as pretty JSON once, followed by a newline and a
-          pretty JSON list of the messages (dict form).
+        - Return a dict containing the contacts list and the list of message dicts.
         """
 
         if not messages:
-            return "contacts: []\nmessages: []"
+            return {"contacts": [], "transcripts": []}
 
         # Collect unique contact ids
         unique_ids: set[int] = set()
@@ -1815,9 +1822,4 @@ class TranscriptManager(BaseTranscriptManager):
         # Convert messages to JSON-serialisable dicts
         msgs_jsonable = [m.model_dump(mode="json") for m in messages]
 
-        return (
-            "Contacts (once):\n"
-            + _json.dumps(contacts_list, indent=4)
-            + "\n\nMessages:\n"
-            + _json.dumps(msgs_jsonable, indent=4)
-        )
+        return {"contacts": contacts_list, "transcripts": msgs_jsonable}
