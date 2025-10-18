@@ -87,7 +87,6 @@ class TranscriptManager(BaseTranscriptManager):
                 filter=filter,
                 offset=offset,
                 limit=limit,
-                return_with_contacts_table=True,
             )
 
         @functools.wraps(self._search_messages, updated=())
@@ -100,7 +99,6 @@ class TranscriptManager(BaseTranscriptManager):
             return self._search_messages(  # type: ignore[misc]
                 references=references,
                 k=k,
-                return_with_contacts_table=True,
             )
 
         ask_tools = {
@@ -709,8 +707,7 @@ class TranscriptManager(BaseTranscriptManager):
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
-        return_with_contacts_table: bool = False,
-    ) -> List[Message] | Dict[str, Any]:
+    ) -> Dict[str, Any]:
         """
         Semantic search across transcript messages using one or more reference texts, ranked by the summed cosine similarity across all provided terms.
 
@@ -790,11 +787,7 @@ class TranscriptManager(BaseTranscriptManager):
                 sorting={"timestamp": "descending"},
             )
             results = [Message(**lg.entries) for lg in logs]
-            return (
-                self._format_contacts_and_messages(results)
-                if return_with_contacts_table
-                else results
-            )
+            return self._format_contacts_and_messages(results)
 
         # Field name sets to classify expressions as message-side vs contact-side
         msg_fields = set(Message.model_fields.keys())
@@ -906,11 +899,7 @@ class TranscriptManager(BaseTranscriptManager):
                 k=k,
             )
             results = [Message(**lg) for lg in rows]
-            return (
-                self._format_contacts_and_messages(results)
-                if return_with_contacts_table
-                else results
-            )
+            return self._format_contacts_and_messages(results)
 
         # 4) Build sender-join context and compute base scores (message + sender)
         left_ctx = self._transcripts_ctx
@@ -1066,11 +1055,7 @@ class TranscriptManager(BaseTranscriptManager):
                     taken += 1
                 except Exception:
                     continue
-            return (
-                self._format_contacts_and_messages(results)
-                if return_with_contacts_table
-                else results
-            )
+            return self._format_contacts_and_messages(results)
 
         # 5) Receiver terms present → compute per-contact receiver scores and combine per message (min over receivers)
         # Collect unique receiver ids across candidates
@@ -1127,11 +1112,7 @@ class TranscriptManager(BaseTranscriptManager):
 
         # Build final results: fetch full Message rows for the selected ids
         if not top_ids:
-            return (
-                self._format_contacts_and_messages([])
-                if return_with_contacts_table
-                else []
-            )
+            return self._format_contacts_and_messages([])
 
         # Fetch the complete message payloads in one go
         ids_expr = ", ".join(str(i) for i in top_ids)
@@ -1160,20 +1141,15 @@ class TranscriptManager(BaseTranscriptManager):
                 # Defensive: skip malformed rows rather than failing the whole search
                 continue
 
-        return (
-            self._format_contacts_and_messages(results)
-            if return_with_contacts_table
-            else results
-        )
+        return self._format_contacts_and_messages(results)
 
     def _filter_messages(
         self,
         *,
         filter: Optional[str] = None,
         offset: int = 0,
-        limit: int = 100,
-        return_with_contacts_table: bool = False,
-    ) -> List[Message] | Dict[str, Any]:
+        limit: int | None = 100,
+    ) -> Dict[str, Any]:
         """
         Filter transcript messages using an exact column-wise boolean expression evaluated per row.
 
@@ -1218,11 +1194,7 @@ class TranscriptManager(BaseTranscriptManager):
             from_fields=list(Message.model_fields.keys()),
         )
         results = [Message(**lg.entries) for lg in logs]
-        return (
-            self._format_contacts_and_messages(results)
-            if return_with_contacts_table
-            else results
-        )
+        return self._format_contacts_and_messages(results)
 
     def _update_contact_id(
         self,
@@ -1780,7 +1752,7 @@ class TranscriptManager(BaseTranscriptManager):
     #  Formatting helper: single contacts table + messages                #
     # ------------------------------------------------------------------ #
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        """Return a dictionary with keys 'contacts' and 'transcripts'.
+        """Return a dictionary with keys 'contacts' and 'messages'.
 
         - Collect unique contact ids from senders and receivers.
         - Fetch full contact rows via ContactManager._filter_contacts using an
@@ -1789,7 +1761,7 @@ class TranscriptManager(BaseTranscriptManager):
         """
 
         if not messages:
-            return {"contacts": [], "transcripts": []}
+            return {"contacts": [], "messages": []}
 
         # Collect unique contact ids
         unique_ids: set[int] = set()
@@ -1819,7 +1791,5 @@ class TranscriptManager(BaseTranscriptManager):
             except Exception:
                 contacts_list = []
 
-        # Convert messages to JSON-serialisable dicts
-        msgs_jsonable = [m.model_dump(mode="json") for m in messages]
-
-        return {"contacts": contacts_list, "transcripts": msgs_jsonable}
+        # Return Message models directly for 'messages' to preserve rich types
+        return {"contacts": contacts_list, "messages": messages}

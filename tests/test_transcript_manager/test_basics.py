@@ -155,38 +155,39 @@ async def test_get_messages():
 
     ## get all
 
-    messages = tm._filter_messages()
+    result = tm._filter_messages()
+    messages = result["messages"]
     assert len(messages) == 10
     assert all(isinstance(msg, Message) for msg in messages)
 
     ## search
 
     # sender
-    messages = tm._filter_messages(filter="sender_id == 0")
+    messages = tm._filter_messages(filter="sender_id == 0")["messages"]
     assert len(messages) == 5
     assert all(isinstance(msg, Message) for msg in messages)
 
     # contains
-    messages = tm._filter_messages(filter="'Hell' in content")
+    messages = tm._filter_messages(filter="'Hell' in content")["messages"]
     assert len(messages) == 5
     assert all(isinstance(msg, Message) for msg in messages)
 
     # does not contain
-    messages = tm._filter_messages(filter="',' not in content")
+    messages = tm._filter_messages(filter="',' not in content")["messages"]
     assert len(messages) == 3
     assert all(isinstance(msg, Message) for msg in messages)
 
     # medium
     messages = tm._filter_messages(
         filter="medium in ('email', 'whatsapp_message')",
-    )
+    )["messages"]
     assert len(messages) == 7
     assert all(isinstance(msg, Message) for msg in messages)
 
     # timestamp
-    messages = tm._filter_messages(filter=f"timestamp < '{start_time}'")
+    messages = tm._filter_messages(filter=f"timestamp < '{start_time}'")["messages"]
     assert len(messages) == 0
-    messages = tm._filter_messages(filter=f"timestamp > '{start_time}'")
+    messages = tm._filter_messages(filter=f"timestamp > '{start_time}'")["messages"]
     assert len(messages) == 10
 
 
@@ -216,7 +217,7 @@ async def test_multiple_receivers():
     tm.join_published()
 
     # Retrieve the message back – simplest: list everything for this exchange
-    found = tm._filter_messages(filter="exchange_id == 4242")
+    found = tm._filter_messages(filter="exchange_id == 4242")["messages"]
     assert (
         len(found) == 1
     ), "Exactly one message should have been logged for exchange 4242"
@@ -254,17 +255,16 @@ async def test_filter_messages_contacts_table_output():
     [tm.log_messages(m) for m in msgs]
     tm.join_published()
 
-    # Call with contacts table rendering enabled
+    # Default now includes contacts and messages
     result = tm._filter_messages(
         filter="exchange_id == 111",
-        return_with_contacts_table=True,
     )
 
     assert isinstance(result, dict)
-    assert set(result.keys()) >= {"contacts", "transcripts"}
+    assert set(result.keys()) >= {"contacts", "messages"}
 
     contacts = result["contacts"]
-    messages = result["transcripts"]
+    messages = result["messages"]
 
     # Validate uniqueness and coverage of contacts
     contact_ids_from_table = {c.get("contact_id") for c in contacts}
@@ -272,9 +272,9 @@ async def test_filter_messages_contacts_table_output():
 
     referenced_ids = set()
     for m in messages:
-        if m.get("sender_id") is not None:
-            referenced_ids.add(m["sender_id"])
-        for rid in m.get("receiver_ids", []) or []:
+        if getattr(m, "sender_id", None) is not None:
+            referenced_ids.add(m.sender_id)
+        for rid in getattr(m, "receiver_ids", []) or []:
             referenced_ids.add(rid)
 
     assert referenced_ids.issubset(
@@ -318,7 +318,7 @@ def test_metadata_private_column_roundtrip():
     assert raw.get("_metadata") == meta
 
     # 3) Manager retrieval excludes private fields → _metadata should not appear
-    msgs = tm._filter_messages(filter=f"exchange_id == {unique_exchange}")
+    msgs = tm._filter_messages(filter=f"exchange_id == {unique_exchange}")["messages"]
     assert len(msgs) == 1
     assert getattr(msgs[0], "_metadata", None) is None
 
@@ -352,7 +352,7 @@ def test_transcript_manager_clear():
     tm.join_published()
 
     # Sanity: messages exist before clear
-    pre = tm._filter_messages()
+    pre = tm._filter_messages()["messages"]
     assert len(pre) >= 2
 
     # Execute clear
@@ -366,5 +366,5 @@ def test_transcript_manager_clear():
     assert "exchange_id" in fields_exchanges
 
     # Prior messages should be gone
-    post = tm._filter_messages()
+    post = tm._filter_messages()["messages"]
     assert len(post) == 0

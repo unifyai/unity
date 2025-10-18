@@ -33,7 +33,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict
 
 import mss
 import redis
@@ -110,10 +110,10 @@ def _capture_and_publish_frames(monitor: Dict[str, int], fps: int = 5):
                 error_count += 1
                 if error_count == 1:
                     LG.error(
-                        f"ScreenShotError: {e}. This is common on Wayland or with incorrect geometry."
+                        f"ScreenShotError: {e}. This is common on Wayland or with incorrect geometry.",
                     )
                     LG.error(
-                        "Please verify your --x, --y, --width, --height arguments. Capture will be retried."
+                        "Please verify your --x, --y, --width, --height arguments. Capture will be retried.",
                     )
                 time.sleep(1)
                 continue
@@ -131,7 +131,8 @@ def _capture_and_publish_frames(monitor: Dict[str, int], fps: int = 5):
             }
             try:
                 redis_client.publish(
-                    "app:comms:screen_frame", json.dumps(event_payload)
+                    "app:comms:screen_frame",
+                    json.dumps(event_payload),
                 )
                 frame_count += 1
             except redis.exceptions.ConnectionError as e:
@@ -146,20 +147,22 @@ def _capture_and_publish_frames(monitor: Dict[str, int], fps: int = 5):
 
 
 async def _result_fetcher_and_printer(
-    transcript_manager: TranscriptManager, project_name: str, voice_enabled: bool
+    transcript_manager: TranscriptManager,
+    project_name: str,
+    voice_enabled: bool,
 ):
     """
     A background task that continuously polls for new transcript messages and prints them.
     """
     LG.info("Result fetcher started. Polling for new transcript logs.")
     # Initialize with the ID of the latest message at startup
-    initial_messages = transcript_manager._filter_messages(limit=1)
+    initial_messages = transcript_manager._filter_messages(limit=1)["messages"]
     last_printed_message_id = initial_messages[0].message_id if initial_messages else -1
     context_name = transcript_manager._transcripts_ctx
 
     while not _main_stop_event.is_set():
         try:
-            latest_messages = transcript_manager._filter_messages(limit=1)
+            latest_messages = transcript_manager._filter_messages(limit=1)["messages"]
             if latest_messages:
                 latest_message = latest_messages[0]
                 if latest_message.message_id > last_printed_message_id:
@@ -197,13 +200,22 @@ async def _main_async() -> None:
         help="The y-coordinate of the top-left corner.",
     )
     parser.add_argument(
-        "--width", type=int, required=True, help="The width of the capture area."
+        "--width",
+        type=int,
+        required=True,
+        help="The width of the capture area.",
     )
     parser.add_argument(
-        "--height", type=int, required=True, help="The height of the capture area."
+        "--height",
+        type=int,
+        required=True,
+        help="The height of the capture area.",
     )
     parser.add_argument(
-        "--fps", type=int, default=5, help="Frames per second for screen capture."
+        "--fps",
+        type=int,
+        default=5,
+        help="Frames per second for screen capture.",
     )
     parser.add_argument(
         "--context",
@@ -262,8 +274,10 @@ async def _main_async() -> None:
         # Start the background task for fetching and printing results
         result_fetcher_task = asyncio.create_task(
             _result_fetcher_and_printer(
-                transcript_manager, args.project_name, args.voice
-            )
+                transcript_manager,
+                args.project_name,
+                args.voice,
+            ),
         )
 
         await asyncio.sleep(2)
@@ -323,7 +337,8 @@ async def _main_async() -> None:
                     },
                 }
                 await redis_client.publish(
-                    "app:comms:phone_utterance", json.dumps(event_payload)
+                    "app:comms:phone_utterance",
+                    json.dumps(event_payload),
                 )
                 LG.info(f"Published utterance event for: '{utterance}'")
 

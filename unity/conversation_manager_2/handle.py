@@ -86,7 +86,9 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
         # _filter_messages is synchronous, so we run it in a thread to avoid blocking.
         def _fetch_from_transcript():
-            return self._tm._filter_messages(filter=filter_expr, limit=max_messages)
+            return self._tm._filter_messages(filter=filter_expr, limit=max_messages)[
+                "messages"
+            ]
 
         try:
             # Await the thread-based call

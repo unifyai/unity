@@ -473,7 +473,9 @@ async def _main_async() -> None:
             # transcript history – not just the messages generated during the
             # current sandbox session.
             try:
-                backend_msgs = list(reversed(tm._filter_messages(limit=1000)))
+                backend_msgs = list(
+                    reversed(tm._filter_messages(limit=1000)["messages"]),
+                )
 
                 # Cache mapping contact_id → first name so we reuse contacts
                 contact_name_cache: dict[int, str] = {}
@@ -527,7 +529,9 @@ async def _main_async() -> None:
                 try:
                     # Fetch **all** messages in chronological order.  The internal
                     # helper returns newest → oldest so we reverse it afterwards.
-                    backend_msgs = list(reversed(tm._filter_messages(limit=1000)))
+                    backend_msgs = list(
+                        reversed(tm._filter_messages(limit=1000)["messages"]),
+                    )
 
                     # Build a cache mapping contact_id -> first name so that
                     # the transcript always uses *names* instead of numeric ids

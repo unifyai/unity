@@ -54,7 +54,7 @@ def test_get_images_for_message_returns_metadata_only_tm():
     tm.join_published()
 
     # Fetch message_id back then query image metadata via private tool
-    stored = tm._filter_messages(filter=f"exchange_id == {msg.exchange_id}")
+    stored = tm._filter_messages(filter=f"exchange_id == {msg.exchange_id}")["messages"]
     assert stored and len(stored) == 1
     mid = int(stored[0].message_id)
 

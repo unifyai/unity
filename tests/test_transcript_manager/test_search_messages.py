@@ -45,7 +45,9 @@ async def test_search_messages_simple_similarity():
     [tm.log_messages(m) for m in msgs]
     tm.join_published()
 
-    nearest = tm._search_messages(references={"content": "banking and budgeting"}, k=2)
+    nearest = tm._search_messages(references={"content": "banking and budgeting"}, k=2)[
+        "messages"
+    ]
 
     assert len(nearest) == 2
     assert all(isinstance(m, Message) for m in nearest)
@@ -53,12 +55,12 @@ async def test_search_messages_simple_similarity():
     assert "Totally unrelated: machine learning and Python" not in contents
 
     # When references is None/empty, skip semantic search and return most recent messages
-    recent_only = tm._search_messages(references=None, k=2)
+    recent_only = tm._search_messages(references=None, k=2)["messages"]
     assert [m.content for m in recent_only] == [
         "Totally unrelated: machine learning and Python",
         "Let's discuss banking plans tomorrow",
     ]
-    recent_only_empty = tm._search_messages(references={}, k=2)
+    recent_only_empty = tm._search_messages(references={}, k=2)["messages"]
     assert [m.content for m in recent_only_empty] == [
         "Totally unrelated: machine learning and Python",
         "Let's discuss banking plans tomorrow",
@@ -130,7 +132,7 @@ async def test_search_messages_cross_contact_and_message_disambiguation():
 
     # Query mixes message content and sender bio; should pick Alice's message as best match
     refs = {"content": "meeting next week", "bio": "accounts"}
-    nearest = tm._search_messages(references=refs, k=3)
+    nearest = tm._search_messages(references=refs, k=3)["messages"]
 
     assert len(nearest) >= 1
     top = nearest[0]
@@ -182,7 +184,9 @@ async def test_search_messages_sender_bio_only():
     [tm.log_messages(m) for m in msgs]
     tm.join_published()
 
-    nearest = tm._search_messages(references={"sender_bio": "accountant"}, k=1)
+    nearest = tm._search_messages(references={"sender_bio": "accountant"}, k=1)[
+        "messages"
+    ]
 
     assert len(nearest) == 1
     top = nearest[0]
@@ -221,7 +225,9 @@ async def test_search_messages_receiver_bio_only_single():
     [tm.log_messages(m) for m in msgs]
     tm.join_published()
 
-    nearest = tm._search_messages(references={"receiver_bio": "engineer"}, k=1)
+    nearest = tm._search_messages(references={"receiver_bio": "engineer"}, k=1)[
+        "messages"
+    ]
 
     assert len(nearest) == 1
     top = nearest[0]
@@ -263,7 +269,9 @@ async def test_search_messages_receiver_bio_multi_receiver_min_aggregation():
     [tm.log_messages(m) for m in msgs]
     tm.join_published()
 
-    nearest = tm._search_messages(references={"receiver_bio": "engineer"}, k=1)
+    nearest = tm._search_messages(references={"receiver_bio": "engineer"}, k=1)[
+        "messages"
+    ]
 
     assert len(nearest) == 1
     top = nearest[0]
@@ -312,14 +320,13 @@ async def test_search_messages_contacts_table_output():
     result = tm._search_messages(
         references={"content": "alpha topic"},
         k=5,
-        return_with_contacts_table=True,
     )
 
     assert isinstance(result, dict)
-    assert set(result.keys()) >= {"contacts", "transcripts"}
+    assert set(result.keys()) >= {"contacts", "messages"}
 
     contacts = result["contacts"]
-    messages = result["transcripts"]
+    messages = result["messages"]
 
     # The messages must reference only ids present in contacts
     contact_ids_from_table = {c.get("contact_id") for c in contacts}
@@ -369,7 +376,7 @@ async def test_search_messages_combined_sender_and_receiver_terms():
     tm.join_published()
 
     refs = {"sender_bio": "accountant", "receiver_bio": "engineer"}
-    nearest = tm._search_messages(references=refs, k=3)
+    nearest = tm._search_messages(references=refs, k=3)["messages"]
 
     assert len(nearest) >= 1
     top = nearest[0]
@@ -420,7 +427,9 @@ async def test_search_messages_receiver_only_returns_expected_messages():
     [tm.log_messages(m) for m in msgs]
     tm.join_published()
 
-    nearest = tm._search_messages(references={"receiver_bio": "engineer"}, k=2)
+    nearest = tm._search_messages(references={"receiver_bio": "engineer"}, k=2)[
+        "messages"
+    ]
 
     assert len(nearest) == 2
     # Both results should have receivers among {bob, dave}; order not guaranteed

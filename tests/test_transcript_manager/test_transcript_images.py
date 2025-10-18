@@ -51,7 +51,7 @@ def test_images_schema_and_roundtrip():
     assert "images" in fields, "images column should exist in Transcripts"
 
     # 2) Round-trip retrieval preserves references
-    stored = tm._filter_messages(filter=f"exchange_id == {msg.exchange_id}")
+    stored = tm._filter_messages(filter=f"exchange_id == {msg.exchange_id}")["messages"]
     assert len(stored) == 1
     got = stored[0].images
     assert isinstance(got, AnnotatedImageRefs)
@@ -147,7 +147,7 @@ def test_get_images_for_message_includes_annotation():
     tm.log_messages(msg)
     tm.join_published()
 
-    stored = tm._filter_messages(filter=f"exchange_id == {msg.exchange_id}")
+    stored = tm._filter_messages(filter=f"exchange_id == {msg.exchange_id}")["messages"]
     mid = stored[0].message_id
 
     items = tm._get_images_for_message(message_id=int(mid))
