@@ -32,6 +32,7 @@ def test_add_and_filter_images():
                 "data": PNG_BLUE_B64,
             },
         ],
+        synchronous=True,
     )
     assert all(isinstance(i, int) for i in ids)
 
@@ -63,6 +64,7 @@ def test_add_images_return_handles_mode():
             },
         ],
         return_handles=True,
+        synchronous=True,
     )
 
     # Should return two ImageHandle instances
@@ -75,6 +77,57 @@ def test_add_images_return_handles_mode():
             b = h.raw()
             assert isinstance(b, (bytes, bytearray)) and len(b) > 0
             break
+
+
+@pytest.mark.unit
+@_handle_project
+def test_add_images_async_mode_returns_handles_and_schedules_uploads():
+    im = ImageManager()
+
+    handles = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "async red",
+                "data": PNG_RED_B64,
+            },
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "async blue",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
+    )
+
+    assert len(handles) == 2
+    assert all(h is None or h.is_pending for h in handles)
+
+    # Await resolution of all pending handles to ensure uploads were scheduled
+    import asyncio as _asyncio
+
+    pids = [h.image_id for h in handles if h is not None]
+    mapping = _asyncio.get_event_loop().run_until_complete(im.await_pending(pids))
+    assert set(mapping.keys()) == set(pids)
+
+
+@pytest.mark.unit
+@_handle_project
+def test_add_images_async_invalid_combo_raises():
+    im = ImageManager()
+    with pytest.raises(ValueError):
+        _ = im.add_images(
+            [
+                {
+                    "timestamp": datetime.now(timezone.utc),
+                    "caption": "invalid",
+                    "data": PNG_RED_B64,
+                },
+            ],
+            synchronous=False,
+            return_handles=False,
+        )
 
 
 @pytest.mark.unit
