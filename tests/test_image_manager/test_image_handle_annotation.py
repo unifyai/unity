@@ -185,3 +185,89 @@ async def test_wait_for_annotation_and_resolution_with_gather():
     ann, rid = await _asyncio.gather(ann_task, rid_task)
     assert isinstance(rid, int)
     assert ann == "both-ready"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@_handle_project
+async def test_wait_for_caption_immediate_and_delayed():
+    im = ImageManager()
+
+    # Immediate caption already present (sync create)
+    [h1] = [
+        x
+        for x in im.add_images(
+            [
+                {
+                    "timestamp": datetime.now(timezone.utc),
+                    "caption": "ready-now",
+                    "data": PNG_GRAY_B64,
+                },
+            ],
+            synchronous=True,
+            return_handles=True,
+        )
+        if x is not None
+    ]
+    got1 = await h1.wait_for_caption(timeout=0.5)
+    assert got1 == "ready-now"
+
+    # Delayed caption set via update_metadata
+    [h2] = [
+        x
+        for x in im.add_images(
+            [
+                {
+                    "timestamp": datetime.now(timezone.utc),
+                    "caption": None,
+                    "data": PNG_GRAY_B64,
+                },
+            ],
+            synchronous=True,
+            return_handles=True,
+        )
+        if x is not None
+    ]
+
+    async def _later():
+        await _asyncio.sleep(0.02)
+        h2.update_metadata(caption="arrived")
+
+    waiter = _asyncio.create_task(h2.wait_for_caption(timeout=1.0))
+    setter = _asyncio.create_task(_later())
+    got2, _ = await _asyncio.gather(waiter, setter)
+    assert got2 == "arrived"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@_handle_project
+async def test_wait_for_caption_and_resolution_together():
+    im = ImageManager()
+    [h] = [
+        x
+        for x in im.add_images(
+            [
+                {
+                    "timestamp": datetime.now(timezone.utc),
+                    "caption": None,
+                    "data": PNG_GRAY_B64,
+                },
+            ],
+            synchronous=False,
+            return_handles=True,
+        )
+        if x is not None
+    ]
+
+    async def _set_caption():
+        await _asyncio.sleep(0.03)
+        h.update_metadata(caption="label-ready")
+
+    cap_task = _asyncio.create_task(h.wait_for_caption(timeout=2.0))
+    rid_task = _asyncio.create_task(h.wait_until_resolved())
+    _ = _asyncio.create_task(_set_caption())
+
+    cap, rid = await _asyncio.gather(cap_task, rid_task)
+    assert isinstance(rid, int)
+    assert cap == "label-ready"

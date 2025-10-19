@@ -39,6 +39,13 @@ class ImageHandle:
         # handle instance only.
         self._annotation: Optional[str] = None
         self._annotation_event = threading.Event()
+        # Caption-ready event, set if caption already exists
+        self._caption_event = threading.Event()
+        try:
+            if self._image.caption is not None:
+                self._caption_event.set()
+        except Exception:
+            pass
         # Deferred persistence state for updates made while pending
         self._deferred_lock = threading.Lock()
         self._deferred_updates: Dict[str, Any] = {}
@@ -110,6 +117,11 @@ class ImageHandle:
             updates["caption"] = caption
             try:
                 self._image.caption = caption
+            except Exception:
+                pass
+            try:
+                if caption is not None:
+                    self._caption_event.set()
             except Exception:
                 pass
         if timestamp is not None:
@@ -424,6 +436,26 @@ class ImageHandle:
                 timeout=timeout,
             )
         return self.annotation
+
+    async def wait_for_caption(
+        self,
+        timeout: Optional[float] = None,
+    ) -> Optional[str]:
+        """
+        Await until a non-None caption (label) is set for this image, then return it.
+
+        Returns immediately if already present.
+        """
+        if self.caption is not None:
+            return self.caption
+        if timeout is None:
+            await asyncio.to_thread(self._caption_event.wait)
+        else:
+            await asyncio.wait_for(
+                asyncio.to_thread(self._caption_event.wait),
+                timeout=timeout,
+            )
+        return self.caption
 
     # ------------------------------ Deferred persistence ------------------
     def _schedule_deferred_persist(self):
