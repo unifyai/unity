@@ -19,12 +19,12 @@ PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 
 @pytest.mark.unit
 @_handle_project
-def test_stage_image_immediate_raw_and_pending_flag():
+def test_async_enqueue_immediate_raw_and_pending_flag():
     im = ImageManager()
 
-    # Stage using raw bytes
+    # Enqueue using raw bytes
     raw_bytes = base64.b64decode(PNG_RED_B64)
-    h = im.stage_image(
+    h = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="staged",
         data=raw_bytes,
@@ -37,7 +37,7 @@ def test_stage_image_immediate_raw_and_pending_flag():
     out = h.raw()
     assert out == raw_bytes
 
-    # DataStore should have the staged row under the pending id
+    # DataStore should have the row under the pending id
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
     row = ds[h.image_id]
     assert row["image_id"] == h.image_id
@@ -59,8 +59,8 @@ def test_await_pending_remaps_ids_and_updates_data_store():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
-    # Stage using base64 string
-    staged = im.stage_image(
+    # Enqueue using base64 string
+    staged = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="to flush",
         data=PNG_BLUE_B64,
@@ -102,7 +102,7 @@ def test_update_metadata_while_pending_reflects_locally():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
-    h = im.stage_image(
+    h = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="xfer",
         data=PNG_RED_B64,
@@ -118,7 +118,7 @@ def test_update_metadata_while_pending_reflects_locally():
 def test_manager_is_pending_id_and_resolution():
     im = ImageManager()
 
-    staged = im.stage_image(
+    staged = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="p",
         data=PNG_RED_B64,
@@ -136,12 +136,12 @@ def test_manager_is_pending_id_and_resolution():
 def test_get_images_for_pending_prefers_cache_no_backend(monkeypatch):
     im = ImageManager()
 
-    h1 = im.stage_image(
+    h1 = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="p1",
         data=PNG_RED_B64,
     )
-    h2 = im.stage_image(
+    h2 = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="p2",
         data=PNG_BLUE_B64,
@@ -163,9 +163,9 @@ def test_get_images_for_pending_prefers_cache_no_backend(monkeypatch):
 
 @pytest.mark.unit
 @_handle_project
-def test_stage_image_accepts_base64_and_raw_roundtrip():
+def test_add_image_async_accepts_base64_and_raw_roundtrip():
     im = ImageManager()
-    h = im.stage_image(
+    h = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="b64",
         data=PNG_RED_B64,
@@ -180,12 +180,12 @@ def test_await_pending_multiple_and_datastore_updates():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
-    h1 = im.stage_image(
+    h1 = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="m1",
         data=PNG_RED_B64,
     )
-    h2 = im.stage_image(
+    h2 = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="m2",
         data=PNG_BLUE_B64,
@@ -210,7 +210,7 @@ def test_temp_image_id_persists_after_resolution():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
-    h = im.stage_image(
+    h = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="keep-temp",
         data=PNG_BLUE_B64,
@@ -230,7 +230,7 @@ def test_temp_image_id_persists_after_resolution():
 @_handle_project
 def test_await_pending_omits_missing_rows():
     im = ImageManager()
-    h = im.stage_image(
+    h = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="ok",
         data=PNG_RED_B64,
@@ -254,8 +254,8 @@ def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypat
 
     ds = _DS.for_context(im._ctx, key_fields=("image_id",))
 
-    # Stage without caption, then update caption while pending
-    h = im.stage_image(
+    # Enqueue without caption, then update caption while pending
+    h = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption=None,
         data=PNG_RED_B64,
@@ -305,7 +305,7 @@ def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypat
 def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
     im = ImageManager()
 
-    h = im.stage_image(
+    h = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="seed",
         data=PNG_BLUE_B64,
@@ -362,9 +362,9 @@ def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_on_pending_stage_returns_text_only():
+async def test_ask_on_pending_enqueue_returns_text_only():
     im = ImageManager()
-    h = im.stage_image(
+    h = im.add_image_async(
         timestamp=datetime.now(timezone.utc),
         caption="ask",
         data=PNG_RED_B64,

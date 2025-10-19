@@ -81,7 +81,7 @@ class ImageHandle:
         Update metadata for this image in-place.
 
         - Always updates the local DataStore so pending handles remain consistent
-          and future flush_pending includes the changes.
+          and the background upload (or subsequent resolution) includes the changes.
         - If the image is resolved (not pending), also persists to the backend
           via ImageManager.update_images.
         """
@@ -632,7 +632,8 @@ class ImageManager(BaseImageManager):
             return False
         return iid >= self._PENDING_BASE
 
-    def stage_image(
+    # New non-blocking create APIs ----------------------------------------
+    def add_image_async(
         self,
         *,
         timestamp: Optional[datetime] = None,
@@ -640,32 +641,77 @@ class ImageManager(BaseImageManager):
         data: Union[bytes, bytearray, str],
     ) -> ImageHandle:
         """
-        Create a pending image locally with a temporary id and seed the DataStore.
+        Enqueue a single image for background upload and return a pending handle.
 
-        Returns an ImageHandle that can be used immediately (raw/ask) while the
-        backend upload is performed asynchronously via flush_pending.
+        - Does not block on backend creation
+        - The returned handle is usable immediately for `raw()` and `ask()`
+        - Upload is scheduled right away; call `await handle.wait_until_resolved()`
+          to obtain the resolved id when needed
         """
-        temp_id = next(self._pending_counter)
-        if timestamp is None:
-            timestamp = datetime.utcnow()
+        [handle] = self.add_images_async(
+            [
+                {
+                    "timestamp": timestamp,
+                    "caption": caption,
+                    "data": data,
+                },
+            ],
+        )
+        return handle
 
-        if isinstance(data, (bytes, bytearray)):
-            data_b64 = base64.b64encode(data).decode("utf-8")
-        else:
-            data_b64 = data
+    def add_images_async(self, items: List[Dict[str, Any]]) -> List[ImageHandle]:
+        """
+        Enqueue multiple images for background upload and return pending handles.
 
-        row: Dict[str, Any] = {
-            "image_id": int(temp_id),
-            "temp_image_id": int(temp_id),
-            "timestamp": timestamp,
-            "caption": caption,
-            "data": data_b64,
-        }
-        try:
-            self._data_store.put(row)
-        except Exception:
-            pass
-        return ImageHandle(manager=self, image=Image(**row))
+        For each item, a temporary id is assigned and the local DataStore is
+        seeded. Uploads are scheduled immediately in the background.
+        """
+        if not items:
+            return []
+
+        handles: List[ImageHandle] = []
+        pending_ids: List[int] = []
+
+        for raw in items:
+            payload = dict(raw or {})
+
+            # Normalize timestamp
+            ts = payload.get("timestamp") or datetime.utcnow()
+
+            # Normalize/encode data to base64 if bytes were provided
+            d = payload.get("data")
+            if d is None:
+                raise ValueError("'data' is required for add_images_async")
+            if isinstance(d, (bytes, bytearray)):
+                d_b64 = base64.b64encode(d).decode("utf-8")
+            else:
+                d_b64 = d
+
+            temp_id = next(self._pending_counter)
+            row: Dict[str, Any] = {
+                "image_id": int(temp_id),
+                "temp_image_id": int(temp_id),
+                "timestamp": ts,
+                "caption": payload.get("caption"),
+                "data": d_b64,
+            }
+
+            try:
+                self._data_store.put(row)
+            except Exception:
+                pass
+
+            handles.append(ImageHandle(manager=self, image=Image(**row)))
+            pending_ids.append(int(temp_id))
+
+        # Schedule background uploads immediately
+        for pid in pending_ids:
+            try:
+                self._ensure_upload_started(int(pid))
+            except Exception:
+                pass
+
+        return handles
 
     async def await_pending(self, pending_ids: List[int]) -> Dict[int, int]:
         """
