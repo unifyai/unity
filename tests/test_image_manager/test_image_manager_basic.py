@@ -46,6 +46,39 @@ def test_add_and_filter_images():
 
 @pytest.mark.unit
 @_handle_project
+def test_add_images_return_handles_mode():
+    im = ImageManager()
+
+    handles = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "handle red",
+                "data": PNG_RED_B64,
+            },
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "handle blue",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        return_handles=True,
+    )
+
+    # Should return two ImageHandle instances
+    assert len(handles) == 2
+    assert all(h is None or hasattr(h, "raw") for h in handles)
+
+    # Validate raw() round-trip at least for the first non-None handle
+    for h in handles:
+        if h is not None:
+            b = h.raw()
+            assert isinstance(b, (bytes, bytearray)) and len(b) > 0
+            break
+
+
+@pytest.mark.unit
+@_handle_project
 def test_update_images():
     im = ImageManager()
 
