@@ -5,6 +5,8 @@ import os
 import json
 import functools
 from datetime import datetime, timedelta
+import asyncio
+import concurrent.futures
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
@@ -337,6 +339,31 @@ class ImageHandle:
         answer = await client.generate(user_message=question)
         return answer
 
+    async def wait_until_resolved(self, timeout: Optional[float] = None) -> int:
+        """
+        Await until this handle's pending id is resolved to a real backend id.
+
+        Returns the resolved image id. If already resolved, returns immediately.
+        """
+        if not self.is_pending:
+            return self.image_id
+        # Defer to manager's await_pending so we share the same scheduling/cache
+        if timeout is None:
+            mapping = await self._manager.await_pending([self.image_id])
+        else:
+            mapping = await asyncio.wait_for(
+                self._manager.await_pending([self.image_id]),
+                timeout=timeout,
+            )
+        rid = mapping.get(self.image_id)
+        if isinstance(rid, int):
+            self.resolve(int(rid))
+            return int(rid)
+        return self.image_id
+
+    def __await__(self):  # convenience alias
+        return self.wait_until_resolved().__await__()
+
 
 class ImageManager(BaseImageManager):
     """Concrete implementation backed by Unify contexts and fields."""
@@ -388,6 +415,14 @@ class ImageManager(BaseImageManager):
         self._PENDING_BASE: int = 10**12
         # Single counter per manager instance; uniqueness is sufficient per-process
         self._pending_counter = itertools.count(self._PENDING_BASE)
+
+        # Cache of known resolutions for fast, race-tolerant lookups
+        self._resolved_pid_map: Dict[int, int] = {}
+
+        # Executor for background uploads when no event loop is running
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        # Map of pending_id -> concurrent future that resolves to real_id
+        self._pending_uploads: Dict[int, concurrent.futures.Future[int]] = {}
 
         # Internal helper ensures we preserve any local-only columns such as
         # temp_image_id when writing backend-fetched rows into the DataStore.
@@ -561,69 +596,162 @@ class ImageManager(BaseImageManager):
             pass
         return ImageHandle(manager=self, image=Image(**row))
 
-    def flush_pending(self, pending_ids: List[int]) -> Dict[int, int]:
+    async def await_pending(self, pending_ids: List[int]) -> Dict[int, int]:
         """
-        Upload pending images and remap their ids.
+        Await resolution for the given pending ids.
 
-        Returns a mapping of {temp_id -> real_id} for successfully uploaded rows.
-        Pending ids that fail to upload are left as-is and omitted from the mapping.
+        - Does not trigger duplicate uploads – each pending id is uploaded at most once,
+          scheduled at stage_image time (or lazily here if missing).
+        - Returns a mapping {pending_id -> real_id} for all requested ids that can be
+          resolved in this session (either already resolved or after the awaited upload).
         """
         if not pending_ids:
             return {}
 
-        # Collect rows in the same order as pending_ids
-        rows: List[Optional[Dict[str, Any]]] = []
-        for pid in pending_ids:
-            try:
-                row = self._data_store.get(int(pid))
-            except Exception:
-                row = None
-            rows.append(row)
-
-        payloads: List[Dict[str, Any]] = []
-        index_map: List[int] = []  # map payload index -> pending_ids index
-        for idx, r in enumerate(rows):
-            if not r:
-                continue
-            # Prepare payload for backend create – omit image_id so auto_counting allocates
-            payloads.append(
-                {
-                    "timestamp": r.get("timestamp") or datetime.utcnow(),
-                    "caption": r.get("caption"),
-                    "data": r.get("data"),
-                },
-            )
-            index_map.append(idx)
-
-        if not payloads:
-            return {}
-
-        created_ids = self.add_images(payloads)
+        # 0) First, resolve any pids that were already uploaded earlier in
+        # this session by scanning the local DataStore snapshot (using the
+        # persisted temp_image_id) or using the cached _resolved_pid_map.
         mapping: Dict[int, int] = {}
-        for out_idx, real_id in enumerate(created_ids):
-            if not isinstance(real_id, int):
+        snapshot: Dict[str, Dict[str, Any]]
+        try:
+            snapshot = self._data_store.snapshot()
+        except Exception:
+            snapshot = {}
+        for pid in list(pending_ids):
+            # Known from cache?
+            rid_cached = self._resolved_pid_map.get(int(pid))
+            if isinstance(rid_cached, int):
+                mapping[int(pid)] = int(rid_cached)
                 continue
-            pid = int(pending_ids[index_map[out_idx]])
-            mapping[pid] = int(real_id)
-
-            # Copy DataStore row under real id, then delete pending row
+            # Scan snapshot for a row with matching temp_image_id and a
+            # different (resolved) image_id
             try:
-                src = self._data_store.get(pid)
-                if src is not None:
-                    new_row = dict(src)
-                    new_row["image_id"] = int(real_id)
-                    # Preserve temp_image_id across re-keying
-                    if "temp_image_id" not in new_row:
-                        new_row["temp_image_id"] = int(pid)
-                    self._data_store.put(new_row)
+                for _k, row in snapshot.items():
                     try:
-                        self._data_store.delete(pid)
+                        if int(row.get("temp_image_id", -1)) != int(pid):
+                            continue
+                        rid = int(row.get("image_id", -1))
+                        if rid != int(pid) and rid >= 0:
+                            mapping[int(pid)] = rid
+                            self._resolved_pid_map[int(pid)] = rid
+                            break
                     except Exception:
-                        pass
+                        continue
             except Exception:
                 pass
 
+        # 1) For any pids not yet resolved, ensure an upload is scheduled
+        pending_unresolved: List[int] = [
+            int(pid) for pid in pending_ids if int(pid) not in mapping
+        ]
+        for pid in pending_unresolved:
+            self._ensure_upload_started(pid)
+
+        # 2) Await completion for any still-unresolved pids
+        to_await: List[asyncio.Future] = []
+        pid_for_future: List[int] = []
+        for pid in pending_unresolved:
+            if int(pid) in mapping:
+                continue
+            fut = self._pending_uploads.get(int(pid))
+            if fut is None:
+                continue
+            try:
+                # Wrap a concurrent future so we can await it in asyncio
+                wrapped = asyncio.wrap_future(fut)
+            except Exception:
+                # Fallback – await in a thread
+                async def _wait_in_thread(cf: concurrent.futures.Future[int]) -> int:
+                    return await asyncio.to_thread(cf.result)
+
+                wrapped = asyncio.ensure_future(_wait_in_thread(fut))
+            to_await.append(wrapped)
+            pid_for_future.append(int(pid))
+
+        if to_await:
+            results = await asyncio.gather(*to_await, return_exceptions=True)
+            for i, res in enumerate(results):
+                pid = pid_for_future[i]
+                if isinstance(res, Exception):
+                    continue
+                try:
+                    rid = int(res)
+                except Exception:
+                    continue
+                if rid < 0:
+                    # Missing/failed upload – do not include in mapping
+                    continue
+                mapping[int(pid)] = rid
+                self._resolved_pid_map[int(pid)] = rid
+
         return mapping
+
+    # ------------------------------ Upload scheduling ---------------------
+    def _ensure_upload_started(self, pending_id: int) -> None:
+        if int(pending_id) in self._pending_uploads:
+            return
+        # Submit a background upload job that returns the real_id
+        try:
+            fut = self._executor.submit(self._upload_one_sync, int(pending_id))
+            self._pending_uploads[int(pending_id)] = fut
+        except Exception:
+            pass
+
+    def _upload_one_sync(self, pending_id: int) -> int:
+        """Blocking upload of a single pending image; returns real_id."""
+        try:
+            row = self._data_store.get(int(pending_id))
+        except Exception:
+            row = None
+        if not isinstance(row, dict):
+            # Nothing to upload; try to find resolved id via snapshot
+            try:
+                snap = self._data_store.snapshot()
+                for _k, r in snap.items():
+                    try:
+                        if int(r.get("temp_image_id", -1)) == int(pending_id):
+                            rid = int(r.get("image_id", -1))
+                            if rid >= 0 and rid != int(pending_id):
+                                self._resolved_pid_map[int(pending_id)] = rid
+                                return rid
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            return -1
+
+        payload = {
+            "timestamp": row.get("timestamp") or datetime.utcnow(),
+            "caption": row.get("caption"),
+            "data": row.get("data"),
+        }
+        [real_id] = self.add_images([payload])  # reuse existing robust path
+        try:
+            rid = int(real_id)
+        except Exception:
+            return -1
+
+        # Re-key local DataStore to the resolved id and preserve temp_image_id
+        try:
+            src = self._data_store.get(int(pending_id))
+        except Exception:
+            src = None
+        if isinstance(src, dict):
+            new_row = dict(src)
+            new_row["image_id"] = rid
+            if "temp_image_id" not in new_row:
+                new_row["temp_image_id"] = int(pending_id)
+            try:
+                self._data_store.put(new_row)
+                try:
+                    self._data_store.delete(int(pending_id))
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        self._resolved_pid_map[int(pending_id)] = rid
+        return rid
 
     def add_images(self, items: List[Dict[str, Any]]) -> List[int]:
         """
