@@ -801,42 +801,21 @@ class ImageManager(BaseImageManager):
         """
         Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
 
-        - When ``return_handles`` is False (default), returns a list of allocated
-          ``image_id`` values aligned to input order; entries may be ``None`` when
-          a per-item create fails.
-        - When ``return_handles`` is True, returns a list of ``ImageHandle``
-          instances aligned to input order; entries may be ``None`` when a
-          per-item create fails.
+        Modes
+        -----
+        - synchronous=True,  return_handles=False (default): return list[int] ids.
+        - synchronous=True,  return_handles=True:  return List[ImageHandle] for created rows.
+        - synchronous=False, return_handles=True:  enqueue local pending rows, schedule uploads, return pending List[ImageHandle].
+        - synchronous=False, return_handles=False: INVALID → raises ValueError explaining why.
         """
-        if synchronous and not return_handles:
-            # Regular synchronous mode returning ids is supported (default)
-            pass
-        elif synchronous and return_handles is False:
-            pass
-        elif synchronous and return_handles is True:
-            # Synchronous + return_handles True is supported
-            pass
-        elif (not synchronous) and (not return_handles):
+        if (not synchronous) and (not return_handles):
             # Invalid pairing per spec: non-blocking enqueue requires handles for tracking
             raise ValueError(
                 "Invalid argument combination: synchronous=False with return_handles=False. "
                 "Non-blocking mode must return ImageHandle instances so callers can await resolution.",
             )
-        # else: non-synchronous + return_handles True is supported
         if not items:
             return []
-
-        # Prepare payloads (preserve explicit_types; convert bytes → base64)
-        prepared: List[Dict[str, Any]] = []
-        for raw in items or []:
-            payload = dict(raw or {})
-            data_val = payload.get("data")
-            if data_val is None:
-                raise ValueError("'data' is required for add_images")
-            if isinstance(data_val, (bytes, bytearray)):
-                payload["data"] = base64.b64encode(data_val).decode("utf-8")
-            img = Image(**payload)
-            prepared.append(img.to_post_json())
 
         # If asynchronous enqueue is requested, create pending rows locally and schedule uploads
         if not synchronous:
@@ -877,6 +856,18 @@ class ImageManager(BaseImageManager):
 
             # In async mode, only return handles (ids are unknown yet)
             return handles
+
+        # Prepare payloads (preserve explicit_types; convert bytes → base64) – sync path only
+        prepared: List[Dict[str, Any]] = []
+        for raw in items or []:
+            payload = dict(raw or {})
+            data_val = payload.get("data")
+            if data_val is None:
+                raise ValueError("'data' is required for add_images")
+            if isinstance(data_val, (bytes, bytearray)):
+                payload["data"] = base64.b64encode(data_val).decode("utf-8")
+            img = Image(**payload)
+            prepared.append(img.to_post_json())
 
         # Synchronous create path: Result list aligned to input order; None when a per-item create fails
         out_ids: List[Optional[int]] = [None] * len(prepared)
