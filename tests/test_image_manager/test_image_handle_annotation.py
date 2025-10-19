@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import asyncio as _asyncio
 
 import pytest
 
@@ -74,8 +75,6 @@ def test_pending_handle_annotation_stays_local_and_not_persisted():
     assert h.annotation == "pending-note"
 
     # Resolve pending → real id
-    import asyncio as _asyncio
-
     mapping = _asyncio.get_event_loop().run_until_complete(
         im.await_pending([h.image_id]),
     )
@@ -94,3 +93,95 @@ def test_pending_handle_annotation_stays_local_and_not_persisted():
     row = ds[resolved_id]
     assert "annotation" not in row
     assert row.get("caption") == "pending base"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@_handle_project
+async def test_wait_for_annotation_immediate():
+    im = ImageManager()
+    [h] = [
+        x
+        for x in im.add_images(
+            [
+                {
+                    "timestamp": datetime.now(timezone.utc),
+                    "caption": "immediate anno",
+                    "data": PNG_GRAY_B64,
+                },
+            ],
+            synchronous=True,
+            return_handles=True,
+        )
+        if x is not None
+    ]
+
+    h.annotation = "ready"
+    got = await h.wait_for_annotation(timeout=1.0)
+    assert got == "ready"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@_handle_project
+async def test_wait_for_annotation_blocks_then_returns():
+    im = ImageManager()
+    [h] = [
+        x
+        for x in im.add_images(
+            [
+                {
+                    "timestamp": datetime.now(timezone.utc),
+                    "caption": "delayed anno",
+                    "data": PNG_GRAY_B64,
+                },
+            ],
+            synchronous=True,
+            return_handles=True,
+        )
+        if x is not None
+    ]
+
+    async def _later():
+        await _asyncio.sleep(0.05)
+        h.annotation = "late"
+
+    waiter = _asyncio.create_task(h.wait_for_annotation(timeout=1.0))
+    setter = _asyncio.create_task(_later())
+    got, _ = await _asyncio.gather(waiter, setter)
+    assert got == "late"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@_handle_project
+async def test_wait_for_annotation_and_resolution_with_gather():
+    im = ImageManager()
+    [h] = [
+        x
+        for x in im.add_images(
+            [
+                {
+                    "timestamp": datetime.now(timezone.utc),
+                    "caption": "pending both",
+                    "data": PNG_GRAY_B64,
+                },
+            ],
+            synchronous=False,
+            return_handles=True,
+        )
+        if x is not None
+    ]
+
+    async def _set_annotation():
+        # Simulate producer attaching annotation shortly after creation
+        await _asyncio.sleep(0.02)
+        h.annotation = "both-ready"
+
+    ann_task = _asyncio.create_task(h.wait_for_annotation(timeout=2.0))
+    rid_task = _asyncio.create_task(h.wait_until_resolved())
+    _ = _asyncio.create_task(_set_annotation())
+
+    ann, rid = await _asyncio.gather(ann_task, rid_task)
+    assert isinstance(rid, int)
+    assert ann == "both-ready"

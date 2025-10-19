@@ -38,6 +38,7 @@ class ImageHandle:
         # backend Images table or the local DataStore; it is specific to this
         # handle instance only.
         self._annotation: Optional[str] = None
+        self._annotation_event = threading.Event()
         # Deferred persistence state for updates made while pending
         self._deferred_lock = threading.Lock()
         self._deferred_updates: Dict[str, Any] = {}
@@ -70,6 +71,11 @@ class ImageHandle:
     @annotation.setter
     def annotation(self, value: Optional[str]) -> None:
         self._annotation = value
+        if value is not None:
+            try:
+                self._annotation_event.set()
+            except Exception:
+                pass
 
     def resolve(self, real_image_id: int) -> None:
         """
@@ -398,6 +404,26 @@ class ImageHandle:
 
     def __await__(self):  # convenience alias
         return self.wait_until_resolved().__await__()
+
+    async def wait_for_annotation(
+        self,
+        timeout: Optional[float] = None,
+    ) -> Optional[str]:
+        """
+        Await until a non-None annotation is set on this handle, then return it.
+
+        If already set, returns immediately.
+        """
+        if self.annotation is not None:
+            return self.annotation
+        if timeout is None:
+            await asyncio.to_thread(self._annotation_event.wait)
+        else:
+            await asyncio.wait_for(
+                asyncio.to_thread(self._annotation_event.wait),
+                timeout=timeout,
+            )
+        return self.annotation
 
     # ------------------------------ Deferred persistence ------------------
     def _schedule_deferred_persist(self):
