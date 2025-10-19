@@ -246,6 +246,118 @@ def test_await_pending_omits_missing_rows():
     assert set(mapping.keys()) == {h.image_id}
 
 
+@pytest.mark.unit
+@_handle_project
+def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypatch):
+    im = ImageManager()
+    from unity.common.data_store import DataStore as _DS
+
+    ds = _DS.for_context(im._ctx, key_fields=("image_id",))
+
+    # Stage without caption, then update caption while pending
+    h = im.stage_image(
+        timestamp=datetime.now(timezone.utc),
+        caption=None,
+        data=PNG_RED_B64,
+    )
+
+    h.update_metadata(caption="label-one")
+    h.update_metadata(caption="label-final")
+
+    # Count backend update_images calls (should be exactly one deferred call)
+    calls = {"count": 0}
+    orig_update_images = im.update_images
+
+    def _wrapped_update_images(updates):
+        calls["count"] += 1
+        return orig_update_images(updates)
+
+    monkeypatch.setattr(im, "update_images", _wrapped_update_images)
+
+    # Resolve now; deferred persistence should run shortly thereafter
+    rid = (
+        __import__("asyncio")
+        .get_event_loop()
+        .run_until_complete(h.wait_until_resolved())
+    )
+
+    # Poll until backend reflects the final label or timeout
+    import time as _time
+
+    deadline = _time.time() + 2.0
+    backend_caption = None
+    while _time.time() < deadline:
+        rows = im.filter_images(filter=f"image_id == {rid}")
+        if rows:
+            backend_caption = rows[0].caption
+            if backend_caption == "label-final":
+                break
+        _time.sleep(0.05)
+
+    assert backend_caption == "label-final"
+    assert rid in ds and ds[rid].get("caption") == "label-final"
+    # Exactly one backend update due to coalescing
+    assert calls["count"] == 1
+
+
+@pytest.mark.unit
+@_handle_project
+def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
+    im = ImageManager()
+
+    h = im.stage_image(
+        timestamp=datetime.now(timezone.utc),
+        caption="seed",
+        data=PNG_BLUE_B64,
+    )
+
+    # Apply several updates while still pending
+    h.update_metadata(caption="v1")
+    h.update_metadata(caption="v2")
+    h.update_metadata(caption="v3")
+
+    captured_payloads = []
+    orig_update_images = im.update_images
+
+    def _wrapped_update_images(updates):
+        captured_payloads.append(list(updates))
+        return orig_update_images(updates)
+
+    monkeypatch.setattr(im, "update_images", _wrapped_update_images)
+
+    # Resolve and wait briefly for deferred persist to run
+    rid = (
+        __import__("asyncio")
+        .get_event_loop()
+        .run_until_complete(h.wait_until_resolved())
+    )
+
+    import time as _time
+
+    # Wait for one call to update_images and backend to reflect v3
+    deadline = _time.time() + 2.0
+    while _time.time() < deadline and len(captured_payloads) == 0:
+        _time.sleep(0.02)
+
+    assert len(captured_payloads) == 1
+    last_payload = captured_payloads[0][0]
+    assert last_payload.get("image_id") == rid
+    assert last_payload.get("caption") == "v3"
+
+    # Verify backend has v3 too
+    backend_caption = None
+    deadline2 = _time.time() + 2.0
+    while _time.time() < deadline2:
+        rows = im.filter_images(filter=f"image_id == {rid}")
+        if rows:
+            backend_caption = rows[0].caption
+            if backend_caption == "v3":
+                break
+        _time.sleep(0.05)
+
+    assert backend_caption == "v3"
+
+
 @pytest.mark.eval
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio

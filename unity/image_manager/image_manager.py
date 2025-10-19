@@ -7,6 +7,7 @@ import functools
 from datetime import datetime, timedelta
 import asyncio
 import concurrent.futures
+import threading
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
@@ -33,6 +34,12 @@ class ImageHandle:
     def __init__(self, *, manager: "ImageManager", image: Image) -> None:
         self._manager = manager
         self._image = image
+        # Deferred persistence state for updates made while pending
+        self._deferred_lock = threading.Lock()
+        self._deferred_updates: Dict[str, Any] = {}
+        self._deferred_task: Any = (
+            None  # asyncio.Task | concurrent.futures.Future | None
+        )
 
     @property
     def image_id(self) -> int:
@@ -115,18 +122,32 @@ class ImageHandle:
         except Exception:
             pass
 
-        # Persist to backend when resolved
+        # Persist to backend
         if not self.is_pending:
             payload: Dict[str, Any] = {"image_id": self.image_id}
-            # Filter to supported keys
             for k in ("caption", "timestamp", "data"):
                 if k in updates:
                     payload[k] = updates[k]
             try:
                 self._manager.update_images([payload])
             except Exception:
-                # Leave local cache updated; backend sync failure tolerated
                 pass
+            return
+
+        # If pending, coalesce updates and schedule deferred persistence after resolution
+        try:
+            with self._deferred_lock:
+                for k in ("caption", "timestamp", "data"):
+                    if k in updates:
+                        self._deferred_updates[k] = updates[k]
+                if (
+                    self._deferred_task is None
+                    or getattr(self._deferred_task, "done", lambda: True)()
+                ):
+                    self._deferred_task = self._schedule_deferred_persist()
+        except Exception:
+            # Best-effort; if scheduling fails we still have local cache updated
+            pass
 
     def raw(self) -> bytes:
         """
@@ -363,6 +384,56 @@ class ImageHandle:
 
     def __await__(self):  # convenience alias
         return self.wait_until_resolved().__await__()
+
+    # ------------------------------ Deferred persistence ------------------
+    def _schedule_deferred_persist(self):
+        async def _async_worker() -> None:
+            # Await resolution; if already resolved this returns immediately
+            try:
+                rid = await self.wait_until_resolved()
+            except Exception:
+                return
+
+            # Drain any accumulated updates and persist; loop to catch races
+            while True:
+                try:
+                    with self._deferred_lock:
+                        pending_updates = dict(self._deferred_updates)
+                        self._deferred_updates.clear()
+                except Exception:
+                    pending_updates = {}
+
+                # Filter to supported keys
+                payload_body: Dict[str, Any] = {}
+                for k in ("caption", "timestamp", "data"):
+                    if k in pending_updates:
+                        payload_body[k] = pending_updates[k]
+
+                if not payload_body:
+                    break
+
+                payload: Dict[str, Any] = {"image_id": int(rid), **payload_body}
+                try:
+                    self._manager.update_images([payload])
+                except Exception:
+                    # Tolerate backend failure; local cache already updated
+                    pass
+
+                # If more updates arrived during the write, loop again
+                try:
+                    with self._deferred_lock:
+                        has_more = bool(self._deferred_updates)
+                except Exception:
+                    has_more = False
+                if not has_more:
+                    break
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(_async_worker())
+        except RuntimeError:
+            # No running loop: execute in background thread with its own loop
+            return self._manager._executor.submit(lambda: asyncio.run(_async_worker()))
 
 
 class ImageManager(BaseImageManager):
