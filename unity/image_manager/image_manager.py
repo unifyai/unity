@@ -632,93 +632,14 @@ class ImageManager(BaseImageManager):
             return False
         return iid >= self._PENDING_BASE
 
-    # New non-blocking create APIs ----------------------------------------
-    def add_image_async(
-        self,
-        *,
-        timestamp: Optional[datetime] = None,
-        caption: Optional[str] = None,
-        data: Union[bytes, bytearray, str],
-    ) -> ImageHandle:
-        """
-        Enqueue a single image for background upload and return a pending handle.
-
-        - Does not block on backend creation
-        - The returned handle is usable immediately for `raw()` and `ask()`
-        - Upload is scheduled right away; call `await handle.wait_until_resolved()`
-          to obtain the resolved id when needed
-        """
-        [handle] = self.add_images_async(
-            [
-                {
-                    "timestamp": timestamp,
-                    "caption": caption,
-                    "data": data,
-                },
-            ],
-        )
-        return handle
-
-    def add_images_async(self, items: List[Dict[str, Any]]) -> List[ImageHandle]:
-        """
-        Enqueue multiple images for background upload and return pending handles.
-
-        For each item, a temporary id is assigned and the local DataStore is
-        seeded. Uploads are scheduled immediately in the background.
-        """
-        if not items:
-            return []
-
-        handles: List[ImageHandle] = []
-        pending_ids: List[int] = []
-
-        for raw in items:
-            payload = dict(raw or {})
-
-            # Normalize timestamp
-            ts = payload.get("timestamp") or datetime.utcnow()
-
-            # Normalize/encode data to base64 if bytes were provided
-            d = payload.get("data")
-            if d is None:
-                raise ValueError("'data' is required for add_images_async")
-            if isinstance(d, (bytes, bytearray)):
-                d_b64 = base64.b64encode(d).decode("utf-8")
-            else:
-                d_b64 = d
-
-            temp_id = next(self._pending_counter)
-            row: Dict[str, Any] = {
-                "image_id": int(temp_id),
-                "temp_image_id": int(temp_id),
-                "timestamp": ts,
-                "caption": payload.get("caption"),
-                "data": d_b64,
-            }
-
-            try:
-                self._data_store.put(row)
-            except Exception:
-                pass
-
-            handles.append(ImageHandle(manager=self, image=Image(**row)))
-            pending_ids.append(int(temp_id))
-
-        # Schedule background uploads immediately
-        for pid in pending_ids:
-            try:
-                self._ensure_upload_started(int(pid))
-            except Exception:
-                pass
-
-        return handles
+    # Non-blocking create functionality merged into add_images
 
     async def await_pending(self, pending_ids: List[int]) -> Dict[int, int]:
         """
         Await resolution for the given pending ids.
 
         - Does not trigger duplicate uploads – each pending id is uploaded at most once,
-          scheduled at stage_image time (or lazily here if missing).
+          scheduled when add_images(..., synchronous=False) is called (or lazily here if missing).
         - Returns a mapping {pending_id -> real_id} for all requested ids that can be
           resolved in this session (either already resolved or after the awaited upload).
         """
@@ -874,6 +795,7 @@ class ImageManager(BaseImageManager):
         self,
         items: List[Dict[str, Any]],
         *,
+        synchronous: bool = True,
         return_handles: bool = False,
     ) -> Union[List[int], List[Optional[ImageHandle]]]:
         """
@@ -886,6 +808,21 @@ class ImageManager(BaseImageManager):
           instances aligned to input order; entries may be ``None`` when a
           per-item create fails.
         """
+        if synchronous and not return_handles:
+            # Regular synchronous mode returning ids is supported (default)
+            pass
+        elif synchronous and return_handles is False:
+            pass
+        elif synchronous and return_handles is True:
+            # Synchronous + return_handles True is supported
+            pass
+        elif (not synchronous) and (not return_handles):
+            # Invalid pairing per spec: non-blocking enqueue requires handles for tracking
+            raise ValueError(
+                "Invalid argument combination: synchronous=False with return_handles=False. "
+                "Non-blocking mode must return ImageHandle instances so callers can await resolution.",
+            )
+        # else: non-synchronous + return_handles True is supported
         if not items:
             return []
 
@@ -901,7 +838,47 @@ class ImageManager(BaseImageManager):
             img = Image(**payload)
             prepared.append(img.to_post_json())
 
-        # Result list aligned to input order; None when a per-item create fails
+        # If asynchronous enqueue is requested, create pending rows locally and schedule uploads
+        if not synchronous:
+            handles: List[Optional[ImageHandle]] = []
+            pending_ids: List[int] = []
+            for raw in items or []:
+                payload = dict(raw or {})
+                ts = payload.get("timestamp") or datetime.utcnow()
+                d = payload.get("data")
+                if d is None:
+                    handles.append(None)
+                    continue
+                if isinstance(d, (bytes, bytearray)):
+                    d_b64 = base64.b64encode(d).decode("utf-8")
+                else:
+                    d_b64 = d
+
+                temp_id = next(self._pending_counter)
+                row_local: Dict[str, Any] = {
+                    "image_id": int(temp_id),
+                    "temp_image_id": int(temp_id),
+                    "timestamp": ts,
+                    "caption": payload.get("caption"),
+                    "data": d_b64,
+                }
+                try:
+                    self._data_store.put(row_local)
+                except Exception:
+                    pass
+                handles.append(ImageHandle(manager=self, image=Image(**row_local)))
+                pending_ids.append(int(temp_id))
+
+            for pid in pending_ids:
+                try:
+                    self._ensure_upload_started(int(pid))
+                except Exception:
+                    pass
+
+            # In async mode, only return handles (ids are unknown yet)
+            return handles
+
+        # Synchronous create path: Result list aligned to input order; None when a per-item create fails
         out_ids: List[Optional[int]] = [None] * len(prepared)
 
         # Fast path: batch create to avoid O(N) round trips and allow parallelism upstream

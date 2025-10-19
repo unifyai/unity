@@ -24,10 +24,16 @@ def test_async_enqueue_immediate_raw_and_pending_flag():
 
     # Enqueue using raw bytes
     raw_bytes = base64.b64decode(PNG_RED_B64)
-    h = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="staged",
-        data=raw_bytes,
+    [h] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "staged",
+                "data": raw_bytes,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
 
     assert h.is_pending
@@ -60,10 +66,16 @@ def test_await_pending_remaps_ids_and_updates_data_store():
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
     # Enqueue using base64 string
-    staged = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="to flush",
-        data=PNG_BLUE_B64,
+    [staged] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "to flush",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
     pid = staged.image_id
     assert pid in ds
@@ -102,10 +114,16 @@ def test_update_metadata_while_pending_reflects_locally():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
-    h = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="xfer",
-        data=PNG_RED_B64,
+    [h] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "xfer",
+                "data": PNG_RED_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
     # Update metadata while pending; should be reflected locally
     h.update_metadata(caption="xfer-updated")
@@ -118,10 +136,16 @@ def test_update_metadata_while_pending_reflects_locally():
 def test_manager_is_pending_id_and_resolution():
     im = ImageManager()
 
-    staged = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="p",
-        data=PNG_RED_B64,
+    [staged] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "p",
+                "data": PNG_RED_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
     assert im.is_pending_id(staged.image_id) is True
     assert im.is_pending_id(123) is False
@@ -136,15 +160,21 @@ def test_manager_is_pending_id_and_resolution():
 def test_get_images_for_pending_prefers_cache_no_backend(monkeypatch):
     im = ImageManager()
 
-    h1 = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="p1",
-        data=PNG_RED_B64,
-    )
-    h2 = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="p2",
-        data=PNG_BLUE_B64,
+    h1, h2 = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "p1",
+                "data": PNG_RED_B64,
+            },
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "p2",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
 
     calls = {"count": 0}
@@ -163,12 +193,18 @@ def test_get_images_for_pending_prefers_cache_no_backend(monkeypatch):
 
 @pytest.mark.unit
 @_handle_project
-def test_add_image_async_accepts_base64_and_raw_roundtrip():
+def test_async_enqueue_accepts_base64_and_raw_roundtrip():
     im = ImageManager()
-    h = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="b64",
-        data=PNG_RED_B64,
+    [h] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "b64",
+                "data": PNG_RED_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
     assert h.is_pending
     assert h.raw() == base64.b64decode(PNG_RED_B64)
@@ -180,15 +216,21 @@ def test_await_pending_multiple_and_datastore_updates():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
-    h1 = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="m1",
-        data=PNG_RED_B64,
-    )
-    h2 = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="m2",
-        data=PNG_BLUE_B64,
+    h1, h2 = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "m1",
+                "data": PNG_RED_B64,
+            },
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "m2",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
 
     mapping = _run(im.await_pending([h1.image_id, h2.image_id]))
@@ -210,10 +252,16 @@ def test_temp_image_id_persists_after_resolution():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
-    h = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="keep-temp",
-        data=PNG_BLUE_B64,
+    [h] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "keep-temp",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
     pid = h.image_id
     mapping = (
@@ -230,10 +278,16 @@ def test_temp_image_id_persists_after_resolution():
 @_handle_project
 def test_await_pending_omits_missing_rows():
     im = ImageManager()
-    h = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="ok",
-        data=PNG_RED_B64,
+    [h] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "ok",
+                "data": PNG_RED_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
     missing_pid = 10**12 + 999_999
 
@@ -255,10 +309,16 @@ def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypat
     ds = _DS.for_context(im._ctx, key_fields=("image_id",))
 
     # Enqueue without caption, then update caption while pending
-    h = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption=None,
-        data=PNG_RED_B64,
+    [h] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": None,
+                "data": PNG_RED_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
 
     h.update_metadata(caption="label-one")
@@ -305,10 +365,16 @@ def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypat
 def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
     im = ImageManager()
 
-    h = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="seed",
-        data=PNG_BLUE_B64,
+    [h] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "seed",
+                "data": PNG_BLUE_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
 
     # Apply several updates while still pending
@@ -364,10 +430,16 @@ def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
 @_handle_project
 async def test_ask_on_pending_enqueue_returns_text_only():
     im = ImageManager()
-    h = im.add_image_async(
-        timestamp=datetime.now(timezone.utc),
-        caption="ask",
-        data=PNG_RED_B64,
+    [h] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "ask",
+                "data": PNG_RED_B64,
+            },
+        ],
+        synchronous=False,
+        return_handles=True,
     )
     answer = await h.ask("What do you notice in this image?")
     assert isinstance(answer, str) and answer.strip()
