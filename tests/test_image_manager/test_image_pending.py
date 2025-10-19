@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
+import asyncio
 import unify
 
 import pytest
@@ -44,9 +45,17 @@ def test_stage_image_immediate_raw_and_pending_flag():
     assert base64.b64decode(row.get("data")) == raw_bytes
 
 
+def _run(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 @pytest.mark.unit
 @_handle_project
-def test_flush_pending_remaps_ids_and_updates_data_store():
+def test_await_pending_remaps_ids_and_updates_data_store():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
@@ -59,8 +68,8 @@ def test_flush_pending_remaps_ids_and_updates_data_store():
     pid = staged.image_id
     assert pid in ds
 
-    # Flush and get real id mapping
-    mapping = im.flush_pending([pid])
+    # Await and get real id mapping
+    mapping = _run(im.await_pending([pid]))
     assert pid in mapping
     real_id = mapping[pid]
     assert isinstance(real_id, int) and real_id < 10**12
@@ -117,7 +126,7 @@ def test_manager_is_pending_id_and_resolution():
     assert im.is_pending_id(staged.image_id) is True
     assert im.is_pending_id(123) is False
 
-    mapping = im.flush_pending([staged.image_id])
+    mapping = _run(im.await_pending([staged.image_id]))
     real_id = mapping[staged.image_id]
     assert im.is_pending_id(real_id) is False
 
@@ -167,7 +176,7 @@ def test_stage_image_accepts_base64_and_raw_roundtrip():
 
 @pytest.mark.unit
 @_handle_project
-def test_flush_pending_multiple_and_datastore_updates():
+def test_await_pending_multiple_and_datastore_updates():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
@@ -182,7 +191,7 @@ def test_flush_pending_multiple_and_datastore_updates():
         data=PNG_BLUE_B64,
     )
 
-    mapping = im.flush_pending([h1.image_id, h2.image_id])
+    mapping = _run(im.await_pending([h1.image_id, h2.image_id]))
     assert set(mapping.keys()) == {h1.image_id, h2.image_id}
     rid1 = mapping[h1.image_id]
     rid2 = mapping[h2.image_id]
@@ -207,7 +216,11 @@ def test_temp_image_id_persists_after_resolution():
         data=PNG_BLUE_B64,
     )
     pid = h.image_id
-    mapping = im.flush_pending([pid])
+    mapping = (
+        __import__("asyncio")
+        .get_event_loop()
+        .run_until_complete(im.await_pending([pid]))
+    )
     rid = mapping[pid]
     row = ds[rid]
     assert row.get("temp_image_id") == pid
@@ -215,7 +228,7 @@ def test_temp_image_id_persists_after_resolution():
 
 @pytest.mark.unit
 @_handle_project
-def test_flush_pending_omits_missing_rows():
+def test_await_pending_omits_missing_rows():
     im = ImageManager()
     h = im.stage_image(
         timestamp=datetime.now(timezone.utc),
@@ -225,10 +238,11 @@ def test_flush_pending_omits_missing_rows():
     missing_pid = 10**12 + 999_999
 
     # Missing only -> empty mapping
-    assert im.flush_pending([missing_pid]) == {}
+    mapping = _run(im.await_pending([missing_pid]))
+    assert mapping == {}
 
     # Mixed -> only existing pending is mapped
-    mapping = im.flush_pending([h.image_id, missing_pid])
+    mapping = _run(im.await_pending([h.image_id, missing_pid]))
     assert set(mapping.keys()) == {h.image_id}
 
 
