@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
-import json
 import unify
 
 import pytest
@@ -90,36 +89,19 @@ def test_flush_pending_remaps_ids_and_updates_data_store():
 
 @pytest.mark.unit
 @_handle_project
-def test_to_ref_from_ref_roundtrip_seeds_data_store():
+def test_update_metadata_while_pending_reflects_locally():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
-    staged = im.stage_image(
+    h = im.stage_image(
         timestamp=datetime.now(timezone.utc),
         caption="xfer",
         data=PNG_RED_B64,
     )
-    ref = staged.to_ref()
-
-    # Construct a new manager and import from ref
-    im2 = ImageManager()
-    h2 = im2.from_ref(ref)
-
-    assert h2.image_id == staged.image_id
-    assert h2.is_pending
-    # Should be usable immediately via cache seeding
-    assert h2.raw() == base64.b64decode(PNG_RED_B64)
-
-    # DataStore must have the row under the same pending id
-    row = ds[h2.image_id]
-    assert row.get("caption") == "xfer"
-    assert base64.b64decode(row.get("data")) == base64.b64decode(PNG_RED_B64)
-
-    # Update metadata while pending; should be reflected locally and included on flush
-    h2.update_metadata(caption="xfer-updated")
-    ds2 = DataStore.for_context(im2._ctx, key_fields=("image_id",))
-    row2 = ds2[h2.image_id]
-    assert row2.get("caption") == "xfer-updated"
+    # Update metadata while pending; should be reflected locally
+    h.update_metadata(caption="xfer-updated")
+    row = ds[h.image_id]
+    assert row.get("caption") == "xfer-updated"
 
 
 @pytest.mark.unit
@@ -215,26 +197,20 @@ def test_flush_pending_multiple_and_datastore_updates():
 
 @pytest.mark.unit
 @_handle_project
-def test_from_ref_json_string_without_inline_data_fallbacks_to_backend():
+def test_temp_image_id_persists_after_resolution():
     im = ImageManager()
+    ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 
-    # Create a real backend image
-    [real_id] = im.add_images(
-        [
-            {
-                "timestamp": datetime.now(timezone.utc),
-                "caption": "real",
-                "data": PNG_BLUE_B64,
-            },
-        ],
+    h = im.stage_image(
+        timestamp=datetime.now(timezone.utc),
+        caption="keep-temp",
+        data=PNG_BLUE_B64,
     )
-
-    # Build a minimal JSON string ref without data
-    ref_str = json.dumps({"image_id": real_id})
-    im2 = ImageManager()
-    h = im2.from_ref(ref_str)
-    assert not h.is_pending
-    assert h.image_id == real_id
+    pid = h.image_id
+    mapping = im.flush_pending([pid])
+    rid = mapping[pid]
+    row = ds[rid]
+    assert row.get("temp_image_id") == pid
 
 
 @pytest.mark.unit
