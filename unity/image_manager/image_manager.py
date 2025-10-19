@@ -61,47 +61,6 @@ class ImageHandle:
             # Best-effort; if mutation fails, leave as-is
             pass
 
-    def to_ref(self) -> Dict[str, Any]:
-        """
-        Produce a JSON-serializable reference for cross-process handoff.
-
-        If base64 data is available locally, include it to allow the receiver to
-        "see" the image immediately without backend reads.
-        """
-        ref: Dict[str, Any] = {
-            "ctx": self._manager._ctx,
-            "image_id": self.image_id,
-        }
-        if self.caption is not None:
-            ref["caption"] = self.caption
-        if isinstance(self._image.timestamp, datetime):
-            ref["timestamp"] = self._image.timestamp.isoformat()
-
-        # Prefer cached base64; fall back to inline data if already base64.
-        data_str: Optional[str] = None
-        try:
-            cached = self._manager._data_store.get(self.image_id)
-            if cached is not None:
-                data_str = cached.get("data")
-        except Exception:
-            data_str = None
-        if not data_str:
-            try:
-                data_str = self._image.data
-            except Exception:
-                data_str = None
-
-        if isinstance(data_str, str):
-            is_url = (
-                data_str.startswith("gs://")
-                or data_str.startswith("http://")
-                or data_str.startswith("https://")
-            )
-            if (not is_url) or data_str.startswith("data:image/"):
-                # Embed base64 or data URL directly for immediate usability
-                ref["data"] = data_str
-        return ref
-
     def update_metadata(
         self,
         *,
@@ -430,6 +389,41 @@ class ImageManager(BaseImageManager):
         # Single counter per manager instance; uniqueness is sufficient per-process
         self._pending_counter = itertools.count(self._PENDING_BASE)
 
+        # Internal helper ensures we preserve any local-only columns such as
+        # temp_image_id when writing backend-fetched rows into the DataStore.
+        def _put_preserve_temp(row: Dict[str, Any]) -> None:
+            try:
+                iid = int(row.get("image_id"))
+            except Exception:
+                # Fallback to raw put if image_id missing/unparseable
+                try:
+                    self._data_store.put(row)
+                except Exception:
+                    pass
+                return
+
+            try:
+                existing = self._data_store.get(iid)
+            except Exception:
+                existing = None
+            merged: Dict[str, Any] = {}
+            if isinstance(existing, dict):
+                merged.update(existing)
+            merged.update(row)
+            if (
+                isinstance(existing, dict)
+                and ("temp_image_id" in existing)
+                and ("temp_image_id" not in merged)
+            ):
+                merged["temp_image_id"] = existing["temp_image_id"]
+            try:
+                self._data_store.put(merged)
+            except Exception:
+                pass
+
+        # Bind helper for reuse
+        self._put_preserve_temp = _put_preserve_temp  # type: ignore[attr-defined]
+
     # ------------------------------ Reads ---------------------------------
     def filter_images(
         self,
@@ -446,10 +440,10 @@ class ImageManager(BaseImageManager):
             limit=limit,
             from_fields=list(self._BUILTIN_FIELDS),
         )
-        # Write-through to local DataStore mirror
+        # Write-through to local DataStore mirror (preserve local-only columns)
         try:
             for lg in logs:
-                self._data_store.put(lg.entries)
+                self._put_preserve_temp(getattr(lg, "entries", {}) or {})
         except Exception:
             pass
         return [Image(**lg.entries) for lg in logs]
@@ -474,10 +468,10 @@ class ImageManager(BaseImageManager):
             unique_id_field="image_id",
             allowed_fields=list(self._BUILTIN_FIELDS),
         )
-        # Write-through to local DataStore mirror
+        # Write-through to local DataStore mirror (preserve local-only columns)
         try:
             for r in filled:
-                self._data_store.put(r)
+                self._put_preserve_temp(r)
         except Exception:
             pass
         return [Image(**r) for r in filled]
@@ -510,7 +504,7 @@ class ImageManager(BaseImageManager):
             )
             for lg in logs:
                 try:
-                    self._data_store.put(lg.entries)
+                    self._put_preserve_temp(getattr(lg, "entries", {}) or {})
                     img = Image(**lg.entries)
                     by_id[int(img.image_id)] = img
                 except Exception:
@@ -556,6 +550,7 @@ class ImageManager(BaseImageManager):
 
         row: Dict[str, Any] = {
             "image_id": int(temp_id),
+            "temp_image_id": int(temp_id),
             "timestamp": timestamp,
             "caption": caption,
             "data": data_b64,
@@ -617,6 +612,9 @@ class ImageManager(BaseImageManager):
                 if src is not None:
                     new_row = dict(src)
                     new_row["image_id"] = int(real_id)
+                    # Preserve temp_image_id across re-keying
+                    if "temp_image_id" not in new_row:
+                        new_row["temp_image_id"] = int(pid)
                     self._data_store.put(new_row)
                     try:
                         self._data_store.delete(pid)
@@ -626,81 +624,6 @@ class ImageManager(BaseImageManager):
                 pass
 
         return mapping
-
-    def from_ref(self, ref: Union[str, Dict[str, Any]]) -> ImageHandle:
-        """
-        Construct an ImageHandle from a cross-process reference.
-
-        If the ref contains inline data, seed the DataStore immediately so the
-        resulting handle can be used without waiting for backend availability.
-        """
-        if isinstance(ref, str):
-            try:
-                ref_obj = json.loads(ref)
-            except Exception as exc:
-                raise ValueError("Invalid JSON ref string") from exc
-        else:
-            ref_obj = dict(ref or {})
-
-        iid = ref_obj.get("image_id")
-        if iid is None:
-            raise ValueError("ref must include 'image_id'")
-        try:
-            image_id = int(iid)
-        except Exception as exc:
-            raise ValueError("'image_id' must be an int") from exc
-
-        caption = ref_obj.get("caption")
-        ts_raw = ref_obj.get("timestamp")
-        if isinstance(ts_raw, str):
-            try:
-                # fromisoformat handles "YYYY-mm-ddTHH:MM:SS[.ffffff][+/-offset]"
-                timestamp = datetime.fromisoformat(ts_raw)  # type: ignore[arg-type]
-            except Exception:
-                timestamp = datetime.utcnow()
-        else:
-            timestamp = datetime.utcnow()
-
-        data_val = ref_obj.get("data")
-        if isinstance(data_val, (bytes, bytearray)):
-            data_str = base64.b64encode(data_val).decode("utf-8")
-        else:
-            data_str = data_val
-
-        # If we have inline data, seed the DataStore immediately
-        if isinstance(data_str, str) and data_str:
-            row = {
-                "image_id": image_id,
-                "timestamp": timestamp,
-                "caption": caption,
-                "data": data_str,
-            }
-            try:
-                # put or update
-                try:
-                    self._data_store.update(image_id, row)
-                except KeyError:
-                    self._data_store.put(row)
-            except Exception:
-                pass
-            return ImageHandle(manager=self, image=Image(**row))
-
-        # Otherwise, fallback to retrieving by id
-        handles = self.get_images([image_id])
-        if not handles:
-            # Seed a minimal stub to allow immediate use (no data available)
-            stub = {
-                "image_id": image_id,
-                "timestamp": timestamp,
-                "caption": caption,
-                "data": "",
-            }
-            try:
-                self._data_store.put(stub)
-            except Exception:
-                pass
-            return ImageHandle(manager=self, image=Image(**stub))
-        return handles[0]
 
     def add_images(self, items: List[Dict[str, Any]]) -> List[int]:
         """
@@ -732,7 +655,7 @@ class ImageManager(BaseImageManager):
             # Helper: write-through to DataStore with a given row payload
             def _put_row(row: Dict[str, Any]) -> None:
                 try:
-                    self._data_store.put(row)
+                    self._put_preserve_temp(row)
                 except Exception:
                     pass
 
@@ -831,7 +754,7 @@ class ImageManager(BaseImageManager):
                 try:
                     lg = unify.log(context=self._ctx, **payload, new=True, mutable=None)
                     try:
-                        self._data_store.put(lg.entries)
+                        self._put_preserve_temp(lg.entries)
                     except Exception:
                         pass
                     try:
@@ -892,7 +815,7 @@ class ImageManager(BaseImageManager):
                 entries=entries,
                 overwrite=True,
             )
-            # Refresh from backend and write-through to DataStore
+            # Refresh from backend and write-through to DataStore (preserve temp id)
             try:
                 rows = unify.get_logs(
                     context=self._ctx,
@@ -901,7 +824,7 @@ class ImageManager(BaseImageManager):
                     from_fields=list(self._BUILTIN_FIELDS),
                 )
                 if rows:
-                    self._data_store.put(rows[0].entries)
+                    self._put_preserve_temp(rows[0].entries)
             except Exception:
                 pass
             updated.append(image_id)
