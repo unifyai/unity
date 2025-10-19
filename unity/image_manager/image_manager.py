@@ -870,10 +870,21 @@ class ImageManager(BaseImageManager):
         self._resolved_pid_map[int(pending_id)] = rid
         return rid
 
-    def add_images(self, items: List[Dict[str, Any]]) -> List[int]:
+    def add_images(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        return_handles: bool = False,
+    ) -> Union[List[int], List[Optional[ImageHandle]]]:
         """
         Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
-        Returns the allocated ``image_id`` values in insertion order.
+
+        - When ``return_handles`` is False (default), returns a list of allocated
+          ``image_id`` values aligned to input order; entries may be ``None`` when
+          a per-item create fails.
+        - When ``return_handles`` is True, returns a list of ``ImageHandle``
+          instances aligned to input order; entries may be ``None`` when a
+          per-item create fails.
         """
         if not items:
             return []
@@ -1009,8 +1020,40 @@ class ImageManager(BaseImageManager):
                 except Exception:
                     out_ids[i] = None
 
-        # Coerce to Python ints where available; keep None where creation failed
-        return [x if isinstance(x, int) else None for x in out_ids]  # type: ignore[return-value]
+        if not return_handles:
+            # Coerce to Python ints where available; keep None where creation failed
+            return [x if isinstance(x, int) else None for x in out_ids]  # type: ignore[return-value]
+
+        # Build handles aligned to input order; None where creation failed
+        handles_out: List[Optional[ImageHandle]] = []
+        for i, maybe_id in enumerate(out_ids):
+            if isinstance(maybe_id, int):
+                try:
+                    # Prefer the row from the local DataStore mirror
+                    row = self._data_store.get(int(maybe_id))
+                except Exception:
+                    row = None
+                if isinstance(row, dict):
+                    try:
+                        handles_out.append(
+                            ImageHandle(manager=self, image=Image(**row)),
+                        )
+                        continue
+                    except Exception:
+                        pass
+                # Fallback: reconstruct from prepared payload + resolved id
+                try:
+                    row_guess = dict(prepared[i])
+                    row_guess["image_id"] = int(maybe_id)
+                    handles_out.append(
+                        ImageHandle(manager=self, image=Image(**row_guess)),
+                    )
+                except Exception:
+                    handles_out.append(None)
+            else:
+                handles_out.append(None)
+
+        return handles_out
 
     def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
         """
