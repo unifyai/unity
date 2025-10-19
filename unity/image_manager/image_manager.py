@@ -34,6 +34,10 @@ class ImageHandle:
     def __init__(self, *, manager: "ImageManager", image: Image) -> None:
         self._manager = manager
         self._image = image
+        # Handle-local, non-persistent annotation. This is NOT written to the
+        # backend Images table or the local DataStore; it is specific to this
+        # handle instance only.
+        self._annotation: Optional[str] = None
         # Deferred persistence state for updates made while pending
         self._deferred_lock = threading.Lock()
         self._deferred_updates: Dict[str, Any] = {}
@@ -56,6 +60,16 @@ class ImageHandle:
     @property
     def timestamp(self) -> datetime:
         return self._image.timestamp
+
+    # ------------------------------ Local-only fields ----------------------
+    @property
+    def annotation(self) -> Optional[str]:
+        """Return/assign a handle-local annotation (never persisted)."""
+        return getattr(self, "_annotation", None)
+
+    @annotation.setter
+    def annotation(self, value: Optional[str]) -> None:
+        self._annotation = value
 
     def resolve(self, real_image_id: int) -> None:
         """
