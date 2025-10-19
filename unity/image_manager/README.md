@@ -166,6 +166,41 @@ async def consume_and_log(handles: Iterable[ImageHandle]) -> List[int]:
 - Optional batch alternative: `ImageManager.await_pending(pending_ids: List[int]) -> Awaitable[Dict[int, int]]` to map multiple pending ids to real ids in one call.
 
 
+## Why `ImageHandle` exists (and when to use the reference types)
+
+`ImageHandle` is a convenient, session‑local wrapper around a single image that:
+
+- Provides immediate, ergonomic access to the raw bytes (`raw()`), and single‑call vision Q&A (`await ask(...)`).
+- Keeps local metadata in sync with reads and writes (`update_metadata(...)` coalesces and persists updates once the image resolves; readers see changes instantly).
+- Exposes awaitables for workflow coordination: `await wait_until_resolved()` for real `image_id`, `await wait_for_annotation()` for handle‑local annotations, and `await wait_for_caption()` for labels persisted upstream.
+- Preserves ordering and favors local cache to avoid unnecessary backend reads.
+
+However, `ImageHandle` instances are Python objects that live only inside your process. When LLMs call tools, they cannot marshal these in‑memory objects directly; tool arguments must be simple, JSON‑serializable structures.
+
+For that reason the module also provides JSON‑friendly reference types that carry only the data LLMs can pass across tool boundaries:
+
+- `RawImageRef` → `{ image_id: int }`
+- `AnnotatedImageRef` → `{ raw_image_ref: { image_id: int }, annotation: str }`
+- Containers: `ImageRefs`, `RawImageRefs`, `AnnotatedImageRefs` for lists.
+
+Typical pattern:
+
+1) Use `ImageHandle` locally for extraction, labeling, Q&A, and awaiting resolution/annotation.
+2) When an LLM (or any remote agent) needs to pass images into tools, convert to reference types so the payload is JSON‑compatible.
+
+Example JSON payloads an LLM can produce:
+
+```json
+{
+  "images": [
+    { "image_id": 123 },
+    { "raw_image_ref": { "image_id": 456 }, "annotation": "used in step X" }
+  ]
+}
+```
+
+In this design, `annotation` is context‑specific and not stored in the `Images` context; it travels alongside `image_id` wherever you log or pass the reference. The `Images` table remains the canonical store for image bytes and image‑level metadata (e.g., `caption`, `timestamp`).
+
 ## File locations
 
 - Implementation: `unity/image_manager/`
