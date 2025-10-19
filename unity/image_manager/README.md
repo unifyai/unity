@@ -1,6 +1,6 @@
 # Image Manager – Zero‑wait Producer/Consumer Flow
 
-This README documents the only supported usage pattern right now: a two‑function, zero‑wait pipeline where one function produces `ImageHandle` objects immediately (without blocking on backend upload), and a second function consumes those handles right away (`raw()`/`ask()`), observes label updates as soon as they are set, and later awaits resolution to obtain real `image_id` values for logging elsewhere.
+This README documents the only supported usage pattern right now: a two‑function, zero‑wait pipeline where one function produces `ImageHandle` objects immediately (without blocking on backend upload), and a second function consumes those handles right away (`raw()`/`ask()`), observes label updates as soon as they are set, and later awaits resolution to obtain real `image_id` values and local annotations for logging into a separate table.
 
 Implementation lives in `unity/image_manager/`; representative tests live in `tests/test_image_manager/`.
 
@@ -26,10 +26,14 @@ Responsibilities
 1) Thinly wrap raw images into `ImageHandle` objects without blocking on upload.
 2) Optionally attach an initial label (caption) that becomes immediately visible to readers.
 3) Pass the list of `ImageHandle` objects to the consumer.
+4) Provide per‑image annotations via `handle.annotation = "..."` when they are ready.
+   - Annotations are handle‑local and not stored in the `Images` context.
+   - They may be ready after images are ready and even after the handles have already been passed to Function B (as long as both functions share the same handle objects).
 
 Key API calls and types
 - `ImageManager.add_images(items, synchronous=False, return_handles=True) -> List[Optional[ImageHandle]]`
 - `ImageHandle.update_metadata(caption: Optional[str] = None, timestamp: Optional[datetime] = None, data: Optional[bytes|bytearray|str] = None) -> None`
+- `ImageHandle.annotation: Optional[str]` (handle‑local, never persisted)
 
 Example
 
@@ -79,7 +83,10 @@ Inputs
 Responsibilities
 1) Use `raw()` and `ask()` immediately (no backend wait).
 2) See label updates as soon as Function A sets them.
-3) Later, await all handles to obtain real `image_id` values, then log elsewhere.
+3) Later, await both events per handle and then log elsewhere:
+   - (a) resolution to obtain the real `image_id`
+   - (b) readiness of the handle‑local `annotation`
+   The downstream table populated by Function B should include both the resolved `image_id` and the `annotation` (even though `annotation` is not stored in `Images`).
 
 Key API calls and types
 - `ImageHandle.raw() -> bytes`
@@ -87,6 +94,10 @@ Key API calls and types
 - `ImageHandle.caption -> Optional[str]`
 - `ImageHandle.wait_until_resolved(timeout: Optional[float] = None) -> Awaitable[int]`
   - Each handle is also awaitable: `await handle` ≡ `await handle.wait_until_resolved()`
+- `ImageHandle.wait_for_annotation(timeout: Optional[float] = None) -> Awaitable[Optional[str]]`
+  - Await until a local annotation is set on this handle.
+- Optional: `ImageHandle.wait_for_caption(timeout: Optional[float] = None) -> Awaitable[Optional[str]]`
+  - Await until a non‑None caption/label exists (persisted upstream).
 
 Example
 
@@ -111,12 +122,16 @@ async def consume_and_log(handles: Iterable[ImageHandle]) -> List[int]:
         # Label is visible immediately if producer called update_metadata
         current_label = h.caption
 
-    # Later: await resolution to real backend ids for logging
-    real_ids: List[int] = await asyncio.gather(
-        *(h.wait_until_resolved() for h in handles)
+    # Later: await both annotation readiness and resolution to real backend ids
+    pairs = await asyncio.gather(
+        *(asyncio.gather(h.wait_for_annotation(), h.wait_until_resolved()) for h in handles)
     )
 
-    # Log real_ids into your separate table here
+    annotations: List[Optional[str]] = [a for (a, _rid) in pairs]
+    real_ids: List[int] = [_rid for (_a, _rid) in pairs]
+
+    # Log both (real_ids, annotations) into your separate table here
+    # (Images does not store annotations; your downstream table should.)
     return real_ids
 ```
 
@@ -138,6 +153,15 @@ async def consume_and_log(handles: Iterable[ImageHandle]) -> List[int]:
 
 - `ImageHandle.wait_until_resolved(timeout: Optional[float] = None) -> Awaitable[int]`
   - Returns the real backend `image_id`. Also available via `await handle`.
+
+- `ImageHandle.annotation: Optional[str]`
+  - Handle‑local annotation, never persisted to `Images`.
+
+- `ImageHandle.wait_for_annotation(timeout: Optional[float] = None) -> Awaitable[Optional[str]]`
+  - Await until a non‑None annotation is set on the handle.
+
+- `ImageHandle.wait_for_caption(timeout: Optional[float] = None) -> Awaitable[Optional[str]]`
+  - Await until a non‑None caption exists; useful if caption is added later via `update_metadata`.
 
 - Optional batch alternative: `ImageManager.await_pending(pending_ids: List[int]) -> Awaitable[Dict[int, int]]` to map multiple pending ids to real ids in one call.
 
