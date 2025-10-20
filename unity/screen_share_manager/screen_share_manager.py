@@ -17,10 +17,9 @@ from PIL import Image
 from skimage.metrics import structural_similarity as ssim
 
 from unity.image_manager.image_manager import ImageManager, ImageHandle
-from .prompt_builders import build_summary_update_prompt, build_annotation_prompt, build_detection_prompt
-from .types import KeyEvent, TurnAnalysisResponse, DetectedEvent
+from .prompt_builders import build_summary_update_prompt, build_single_annotation_prompt, build_detection_prompt
+from .types import KeyEvent, DetectedEvent
 
-# Use a named logger for the manager
 logger = logging.getLogger(__name__)
 
 
@@ -31,11 +30,9 @@ class ScreenShareManager:
     """
 
     def __init__(self, include_raw_image_data_in_result: bool = False):
-        # Configuration
         self.MSE_THRESHOLD = 10
         self.SSIM_THRESHOLD = 0.995
         self.MIN_CONTOUR_AREA = 50
-        self.MAX_ASPECT_RATIO = 20
         self.DEBOUNCE_DELAY_SEC = 0.5
         self.INACTIVITY_TIMEOUT_SEC = 5.0
         self.FRAME_BUFFER_SIZE = 100
@@ -43,15 +40,11 @@ class ScreenShareManager:
         self.FRAME_QUEUE_SIZE = 150
         self.RESULTS_QUEUE_SIZE = 200
         self.DETECTION_QUEUE_SIZE = 10
-
-        # Clients and Managers
-        self._analysis_client = unify.AsyncUnify("gpt-4o@openai", response_format=TurnAnalysisResponse)
+        self._analysis_client = unify.AsyncUnify("gpt-4o@openai")
         self._detection_client = unify.AsyncUnify("gpt-4o-mini@openai")
         self._summary_client = unify.AsyncUnify("gpt-4o-mini@openai")
         self._image_manager = ImageManager()
-        self._cpu_executor = ThreadPoolExecutor(max_workers=os.cpu_count() or 4)
-
-        # State Variables
+        self._cpu_executor = ThreadPoolExecutor(max_workers=self.MAX_FRAME_WORKERS)
         self._stop_event = asyncio.Event()
         self._frame_sequence_id = 0
         self._frame_queue = asyncio.Queue(maxsize=self.FRAME_QUEUE_SIZE)
@@ -83,8 +76,7 @@ class ScreenShareManager:
         logger.info("ScreenShareManager stopping...")
         self._stop_event.set()
         for task in [self._sequencer_task, self._inactivity_task, self._summary_update_task, self._debounce_task, *self._frame_workers]:
-            if task and not task.done():
-                task.cancel()
+            if task and not task.done(): task.cancel()
         self._cpu_executor.shutdown(wait=False, cancel_futures=True)
 
     def set_session_context(self, context_text: str):
@@ -127,40 +119,44 @@ class ScreenShareManager:
         return asyncio.create_task(_analysis_wrapper())
 
     async def annotate_events(self, events: List[DetectedEvent], context: Optional[str] = None) -> List[ImageHandle]:
-        if not events: return []
-        logger.info(f"Starting annotation for {len(events)} detected events.")
-        key_events, _ = await self._get_llm_annotations(events, context)
-        annotated_handles: List[ImageHandle] = []
-
-        if not key_events:
-            logger.warning("Annotation step returned no key events.")
+        if not events:
             return []
+        
+        logger.info(f"Starting concurrent annotation for {len(events)} detected events.")
 
-        # **FIX**: Use a robust matching algorithm instead of exact timestamp equality.
-        ts_to_event_map = {e.timestamp: e for e in events}
-        available_timestamps = sorted(ts_to_event_map.keys())
+        # Create and run an independent annotation task for each event
+        annotation_tasks = []
+        annotations_so_far: List[str] = []
+        for event in events:
+            # Pass the list of previous annotations for better context
+            task = self._get_llm_annotation_for_event(event, context, annotations_so_far)
+            annotation_tasks.append(task)
+        
+        results = await asyncio.gather(*annotation_tasks, return_exceptions=True)
 
-        for ke in key_events:
-            rep_ts = ke.representative_timestamp
-            # Find the closest timestamp from the original events
-            closest_ts = min(available_timestamps, key=lambda ts: abs(ts - rep_ts))
+        annotated_handles: List[ImageHandle] = []
+        key_events_for_summary: List[KeyEvent] = []
+
+        for i, result in enumerate(results):
+            event = events[i]
+            if isinstance(result, Exception) or not result:
+                logger.warning(f"Failed to generate annotation for event at timestamp {event.timestamp:.2f}s. Error: {result}")
+                continue
+
+            annotation_text = result
+            event.image_handle.annotation = annotation_text
+            annotated_handles.append(event.image_handle)
+            logger.debug(f"Attached annotation '{annotation_text}' to handle for timestamp {event.timestamp:.2f}s.")
+            key_events_for_summary.append(KeyEvent(timestamp=event.timestamp, image_annotation=annotation_text, representative_timestamp=event.timestamp))
+
+        if key_events_for_summary:
+            async with self._state_lock:
+                self._unsummarized_events.extend(key_events_for_summary)
+            self._trigger_summary_update()
             
-            # If the match is within a reasonable tolerance (e.g., 1 second), accept it.
-            if abs(closest_ts - rep_ts) < 1.0:
-                matching_event = ts_to_event_map[closest_ts]
-                matching_event.image_handle.annotation = ke.image_annotation
-                annotated_handles.append(matching_event.image_handle)
-                logger.debug(f"Matched annotation '{ke.image_annotation}' to handle for timestamp {closest_ts:.2f}s.")
-            else:
-                logger.warning(f"Could not find a close match for annotation with timestamp {rep_ts:.2f}s. Closest was {closest_ts:.2f}s. Discarding.")
-
-        async with self._state_lock:
-            self._unsummarized_events.extend(key_events)
-        self._trigger_summary_update()
         logger.info(f"Successfully annotated {len(annotated_handles)} handles.")
         return annotated_handles
 
-    # --- Internal Methods ---
     def _strip_data_url_prefix(self, data_url: str) -> str:
         if data_url.startswith('data:image'): return data_url.split(',', 1)[1]
         return data_url
@@ -188,7 +184,7 @@ class ScreenShareManager:
             await asyncio.sleep(self.INACTIVITY_TIMEOUT_SEC)
             is_debouncing = self._debounce_task and not self._debounce_task.done()
             if (asyncio.get_event_loop().time() - self._last_activity_time >= self.INACTIVITY_TIMEOUT_SEC and not is_debouncing and self._pending_vision_events):
-                logger.info("Inactivity timeout reached. Flushing pending vision events for detection.")
+                logger.info("Inactivity timeout. Flushing pending vision events for detection.")
                 self._trigger_turn_analysis(speech_event=None)
 
     async def _frame_processing_worker(self):
@@ -211,16 +207,14 @@ class ScreenShareManager:
                 if seq_id != next_seq_id:
                     results_buffer[seq_id] = (seq_id, event_data, pil_img)
                     continue
-                
                 self._last_activity_time = loop.time()
                 ts, b64 = event_data["payload"]["timestamp"], event_data["payload"]["frame_b64"]
                 self._frame_buffer.append((ts, b64))
-
                 if self._last_significant_frame_pil:
                     if self._calculate_mse(pil_img, self._last_significant_frame_pil) > self.MSE_THRESHOLD:
                         score = await loop.run_in_executor(self._cpu_executor, ssim, np.array(self._last_significant_frame_pil), np.array(pil_img))
                         if score < self.SSIM_THRESHOLD and self._is_semantically_significant(self._last_significant_frame_pil, pil_img):
-                            logger.debug(f"Significant visual change detected by sequencer at t={ts:.2f}s.")
+                            logger.debug(f"Sequencer detected significant visual change at t={ts:.2f}s.")
                             async with self._state_lock:
                                 self._pending_vision_events.append({"timestamp": ts, "before_frame_b64": self._last_significant_frame_b64, "after_frame_b64": b64})
                             self._last_significant_frame_b64, self._last_significant_frame_pil = b64, pil_img
@@ -254,6 +248,27 @@ class ScreenShareManager:
         except asyncio.CancelledError: logger.info("Debounced detection was cancelled.")
 
     async def _detect_key_moments(self, speech_event, visual_events, latest_frame):
+
+        consolidated_visual_events = []
+        time_window = 1.0  # Time window in seconds to group events
+        if visual_events:
+            visual_events.sort(key=lambda x: x['timestamp'])
+            
+            i = 0
+            while i < len(visual_events):
+                # Find the end of the current cluster of events
+                j = i
+                while j + 1 < len(visual_events) and \
+                      (visual_events[j+1]['timestamp'] - visual_events[j]['timestamp']) <= time_window:
+                    j += 1
+                # Add the last event of the cluster
+                consolidated_visual_events.append(visual_events[j])
+                i = j + 1
+            
+            if len(visual_events) > len(consolidated_visual_events):
+                logger.debug(f"Consolidated {len(visual_events)} visual events down to {len(consolidated_visual_events)} to reduce noise.")
+            visual_events = consolidated_visual_events
+        
         async with self._state_lock: current_summary = self._session_summary
         system_prompt = build_detection_prompt(current_summary, speech_event, bool(visual_events or latest_frame))
         self._detection_client.set_system_message(system_prompt)
@@ -263,53 +278,55 @@ class ScreenShareManager:
             user_content.append({"type": "text", "text": f"Visual change at t={ve['timestamp']:.2f}s."})
             frame_map[ve['timestamp']] = ve['after_frame_b64']
         if latest_frame: frame_map[latest_frame[0]] = latest_frame[1]
-
         if not user_content:
             await self._detection_queue.put(([], {}))
             return
-            
         try:
             logger.debug("Calling detection LLM...")
             response_str = await self._detection_client.generate(user_message="\n".join(c['text'] for c in user_content))
-            logger.debug(f"Detection LLM response: {response_str}")
             result = json.loads(response_str)
             key_moments = result.get("moments", [])
             key_moments.sort(key=lambda x: x['timestamp'])
-
             for moment in key_moments:
                 ts = moment['timestamp']
                 if ts not in frame_map and self._frame_buffer:
                     _, closest_frame = min(self._frame_buffer, key=lambda x: abs(x[0] - ts))
                     frame_map[ts] = closest_frame
-            
             await self._detection_queue.put((key_moments, frame_map))
         except Exception as e:
             logger.error(f"Failed to detect key moments: {e}", exc_info=True)
             await self._detection_queue.put(([], {}))
 
-    async def _get_llm_annotations(self, events_to_annotate, consumer_context):
-        async with self._state_lock: current_summary = self._session_summary
-        system_prompt = build_annotation_prompt(current_summary, consumer_context)
-        self._analysis_client.set_system_message(system_prompt)
+    async def _get_llm_annotation_for_event(self, event_to_annotate: DetectedEvent, consumer_context: Optional[str], previous_annotations_in_turn: List[str]) -> Optional[str]:
+        """Performs a single, reliable annotation call for one event."""
+        async with self._state_lock:
+            current_summary = self._session_summary
         
-        user_content, ts_map = [], {}
-        for i, event in enumerate(events_to_annotate):
-            raw_bytes = event.image_handle.raw()
-            b64_data = base64.b64encode(raw_bytes).decode('utf-8')
-            data_url = f"data:image/png;base64,{b64_data}"
-            ts_map[event.timestamp] = data_url
-            user_content.extend([
-                {"type": "text", "text": f"\nMoment #{i+1} at t={event.timestamp:.2f}s:"},
-                {"type": "image_url", "image_url": {"url": data_url}},
-            ])
+        system_prompt = build_single_annotation_prompt(current_summary, consumer_context, previous_annotations_in_turn)
+        self._analysis_client.set_system_message(system_prompt)
+
+        raw_bytes = event_to_annotate.image_handle.raw()
+        b64_data = base64.b64encode(raw_bytes).decode('utf-8')
+        data_url = f"data:image/png;base64,{b64_data}"
+        
+        user_content = [
+            {"type": "text", "text": f"Moment at t={event_to_annotate.timestamp:.2f}s:"},
+            {"type": "image_url", "image_url": {"url": data_url}},
+        ]
+
         try:
-            logger.debug("Calling annotation LLM...")
+            logger.debug(f"Calling annotation LLM for image at timestamp {event_to_annotate.timestamp:.2f}s...")
             response = await self._analysis_client.generate(user_message=user_content)
-            logger.debug(f"Annotation LLM response: {response}")
-            return (response.events, ts_map) if isinstance(response, TurnAnalysisResponse) else ([], {})
+
+            if isinstance(response, str) and response.strip():
+                logger.debug(f"Annotation LLM returned: '{response.strip()}'")
+                return response.strip()
+            else:
+                logger.warning(f"Annotation LLM returned an empty or invalid response for timestamp {event_to_annotate.timestamp:.2f}s. Type: {type(response)}")
+                return None
         except Exception as e:
-            logger.error(f"Error during LLM annotation: {e}", exc_info=True)
-            return [], {}
+            logger.error(f"Error during single-event LLM annotation: {e}", exc_info=True)
+            return None
 
     def _trigger_summary_update(self):
         if self._summary_update_task and not self._summary_update_task.done(): return

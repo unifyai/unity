@@ -8,7 +8,7 @@ input to simulate a user turn, and then executes the two-stage analysis
 process (detect and annotate) to get back annotated ImageHandles.
 
 Prerequisites:
-- `pip install mss Pillow opencv-python aiohttp unifyai
+- `pip install mss Pillow opencv-python aiohttp unifyai`
 - Set UNIFY_KEY environment variable.
 - Optional: DEEPGRAM_API_KEY and CARTESIA_API_KEY for --voice mode.
 ===================================================================
@@ -23,6 +23,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import List
 
 import mss
 from dotenv import load_dotenv
@@ -70,6 +71,7 @@ async def _capture_and_push_frames(manager: ScreenShareManager, monitor: dict, f
     logger.info("Capture will begin in 2 seconds. Please focus the target window.")
     await asyncio.sleep(2)
     start_time = time.time()
+    frame_count = 0
     with mss.mss() as sct:
         while not _stop_event.is_set():
             loop_start = time.time()
@@ -79,7 +81,12 @@ async def _capture_and_push_frames(manager: ScreenShareManager, monitor: dict, f
                 buffered = io.BytesIO()
                 img.save(buffered, format="PNG")
                 data_url = f"data:image/png;base64,{base64.b64encode(buffered.getvalue()).decode('utf-8')}"
-                await manager.push_frame(data_url, time.time() - start_time)
+                
+                frame_timestamp = time.time() - start_time
+                await manager.push_frame(data_url, frame_timestamp)
+                frame_count += 1
+                logger.debug(f"Pushed frame #{frame_count} at timestamp {frame_timestamp:.2f}s")
+
                 sleep_time = (1 / fps) - (time.time() - loop_start)
                 await asyncio.sleep(max(0.01, sleep_time))
             except mss.exception.ScreenShotError as e:
@@ -88,7 +95,71 @@ async def _capture_and_push_frames(manager: ScreenShareManager, monitor: dict, f
             except Exception as e:
                 logger.error(f"Capture loop error: {e}", exc_info=True)
                 break
-    logger.info("Screen capture task stopped.")
+    logger.info(f"Screen capture task stopped after pushing {frame_count} frames.")
+
+
+async def _process_turn_analysis(screen_manager: ScreenShareManager, utterance: str, turn_counter: int, args):
+    """
+    Runs the full detection and annotation pipeline for a single turn in the background.
+    """
+    logger.info(f"--- Turn #{turn_counter} ---")
+
+    # --- Stage 1: Detection ---
+    start_time, end_time = time.time() - 5, time.time()
+    await screen_manager.push_speech(utterance, start_time, end_time)
+    logger.info(f"Pushed speech event for turn #{turn_counter}. Triggering analysis.")
+    
+    analysis_task = screen_manager.analyze_turn()
+    
+    print(f"\n[Turn #{turn_counter}] 🔍 Detecting key events...")
+    logger.info(f"[Turn #{turn_counter}] Awaiting detection task...")
+    detection_start_time = time.time()
+    detected_events = await analysis_task
+    detection_duration = time.time() - detection_start_time
+    logger.info(f"[Turn #{turn_counter}] Detection stage completed in {detection_duration:.2f} seconds.")
+
+    if not detected_events:
+        print(f"   -> [Turn #{turn_counter}] No significant events were detected.")
+        logger.info(f"[Turn #{turn_counter}] No events detected. Turn processing complete.")
+        return
+    
+    logger.info(f"[Turn #{turn_counter}] Detected {len(detected_events)} candidate event(s) at timestamps: {[f'{e.timestamp:.2f}s' for e in detected_events]}")
+    print(f"   -> [Turn #{turn_counter}] Detected {len(detected_events)} candidate event(s). Now generating annotations...")
+    
+    # --- Stage 2: Annotation ---
+    annotation_context = f"The user just said: '{utterance}'"
+    logger.info(f"[Turn #{turn_counter}] Starting annotation with consumer context: '{annotation_context}'")
+    annotation_start_time = time.time()
+    annotated_handles = await screen_manager.annotate_events(detected_events, annotation_context)
+    annotation_duration = time.time() - annotation_start_time
+    logger.info(f"[Turn #{turn_counter}] Annotation stage completed in {annotation_duration:.2f} seconds.")
+
+    print(f"\n[Turn #{turn_counter}] ✅ Analysis Complete:")
+    if not annotated_handles:
+        print(f"   -> [Turn #{turn_counter}] No final annotated images were generated.")
+        logger.warning(f"[Turn #{turn_counter}] Annotation stage finished but produced no handles.")
+    else:
+        logger.info(f"[Turn #{turn_counter}] Generated {len(annotated_handles)} annotated image(s).")
+        print(f"   -> [Turn #{turn_counter}] Generated {len(annotated_handles)} annotated image(s):")
+        for i, handle in enumerate(annotated_handles):
+            logger.debug(f"  [Turn #{turn_counter}] Handle #{i+1}: Pending ID={handle.image_id}, Annotation='{handle.annotation}'")
+            print(f"      [{i+1}] Image (Pending ID: {handle.image_id})")
+            print(f'          Annotation: "{handle.annotation}"')
+            
+            if args.save_images:
+                img_path = Path("images") / f"turn_{turn_counter}_{int(time.time())}_{i}.png"
+                try:
+                    raw_data = handle.raw()
+                    with open(img_path, "wb") as f:
+                        f.write(raw_data)
+                    logger.info(f"[Turn #{turn_counter}] Successfully saved image for handle {handle.image_id} to '{img_path}' ({len(raw_data)} bytes).")
+                    print(f"          -> Saved to {img_path}")
+                except Exception as e:
+                    logger.error(f"[Turn #{turn_counter}] Failed to save image for handle {handle.image_id} to '{img_path}': {e}", exc_info=True)
+                    
+    if args.voice:
+        speak("Analysis complete.")
+    logger.info(f"--- End of Turn #{turn_counter} ---\n")
 
 
 async def _main_async() -> None:
@@ -107,6 +178,9 @@ async def _main_async() -> None:
         log_in_terminal=args.log_in_terminal,
         log_file=".logs_screen_share_sandbox.txt",
     )
+    # Ensure the logger level is set to capture detailed messages for the file.
+    logging.getLogger("unity.screen_share_manager.screen_share_manager").setLevel(logging.DEBUG)
+
 
     if args.save_images:
         Path("images").mkdir(exist_ok=True)
@@ -123,6 +197,10 @@ async def _main_async() -> None:
     print(_COMMANDS_HELP)
 
     # --- Main Loop ---
+    logger.info("Sandbox REPL started. Waiting for user input...")
+    turn_counter = 0
+    background_tasks: List[asyncio.Task] = []
+
     try:
         while not _stop_event.is_set():
             utterance = ""
@@ -130,57 +208,62 @@ async def _main_async() -> None:
                 _wait_for_tts_end()
                 prompt = await asyncio.to_thread(input, "command ('r' to record)> ")
                 if prompt.strip().lower() == 'r':
+                    logger.info("Recording voice input...")
                     audio = await asyncio.to_thread(record_until_enter)
                     utterance = transcribe_deepgram(audio).strip()
-                    if utterance: print(f"▶️  {utterance}")
+                    if utterance:
+                        print(f"▶️  {utterance}")
+                        logger.info(f"Transcribed voice input: '{utterance}'")
                 else:
                     utterance = prompt.strip()
+                    if utterance:
+                        logger.info(f"Received text input: '{utterance}'")
             else:
                 utterance = await asyncio.to_thread(input, "command> ")
                 utterance = utterance.strip()
-            
+                if utterance:
+                    logger.info(f"Received text input: '{utterance}'")
+
             if not utterance or utterance.lower() in {"quit", "exit", "help", "h"}:
-                if utterance.lower() in {"quit", "exit"}: break
-                if utterance.lower() in {"help", "h"}: print(_COMMANDS_HELP)
-                continue
-
-            start_time, end_time = time.time() - 5, time.time()
-            await screen_manager.push_speech(utterance, start_time, end_time)
-            analysis_task = screen_manager.analyze_turn()
-            
-            print("\n🔍 Detecting key events...")
-            detected_events = await analysis_task
-            
-            if not detected_events:
-                print("   -> No significant events were detected for this turn.")
+                if utterance.lower() in {"quit", "exit"}:
+                    logger.info(f"'{utterance}' command received. Initiating shutdown.")
+                    break
+                if utterance.lower() in {"help", "h"}:
+                    print(_COMMANDS_HELP)
                 continue
             
-            print(f"   -> Detected {len(detected_events)} candidate event(s). Now generating annotations...")
-            annotation_context = f"The user just said: '{utterance}'"
-            annotated_handles = await screen_manager.annotate_events(detected_events, annotation_context)
+            turn_counter += 1
 
-            print("\n✅ Analysis Complete:")
-            if not annotated_handles:
-                print("   -> No final annotated images were generated.")
-            else:
-                print(f"   -> Generated {len(annotated_handles)} annotated image(s):")
-                for i, handle in enumerate(annotated_handles):
-                    print(f"      [{i+1}] Image (Pending ID: {handle.image_id})")
-                    print(f'          Annotation: "{handle.annotation}"')
-                    if args.save_images:
-                        img_path = Path("images") / f"turn_{int(time.time())}_{i}.png"
-                        try:
-                            with open(img_path, "wb") as f: f.write(handle.raw())
-                            print(f"          -> Saved to {img_path}")
-                        except Exception as e: logger.error(f"Failed to save image {handle.image_id}: {e}", exc_info=True)
-            if args.voice: speak("Analysis complete.")
+            # Schedule the entire turn processing to run in the background.
+            task = asyncio.create_task(_process_turn_analysis(screen_manager, utterance, turn_counter, args))
+            background_tasks.append(task)
+
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        logger.info("Sandbox interrupted by user. Shutting down.")
+    except Exception as e:
+        logger.critical(f"An unhandled exception occurred in the main loop: {e}", exc_info=True)
     finally:
         print("\nShutting down...")
+        logger.info("Starting sandbox shutdown sequence.")
         _stop_event.set()
         screen_manager.stop()
+        logger.info("ScreenShareManager stopped.")
+        
+        # Add a small delay to allow tasks to cancel
+        await asyncio.sleep(0.1)
+
+        # Cancel any pending background tasks
+        for task in background_tasks:
+            if not task.done():
+                task.cancel()
+        
         if capture_task and not capture_task.done():
+            logger.info("Waiting for capture task to complete...")
             await capture_task
+            logger.info("Capture task completed.")
+        
         print("Shutdown complete.")
+        logger.info("Sandbox shutdown complete.")
 
 if __name__ == "__main__":
     try:
