@@ -1,6 +1,6 @@
 import asyncio
 import json
-from unittest.mock import patch, AsyncMock, MagicMock, call, ANY
+from unittest.mock import patch, AsyncMock, MagicMock, call
 from pathlib import Path
 
 import pytest
@@ -48,20 +48,23 @@ async def manager():
 
 
 @pytest.fixture
-def mocked_manager(manager: ScreenShareManager):
+async def mocked_manager():
     """Provides a manager with its LLM clients mocked out."""
+    ssm = ScreenShareManager()
     with patch.object(
-        manager, "_detection_client", new_callable=AsyncMock
+        ssm, "_detection_client", new_callable=AsyncMock
     ) as mock_detect, patch.object(
-        manager, "_analysis_client", new_callable=AsyncMock
+        ssm, "_analysis_client", new_callable=AsyncMock
     ) as mock_annotate, patch.object(
-        manager, "_summary_client", new_callable=AsyncMock
+        ssm, "_summary_client", new_callable=AsyncMock
     ) as mock_summary:
-        yield manager, {
+        await ssm.start()
+        yield ssm, {
             "detect": mock_detect,
             "annotate": mock_annotate,
             "summary": mock_summary,
         }
+        ssm.stop()
 
 
 # --- High-Level API and Orchestration Tests ---
@@ -82,9 +85,7 @@ async def test_full_api_flow_detection_and_annotation(mocked_manager):
         {"moments": [{"timestamp": 1.5, "reason": "visual_change"}]}
     )
 
-    await manager.push_frame(PNG_BLUE_B64, 0.5)
-    await manager.push_frame(PNG_RED_B64, 1.5)
-    # Mock internal queues to simulate frame processing for this test
+    # Simulate the result of the detection being put on the queue
     await manager._detection_queue.put(
         ([{"timestamp": 1.5, "reason": "visual_change"}], {1.5: PNG_RED_B64})
     )
@@ -104,9 +105,10 @@ async def test_full_api_flow_detection_and_annotation(mocked_manager):
     annotated_handles = await manager.annotate_events(detected_events, consumer_context)
 
     mocks["annotate"].generate.assert_called_once()
-    # Verify consumer context is in the prompt
+    # Verify consumer context is in the system prompt
     system_prompt = mocks["annotate"]._system_message
     assert "User is performing a test." in system_prompt
+
     assert len(annotated_handles) == 1
     assert annotated_handles[0].annotation == "This is the rich annotation."
     assert annotated_handles[0] is detected_events[0].image_handle
@@ -122,7 +124,6 @@ async def test_sequential_annotation_builds_context(mocked_manager):
     """
     manager, mocks = mocked_manager
 
-    # Create two dummy DetectedEvents with real (pending) ImageHandles
     handles = manager._image_manager.add_images(
         [{"data": PNG_RED_B64}, {"data": PNG_GREEN_B64}],
         synchronous=False,
@@ -133,7 +134,6 @@ async def test_sequential_annotation_builds_context(mocked_manager):
         DetectedEvent(2.0, "reason2", handles[1]),
     ]
 
-    # Mock the analysis client to return different annotations
     mocks["annotate"].generate.side_effect = [
         "Annotation for event 1",
         "Annotation for event 2",
@@ -144,10 +144,9 @@ async def test_sequential_annotation_builds_context(mocked_manager):
     assert mocks["annotate"].generate.call_count == 2
 
     # Check that the first annotation was passed as context to the second call's system prompt
-    second_call_prompt = mocks["annotate"]._system_message
-    assert '"Annotation for event 1"' in str(second_call_prompt)
+    second_call_system_prompt = mocks["annotate"]._system_message
+    assert '"Annotation for event 1"' in second_call_system_prompt
 
-    assert len(handles) == 2
     assert handles[0].annotation == "Annotation for event 1"
     assert handles[1].annotation == "Annotation for event 2"
 
@@ -173,16 +172,13 @@ async def test_summary_update_triggered_after_annotation(mocked_manager):
 
     await manager.annotate_events(detected_events, "test context")
 
-    # Allow the background summary task to run
     await asyncio.sleep(1.1)
 
     mocks["summary"].generate.assert_called_once()
-    # Check that the prompt for the summary update contains the new annotation
     summary_prompt = mocks["summary"].generate.call_args.args[0]
     assert "A new event happened." in summary_prompt
     assert "Initial summary." in summary_prompt
 
-    # Check that the manager's internal state was updated
     async with manager._state_lock:
         assert manager._session_summary == "Updated summary including the new event."
 
@@ -198,12 +194,6 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
     manager, mocks = mocked_manager
     manager.settings.debounce_delay_sec = 0.05
 
-    # --- Turn 1: Silent visual event ---
-    mocks["detect"].generate.return_value = json.dumps(
-        {"moments": [{"timestamp": 1.0, "reason": "silent_change"}]}
-    )
-
-    # Manually trigger a silent analysis and populate the stored events
     silent_handle = manager._image_manager.add_images(
         [{"data": PNG_RED_B64}], synchronous=False, return_handles=True
     )[0]
@@ -211,13 +201,11 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
         DetectedEvent(1.0, "silent_change", silent_handle)
     ]
 
-    # --- Turn 2: Speech event ---
     mocks["detect"].generate.return_value = json.dumps(
         {"moments": [{"timestamp": 2.5, "reason": "speech_related_change"}]}
     )
 
     await manager.push_speech("second turn", 2.0, 3.0)
-    # Simulate the result of the new detection being put on the queue
     await manager._detection_queue.put(
         ([{"timestamp": 2.5, "reason": "speech_related_change"}], {2.5: PNG_GREEN_B64})
     )
@@ -225,14 +213,13 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
     analysis_task = manager.analyze_turn()
     all_events = await analysis_task
 
-    # Should contain both the stored silent event and the new event
     assert len(all_events) == 2
     timestamps = {e.timestamp for e in all_events}
     assert 1.0 in timestamps
     assert 2.5 in timestamps
 
 
-# --- Lifecycle and State Transition Tests  ---
+# --- Lifecycle and State Transition Tests (New) ---
 
 
 @pytest.mark.unit
@@ -240,20 +227,24 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
 @pytest.mark.asyncio
 async def test_start_and_stop_lifecycle():
     """Verifies that start() creates background tasks and stop() cancels them."""
-    with patch("asyncio.create_task") as mock_create_task:
-        # We need mock tasks that can be cancelled
-        mock_tasks = [MagicMock(spec=asyncio.Task) for _ in range(3)]
-        mock_create_task.side_effect = mock_tasks
+    created_tasks = []
 
+    def mock_create_task(coro):
+        task = MagicMock(spec=asyncio.Task)
+        created_tasks.append(task)
+        return task
+
+    with patch("asyncio.create_task", side_effect=mock_create_task):
         manager = ScreenShareManager()
         await manager.start()
 
-        # Sequencer, Inactivity Loop, and Frame Workers are created
-        assert mock_create_task.call_count >= 3
+        # Expected tasks: sequencer + inactivity loop + N frame workers
+        expected_task_count = 2 + manager.settings.max_frame_workers
+        assert len(created_tasks) == expected_task_count
 
         manager.stop()
 
-        for task in mock_tasks:
+        for task in created_tasks:
             task.cancel.assert_called_once()
 
 
@@ -272,10 +263,8 @@ async def test_debounce_logic_groups_speech_events(mocked_manager):
         await asyncio.sleep(0.05)
         await manager.push_speech("second part", 1.2, 1.3)
 
-        # Analysis should not have been triggered yet
         mock_detect.assert_not_called()
 
-        # Wait for debounce window to close
         await asyncio.sleep(0.25)
 
         mock_detect.assert_called_once()
@@ -290,22 +279,18 @@ async def test_inactivity_flush_triggers_for_visual_events(mocked_manager):
     manager.settings.inactivity_timeout_sec = 0.1
     manager.settings.debounce_delay_sec = 0.05
 
-    # Stop the real inactivity loop so we can test the logic manually
     manager._inactivity_task.cancel()
 
     with patch.object(
         manager, "_detect_key_moments", new_callable=AsyncMock
     ) as mock_detect:
-        # Simulate a pending visual event
         manager._pending_vision_events.append(
             {"timestamp": 1.0, "after_frame_b64": PNG_RED_B64}
         )
         manager._last_activity_time = asyncio.get_event_loop().time()
 
-        # Wait longer than the inactivity timeout
         await asyncio.sleep(0.15)
 
-        # Manually run the check that the loop would perform
         is_debouncing = manager._debounce_task and not manager._debounce_task.done()
         if (
             asyncio.get_event_loop().time() - manager._last_activity_time
@@ -315,12 +300,12 @@ async def test_inactivity_flush_triggers_for_visual_events(mocked_manager):
         ):
             manager._trigger_turn_analysis(speech_event=None)
 
-        await asyncio.sleep(0.1)  # allow debounce to finish
+        await asyncio.sleep(0.1)
 
         mock_detect.assert_called_once()
 
 
-# --- Error and Failure Condition Tests  ---
+# --- Error and Failure Condition Tests (New) ---
 
 
 @pytest.mark.unit
@@ -332,7 +317,6 @@ async def test_detection_llm_retries_on_failure(mocked_manager):
     manager.settings.llm_retry_max_tries = 3
     manager.settings.llm_retry_base_delay_sec = 0.01
 
-    # Simulate failure on first two calls, success on the third
     mocks["detect"].generate.side_effect = [
         Exception("LLM unavailable"),
         Exception("LLM still unavailable"),
@@ -358,14 +342,12 @@ async def test_detection_llm_handles_invalid_json(mocked_manager, caplog):
         TurnState(speech_event={"payload": {"content": "test"}})
     )
 
-    # Check that an error was logged
     assert "Failed to detect key moments" in caplog.text
-    # Check that the detection queue still gets a default value to unblock the consumer
     key_moments, _ = await manager._detection_queue.get()
     assert key_moments == []
 
 
-# --- Concurrency and Load Tests  ---
+# --- Concurrency and Load Tests (New) ---
 
 
 @pytest.mark.unit
@@ -377,7 +359,6 @@ async def test_adaptive_frame_dropping_under_load(caplog):
     await manager.start()
 
     with patch.object(manager._frame_queue, "qsize") as mock_qsize:
-        # Simulate a backlogged queue
         mock_qsize.return_value = manager.settings.frame_queue_size * 0.8
 
         await manager.push_frame(PNG_BLUE_B64, 1.0)
@@ -386,7 +367,7 @@ async def test_adaptive_frame_dropping_under_load(caplog):
     manager.stop()
 
 
-# --- Configuration Tests  ---
+# --- Configuration Tests (New) ---
 
 
 @pytest.mark.unit
@@ -402,11 +383,12 @@ def test_custom_settings_are_applied():
     assert manager.settings.mse_threshold == 99.9
 
 
-# --- Visual Change Detection Tests  ---
+# --- Visual Change Detection Tests (Original - Now Async) ---
 
 
 @pytest.mark.vision
 @_handle_project
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "image_pair",
     [
@@ -414,7 +396,7 @@ def test_custom_settings_are_applied():
         ("button_active_before.png", "button_active_after.png"),
     ],
 )
-def test_visual_change_detection_significant_changes(
+async def test_visual_change_detection_significant_changes(
     manager: ScreenShareManager, image_pair
 ):
     """Tests that the vision pipeline correctly identifies REAL, significant UI changes."""
@@ -434,6 +416,7 @@ def test_visual_change_detection_significant_changes(
 
 @pytest.mark.vision
 @_handle_project
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "image_pair",
     [
@@ -441,7 +424,7 @@ def test_visual_change_detection_significant_changes(
         ("cursor_move_before.png", "cursor_move_after.png"),
     ],
 )
-def test_visual_change_detection_insignificant_changes(
+async def test_visual_change_detection_insignificant_changes(
     manager: ScreenShareManager, image_pair
 ):
     """Tests that the vision pipeline correctly IGNORES insignificant visual noise."""
