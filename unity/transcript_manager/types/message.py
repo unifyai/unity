@@ -94,45 +94,68 @@ class Message(BaseModel):
 
         # Default behaviour: do NOT prune empties; only when explicitly requested via context
         prune = False
+        shorthand = False
         try:
             ctx = info.context or {}
             if "prune_empty" in ctx:
                 prune = bool(ctx["prune_empty"])  # explicit override
+            if "shorthand" in ctx:
+                shorthand = bool(ctx["shorthand"])  # explicit aliasing
         except Exception:
             pass
 
-        if not prune:
-            return data
+        out = data
+        if prune:
 
-        def _is_empty(value):
+            def _is_empty(value):
+                try:
+                    if value is None:
+                        return True
+                    # Treat empty strings as empty; keep False/0 as meaningful
+                    if isinstance(value, str):
+                        return value.strip() == ""
+                    if isinstance(value, (list, tuple, set, dict)):
+                        return len(value) == 0
+                    return False
+                except Exception:
+                    return False
+
+            def _prune(obj):
+                try:
+                    if isinstance(obj, dict):
+                        pruned = {k: _prune(v) for k, v in obj.items()}
+                        return {k: v for k, v in pruned.items() if not _is_empty(v)}
+                    if isinstance(obj, list):
+                        pruned_list = [_prune(v) for v in obj]
+                        return [v for v in pruned_list if not _is_empty(v)]
+                    return obj
+                except Exception:
+                    return obj
+
             try:
-                if value is None:
-                    return True
-                # Treat empty strings as empty; keep False/0 as meaningful
-                if isinstance(value, str):
-                    return value.strip() == ""
-                if isinstance(value, (list, tuple, set, dict)):
-                    return len(value) == 0
-                return False
+                out = _prune(out)
             except Exception:
-                return False
+                out = data
 
-        def _prune(obj):
+        if shorthand and isinstance(out, dict):
+            # Minimal, stable aliases for top-level fields
+            alias_map = {
+                "message_id": "mid",
+                "medium": "med",
+                "sender_id": "sid",
+                "receiver_ids": "rids",
+                "timestamp": "ts",
+                "content": "c",
+                "exchange_id": "xid",
+                "images": "imgs",
+            }
             try:
-                if isinstance(obj, dict):
-                    pruned = {k: _prune(v) for k, v in obj.items()}
-                    return {k: v for k, v in pruned.items() if not _is_empty(v)}
-                if isinstance(obj, list):
-                    pruned_list = [_prune(v) for v in obj]
-                    return [v for v in pruned_list if not _is_empty(v)]
-                return obj
+                out = {alias_map.get(k, k): v for k, v in out.items()}
             except Exception:
-                return obj
+                # best-effort: if mapping fails, keep original keys
+                out = out
 
-        try:
-            return _prune(data)
-        except Exception:
-            return data
+        return out
 
 
 VALID_MEDIA: tuple[str, ...] = tuple(m.value for m in Medium)
