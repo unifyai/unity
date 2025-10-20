@@ -117,7 +117,7 @@ CONTEXT PROVIDED:
 YOUR TASK:
 ----------
 - Write a single, clear annotation string for the image.
-- Your annotation must describe what the screenshot visually contains and explain its significance, using all available context. Answer the question: **"Why is this screenshot important right now?"**
+- Your annotation must describe what the screenshot visually contains and explain its significance relative to the available context.
 
 CRITICAL RULES:
 ---------------
