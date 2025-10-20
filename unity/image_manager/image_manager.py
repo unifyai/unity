@@ -37,6 +37,7 @@ class ImageHandle:
         manager: "ImageManager",
         image: Image,
         annotation: Optional[str] = None,
+        auto_caption: bool = True,
     ) -> None:
         self._manager = manager
         self._image = image
@@ -69,6 +70,45 @@ class ImageHandle:
         self._deferred_task: Any = (
             None  # asyncio.Task | concurrent.futures.Future | None
         )
+        # Track any background task launched for auto-captioning
+        self._auto_caption_task: Any = (
+            None  # asyncio.Task | concurrent.futures.Future | None
+        )
+
+        # Optionally auto-generate a caption if requested and none exists yet
+        if auto_caption:
+            try:
+                if self._image.caption is None:
+
+                    async def _auto_caption_worker() -> None:
+                        try:
+                            answer = await self.ask(
+                                "Please describe the contents of the image",
+                            )
+                            if isinstance(answer, str):
+                                answer_str = answer.strip()
+                                if answer_str:
+                                    # Only apply if caption still missing to avoid overriding later edits
+                                    if self.caption is None:
+                                        # Update locally (and persist immediately or defer if pending)
+                                        self.update_metadata(caption=answer_str)
+                        except Exception:
+                            # Best-effort; ignore failures
+                            pass
+
+                    try:
+                        loop = asyncio.get_running_loop()
+                        self._auto_caption_task = loop.create_task(
+                            _auto_caption_worker(),
+                        )
+                    except RuntimeError:
+                        # No running loop; execute in a background thread with its own loop
+                        self._auto_caption_task = self._manager._executor.submit(
+                            lambda: asyncio.run(_auto_caption_worker()),
+                        )
+            except Exception:
+                # Defensive coding: auto-captioning is optional and must not break construction
+                pass
 
     @property
     def image_id(self) -> int:
@@ -921,6 +961,7 @@ class ImageManager(BaseImageManager):
                 ts = payload.get("timestamp") or datetime.utcnow()
                 d = payload.get("data")
                 ann = payload.get("annotation")
+                ac_flag = bool(payload.get("auto_caption", True))
                 if d is None:
                     handles.append(None)
                     continue
@@ -942,7 +983,12 @@ class ImageManager(BaseImageManager):
                 except Exception:
                     pass
                 handles.append(
-                    ImageHandle(manager=self, image=Image(**row_local), annotation=ann),
+                    ImageHandle(
+                        manager=self,
+                        image=Image(**row_local),
+                        annotation=ann,
+                        auto_caption=ac_flag,
+                    ),
                 )
                 pending_ids.append(int(temp_id))
 
@@ -958,10 +1004,12 @@ class ImageManager(BaseImageManager):
         # Prepare payloads (preserve explicit_types; convert bytes → base64) – sync path only
         prepared: List[Dict[str, Any]] = []
         annotations: List[Optional[str]] = []
+        auto_caption_flags: List[bool] = []
         for raw in items or []:
             payload = dict(raw or {})
             # Extract handle-local annotation (not part of the backend payload)
             ann = payload.pop("annotation", None)
+            ac_flag = bool(payload.pop("auto_caption", True))
             data_val = payload.get("data")
             if data_val is None:
                 raise ValueError("'data' is required for add_images")
@@ -970,6 +1018,7 @@ class ImageManager(BaseImageManager):
             img = Image(**payload)
             prepared.append(img.to_post_json())
             annotations.append(ann)
+            auto_caption_flags.append(ac_flag)
 
         # Synchronous create path: Result list aligned to input order; None when a per-item create fails
         out_ids: List[Optional[int]] = [None] * len(prepared)
@@ -1112,6 +1161,11 @@ class ImageManager(BaseImageManager):
                                 annotation=(
                                     annotations[i] if i < len(annotations) else None
                                 ),
+                                auto_caption=(
+                                    auto_caption_flags[i]
+                                    if i < len(auto_caption_flags)
+                                    else False
+                                ),
                             ),
                         )
                         continue
@@ -1126,6 +1180,11 @@ class ImageManager(BaseImageManager):
                             manager=self,
                             image=Image(**row_guess),
                             annotation=annotations[i] if i < len(annotations) else None,
+                            auto_caption=(
+                                auto_caption_flags[i]
+                                if i < len(auto_caption_flags)
+                                else False
+                            ),
                         ),
                     )
                 except Exception:

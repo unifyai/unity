@@ -322,6 +322,7 @@ def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypat
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": None,
+                "auto_caption": False,
                 "data": PNG_RED_B64,
             },
         ],

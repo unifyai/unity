@@ -220,6 +220,7 @@ async def test_wait_for_caption_immediate_and_delayed():
                 {
                     "timestamp": datetime.now(timezone.utc),
                     "caption": None,
+                    "auto_caption": False,
                     "data": PNG_GRAY_B64,
                 },
             ],
@@ -251,6 +252,7 @@ async def test_wait_for_caption_and_resolution_together():
                 {
                     "timestamp": datetime.now(timezone.utc),
                     "caption": None,
+                    "auto_caption": False,
                     "data": PNG_GRAY_B64,
                 },
             ],
