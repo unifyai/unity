@@ -890,6 +890,12 @@ class ImageManager(BaseImageManager):
         """
         Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
 
+        Extended support
+        ----------------
+        - ``annotation`` (str, optional) may also be provided per item. It is applied
+          to returned ``ImageHandle`` instances only (when ``return_handles=True``) and
+          is never persisted to the backend or the local ``DataStore``.
+
         Modes
         -----
         - synchronous=True,  return_handles=False (default): return list[int] ids.
@@ -914,6 +920,7 @@ class ImageManager(BaseImageManager):
                 payload = dict(raw or {})
                 ts = payload.get("timestamp") or datetime.utcnow()
                 d = payload.get("data")
+                ann = payload.get("annotation")
                 if d is None:
                     handles.append(None)
                     continue
@@ -934,7 +941,9 @@ class ImageManager(BaseImageManager):
                     self._data_store.put(row_local)
                 except Exception:
                     pass
-                handles.append(ImageHandle(manager=self, image=Image(**row_local)))
+                handles.append(
+                    ImageHandle(manager=self, image=Image(**row_local), annotation=ann),
+                )
                 pending_ids.append(int(temp_id))
 
             for pid in pending_ids:
@@ -948,8 +957,11 @@ class ImageManager(BaseImageManager):
 
         # Prepare payloads (preserve explicit_types; convert bytes → base64) – sync path only
         prepared: List[Dict[str, Any]] = []
+        annotations: List[Optional[str]] = []
         for raw in items or []:
             payload = dict(raw or {})
+            # Extract handle-local annotation (not part of the backend payload)
+            ann = payload.pop("annotation", None)
             data_val = payload.get("data")
             if data_val is None:
                 raise ValueError("'data' is required for add_images")
@@ -957,6 +969,7 @@ class ImageManager(BaseImageManager):
                 payload["data"] = base64.b64encode(data_val).decode("utf-8")
             img = Image(**payload)
             prepared.append(img.to_post_json())
+            annotations.append(ann)
 
         # Synchronous create path: Result list aligned to input order; None when a per-item create fails
         out_ids: List[Optional[int]] = [None] * len(prepared)
@@ -1093,7 +1106,13 @@ class ImageManager(BaseImageManager):
                 if isinstance(row, dict):
                     try:
                         handles_out.append(
-                            ImageHandle(manager=self, image=Image(**row)),
+                            ImageHandle(
+                                manager=self,
+                                image=Image(**row),
+                                annotation=(
+                                    annotations[i] if i < len(annotations) else None
+                                ),
+                            ),
                         )
                         continue
                     except Exception:
@@ -1103,7 +1122,11 @@ class ImageManager(BaseImageManager):
                     row_guess = dict(prepared[i])
                     row_guess["image_id"] = int(maybe_id)
                     handles_out.append(
-                        ImageHandle(manager=self, image=Image(**row_guess)),
+                        ImageHandle(
+                            manager=self,
+                            image=Image(**row_guess),
+                            annotation=annotations[i] if i < len(annotations) else None,
+                        ),
                     )
                 except Exception:
                     handles_out.append(None)

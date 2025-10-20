@@ -56,11 +56,13 @@ def test_add_images_return_handles_mode():
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "handle red",
                 "data": PNG_RED_B64,
+                "annotation": "ann-red",
             },
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "handle blue",
                 "data": PNG_BLUE_B64,
+                "annotation": "ann-blue",
             },
         ],
         return_handles=True,
@@ -70,6 +72,10 @@ def test_add_images_return_handles_mode():
     # Should return two ImageHandle instances
     assert len(handles) == 2
     assert all(h is None or hasattr(h, "raw") for h in handles)
+
+    # Validate annotations are set on returned handles and not persisted
+    anns = [h.annotation for h in handles if h is not None]
+    assert set(anns) == {"ann-red", "ann-blue"}
 
     # Validate raw() round-trip at least for the first non-None handle
     for h in handles:
