@@ -1046,7 +1046,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         source_table: str,
         column_name: str,
         dest_table: str,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Copy a column's values from one table to another.
 
@@ -1085,7 +1085,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
         return {
             "status": "copied",
-            "rows": str(len(log_ids)),
+            "rows": len(log_ids),
             "from": source_table,
             "to": dest_table,
             "column": column_name,
@@ -1097,7 +1097,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         source_table: str,
         column_name: str,
         dest_table: str,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Move a column from one table to another.
 
@@ -1128,8 +1128,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         del_res = self._delete_column(table=source_table, column_name=column_name)
         return {
             "status": "moved",
-            "copy_result": str(copy_res),
-            "delete_result": str(del_res),
+            "copy_result": copy_res,
+            "delete_result": del_res,
         }
 
     def _transform_column(
@@ -1138,7 +1138,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table: str,
         column_name: str,
         equation: str,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Transform a column in‑place according to a Python ``equation``.
 
@@ -1178,9 +1178,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
         return {
             "status": "transformed",
-            "create_result": str(create_res),
-            "delete_result": str(delete_res),
-            "rename_result": str(rename_res),
+            "create_result": create_res,
+            "delete_result": delete_res,
+            "rename_result": rename_res,
         }
 
     #  Row-level deletion
@@ -1192,7 +1192,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         offset: int = 0,
         limit: int = 100,
         tables: Optional[List[str]] = None,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Delete every log matching ``filter`` across one or more tables.
 
@@ -1238,7 +1238,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         project_name = unify.active_project()
 
-        def _delete_for_table(table_name: str) -> tuple[str, str]:
+        def _delete_for_table(table_name: str) -> tuple[str, Any]:
             ctx = self._ctx_for_table(table_name)
             log_ids = list(
                 unify.get_logs(
@@ -1250,7 +1250,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 ),
             )
             if not log_ids:
-                return table_name, "no-op"
+                return table_name, {"status": "no-op"}
 
             res = unify.delete_logs(
                 logs=log_ids,
@@ -1258,14 +1258,15 @@ class KnowledgeManager(BaseKnowledgeManager):
                 project=project_name,
                 delete_empty_logs=True,
             )
-            return table_name, res.get("message", str(res))
+            # Return the full backend response for structured logging
+            return table_name, res
 
         # Parallelise across tables to minimise wall-clock time when multiple tables are targeted.
         if len(resolved_tables) == 1:
             name, msg = _delete_for_table(resolved_tables[0])
             return {name: msg}
 
-        summaries: Dict[str, str] = {}
+        summaries: Dict[str, Any] = {}
         max_workers = min(8, max(1, len(resolved_tables)))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {
