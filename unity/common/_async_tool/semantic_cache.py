@@ -485,7 +485,7 @@ async def _handle_manager_tool(tool: ToolSpec, args):
     tools = {}
 
     manager = base()
-    tools = manager.get_tools(tool.fn.__name__)
+    tools = manager.get_tools(tool.fn.__name__, include_sub_tools=True)
     tools = normalise_tools(tools)
     history = await _rexecute_tools(result.tool_trajectory, tools)
     return history
