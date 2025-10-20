@@ -40,7 +40,11 @@ class BaseStateManager(ABC):
         """
         self._tools[method] = tools
 
-    def get_tools(self, method: Optional[str] = None) -> Dict[str, Callable]:
+    def get_tools(
+        self,
+        method: Optional[str] = None,
+        include_sub_tools: bool = False,
+    ) -> Dict[str, Callable]:
         """
         Get tools for a given manager method.
 
@@ -50,6 +54,17 @@ class BaseStateManager(ABC):
             The name of the manager method to get tools for. If ``None``, return all tools.
         """
         if method is None:
-            return self._tools
+            ret = {}
+            for sub_tools in self._tools.values():
+                ret.update(sub_tools)
+            return ret
+
+        if include_sub_tools:
+            # Return all sub tools that starts with `method.`
+            ret = self._tools.get(method, {})
+            for sub_tool in self._tools.keys():
+                if sub_tool.startswith(f"{method}."):
+                    ret.update(self._tools[sub_tool])
+            return ret
 
         return self._tools.get(method, {})
