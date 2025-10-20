@@ -124,7 +124,7 @@ class _SemanticCacheSaver:
             context=store_context,
             user_message=user_message,
             namespace=namespace,
-            tool_trajectory=json.dumps(tool_trajectory),
+            tool_trajectory=tool_trajectory,
         )
 
         embed_expr = f"embed({{logs:user_message}}, model='{_CONFIG.embedding_model}')"
@@ -421,7 +421,7 @@ def search_semantic_cache(
         return SemanticCacheResult(
             original_user_message=user_message,
             closest_user_message=entries["user_message"],
-            tool_trajectory=json.loads(entries["tool_trajectory"]),
+            tool_trajectory=entries["tool_trajectory"],
         )
 
     return None
