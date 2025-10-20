@@ -1,7 +1,9 @@
 Screen Share Manager Sandbox
 ============================
 
-This sandbox lets you experiment with the `ScreenShareManager` in isolation by streaming a window from your screen, providing voice or text input to simulate user turns, and logging the captioned detected events in a Unify project. Details on how the manager works can be found in the base class that lives in `unity/screen_share_manager/screen_share_manager.py`
+This sandbox lets you experiment with the `ScreenShareManager` in isolation by streaming a window from your screen, providing voice or text input to simulate user turns, and printing the resulting annotated image analysis event. The manager's core responsibility is to analyze screen and speech events and publish an `AnnotatedImageRefs` object to a Redis channel for other services to consume.
+
+Details on how the manager works can be found in the base class that lives in `unity/screen_share_manager/screen_share_manager.py`
 
 Demo:
 -----
@@ -22,14 +24,14 @@ Running the sandbox
     *   `--name unity-redis`: Gives the container a memorable name, making it easy to manage.
     *   `-p 6379:6379`: Maps port `6379` on your local machine to port `6379` inside the container. The code defaults to connecting to this port.
     *   `redis`: Tells Docker to download and run the official Redis image.
-3. **Install required libraries** 
+3. **Install required libraries**
     ```bash
-    pip install mss redis numpy Pillow opencv-python
+    pip install mss redis numpy Pillow opencv-python aiohttp
     ```
-4. **Setup environment variables** 
+4. **Setup environment variables**
     | Variable Name | Requirement | Description |
     | :--- | :--- | :--- |
-    | **`UNIFY_KEY`** | **Required** | This is essential. The `ScreenShareManager`'s core logic relies on calling the Unify client to analyze the user turn and generate descriptive captions, and log the transcripts in the Unify project. |
+    | **`UNIFY_KEY`** | **Required** | This is essential. The `ScreenShareManager`'s core logic relies on calling the Unify client to analyze the user turn and generate descriptive annotations for the screen events. |
     | **`DEEPGRAM_API_KEY`** | **Required for `--voice`** | Only needed if you want to use voice input. The sandbox uses Deepgram for real-time speech-to-text transcription. |
     | **`CARTESIA_API_KEY`** | **Required for `--voice`** | Only needed if you want to use voice output. The sandbox uses Cartesia to generate the text-to-speech voice that confirms "Analysis complete." |
     | **`REDIS_HOST`** | Optional | Defaults to `localhost`. You only need to set this if your Redis server is running on a different machine or inside a specific Docker network. |
@@ -42,6 +44,9 @@ Running the sandbox
 
     # The same, but with voice input/output enabled
     python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --voice
+    
+    # Example with local image saving enabled
+    python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --save-images
     ```
 
 CLI flags
@@ -55,6 +60,7 @@ This sandbox re-uses the common helper in `sandboxes/utils.py`, so it shares the
 --width             The width of the capture area. (Required)
 --height            The height of the capture area. (Required)
 --fps               Frames per second for screen capture. (Default: 5)
+--save-images       Save annotated images locally to an 'images' folder.
 
 # Standard flags
 --voice / -v        Enable voice capture (Deepgram) + TTS playback (Cartesia)
@@ -75,9 +81,10 @@ Once the sandbox starts, the screen capture will begin, and you can issue comman
 *   `help` | `h` - Show the help message.
 *   `quit` | `exit` - Stop the screen capture and exit the sandbox.
 
-Your utterance is sent for background processing immediately. Results from the analysis will appear asynchronously in the terminal as they are logged in the Unify project.
+Your utterance is sent for background processing immediately. Results from the analysis will appear asynchronously in the terminal as they are published to the `app:comms:screen_analysis_result` Redis channel.
 
 Logging and debugging
 ---------------------
-*   Logged events can be seen in the Unify console under the selected project and context defaults to `Sandbox/Assistant/Transcripts` 
+*   Analysis results are printed directly to the terminal as they are received from the Redis channel.
+*   If you run with the `--save-images` flag, each annotated image from a turn will be saved to a local `images/` directory, named by its unique `image_id`.
 *   Running logs are written to `.logs_screen_share_sandbox.txt` (overwritten each run). Pass `--log_in_terminal` to also stream logs to the terminal.

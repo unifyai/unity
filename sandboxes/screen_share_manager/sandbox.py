@@ -3,8 +3,8 @@
 An interactive sandbox for the ScreenShareManager.
 
 This sandbox allows you to stream a specific window from your screen and provide
-voice or text input to simulate a user turn. It then fetches and displays the
-richly annotated transcript message created by the ScreenShareManager.
+voice or text input to simulate a user turn. It then listens for and displays
+the annotated image analysis result published by the ScreenShareManager.
 
 Prerequisites:
 - `pip install mss redis numpy Pillow opencv-python`
@@ -17,6 +17,7 @@ python -m sandboxes.screen_share_manager.sandbox \
     --width 1280 \
     --height 720 \
     --voice \
+    --save-images \
     --context "The user is Jane Doe, an administrator trying to reset a client's password."
 """
 
@@ -33,10 +34,10 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Any
 
 import mss
-import redis
+import redis.asyncio as redis
 from dotenv import load_dotenv
 from PIL import Image
 
@@ -58,7 +59,6 @@ from sandboxes.utils import (
     _wait_for_tts_end,
 )
 from unity.screen_share_manager.screen_share_manager import ScreenShareManager
-from unity.transcript_manager.transcript_manager import TranscriptManager
 
 # Logger setup for the sandbox
 LG = logging.getLogger("screen_share_sandbox")
@@ -72,7 +72,7 @@ _COMMANDS_HELP = """
 ScreenShareManager Sandbox (Async Mode)
 ---------------------------------------
 Type a message or use 'r' to record voice. Your utterance is sent for background
-processing immediately. Results will appear below as they become available.
+processing immediately. Analysis results will appear below as they are published.
 
 ┌─────────────── Commands ───────────────┐
 │ <your message>      - Send a text utterance.                      │
@@ -110,10 +110,10 @@ def _capture_and_publish_frames(monitor: Dict[str, int], fps: int = 5):
                 error_count += 1
                 if error_count == 1:
                     LG.error(
-                        f"ScreenShotError: {e}. This is common on Wayland or with incorrect geometry.",
+                        f"ScreenShotError: {e}. This is common on Wayland or with incorrect geometry."
                     )
                     LG.error(
-                        "Please verify your --x, --y, --width, --height arguments. Capture will be retried.",
+                        "Please verify your --x, --y, --width, --height arguments. Capture will be retried."
                     )
                 time.sleep(1)
                 continue
@@ -131,8 +131,7 @@ def _capture_and_publish_frames(monitor: Dict[str, int], fps: int = 5):
             }
             try:
                 redis_client.publish(
-                    "app:comms:screen_frame",
-                    json.dumps(event_payload),
+                    "app:comms:screen_frame", json.dumps(event_payload)
                 )
                 frame_count += 1
             except redis.exceptions.ConnectionError as e:
@@ -146,42 +145,66 @@ def _capture_and_publish_frames(monitor: Dict[str, int], fps: int = 5):
     LG.info(f"Screen capture thread stopped. Published {frame_count} frames.")
 
 
-async def _result_fetcher_and_printer(
-    transcript_manager: TranscriptManager,
-    project_name: str,
-    voice_enabled: bool,
-):
+async def _result_listener_and_printer(voice_enabled: bool, save_images: bool):
     """
-    A background task that continuously polls for new transcript messages and prints them.
+    A background task that listens for screen analysis results and prints them.
+    If save_images is True, it also saves the raw images to a local folder.
     """
-    LG.info("Result fetcher started. Polling for new transcript logs.")
-    # Initialize with the ID of the latest message at startup
-    initial_messages = transcript_manager._filter_messages(limit=1)["messages"]
-    last_printed_message_id = initial_messages[0].message_id if initial_messages else -1
-    context_name = transcript_manager._transcripts_ctx
+    LG.info("Result listener started. Subscribing to analysis results.")
+    redis_client = redis.asyncio.Redis(
+        host=os.getenv("REDIS_HOST", "localhost"),
+        port=int(os.getenv("REDIS_PORT", 6379)),
+        decode_responses=True,
+    )
 
-    while not _main_stop_event.is_set():
-        try:
-            latest_messages = transcript_manager._filter_messages(limit=1)["messages"]
-            if latest_messages:
-                latest_message = latest_messages[0]
-                if latest_message.message_id > last_printed_message_id:
-                    print(
-                        f"\n\n✅ Event logged to Unify in {project_name}/{context_name} in log {latest_message.message_id}\n",
-                        flush=True,
-                    )
+    async with redis_client.pubsub() as pubsub:
+        await pubsub.subscribe("app:comms:screen_analysis_result")
+        while not _main_stop_event.is_set():
+            try:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
+                )
+                if message:
+                    data = json.loads(message["data"])
+                    payload = data.get("payload", {})
+                    images = payload.get("images", {}).get("root", [])
+                    image_data_map = payload.get("image_data_map", {})
+
+                    print("\n\n✅ Screen Analysis Result Received:", flush=True)
+                    if not images:
+                        print("   -> No annotated images were generated for this turn.")
+                    else:
+                        print(f"   -> Found {len(images)} annotated image(s):")
+                        for i, ref in enumerate(images):
+                            img_id = ref.get("raw_image_ref", {}).get("image_id", "N/A")
+                            annotation = ref.get("annotation", "No annotation.")
+                            print(f"      [{i+1}] Image ID: {img_id}")
+                            print(f'          Annotation: "{annotation}"')
+
+                    if save_images and image_data_map:
+                        print("   -> Saving images locally...")
+                        for image_id, data_url in image_data_map.items():
+                            try:
+                                img_data = base64.b64decode(data_url.split(",")[1])
+                                img_path = Path("images") / f"{image_id}.png"
+                                with open(img_path, "wb") as f:
+                                    f.write(img_data)
+                                print(f"      -> Saved {img_path}")
+                            except Exception as e:
+                                LG.error(f"Failed to save image {image_id}: {e}")
+
                     if voice_enabled:
                         speak("Analysis complete.")
-                    # Update the last printed ID and redraw the input prompt
-                    last_printed_message_id = latest_message.message_id
-                    # This helps redraw the prompt cleanly after printing the async result
-                    sys.stdout.write("command> ")
+
+                    # Redraw the input prompt cleanly
+                    sys.stdout.write("\ncommand> ")
                     sys.stdout.flush()
 
-            await asyncio.sleep(1)  # Poll every second
-        except Exception as e:
-            LG.error(f"Error in result fetcher: {e}", exc_info=True)
-            await asyncio.sleep(2)
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                LG.error(f"Error in result listener: {e}", exc_info=True)
+                await asyncio.sleep(2)
 
 
 async def _main_async() -> None:
@@ -200,22 +223,13 @@ async def _main_async() -> None:
         help="The y-coordinate of the top-left corner.",
     )
     parser.add_argument(
-        "--width",
-        type=int,
-        required=True,
-        help="The width of the capture area.",
+        "--width", type=int, required=True, help="The width of the capture area."
     )
     parser.add_argument(
-        "--height",
-        type=int,
-        required=True,
-        help="The height of the capture area.",
+        "--height", type=int, required=True, help="The height of the capture area."
     )
     parser.add_argument(
-        "--fps",
-        type=int,
-        default=5,
-        help="Frames per second for screen capture.",
+        "--fps", type=int, default=5, help="Frames per second for screen capture."
     )
     parser.add_argument(
         "--context",
@@ -223,8 +237,19 @@ async def _main_async() -> None:
         default=None,
         help="Optional pre-conversation context about the user or their goal.",
     )
+    parser.add_argument(
+        "--save-images",
+        action="store_true",
+        help="Save annotated images locally to an 'images' folder.",
+    )
     args = parser.parse_args()
     os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
+
+    if args.save_images:
+        Path("images").mkdir(exist_ok=True)
+        LG.info(
+            "Image saving enabled. Images will be stored in the 'images/' directory."
+        )
 
     activate_project(args.project_name, args.overwrite)
     configure_sandbox_logging(
@@ -244,21 +269,22 @@ async def _main_async() -> None:
     capture_thread = None
     redis_client = None
     manager_task = None
-    result_fetcher_task = None
+    result_listener_task = None
 
     session_start_time = time.time()
 
     try:
-        screen_manager = ScreenShareManager()
+        screen_manager = ScreenShareManager(
+            include_raw_image_data_in_result=args.save_images
+        )
         if args.context:
             screen_manager.set_session_context(args.context)
             LG.info(f"Initial session context set from CLI: '{args.context}'")
 
-        transcript_manager = TranscriptManager()
         redis_client = redis.asyncio.Redis(
             host=os.getenv("REDIS_HOST", "localhost"),
             port=int(os.getenv("REDIS_PORT", 6379)),
-            decode_responses=False,
+            decode_responses=False,  # Use bytes for publishing
         )
 
         manager_task = asyncio.create_task(screen_manager.start())
@@ -271,13 +297,9 @@ async def _main_async() -> None:
         )
         capture_thread.start()
 
-        # Start the background task for fetching and printing results
-        result_fetcher_task = asyncio.create_task(
-            _result_fetcher_and_printer(
-                transcript_manager,
-                args.project_name,
-                args.voice,
-            ),
+        # Start the background task for listening to and printing results
+        result_listener_task = asyncio.create_task(
+            _result_listener_and_printer(args.voice, args.save_images)
         )
 
         await asyncio.sleep(2)
@@ -289,13 +311,12 @@ async def _main_async() -> None:
                 turn_start_time = 0.0
                 turn_end_time = 0.0
 
-                # Use asyncio.to_thread to run the blocking input() in a separate thread
+                # Use asyncio.to_thread to run the blocking input()
                 if args.voice:
                     _wait_for_tts_end()
                     prompt = await asyncio.to_thread(input, "command ('r' to record)> ")
                     prompt = prompt.strip()
                     if prompt.lower() == "r":
-                        # Voice recording is also blocking, so run it in a thread
                         turn_start_time = time.time()
                         audio = await asyncio.to_thread(record_until_enter)
                         utterance = transcribe_deepgram(audio).strip()
@@ -337,8 +358,7 @@ async def _main_async() -> None:
                     },
                 }
                 await redis_client.publish(
-                    "app:comms:phone_utterance",
-                    json.dumps(event_payload),
+                    "app:comms:phone_utterance", json.dumps(event_payload)
                 )
                 LG.info(f"Published utterance event for: '{utterance}'")
 
@@ -359,8 +379,8 @@ async def _main_async() -> None:
                 await asyncio.sleep(0.5)
                 manager_task.cancel()
 
-        if result_fetcher_task and not result_fetcher_task.done():
-            result_fetcher_task.cancel()
+        if result_listener_task and not result_listener_task.done():
+            result_listener_task.cancel()
 
         if capture_thread:
             _capture_stop_event.set()
