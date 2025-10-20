@@ -22,7 +22,8 @@ from .messages import (
 )
 from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
-from ..llm_helpers import method_to_schema, _collect_images, _strip_image_keys, _dumps
+from ..llm_helpers import method_to_schema
+from .formatting import serialize_tool_content, sanitize_tool_msg_for_logging
 from contextlib import suppress
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
@@ -47,12 +48,12 @@ class ToolsData:
     # Local helper: pretty-print tool payloads consistently
     @staticmethod
     def _pretty_tool_payload(tool_name: str, payload: Any) -> str:
-        with suppress(Exception):
-            content_payload = (
-                payload if isinstance(payload, dict) else {"message": str(payload)}
-            )
-            return _dumps({"tool": tool_name, **content_payload}, indent=4)
-        return _dumps({"tool": tool_name, "message": str(payload)}, indent=4)
+        # Centralized serialization for progress/notification placeholders
+        return serialize_tool_content(
+            tool_name=tool_name,
+            payload=payload,
+            is_final=False,
+        )
 
     def _quota_count(self, task_name: str) -> int:
         return self.call_counts.get(task_name, 0)
@@ -538,25 +539,8 @@ class ToolsData:
             #  Normal (non-handle) result – unchanged path
             # ───────────────────────────────────────────────────────────────
             # ── finished successfully – promote any embedded images ─────────
-            images: list[str] = []
-            _collect_images(raw, images)
-
-            text_repr = _dumps(_strip_image_keys(raw), indent=4)
-
-            if images:
-                content_blocks: list = []
-                if text_repr and text_repr != "{}":
-                    content_blocks.append({"type": "text", "text": text_repr})
-                content_blocks.extend(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"},
-                    }
-                    for b64 in images
-                )
-                result = content_blocks
-            else:
-                result = text_repr
+            # Centralized serialization for final tool results
+            result = serialize_tool_content(tool_name=name, payload=raw, is_final=True)
 
             consecutive_failures.reset_failures()
         except Exception:
@@ -642,27 +626,15 @@ class ToolsData:
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
         if self._logger.log_steps:
-            # Create a clean version of tool_msg for logging (strip image data)
-            tool_msg_for_logging = tool_msg.copy()
-            if isinstance(tool_msg_for_logging.get("content"), list):
-                # Filter out image_url items and keep only text content
-                tool_msg_for_logging["content"] = [
-                    item
-                    for item in tool_msg_for_logging["content"]
-                    if item.get("type") != "image_url"
-                ]
-            # If the content is a JSON string (from tool result), parse it so indenting applies
+            # Log EXACLY what was inserted, but redact base64 data URLs for readability
             try:
-                from .utils import try_parse_json as _try_parse_json  # local import
-
-                _c = tool_msg_for_logging.get("content")
-                tool_msg_for_logging["content"] = _try_parse_json(_c)
+                safe_for_logs = sanitize_tool_msg_for_logging(tool_msg)
+                self._logger.info(
+                    f"{json.dumps(safe_for_logs, indent=4)}",
+                    prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
+                )
             except Exception:
                 pass
-            self._logger.info(
-                f"{json.dumps(tool_msg_for_logging, indent=4)}",
-                prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
-            )
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures.has_exceeded_failures():
