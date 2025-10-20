@@ -1,5 +1,5 @@
 import json
-from typing import List, Deque
+from typing import List, Deque, Optional, Dict
 from unity.screen_share_manager.types import KeyEvent, TurnAnalysisResponse
 from ..common.prompt_helpers import now_utc_str
 
@@ -8,73 +8,95 @@ def _now() -> str:
     return now_utc_str()
 
 
-def build_turn_analysis_prompt(
+def build_detection_prompt(
     current_summary: str,
-    recent_events: Deque[KeyEvent],
+    speech_event: Optional[Dict],
+    has_visual_events: bool,
 ) -> str:
     """
-    Builds the system prompt for the screen share turn analysis LLM.
+    Builds a lightweight system prompt for the *detection* stage.
+
+    This prompt instructs a fast LLM to simply identify timestamps of interest
+    from the provided context (speech, visual changes) without generating
+    expensive, detailed annotations. Its goal is speed.
+    """
+    speech_text = f"User Speech: \"{speech_event['payload']['content']}\"" if speech_event else "No user speech occurred."
+    visual_text = "Key visual frames representing screen changes were also provided." if has_visual_events else "No significant visual changes were detected."
+
+    prompt = f"""
+You are an ultra-fast analysis assistant. Your only job is to identify timestamps of potentially important moments in a screen share session based on limited information. DO NOT describe the images.
+
+CONTEXT:
+- Session Summary: {current_summary}
+- This Turn: {speech_text} {visual_text}
+
+TASK:
+Based on the provided text and image placeholders, identify the timestamps of key moments. A key moment is either the start of a user's speech or a significant visual change.
+
+Respond with a JSON object containing a single key "moments", which is a list of objects. Each object must have a "timestamp" (float) and a "reason" (string, either "user_speech" or "visual_change").
+
+Example Response:
+{{
+  "moments": [
+    {{ "timestamp": 15.2, "reason": "user_speech" }},
+    {{ "timestamp": 16.8, "reason": "visual_change" }}
+  ]
+}}
+
+Provide ONLY the JSON object and nothing else.
+"""
+    return prompt.strip()
+
+
+def build_annotation_prompt(
+    current_summary: str,
+    consumer_context: Optional[str],
+) -> str:
+    """
+    Builds the detailed system prompt for the *annotation* stage.
+
+    This prompt instructs a powerful vision LLM to generate rich, contextual
+    annotations by combining the manager's long-term summary with optional,
+    immediate context from the consumer.
     """
     schema = TurnAnalysisResponse.model_json_schema()
 
-    recent_events_formatted = (
-        "\n".join([f"- {evt.image_annotation}" for evt in recent_events])
-        if recent_events
-        else "No recent events have been identified."
-    )
+    consumer_context_section = ""
+    if consumer_context:
+        consumer_context_section = f"""
+2.  **Immediate Turn Context:** High-level context about what the user was doing in this specific turn, provided by the consuming system. Use this as the primary focus for the annotation's relevance.
+    <consumer_context>
+    {consumer_context}
+    </consumer_context>
+"""
 
     prompt = f"""
-You are an expert AI assistant specializing in analyzing user interactions during screen share sessions. Your task is to watch a video stream, listen to the user's speech, and identify all key moments for the CURRENT TURN ONLY.
+You are an expert AI assistant specializing in analyzing user interactions during screen share sessions. Your task is to view a curated set of key screenshots and generate a rich, contextual annotation for each one.
 
 CONTEXT PROVIDED:
 ----------------
-1.  **Current Session Summary:** A rolling summary of what has happened in the session so far. This provides the backstory for the current turn.
+1.  **Overall Session Summary:** A rolling summary of what has happened in the session so far. Use this for historical backstory.
     <summary>
     {current_summary}
     </summary>
-2.  **Recent Key Events:** A list of the last 5 annotations that were generated.
-    <recent_events>
-    {recent_events_formatted}
-    </recent_events>
-3.  **User Speech (Optional):** The full transcript of what the user said during their turn.
-4.  **Speech Timestamps (Optional):** The start and end time of the user's speech.
-5.  **Key Visual Frames:** A list of 'before' and 'after' screenshots representing significant visual changes that occurred. Each visual change has a precise timestamp.
+{consumer_context_section}
+3.  **Key Moment Images:** A list of screenshots, each representing a significant moment that you need to describe.
 
 YOUR TASK:
 ----------
-- Analyze all the provided information to create a complete, chronological narrative of the user's CURRENT TURN.
-- Identify every distinct, meaningful event that occurred IN THIS TURN. An event can be either a spoken intent or a visual action.
-- For each event, you must generate a single, clear `image_annotation`. This annotation must describe what the 'AFTER' screenshot visually contains and explain its significance in the context of the user's entire turn, their speech, and the session summary. It should answer the question: **"Why is this screenshot important right now?"**
-- You must also identify which of the provided 'AFTER' frames best illustrates the event and return its exact timestamp in the `representative_timestamp` field.
-
-RULES FOR `image_annotation` (VERY IMPORTANT):
-----------------------------------------------
-- **Be Descriptive:** The annotation should describe the visual evidence in the 'AFTER' frame.
-- **Be Contextual:** The annotation must explain the relevance of the visual evidence to the user's speech, their likely intent, and the ongoing session narrative.
-- **Combine Action and Evidence:** Instead of separate fields, merge the user's action and the visual proof into one coherent sentence.
-
-**Example 1 (Speech + Vision):**
-- User says: "Okay, I will submit my profile now."
-- Visual: User clicks "Submit" and a confirmation appears.
-- **`image_annotation`**: "A confirmation message stating 'Your profile has been updated' is visible, confirming the user's stated intention to submit their profile."
-
-**Example 2 (Vision-Only):**
-- *No user speech occurs.* A modal dialog appears on the screen.
-- Session Context: "User was on the main dashboard."
-- **`image_annotation`**: "The 'Account Settings' modal has appeared, which is the expected outcome after the user previously clicked on their profile icon."
+- For each image provided in the user message, you must generate a single, clear `image_annotation`.
+- This annotation must describe what the screenshot visually contains and explain its significance, prioritizing the **Immediate Turn Context** (if provided) and using the **Overall Session Summary** for background. It should answer the question: **"Why is this screenshot important right now?"**
+- You must also identify the exact timestamp of the image you are annotating and return it in the `representative_timestamp` field.
 
 CRITICAL RULES:
 ---------------
-1.  **Representative Timestamp is Mandatory:** For every event, the `representative_timestamp` field must contain the exact timestamp of the corresponding 'AFTER' frame from the input. Do NOT invent timestamps.
-2.  **Timestamp Format:** All `timestamp` values must be floating-point numbers representing seconds relative to the start of the media stream (e.g., `12.34`).
-3.  **Chronological Order:** The final list of events in your response MUST be sorted by timestamp.
-4.  **JSON ONLY:** Your entire response must be a single, valid JSON object that strictly conforms to the provided schema. Do not include any other text, notes, or markdown.
-5.  **Speech Intent:** Always create an event for the user's primary spoken intent, timestamped at the beginning of their speech. For speech events, the `representative_timestamp` should be the timestamp of the visual frame that best shows the screen state *while they were speaking*.
+1.  **Representative Timestamp is Mandatory:** For every event, `representative_timestamp` must exactly match the timestamp of the corresponding frame from the input.
+2.  **Chronological Order:** The final list of events must be sorted by timestamp.
+3.  **JSON ONLY:** Your response must be a single, valid JSON object that strictly conforms to the schema below.
 
 SCHEMA FOR YOUR RESPONSE:```json
 {json.dumps(schema, indent=2)}```
 """
-    # Append current time to stabilize cache keys in tests
     return prompt + f"\n\nCurrent UTC time is {_now()}."
 
 
@@ -83,7 +105,7 @@ def build_summary_update_prompt(
     new_events: List[KeyEvent],
 ) -> str:
     """
-    Builds the system prompt for the summary update LLM.
+    Builds the system prompt for the summary update LLM. (Unchanged)
     """
     new_events_formatted = "\n".join(
         [f"- At t={evt.timestamp:.2f}s: {evt.image_annotation}" for evt in new_events],
@@ -106,7 +128,6 @@ YOUR TASK:
 - Read the current summary and the list of new events.
 - Create a new, updated summary that integrates the new events into the narrative of the existing summary.
 - The summary should remain concise, coherent, and chronological.
-- Do not simply append the new events. Re-write the summary to naturally include them.
 - Your response must be ONLY the new summary text, with no preamble or other text.
 """
     return prompt + f"\n\nCurrent UTC time is {_now()}."
