@@ -178,6 +178,7 @@ def _dumps(
     obj: Any,
     idx: List[Union[str, int]] = None,
     indent: int = None,
+    context: dict | None = None,
 ) -> Any:
     # prevents circular import
     from unify.logging.logs import Log
@@ -187,24 +188,29 @@ def _dumps(
         base = True
         idx = list()
     if isinstance(obj, BaseModel):
-        ret = obj.model_dump(mode="json")
+        # Thread optional serialization context (ignored by models that don't use it)
+        ret = obj.model_dump(mode="json", context=context)
     elif inspect.isclass(obj) and issubclass(obj, BaseModel):
         ret = obj.model_json_schema()
     elif isinstance(obj, Log):
         ret = obj.to_json()
     elif isinstance(obj, dict):
-        ret = {k: _dumps(v, idx + ["k"]) for k, v in obj.items()}
+        ret = {k: _dumps(v, idx + ["k"], context=context) for k, v in obj.items()}
     elif isinstance(obj, list):
-        ret = [_dumps(v, idx + [i]) for i, v in enumerate(obj)]
+        ret = [_dumps(v, idx + [i], context=context) for i, v in enumerate(obj)]
     elif isinstance(obj, set):
         # Convert sets to a sorted list for deterministic, JSON-serialisable output
         try:
-            ret = sorted(_dumps(v, idx + [i]) for i, v in enumerate(sorted(obj)))
+            ret = sorted(
+                _dumps(v, idx + [i], context=context) for i, v in enumerate(sorted(obj))
+            )
         except Exception:
             # Fallback: best-effort conversion preserving insertion order where possible
-            ret = [_dumps(v, idx + [i]) for i, v in enumerate(list(obj))]
+            ret = [
+                _dumps(v, idx + [i], context=context) for i, v in enumerate(list(obj))
+            ]
     elif isinstance(obj, tuple):
-        ret = tuple(_dumps(v, idx + [i]) for i, v in enumerate(obj))
+        ret = tuple(_dumps(v, idx + [i], context=context) for i, v in enumerate(obj))
     else:
         ret = obj
     return json.dumps(ret, indent=indent) if base else ret
