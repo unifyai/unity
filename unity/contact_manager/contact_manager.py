@@ -640,8 +640,8 @@ class ContactManager(BaseContactManager):
     # Public #
     # -------#
     @functools.wraps(BaseContactManager.ask, updated=())
-    @log_manager_call("ContactManager", "ask", payload_key="question")
     @manager_tool
+    @log_manager_call("ContactManager", "ask", payload_key="question")
     async def ask(
         self,
         text: str,

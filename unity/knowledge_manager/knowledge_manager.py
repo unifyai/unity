@@ -477,8 +477,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.ask, updated=())
-    @log_manager_call("KnowledgeManager", "ask", payload_key="question")
     @manager_tool
+    @log_manager_call("KnowledgeManager", "ask", payload_key="question")
     async def ask(
         self,
         text: str,
