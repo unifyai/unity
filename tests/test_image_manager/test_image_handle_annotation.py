@@ -271,3 +271,65 @@ async def test_wait_for_caption_and_resolution_together():
     cap, rid = await _asyncio.gather(cap_task, rid_task)
     assert isinstance(rid, int)
     assert cap == "label-ready"
+
+
+@pytest.mark.unit
+@_handle_project
+def test_constructor_annotation_is_set_and_not_persisted():
+    from unity.image_manager.image_manager import ImageHandle
+    from unity.image_manager.types.image import Image
+
+    im = ImageManager()
+    ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
+
+    [img_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "ctor base",
+                "data": PNG_GRAY_B64,
+            },
+        ],
+    )
+
+    row = ds[img_id]
+    h = ImageHandle(manager=im, image=Image(**row), annotation="ctor-note")
+
+    # Annotation provided in constructor should be set on this handle only
+    assert h.annotation == "ctor-note"
+
+    # A fresh handle from the manager must not inherit the annotation
+    fresh = im.get_images([img_id])[0]
+    assert getattr(fresh, "annotation", None) is None
+
+    # DataStore must not contain the annotation
+    row2 = ds[img_id]
+    assert "annotation" not in row2
+    assert row2.get("caption") == "ctor base"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@_handle_project
+async def test_wait_for_annotation_immediate_via_constructor():
+    from unity.image_manager.image_manager import ImageHandle
+    from unity.image_manager.types.image import Image
+
+    im = ImageManager()
+    ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
+
+    [img_id] = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "ctor wait",
+                "data": PNG_GRAY_B64,
+            },
+        ],
+    )
+
+    row = ds[img_id]
+    h = ImageHandle(manager=im, image=Image(**row), annotation="ready-now")
+
+    got = await h.wait_for_annotation(timeout=0.5)
+    assert got == "ready-now"
