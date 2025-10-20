@@ -49,6 +49,7 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+from ..constants import is_semantic_cache_enabled
 
 
 class Conductor(BaseConductor):
@@ -345,6 +346,13 @@ class Conductor(BaseConductor):
             build_ask_prompt(tools, include_activity=include_activity),
         )
 
+        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
+        if use_semantic_cache in ("read", "both"):
+            tool_policy = None
+        else:
+            tool_policy = lambda i, _: ("required", _) if i < 1 else ("auto", _)
+
         handle = start_async_tool_loop(
             client,
             text,
@@ -353,7 +361,9 @@ class Conductor(BaseConductor):
             parent_chat_context=parent_chat_context,
             log_steps=_log_tool_steps,
             # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=tool_policy,
+            semantic_cache=use_semantic_cache,
+            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
