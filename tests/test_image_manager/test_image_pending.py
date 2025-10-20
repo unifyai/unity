@@ -30,6 +30,7 @@ def test_async_enqueue_immediate_raw_and_pending_flag():
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "staged",
                 "data": raw_bytes,
+                "annotation": "staged-ann",
             },
         ],
         synchronous=False,
@@ -37,6 +38,7 @@ def test_async_enqueue_immediate_raw_and_pending_flag():
     )
 
     assert h.is_pending
+    assert h.annotation == "staged-ann"
     assert isinstance(h.image_id, int) and h.image_id >= 10**12
 
     # Immediate raw access must work and round-trip to original bytes
@@ -49,6 +51,7 @@ def test_async_enqueue_immediate_raw_and_pending_flag():
     assert row["image_id"] == h.image_id
     assert row.get("caption") == "staged"
     assert base64.b64decode(row.get("data")) == raw_bytes
+    assert "annotation" not in row
 
 
 def _run(coro):
@@ -222,11 +225,13 @@ def test_await_pending_multiple_and_datastore_updates():
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "m1",
                 "data": PNG_RED_B64,
+                "annotation": "m1-ann",
             },
             {
                 "timestamp": datetime.now(timezone.utc),
                 "caption": "m2",
                 "data": PNG_BLUE_B64,
+                "annotation": "m2-ann",
             },
         ],
         synchronous=False,
@@ -244,6 +249,9 @@ def test_await_pending_multiple_and_datastore_updates():
     # get_images by real ids returns in requested order
     hs = im.get_images([rid2, rid1])
     assert [h.image_id for h in hs] == [rid2, rid1]
+    # New handles should not inherit prior annotations (local-only)
+    assert getattr(hs[0], "annotation", None) is None
+    assert getattr(hs[1], "annotation", None) is None
 
 
 @pytest.mark.unit

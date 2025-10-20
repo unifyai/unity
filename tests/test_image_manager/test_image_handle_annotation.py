@@ -309,6 +309,36 @@ def test_constructor_annotation_is_set_and_not_persisted():
 
 
 @pytest.mark.unit
+@_handle_project
+def test_add_images_with_annotation_sets_handle_local_only():
+    im = ImageManager()
+    ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
+
+    # Sync mode with return_handles=True
+    hs = im.add_images(
+        [
+            {
+                "timestamp": datetime.now(timezone.utc),
+                "caption": "ctor via add",
+                "data": PNG_GRAY_B64,
+                "annotation": "via-add",
+            },
+        ],
+        synchronous=True,
+        return_handles=True,
+    )
+    h = next(h for h in hs if h is not None)
+    assert h.annotation == "via-add"
+
+    row = ds[h.image_id]
+    assert "annotation" not in row
+
+    # A fresh handle must not inherit annotation
+    h2 = ImageManager().get_images([h.image_id])[0]
+    assert getattr(h2, "annotation", None) is None
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_wait_for_annotation_immediate_via_constructor():
