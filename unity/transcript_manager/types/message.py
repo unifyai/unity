@@ -1,5 +1,12 @@
 from enum import StrEnum
-from pydantic import BaseModel, Field, model_validator, model_serializer
+from pydantic import (
+    BaseModel,
+    Field,
+    model_validator,
+    model_serializer,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+)
 from datetime import datetime
 from ...image_manager.types import AnnotatedImageRefs
 
@@ -78,8 +85,24 @@ class Message(BaseModel):
     # presentations omit noise like images: [] while the
     # in-memory model remains unchanged and fully populated.
     @model_serializer(mode="wrap")
-    def _prune_empty_on_serialize(self, handler):  # type: ignore[no-redef]
+    def _prune_empty_on_serialize(
+        self,
+        handler: SerializerFunctionWrapHandler,
+        info: SerializationInfo,
+    ) -> dict:  # type: ignore[no-redef]
         data = handler(self)
+
+        # Default behaviour: do NOT prune empties; only when explicitly requested via context
+        prune = False
+        try:
+            ctx = info.context or {}
+            if "prune_empty" in ctx:
+                prune = bool(ctx["prune_empty"])  # explicit override
+        except Exception:
+            pass
+
+        if not prune:
+            return data
 
         def _is_empty(value):
             try:
