@@ -11,7 +11,7 @@ A demo video walking through a sample run can be found here: [Loom Video](https:
 
 #### 1. Install required libraries:
 ```bash
-pip install mss Pillow opencv-python aiohttp unify
+pip install unifyai mss Pillow opencv-python python-dotenv deepgram-sdk cartesia sounddevice
 ```
 
 #### 2. Setup environment variables:
@@ -33,8 +33,11 @@ python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --
 # The same, but with voice input/output enabled
 python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --voice
     
-# Example with local image saving enabled
-python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --save-images
+# Example with local image saving enabled 
+python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --save-images 
+
+# Example with initial context
+python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --context "User is trying to log into a web portal."
 ```
 
 ### CLI flags
@@ -46,12 +49,14 @@ python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --
 --width             The width of the capture area. (Required)
 --height            The height of the capture area. (Required)
 --fps               Frames per second for screen capture. (Default: 5)
+--context           Initial session context to provide to the manager.
 --save-images       Save annotated images locally to an 'images' folder.
 
 # Standard flags
 --voice / -v        Enable voice capture (Deepgram) + TTS playback (Cartesia)
 --debug / -d        Show verbose tool logs (reasoning steps)
 --project_name / -p Name of the Unify project/context (default: "Sandbox")
+--log-in-terminal   Stream detailed logs to the terminal in addition to the log file.
 ```
 
 ### Interactive commands inside the REPL
