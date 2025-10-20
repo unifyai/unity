@@ -86,6 +86,7 @@ class Conductor(BaseConductor):
             description: A detailed description of the hypothetical scenario to simulate.
             log_events: Whether to log ManagerMethod events to the EventBus.
         """
+        super().__init__()
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
@@ -162,8 +163,6 @@ class Conductor(BaseConductor):
         self._active_task = None  # type: ignore
 
         # These two dicts are rebuilt lazily before every ask/request
-        self._passive_tools: Dict[str, Callable] = {}
-        self._active_tools: Dict[str, Callable] = {}
         """Re-compute passive / active tool maps based on current active task."""
 
         # -------- base passive helpers -------------------------------- #
@@ -192,7 +191,7 @@ class Conductor(BaseConductor):
             _plan_ask_proxy.__name__ = "_ask_plan_call_"
             passive[_plan_ask_proxy.__name__] = _plan_ask_proxy
 
-        self._passive_tools = passive
+        self.add_tools("ask", passive)
 
         # -------- build active helpers (passive + writers) ------------ #
 
@@ -282,7 +281,7 @@ class Conductor(BaseConductor):
             else:
                 active[exec_key] = _wrap_and_track(_orig)  # type: ignore[arg-type]
 
-        self._active_tools = active
+        self.add_tools("request", active)
 
     # ------------------------------------------------------------------ #
     #  Public API                                                        #
@@ -318,7 +317,7 @@ class Conductor(BaseConductor):
                 question=text,
             )
 
-        tools: Dict[str, Callable] = dict(self._passive_tools)
+        tools: Dict[str, Callable] = dict(self.get_tools("ask"))
 
         if clarification_up_q is not None or clarification_down_q is not None:
 
@@ -454,7 +453,7 @@ class Conductor(BaseConductor):
                 request=text,
             )
 
-        tools: Dict[str, Callable] = dict(self._active_tools)
+        tools: Dict[str, Callable] = dict(self.get_tools("request"))
 
         if clarification_up_q is not None or clarification_down_q is not None:
 
