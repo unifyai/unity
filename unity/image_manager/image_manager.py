@@ -31,7 +31,13 @@ import itertools
 class ImageHandle:
     """A lightweight handle around a single stored image."""
 
-    def __init__(self, *, manager: "ImageManager", image: Image) -> None:
+    def __init__(
+        self,
+        *,
+        manager: "ImageManager",
+        image: Image,
+        annotation: Optional[str] = None,
+    ) -> None:
         self._manager = manager
         self._image = image
         # Handle-local, non-persistent annotation. This is NOT written to the
@@ -46,6 +52,17 @@ class ImageHandle:
                 self._caption_event.set()
         except Exception:
             pass
+        # If an initial annotation is provided, set it now (and trigger the event)
+        try:
+            if annotation is not None:
+                self.annotation = annotation
+        except Exception:
+            # Best-effort; keep initialization robust even if setter fails
+            try:
+                self._annotation = annotation
+                self._annotation_event.set()
+            except Exception:
+                pass
         # Deferred persistence state for updates made while pending
         self._deferred_lock = threading.Lock()
         self._deferred_updates: Dict[str, Any] = {}
