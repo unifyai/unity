@@ -559,9 +559,9 @@ class ConversationManager:
         call_utterance_timestamp = ""
         call_url = ""
         if self.state.call_start_timestamp:
-            delta = (
-                datetime.now() + timedelta(seconds=2) - self.state.call_start_timestamp
-            )
+            delta = datetime.now() - self.state.call_start_timestamp
+            if role == "Assistant":
+                delta += timedelta(seconds=2)
             minutes, seconds = divmod(int(delta.total_seconds()), 60)
             # ToDo: Make this MM:SS once we have explicit types working
             call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
