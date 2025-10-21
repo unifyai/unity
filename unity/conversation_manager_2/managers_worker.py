@@ -52,7 +52,7 @@ class ManagersWorker:
 
         # Conductor handle registry: incrementing int handle_id -> handle
         self._next_handle_id: int = 0
-        self._handle_registry: dict[int, SteerableToolHandle] = {}
+        self._handle_registry: dict[int, dict[str, Any]] = {}
         # Minimal meta for tracing (per handle_id)
         self._handle_meta: dict[int, dict] = {}
 
@@ -486,20 +486,21 @@ class ManagersWorker:
         self, event: ConductorHandleRequest
     ) -> None:
         # get handle
-        handle = self._handle_registry.get(event.handle_id)
-        if not handle:
+        handle_data = self._handle_registry.get(event.handle_id)
+        if not handle_data:
             print(
                 f"[ManagersWorker] Unknown handle_id={event.handle_id} for intervention"
             )
             return
 
         # record intervention
-        self._handle_registry[event.handle_id]["handle_actions"].append(
+        handle_data["handle_actions"].append(
             {
                 "action_name": event.action_name,
                 "query": event.query,
             }
         )
+        handle: SteerableToolHandle = handle_data["handle"]
 
         # perform intervention
         match event.action_name:
