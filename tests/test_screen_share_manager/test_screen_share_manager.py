@@ -20,9 +20,9 @@ from skimage.metrics import structural_similarity as ssim
 
 # --- Constants and Asset Loading ---
 
-PNG_BLUE_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mNkYPhfz/w3A5MBA/8/AAYDAL4/7d4eAAAAAElFTkSuQmCC"
-PNG_RED_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8AARf4z/A8DMQABAL9M43+gS1dAAAAAAElFTkSuQmCC"
-PNG_GREEN_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8/5/hP2E8A5MBA/8/AAYDAF4/7d4eAAAAAElFTkSuQmCC"
+PNG_BLUE_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mNkYPhfz/w3A5MBA/8/AAYDAL4/7d4eAAAAAElFTSuQmCC"
+PNG_RED_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8AARf4z/A8DMQABAL9M43+gS1dAAAAAAElFTSuQmCC"
+PNG_GREEN_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8/5/hP2E8A5MBA/8/AAYDAF4/7d4eAAAAAElFTSuQmCC"
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 
@@ -100,6 +100,7 @@ async def test_full_api_flow_detection_and_annotation(mocked_manager):
     Tests the primary API flow: push frames/speech, analyze, and annotate,
     verifying that the consumer context is used.
     """
+    mocked_manager = await mocked_manager
     manager, mocks = mocked_manager
 
     # --- Stage 1: Detection ---
@@ -144,6 +145,7 @@ async def test_sequential_annotation_builds_context(mocked_manager):
     Tests that annotating multiple events in one call correctly passes the annotation
     of the first event as context to the second.
     """
+    mocked_manager = await mocked_manager
     manager, mocks = mocked_manager
 
     handles = manager._image_manager.add_images(
@@ -181,6 +183,7 @@ async def test_summary_update_triggered_after_annotation(mocked_manager):
     Verifies that after a successful annotation, the session summary is updated
     with the new event information.
     """
+    mocked_manager = await mocked_manager
     manager, mocks = mocked_manager
     manager.set_session_context("Initial summary.")
 
@@ -213,6 +216,7 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
     Tests that a visual event detected without speech is stored and then
     returned in the result of the next turn that *does* have speech.
     """
+    mocked_manager = await mocked_manager
     manager, mocks = mocked_manager
     manager.settings.debounce_delay_sec = 0.05
 
@@ -276,6 +280,7 @@ async def test_start_and_stop_lifecycle():
 @pytest.mark.asyncio
 async def test_debounce_logic_groups_speech_events(mocked_manager):
     """Ensures multiple quick speech events trigger only one analysis."""
+    mocked_manager = await mocked_manager
     manager, _ = mocked_manager
     manager.settings.debounce_delay_sec = 0.2
 
@@ -298,6 +303,7 @@ async def test_debounce_logic_groups_speech_events(mocked_manager):
 @pytest.mark.asyncio
 async def test_inactivity_flush_triggers_for_visual_events(mocked_manager):
     """Tests that a silent visual event triggers analysis after an inactivity period."""
+    mocked_manager = await mocked_manager
     manager, _ = mocked_manager
     manager.settings.inactivity_timeout_sec = 0.1
     manager.settings.debounce_delay_sec = 0.05
@@ -336,6 +342,7 @@ async def test_inactivity_flush_triggers_for_visual_events(mocked_manager):
 @pytest.mark.asyncio
 async def test_detection_llm_retries_on_failure(mocked_manager):
     """Verifies that the LLM retry decorator is working."""
+    mocked_manager = await mocked_manager
     manager, mocks = mocked_manager
     manager.settings.llm_retry_max_tries = 3
     manager.settings.llm_retry_base_delay_sec = 0.01
@@ -358,6 +365,7 @@ async def test_detection_llm_retries_on_failure(mocked_manager):
 @pytest.mark.asyncio
 async def test_detection_llm_handles_invalid_json(mocked_manager, caplog):
     """Ensures the manager doesn't crash if the LLM returns malformed JSON."""
+    mocked_manager = await mocked_manager
     manager, mocks = mocked_manager
     mocks["detect"].generate.return_value = "This is not JSON"
 
@@ -423,6 +431,7 @@ async def test_visual_change_detection_significant_changes(
     manager: ScreenShareManager, image_pair
 ):
     """Tests that the vision pipeline correctly identifies REAL, significant UI changes."""
+    manager = await manager
     before_filename, after_filename = image_pair
     img_before = load_asset_image(before_filename)
     img_after = load_asset_image(after_filename)
@@ -451,6 +460,7 @@ async def test_visual_change_detection_insignificant_changes(
     manager: ScreenShareManager, image_pair
 ):
     """Tests that the vision pipeline correctly IGNORES insignificant visual noise."""
+    manager = await manager
     before_filename, after_filename = image_pair
     img_before = load_asset_image(before_filename)
     img_after = load_asset_image(after_filename)
