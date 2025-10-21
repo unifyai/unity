@@ -313,12 +313,19 @@ class TaskScheduler(BaseTaskScheduler):
         # Pointer to the single currently active task handle (or None).
         # Exactly one task can be active at a time.
         self._active_task: Optional[TaskScheduler.ActivePointer] = None
-        primed_tasks = self._filter_tasks(filter="status == 'primed'")
-        if primed_tasks:
+        primed_out = self._filter_tasks(filter="status == 'primed'")
+        primed_tasks = (
+            primed_out.get("tasks", []) if isinstance(primed_out, dict) else []
+        )
+        if primed_tasks and isinstance(primed_tasks, list):
             assert (
                 len(primed_tasks) == 1
             ), f"More than one primed task found:\n{primed_tasks}"
-            self._primed_task: Optional[Dict[str, Any]] = primed_tasks[0]
+            pt = primed_tasks[0]
+            try:
+                self._primed_task: Optional[Dict[str, Any]] = pt.model_dump(mode="json")  # type: ignore[assignment]
+            except Exception:
+                self._primed_task = None
         else:
             self._primed_task: Optional[Dict[str, Any]] = None
 
@@ -636,10 +643,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Also guard against orphan 'active' rows (e.g., after crash) even if pointer is None.
         try:
-            any_active = any(
-                r.get("status") == str(Status.active)
-                for r in self._filter_tasks(filter="status == 'active'", limit=1)
-            )
+            active_out = self._filter_tasks(filter="status == 'active'", limit=1)
+            tasks = active_out.get("tasks", []) if isinstance(active_out, dict) else []
+            any_active = any(getattr(t, "status", None) == Status.active for t in tasks)
         except Exception:
             any_active = False
         if any_active:
@@ -744,26 +750,35 @@ class TaskScheduler(BaseTaskScheduler):
         if self._active_task is not None:
             raise RuntimeError("Another task is already running – stop it first.")
 
-        candidate_rows = self._filter_tasks(
+        candidate_out = self._filter_tasks(
             filter=(
                 f"task_id == {task_id} and status not in "
                 "('completed','cancelled','failed','active')"
             ),
         )
+        candidate_rows = (
+            candidate_out.get("tasks", []) if isinstance(candidate_out, dict) else []
+        )
         if not candidate_rows:
             raise ValueError(f"No runnable task found with id={task_id}")
 
         # Pick the *oldest* runnable instance (lowest instance_id)
-        task_row = sorted(
-            candidate_rows,
-            key=lambda r: r.get("instance_id", 0),
-        )[0]
-        if task_row["status"] in ("completed", "cancelled", "failed", "active"):
-            raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
+        task_model = sorted(candidate_rows, key=lambda r: getattr(r, "instance_id", 0))[
+            0
+        ]
+        if str(getattr(task_model, "status", "")) in (
+            "completed",
+            "cancelled",
+            "failed",
+            "active",
+        ):
+            raise ValueError(
+                f"Task {task_id} is already {getattr(task_model, 'status', None)!r}.",
+            )
 
         # Adjust queue linkages for activation (and record reintegration plan).
         # detach=True → isolation semantics; detach=False → chain semantics.
-        desired_next: Optional[int] = _q_next(task_row.get("schedule"))
+        desired_next: Optional[int] = _q_next(getattr(task_model, "schedule", None))
 
         self._detach_from_queue_for_activation(
             task_id=task_id,
@@ -772,7 +787,11 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
-        _task_desc = task_row.get("description") or task_row.get("name") or ""
+        _task_desc = getattr(task_model, "description", None) or getattr(
+            task_model,
+            "name",
+            "",
+        )
         handle = await ActiveTask.create(
             self._actor,
             task_description=_task_desc,
@@ -780,20 +799,20 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_up_q=clarification_up_q,
             clarification_down_q=clarification_down_q,
             task_id=task_id,
-            instance_id=task_row["instance_id"],
+            instance_id=getattr(task_model, "instance_id", 0),
             scheduler=self,
         )
 
         self._active_task = TaskScheduler.ActivePointer(
             task_id=task_id,
-            instance_id=task_row["instance_id"],
+            instance_id=getattr(task_model, "instance_id", 0),
             handle=handle,
         )
 
         # Clone if this is a triggerable or recurring task
-        if self._to_status(task_row["status"]) == Status.triggerable or task_row.get(
-            "repeat",
-        ):
+        if self._to_status(
+            getattr(task_model, "status", "queued"),
+        ) == Status.triggerable or getattr(task_model, "repeat", None):
             self._clone_task_instance(task_row)
 
         # Promote status to active (and record the activation reason) and clear the primed pointer if needed
@@ -4225,7 +4244,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
-    ) -> List[Task]:
+    ) -> Dict[str, Any]:
         """
         Semantic search across tasks using one or more reference texts.
 
@@ -4269,7 +4288,12 @@ class TaskScheduler(BaseTaskScheduler):
             row_filter=None,
             unique_id_field="task_id",
         )
-        return [Task(**lg) for lg in filled]
+        tasks_list = [Task(**lg) for lg in filled]
+        return {
+            "task_keys_to_shorthand": Task.shorthand_map(),
+            "tasks": tasks_list,
+            "shorthand_to_task_keys": Task.shorthand_inverse_map(),
+        }
 
     def _filter_tasks(
         self,
@@ -4277,7 +4301,7 @@ class TaskScheduler(BaseTaskScheduler):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[TaskRow]:
+    ) -> Dict[str, Any]:
         """
         Run a **column-wise Python expression** (`filter`) against every task
         and return the matching rows.
@@ -4375,6 +4399,36 @@ class TaskScheduler(BaseTaskScheduler):
             rep = row.get("repeat")
             if isinstance(rep, list):
                 row["repeat"] = [_rehydrate_repeat(x) for x in rep]
+        # Convert to Task models for stable typing
+        tasks_list: List[Task] = []
+        for r in rows:
+            try:
+                tasks_list.append(Task(**r))
+            except Exception:
+                # best-effort: skip malformed rows
+                continue
+        return {
+            "task_keys_to_shorthand": Task.shorthand_map(),
+            "tasks": tasks_list,
+            "shorthand_to_task_keys": Task.shorthand_inverse_map(),
+        }
+
+    # Internal helper: legacy row view used by scheduler internals
+    def _filter_tasks_rows(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> List[TaskRow]:
+        out = self._filter_tasks(filter=filter, offset=offset, limit=limit)
+        models: List[Task] = out.get("tasks", []) if isinstance(out, dict) else []
+        rows: List[TaskRow] = []
+        for t in models:
+            try:
+                rows.append(t.model_dump(mode="json"))
+            except Exception:
+                pass
         return rows
 
     # ────────────────────────────────────────────────────────────────────

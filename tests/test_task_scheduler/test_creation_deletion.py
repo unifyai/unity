@@ -14,9 +14,10 @@ def test_create_task():
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
         entrypoint=101,
     )
-    task_list = task_scheduler._filter_tasks()
+    out = task_scheduler._filter_tasks()
+    task_list = out["tasks"]
     assert len(task_list) == 1
-    row = task_list[0]
+    row = task_list[0].model_dump(mode="json")
     # After refactor, _filter_tasks returns raw JSON-serialisable values (enums as strings)
     assert row["name"] == "Promote Jeff Smith"
     assert (
@@ -46,12 +47,14 @@ def test_delete_task():
         name="Promote Jeff Smith",
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
-    task_list = task_scheduler._filter_tasks()
+    out = task_scheduler._filter_tasks()
+    task_list = out["tasks"]
     assert len(task_list) == 1
 
     # delete
     task_scheduler._delete_task(task_id=0)
-    task_list = task_scheduler._filter_tasks()
+    out = task_scheduler._filter_tasks()
+    task_list = out["tasks"]
     assert task_list == []
 
 
@@ -71,9 +74,10 @@ def test_create_task_with_response_policy():
         response_policy=policy,
     )
 
-    rows = ts._filter_tasks()
+    out = ts._filter_tasks()
+    rows = out["tasks"]
     assert len(rows) == 1
-    assert rows[0]["response_policy"] == policy
+    assert rows[0].response_policy == policy
 
 
 @_handle_project
@@ -103,8 +107,8 @@ def test_create_tasks_single_queue_and_ids():
     assert queues[0]["head_id"] == 0
     # Primed head with no start_at
     assert not (q[0].schedule and q[0].schedule.start_at)
-    head_row = ts._filter_tasks(filter="task_id == 0", limit=1)[0]
-    assert head_row["status"] == "primed"
+    head_row = ts._filter_tasks(filter="task_id == 0", limit=1)["tasks"][0]
+    assert str(head_row.status) == "primed"
 
 
 @_handle_project
@@ -139,8 +143,8 @@ def test_create_tasks_multi_queues_with_start_times():
     assert [t.task_id for t in q0] == [0, 2]
     assert q0[0].schedule and q0[0].schedule.start_at
     assert q0[0].schedule.start_at.isoformat() == "2036-01-01T10:00:00+00:00"
-    row0 = ts._filter_tasks(filter="task_id == 0", limit=1)[0]
-    assert row0["status"] == "scheduled"
+    row0 = ts._filter_tasks(filter="task_id == 0", limit=1)["tasks"][0]
+    assert str(row0.status) == "scheduled"
 
     # Second queue should be [1,3] with scheduled head (explicit start_at provided)
     q1 = ts._get_queue(queue_id=qid1)
@@ -165,14 +169,14 @@ def test_task_scheduler_clear():
     assert id1 == 0 and id2 == 1
 
     # Sanity: tasks present before clear
-    before = ts._filter_tasks()
+    before = ts._filter_tasks()["tasks"]
     assert before and len(before) == 2
 
     # Execute clear
     ts.clear()
 
     # After clear: no tasks
-    after = ts._filter_tasks()
+    after = ts._filter_tasks()["tasks"]
     assert after == []
 
     # Creating again should work and ids should restart from 0

@@ -81,9 +81,9 @@ def test_tool_filter_tasks_timing():
         "task_id"
     ]
     t0 = time.perf_counter()
-    rows = ts._filter_tasks(filter=f"task_id == {tid}")
+    rows = ts._filter_tasks(filter=f"task_id == {tid}")["tasks"]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    assert rows and rows[0]["task_id"] == tid
+    assert rows and rows[0].task_id == tid
     assert elapsed_ms < 2700
     print(f"elapsed: {elapsed_ms} < 2700")
 
