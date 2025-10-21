@@ -103,7 +103,12 @@ async def test_ask_semantic_queries(
     candidate_answer, reasoning_steps = await handle.result()
 
     # For better judgment context, fetch all contacts to pass to the LLM judge
-    all_contacts = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts_dict = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts = (
+        all_contacts_dict["contacts"]
+        if isinstance(all_contacts_dict, dict)
+        else all_contacts_dict
+    )
 
     _llm_judge_contact_retrieval(
         question,
@@ -138,7 +143,12 @@ async def test_ask_with_parent_context(
     )
     candidate_answer, reasoning_steps = await handle.result()
 
-    all_contacts = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts_dict = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts = (
+        all_contacts_dict["contacts"]
+        if isinstance(all_contacts_dict, dict)
+        else all_contacts_dict
+    )
     _llm_judge_contact_retrieval(
         question,
         expected_email,
@@ -180,7 +190,12 @@ async def test_ask_with_clarification(
     await clar_down_q.put("I mean Alice Wonder.")
 
     candidate_answer, reasoning_steps = await handle.result()
-    all_contacts = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts_dict = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts = (
+        all_contacts_dict["contacts"]
+        if isinstance(all_contacts_dict, dict)
+        else all_contacts_dict
+    )
     _llm_judge_contact_retrieval(
         question + " (after clarifying 'Alice Wonder')",
         expected_phone_after_clarification,
@@ -210,7 +225,12 @@ async def test_ask_interjection(
     await handle.interject(interjected_question)
     candidate_answer, reasoning_steps = await handle.result()
 
-    all_contacts = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts_dict = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts = (
+        all_contacts_dict["contacts"]
+        if isinstance(all_contacts_dict, dict)
+        else all_contacts_dict
+    )
     _llm_judge_contact_retrieval(
         f"{initial_question} AND {interjected_question}",
         expected_fragment_charlie,

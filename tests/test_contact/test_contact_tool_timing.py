@@ -54,8 +54,7 @@ def test_tool_filter_contacts_timing():
     cm = ContactManager()
     cid = cm._create_contact(first_name="PerfFilter")["details"]["contact_id"]
     t0 = time.perf_counter()
-    rows = cm._filter_contacts(filter=f"contact_id == {cid}")
-    rows = rows["contacts"]
+    rows = cm._filter_contacts(filter=f"contact_id == {cid}")["contacts"]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert rows and rows[0].contact_id == cid
     assert elapsed_ms < 1800

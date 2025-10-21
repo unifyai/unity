@@ -278,7 +278,9 @@ async def test_update_stop_operation(
     assert handle.done()
 
     await asyncio.sleep(0.2)
-    prof_x_search = cm._filter_contacts(filter="email_address == 'prox@xmen.com'")
+    prof_x_search = cm._filter_contacts(filter="email_address == 'prox@xmen.com'")[
+        "contacts"
+    ]
     assert (
         len(prof_x_search) == 0
     ), "Contact should ideally not be created if stopped early."

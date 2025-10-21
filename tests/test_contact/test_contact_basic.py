@@ -174,8 +174,8 @@ def test_contact_manager_clear():
     assert id1 > 1 and id2 > 1
 
     # Sanity: system contacts present before clear
-    a = cm._filter_contacts(filter="contact_id == 0")
-    u = cm._filter_contacts(filter="contact_id == 1")
+    a = cm._filter_contacts(filter="contact_id == 0")["contacts"]
+    u = cm._filter_contacts(filter="contact_id == 1")["contacts"]
     assert a and u
 
     # Execute clear
