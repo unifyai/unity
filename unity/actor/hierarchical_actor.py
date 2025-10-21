@@ -823,9 +823,9 @@ class PlanSanitizer(ast.NodeTransformer):
 
 
 class FunctionReplacer(ast.NodeTransformer):
-    """AST transformer to replace a function definition in a module."""
+    """AST transformer to replace a function definition in a module, including nested functions."""
 
-    def __init__(self, target_name: str, new_function_node: ast.FunctionDef):
+    def __init__(self, target_name: str, new_function_node: ast.AST):
         """
         Initializes the transformer.
 
@@ -2054,9 +2054,9 @@ class HierarchicalPlan(BaseActiveTask):
 
     def _update_plan_with_new_code(self, function_name: str, new_code: str):
         """
-        Updates the plan's source code by rebuilding it from the clean source map
-        after patching a single function. This ensures the sanitizer always runs
-        on pristine, un-instrumented code, preserving all nested structures.
+        Updates the plan's source code by performing an in-place replacement of a
+        function, whether it is top-level or nested. This uses an AST transformer
+        to ensure correctness.
 
         Args:
             function_name: The name of the function to replace.
@@ -2073,31 +2073,51 @@ class HierarchicalPlan(BaseActiveTask):
                 raise ValueError("New code must contain a single function definition.")
             new_function_node = new_function_tree.body[0]
 
-            self.clean_function_source_map[new_function_node.name] = ast.unparse(
-                new_function_node,
-            )
+            parent_function_name = None
+            for top_level_func in self.top_level_function_names:
+                if top_level_func == function_name:
+                    continue
+                parent_source = self.clean_function_source_map.get(top_level_func, "")
+                if (
+                    f"def {function_name}(" in parent_source
+                    or f"async def {function_name}(" in parent_source
+                ):
+                    parent_function_name = top_level_func
+                    break
 
-            original_tree = ast.parse(self.plan_source_code or "pass")
+            if parent_function_name:
+                parent_source = self.clean_function_source_map[parent_function_name]
+                parent_tree = ast.parse(parent_source)
+
+                replacer = FunctionReplacer(function_name, new_function_node)
+                modified_parent_tree = replacer.visit(parent_tree)
+                ast.fix_missing_locations(modified_parent_tree)
+
+                new_parent_source = ast.unparse(modified_parent_tree)
+                self.clean_function_source_map[parent_function_name] = new_parent_source
+            else:
+                self.clean_function_source_map[function_name] = new_code
+                if function_name not in self.top_level_function_names:
+                    self.top_level_function_names.add(function_name)
+
+            original_sanitized_tree = ast.parse(self.plan_source_code or "pass")
             reconstructed_parts = [
                 ast.unparse(node)
-                for node in original_tree.body
+                for node in original_sanitized_tree.body
                 if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             ]
-
-            for func_name in self.top_level_function_names:
+            for func_name in sorted(list(self.top_level_function_names)):
                 if func_name in self.clean_function_source_map:
                     reconstructed_parts.append(
                         self.clean_function_source_map[func_name],
                     )
 
-            if new_function_node.name not in self.top_level_function_names:
-                reconstructed_parts.append(
-                    self.clean_function_source_map[new_function_node.name],
-                )
+            new_unsanitized_code = "\n\n".join(reconstructed_parts)
 
-            unsanitized_code = "\n\n".join(reconstructed_parts)
-
-            self.plan_source_code = self.actor._sanitize_code(unsanitized_code, self)
+            self.plan_source_code = self.actor._sanitize_code(
+                new_unsanitized_code,
+                self,
+            )
             self.actor._load_plan_module(self)
 
         except (SyntaxError, ValueError, RuntimeError) as e:
