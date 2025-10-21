@@ -463,6 +463,7 @@ async def test_visual_change_detection_significant_changes(
     if "button_active" in before_filename:
         manager.settings.mse_threshold = 10.0
         manager.settings.ssim_threshold = 0.995
+        manager.settings.min_contour_area = 50
 
     assert (
         manager._calculate_mse(img_before, img_after) > manager.settings.mse_threshold
