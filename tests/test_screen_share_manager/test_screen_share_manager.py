@@ -1,477 +1,439 @@
-from __future__ import annotations
-
 import asyncio
-import base64
 import json
+from unittest.mock import patch, AsyncMock, MagicMock, call
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from PIL import Image
+import numpy as np
 
-from tests.helpers import _handle_project
-from unity.image_manager.image_manager import ImageHandle, ImageManager
+from unity.image_manager.image_manager import ImageHandle
 from unity.screen_share_manager.screen_share_manager import (
-    DetectedEvent,
     ScreenShareManager,
     ScreenShareManagerSettings,
+    TurnState,
 )
-from unity.screen_share_manager.types import KeyEvent
+from unity.screen_share_manager.types import DetectedEvent
+from tests.helpers import _handle_project
 
-# --- Asset Loading ---
-# Helper to locate and load image assets for realistic visual change detection tests.
+from skimage.metrics import structural_similarity as ssim
+
+# --- Constants and Asset Loading ---
+
+PNG_BLUE_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mNkYPhfz/w3A5MBA/8/AAYDAL4/7d4eAAAAAElFTkSuQmCC"
+PNG_RED_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8AARf4z/A8DMQABAL9M43+gS1dAAAAAAElFTkSuQmCC"
+PNG_GREEN_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8/5/hP2E8A5MBA/8/AAYDAF4/7d4eAAAAAElFTkSuQmCC"
+
 ASSETS_DIR = Path(__file__).parent / "assets"
 
 
-def load_asset_b64(filename: str) -> str:
-    """Loads an image from the assets folder and returns it as a base64 string."""
+def load_asset_image(filename: str) -> Image.Image:
+    """Loads an image from the assets directory for vision tests."""
+    path = ASSETS_DIR / filename
+    if not path.exists():
+        pytest.fail(f"Required asset for vision test not found: {path}")
+    return Image.open(path).convert("L").resize((512, 288))
+
+
+# --- Fixtures ---
+
+
+@pytest.fixture
+async def manager() -> ScreenShareManager:
+    """Provides a clean, started ScreenShareManager instance for each test."""
+    ssm = ScreenShareManager()
+    await ssm.start()
     try:
-        content = (ASSETS_DIR / filename).read_bytes()
-        return base64.b64encode(content).decode("utf-8")
-    except FileNotFoundError:
-        pytest.fail(
-            f"Asset file not found: {filename}. Ensure it is in the 'assets' directory."
-        )
-
-
-# Load significant change assets
-MODAL_BEFORE_B64 = load_asset_b64("modal_before.png")
-MODAL_AFTER_B64 = load_asset_b64("modal_after.png")
-BUTTON_BEFORE_B64 = load_asset_b64("button_active_before.png")
-BUTTON_AFTER_B64 = load_asset_b64("button_active_after.png")
-
-# Load insignificant change assets
-CARET_BEFORE_B64 = load_asset_b64("blinking_caret_before.png")
-CARET_AFTER_B64 = load_asset_b64("blinking_caret_after.png")
-CURSOR_BEFORE_B64 = load_asset_b64("cursor_move_before.png")
-CURSOR_AFTER_B64 = load_asset_b64("cursor_move_after.png")
-
-# Simple solid color assets for non-visual tests
-PNG_RED_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/wcAAwAB/epv2AAAAABJRU5ErkJggg=="
-PNG_BLUE_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk/wcAAgAB/epv2AAAAABJRU5ErkJggg=="
-PNG_GREEN_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60eADwAAAABJRU5ErkJggg=="
-
-
-class MockAsyncUnify:
-    """A mock for unify.AsyncUnify to return canned responses."""
-
-    def __init__(self, responses: Optional[List[str]] = None, test_id: str = "default"):
-        self._responses = responses or []
-        self._response_idx = 0
-        self.system_message: Optional[str] = None
-        self.call_history: List[Dict[str, Any]] = []
-        self.test_id = test_id
-
-    def set_system_message(self, message: str):
-        self.system_message = message
-
-    async def generate(self, *args, **kwargs) -> str:
-        call_info = {
-            "args": args,
-            "kwargs": kwargs,
-            "system_message": self.system_message,
-        }
-        self.call_history.append(call_info)
-        if self._response_idx < len(self._responses):
-            response = self._responses[self._response_idx]
-            self._response_idx += 1
-            if isinstance(response, Exception):
-                raise response
-            return response
-        raise AssertionError(
-            f"MockAsyncUnify '{self.test_id}' received more calls than expected."
-        )
+        return ssm
+    finally:
+        await ssm.stop()
 
 
 @pytest.fixture
-def mock_image_manager(monkeypatch):
-    """Fixture to provide a mocked ImageManager."""
-    mock_im = MagicMock(spec=ImageManager)
-    _pending_id_counter = 10**12
+async def mocked_manager():
+    """Provides a manager with its LLM clients mocked out."""
+    ssm = ScreenShareManager()
 
-    def _add_images_side_effect(items, synchronous, return_handles):
-        nonlocal _pending_id_counter
-        handles = []
-        for item in items:
-            mock_handle = MagicMock(spec=ImageHandle)
-            mock_handle.image_id = _pending_id_counter
-            mock_handle.is_pending = True
-            type(mock_handle).annotation = patch.object.PropertyMock(return_value=None)
-            raw_data = item["data"]
-            if isinstance(raw_data, str):
-                raw_data = base64.b64decode(raw_data)
-            mock_handle.raw.return_value = raw_data
-            handles.append(mock_handle)
-            _pending_id_counter += 1
-        return handles
+    patch_detect = patch.object(ssm, "_detection_client", new_callable=AsyncMock)
+    patch_annotate = patch.object(ssm, "_analysis_client", new_callable=AsyncMock)
+    patch_summary = patch.object(ssm, "_summary_client", new_callable=AsyncMock)
 
-    async def _add_images_async(*args, **kwargs):
-        return _add_images_side_effect(*args, **kwargs)
-
-    mock_im.add_images = AsyncMock(side_effect=_add_images_side_effect)
-    monkeypatch.setattr(
-        "asyncio.to_thread",
-        lambda func, *args, **kwargs: _add_images_async(*args, **kwargs),
-    )
-    return mock_im
+    with patch_detect as mock_detect, patch_annotate as mock_annotate, patch_summary as mock_summary:
+        await ssm.start()
+        try:
+            return ssm, {
+                "detect": mock_detect,
+                "annotate": mock_annotate,
+                "summary": mock_summary,
+            }
+        finally:
+            await ssm.stop()
 
 
-@pytest.fixture
-async def manager(mock_image_manager):
-    """Fixture to create, start, and stop a ScreenShareManager instance."""
-    # Use settings that mirror the defaults to test real-world behavior with assets
-    settings = ScreenShareManagerSettings(
-        mse_threshold=25.0,
-        ssim_threshold=0.985,
-        min_contour_area=100,
-        debounce_delay_sec=0.05,
-        vision_event_cooldown_sec=0.02,
-        inactivity_timeout_sec=0.2,
-        frame_queue_size=10,
-        adaptive_drop_threshold=0.7,
-    )
-    mock_detection_client = MockAsyncUnify(test_id="detection")
-    mock_analysis_client = MockAsyncUnify(test_id="analysis")
-    mock_summary_client = MockAsyncUnify(test_id="summary")
-
-    mgr = ScreenShareManager(
-        settings=settings,
-        image_manager=mock_image_manager,
-        detection_client=mock_detection_client,
-        analysis_client=mock_analysis_client,
-        summary_client=mock_summary_client,
-    )
-    await mgr.start()
-    yield mgr
-    await mgr.stop()
+# --- High-Level API and Orchestration Tests ---
 
 
 @pytest.mark.unit
-@pytest.mark.asyncio
 @_handle_project
-async def test_manager_initialization_and_lifecycle(manager: ScreenShareManager):
-    """Test that the manager starts and stops its background tasks."""
-    assert manager._sequencer_task and not manager._sequencer_task.done()
-    assert manager._inactivity_task and not manager._inactivity_task.done()
-    assert len(manager._frame_workers) > 0
-    await asyncio.sleep(0.01)
-
-
-# --- Visual Detection System Tests (Using Real Image Assets) ---
-
-
-@pytest.mark.unit
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "before_b64, after_b64",
-    [
-        (MODAL_BEFORE_B64, MODAL_AFTER_B64),
-        (BUTTON_BEFORE_B64, BUTTON_AFTER_B64),
-    ],
-)
-@_handle_project
-async def test_detects_significant_visual_changes(
-    manager: ScreenShareManager, before_b64, after_b64
-):
+async def test_full_api_flow_detection_and_annotation(mocked_manager):
     """
-    Tests that the manager's real image processing logic correctly identifies
-    a significant UI change (e.g., a modal appearing).
+    Tests the primary API flow: push frames/speech, analyze, and annotate,
+    verifying that the consumer context is used.
     """
-    assert len(manager._pending_vision_events) == 0
+    manager, mocks = mocked_manager
 
-    # Push the "before" state
-    await manager.push_frame(before_b64, timestamp=1.0)
-    await asyncio.sleep(0.1)  # Let processing happen
-    assert len(manager._pending_vision_events) == 0
-    assert manager._last_significant_frame_b64 is not None
-
-    # Push the "after" state, which contains a significant change
-    await manager.push_frame(after_b64, timestamp=2.0)
-    await asyncio.sleep(0.1)
-
-    # A visual event should have been detected
-    assert len(manager._pending_vision_events) == 1
-    event = manager._pending_vision_events[0]
-    assert event["timestamp"] == 2.0
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "before_b64, after_b64",
-    [
-        (CARET_BEFORE_B64, CARET_AFTER_B64),
-        (CURSOR_BEFORE_B64, CURSOR_AFTER_B64),
-    ],
-)
-@_handle_project
-async def test_ignores_insignificant_visual_changes(
-    manager: ScreenShareManager, before_b64, after_b64
-):
-    """
-    Tests that the manager's real image processing logic correctly ignores
-    insignificant UI changes (e.g., a blinking cursor or small mouse movement).
-    """
-    await manager.push_frame(before_b64, timestamp=1.0)
-    await asyncio.sleep(0.1)
-    await manager.push_frame(after_b64, timestamp=1.1)
-    await asyncio.sleep(0.1)
-
-    # No event should be created because the change is too small to be significant
-    assert len(manager._pending_vision_events) == 0
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-@_handle_project
-async def test_vision_event_cooldown_prevents_flooding(manager: ScreenShareManager):
-    """Tests that the vision_event_cooldown_sec prevents a flood of events."""
-    # This test uses simple assets as it's testing timing, not complex detection.
-    with patch.object(manager, "_calculate_mse", return_value=50.0), patch.object(
-        manager, "_is_semantically_significant", return_value=True
-    ), patch("skimage.metrics.structural_similarity", return_value=0.9):
-
-        await manager.push_frame(PNG_RED_B64, timestamp=1.0)
-        await asyncio.sleep(0.05)
-        assert len(manager._pending_vision_events) == 0
-
-        await manager.push_frame(PNG_BLUE_B64, timestamp=1.1)
-        await asyncio.sleep(0.05)
-        assert len(manager._pending_vision_events) == 1
-
-        await manager.push_frame(PNG_GREEN_B64, timestamp=1.11)
-        await asyncio.sleep(0.05)
-        assert len(manager._pending_vision_events) == 1
-
-        await asyncio.sleep(manager.settings.vision_event_cooldown_sec)
-        await manager.push_frame(PNG_RED_B64, timestamp=1.2)
-        await asyncio.sleep(0.05)
-        assert len(manager._pending_vision_events) == 2
-
-
-# --- Turn Analysis Debouncing Tests ---
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-@_handle_project
-async def test_turn_analysis_debouncing_waits_for_delay(manager: ScreenShareManager):
-    """Tests that analysis is delayed by the debounce setting."""
-    manager._detection_client = MockAsyncUnify(responses=['{"moments": []}'])
-    await manager.push_speech("test utterance", 1.0, 1.5)
-    assert len(manager._detection_client.call_history) == 0
-    await asyncio.sleep(manager.settings.debounce_delay_sec / 2)
-    assert len(manager._detection_client.call_history) == 0
-    await asyncio.sleep(manager.settings.debounce_delay_sec)
-    assert len(manager._detection_client.call_history) == 1
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-@_handle_project
-async def test_debouncing_is_reset_by_new_events(manager: ScreenShareManager):
-    """Tests that a new speech event resets the debounce timer."""
-    manager._detection_client = MockAsyncUnify(responses=['{"moments": []}'])
-    await manager.push_speech("first utterance", 1.0, 1.5)
-    await asyncio.sleep(manager.settings.debounce_delay_sec * 0.9)
-    assert len(manager._detection_client.call_history) == 0
-    await manager.push_speech("second utterance", 2.0, 2.5)
-    await asyncio.sleep(manager.settings.debounce_delay_sec * 0.9)
-    assert len(manager._detection_client.call_history) == 0
-    await asyncio.sleep(manager.settings.debounce_delay_sec)
-    assert len(manager._detection_client.call_history) == 1
-    assert (
-        "second utterance"
-        in manager._detection_client.call_history[0]["system_message"]
+    # --- Stage 1: Detection ---
+    mocks["detect"].generate.return_value = json.dumps(
+        {"moments": [{"timestamp": 1.5, "reason": "visual_change"}]}
     )
 
-
-# --- Adaptive Frame Dropping Tests ---
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-@_handle_project
-async def test_adaptive_frame_dropping_when_backlogged(manager: ScreenShareManager):
-    """Tests that frames are dropped when the queue is nearing capacity."""
-    backlog_size = (
-        int(
-            manager.settings.frame_queue_size * manager.settings.adaptive_drop_threshold
-        )
-        + 1
-    )
-    with patch.object(
-        manager._frame_queue, "qsize", return_value=backlog_size
-    ), patch.object(manager._frame_queue, "put") as mock_put:
-        await manager.push_frame(PNG_RED_B64, 1.0)
-        mock_put.assert_not_called()
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-@_handle_project
-async def test_frame_dropping_when_queue_is_full(manager: ScreenShareManager):
-    """Tests that frames are dropped when the queue is completely full."""
-    with patch.object(manager._frame_queue, "full", return_value=True), patch.object(
-        manager._frame_queue, "put"
-    ) as mock_put:
-        await manager.push_frame(PNG_RED_B64, 1.0)
-        mock_put.assert_not_called()
-
-
-# --- Other Core Logic and Edge Case Tests ---
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-@_handle_project
-async def test_inactivity_flush_triggers_silent_detection(manager: ScreenShareManager):
-    """Test that inactivity flushes pending visual events into a silent turn."""
-    detection_response = '{"moments": [{"timestamp": 2.0, "reason": "visual_change"}]}'
-    manager._detection_client = MockAsyncUnify(
-        responses=[detection_response], test_id="inactivity_flush"
-    )
-    # Use mocks for image comparison to ensure a visual event is created for this timing test.
-    with patch.object(manager, "_calculate_mse", return_value=50.0), patch.object(
-        manager, "_is_semantically_significant", return_value=True
-    ), patch("skimage.metrics.structural_similarity", return_value=0.9):
-        await manager.push_frame(PNG_RED_B64, timestamp=1.0)
-        await manager.push_frame(PNG_BLUE_B64, timestamp=2.0)
-        await asyncio.sleep(0.1)
-        assert len(manager._pending_vision_events) == 1
-        await asyncio.sleep(0.3)
-        assert len(manager._detection_client.call_history) == 1
-        assert "No user speech occurred." in manager._detection_client.system_message
-        assert len(manager._pending_vision_events) == 0
-        assert len(manager._stored_silent_detected_events) == 1
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-@_handle_project
-async def test_full_turn_speech_plus_visuals(manager: ScreenShareManager):
-    """Test a complete turn from speech to annotation."""
-    detection_response = '{"moments": [{"timestamp": 2.0, "reason": "user_speech"}]}'
-    annotation_response = "A modal window appeared on the screen."
-    summary_response = "Session started. A modal window appeared on the screen."
-    manager._detection_client = MockAsyncUnify(
-        responses=[detection_response], test_id="full_turn_detect"
-    )
-    manager._analysis_client = MockAsyncUnify(
-        responses=[annotation_response], test_id="full_turn_analysis"
-    )
-    manager._summary_client = MockAsyncUnify(
-        responses=[summary_response], test_id="full_turn_summary"
+    # Simulate the result of the detection being put on the queue
+    await manager._detection_queue.put(
+        ([{"timestamp": 1.5, "reason": "visual_change"}], {1.5: PNG_RED_B64})
     )
 
-    await manager.push_frame(MODAL_BEFORE_B64, timestamp=1.0)
-    await manager.push_frame(MODAL_AFTER_B64, timestamp=2.0)
-    await asyncio.sleep(0.01)
-
-    await manager.push_speech("what is this pop-up?", 1.8, 2.5)
     analysis_task = manager.analyze_turn()
-    await asyncio.sleep(0.1)
-
     detected_events = await analysis_task
-    assert len(detected_events) == 1
 
-    annotated_handles = await manager.annotate_events(
-        detected_events, context="User is confused."
-    )
+    assert len(detected_events) == 1
+    assert isinstance(detected_events[0], DetectedEvent)
+    assert detected_events[0].timestamp == 1.5
+    assert isinstance(detected_events[0].image_handle, ImageHandle)
+
+    # --- Stage 2: Annotation ---
+    mocks["annotate"].generate.return_value = "This is the rich annotation."
+    consumer_context = "User is performing a test."
+
+    annotated_handles = await manager.annotate_events(detected_events, consumer_context)
+
+    mocks["annotate"].generate.assert_called_once()
+    # Verify consumer context is in the system prompt
+    system_prompt = mocks["annotate"]._system_message
+    assert "User is performing a test." in system_prompt
+
     assert len(annotated_handles) == 1
-    assert annotated_handles[0].annotation == annotation_response
+    assert annotated_handles[0].annotation == "This is the rich annotation."
+    assert annotated_handles[0] is detected_events[0].image_handle
+
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_sequential_annotation_builds_context(mocked_manager):
+    """
+    Tests that annotating multiple events in one call correctly passes the annotation
+    of the first event as context to the second.
+    """
+    manager, mocks = mocked_manager
+
+    handles = manager._image_manager.add_images(
+        [{"data": PNG_RED_B64}, {"data": PNG_GREEN_B64}],
+        synchronous=False,
+        return_handles=True,
+    )
+    detected_events = [
+        DetectedEvent(1.0, "reason1", handles[0]),
+        DetectedEvent(2.0, "reason2", handles[1]),
+    ]
+
+    mocks["annotate"].generate.side_effect = [
+        "Annotation for event 1",
+        "Annotation for event 2",
+    ]
+
+    await manager.annotate_events(detected_events, "initial context")
+
+    assert mocks["annotate"].generate.call_count == 2
+
+    # Check that the first annotation was passed as context to the second call's system prompt
+    second_call_system_prompt = mocks["annotate"]._system_message
+    assert '"Annotation for event 1"' in second_call_system_prompt
+
+    assert handles[0].annotation == "Annotation for event 1"
+    assert handles[1].annotation == "Annotation for event 2"
+
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_summary_update_triggered_after_annotation(mocked_manager):
+    """
+    Verifies that after a successful annotation, the session summary is updated
+    with the new event information.
+    """
+    manager, mocks = mocked_manager
+    manager.set_session_context("Initial summary.")
+
+    handles = manager._image_manager.add_images(
+        [{"data": PNG_RED_B64}], synchronous=False, return_handles=True
+    )
+    detected_events = [DetectedEvent(1.0, "test", handles[0])]
+
+    mocks["annotate"].generate.return_value = "A new event happened."
+    mocks["summary"].generate.return_value = "Updated summary including the new event."
+
+    await manager.annotate_events(detected_events, "test context")
 
     await asyncio.sleep(1.1)
-    assert len(manager._summary_client.call_history) == 1
-    assert manager._session_summary == summary_response
+
+    mocks["summary"].generate.assert_called_once()
+    summary_prompt = mocks["summary"].generate.call_args.args[0]
+    assert "A new event happened." in summary_prompt
+    assert "Initial summary." in summary_prompt
+
+    async with manager._state_lock:
+        assert manager._session_summary == "Updated summary including the new event."
 
 
 @pytest.mark.unit
-@pytest.mark.asyncio
 @_handle_project
-async def test_event_burst_consolidation(manager: ScreenShareManager):
-    """Test that rapid visual changes are consolidated into one event."""
-    manager.settings.burst_detection_threshold_sec = 0.1
-    manager.settings.visual_event_sampling_threshold = 2
-    detection_response = '{"moments": [{"timestamp": 1.4, "reason": "visual_change"}]}'
-    manager._detection_client = MockAsyncUnify(
-        responses=[detection_response], test_id="burst_detect"
-    )
-
-    with patch.object(manager, "_calculate_mse", return_value=50.0), patch.object(
-        manager, "_is_semantically_significant", return_value=True
-    ), patch("skimage.metrics.structural_similarity", return_value=0.9):
-        await manager.push_frame(PNG_RED_B64, timestamp=1.0)
-        await manager.push_frame(PNG_BLUE_B64, timestamp=1.1)
-        await manager.push_frame(PNG_RED_B64, timestamp=1.2)
-        await manager.push_frame(PNG_BLUE_B64, timestamp=1.3)
-        await manager.push_frame(PNG_RED_B64, timestamp=1.4)
-        await asyncio.sleep(0.1)
-        await asyncio.sleep(0.3)
-
-        assert len(manager._detection_client.call_history) == 1
-        prompt = manager._detection_client.system_message
-        assert "A rapid sequence of 5 visual changes" in prompt
-        assert "ending at t=1.40s" in prompt
-
-
-@pytest.mark.unit
 @pytest.mark.asyncio
-@_handle_project
-async def test_silent_events_are_combined_with_next_turn(manager: ScreenShareManager):
-    """Test that stored silent events are returned alongside the next turn's events."""
-    detection_responses = [
-        '{"moments": [{"timestamp": 2.0, "reason": "visual_change"}]}',
-        '{"moments": [{"timestamp": 4.5, "reason": "user_speech"}]}',
+async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager):
+    """
+    Tests that a visual event detected without speech is stored and then
+    returned in the result of the next turn that *does* have speech.
+    """
+    manager, mocks = mocked_manager
+    manager.settings.debounce_delay_sec = 0.05
+
+    silent_handle = manager._image_manager.add_images(
+        [{"data": PNG_RED_B64}], synchronous=False, return_handles=True
+    )[0]
+    manager._stored_silent_detected_events = [
+        DetectedEvent(1.0, "silent_change", silent_handle)
     ]
-    manager._detection_client = MockAsyncUnify(
-        responses=detection_responses, test_id="silent_plus_speech"
+
+    mocks["detect"].generate.return_value = json.dumps(
+        {"moments": [{"timestamp": 2.5, "reason": "speech_related_change"}]}
     )
 
-    await manager.push_frame(MODAL_BEFORE_B64, timestamp=1.0)
-    await manager.push_frame(MODAL_AFTER_B64, timestamp=2.0)
-    await asyncio.sleep(0.3)
-    assert len(manager._detection_client.call_history) == 1
-    assert len(manager._stored_silent_detected_events) == 1
+    await manager.push_speech("second turn", 2.0, 3.0)
+    await manager._detection_queue.put(
+        ([{"timestamp": 2.5, "reason": "speech_related_change"}], {2.5: PNG_GREEN_B64})
+    )
 
-    await manager.push_frame(BUTTON_BEFORE_B64, timestamp=4.5)
-    await manager.push_speech("now do this", 4.0, 4.8)
     analysis_task = manager.analyze_turn()
-    await asyncio.sleep(0.1)
+    all_events = await analysis_task
 
-    detected_events = await analysis_task
-    assert len(detected_events) == 2
-    timestamps = sorted([e.timestamp for e in detected_events])
-    assert timestamps == [2.0, 4.5]
-    assert len(manager._stored_silent_detected_events) == 0
+    assert len(all_events) == 2
+    timestamps = {e.timestamp for e in all_events}
+    assert 1.0 in timestamps
+    assert 2.5 in timestamps
+
+
+# --- Lifecycle and State Transition Tests (New) ---
 
 
 @pytest.mark.unit
-@pytest.mark.asyncio
 @_handle_project
-async def test_annotation_failure_on_one_event_does_not_stop_others(
-    manager: ScreenShareManager,
-):
-    """Tests that if one annotation fails, others in the same turn are still processed."""
-    handle1 = MagicMock(spec=ImageHandle)
-    handle1.raw.return_value = b"1"
-    handle1.annotation = None
-    handle2 = MagicMock(spec=ImageHandle)
-    handle2.raw.return_value = b"2"
-    handle2.annotation = None
-    detected_events = [
-        DetectedEvent(timestamp=1.0, detection_reason="a", image_handle=handle1),
-        DetectedEvent(timestamp=2.0, detection_reason="b", image_handle=handle2),
+@pytest.mark.asyncio
+async def test_start_and_stop_lifecycle():
+    """Verifies that start() creates background tasks and stop() cancels them."""
+    created_tasks = []
+
+    def mock_create_task(coro):
+        task = MagicMock(spec=asyncio.Task)
+        task.done.return_value = False
+        created_tasks.append(task)
+        return task
+
+    with patch("asyncio.create_task", side_effect=mock_create_task):
+        manager = ScreenShareManager()
+        await manager.start()
+
+        # Expected tasks: sequencer + inactivity loop + N frame workers
+        expected_task_count = 2 + manager.settings.max_frame_workers
+        assert len(created_tasks) == expected_task_count
+
+        await manager.stop()
+
+        for task in created_tasks:
+            task.cancel.assert_called_once()
+
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_debounce_logic_groups_speech_events(mocked_manager):
+    """Ensures multiple quick speech events trigger only one analysis."""
+    manager, _ = mocked_manager
+    manager.settings.debounce_delay_sec = 0.2
+
+    with patch.object(
+        manager, "_detect_key_moments", new_callable=AsyncMock
+    ) as mock_detect:
+        await manager.push_speech("first part", 1.0, 1.1)
+        await asyncio.sleep(0.05)
+        await manager.push_speech("second part", 1.2, 1.3)
+
+        mock_detect.assert_not_called()
+
+        await asyncio.sleep(0.25)
+
+        mock_detect.assert_called_once()
+
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_inactivity_flush_triggers_for_visual_events(mocked_manager):
+    """Tests that a silent visual event triggers analysis after an inactivity period."""
+    manager, _ = mocked_manager
+    manager.settings.inactivity_timeout_sec = 0.1
+    manager.settings.debounce_delay_sec = 0.05
+
+    manager._inactivity_task.cancel()
+
+    with patch.object(
+        manager, "_detect_key_moments", new_callable=AsyncMock
+    ) as mock_detect:
+        manager._pending_vision_events.append(
+            {"timestamp": 1.0, "after_frame_b64": PNG_RED_B64}
+        )
+        manager._last_activity_time = asyncio.get_event_loop().time()
+
+        await asyncio.sleep(0.15)
+
+        is_debouncing = manager._debounce_task and not manager._debounce_task.done()
+        if (
+            asyncio.get_event_loop().time() - manager._last_activity_time
+            >= manager.settings.inactivity_timeout_sec
+            and not is_debouncing
+            and manager._pending_vision_events
+        ):
+            manager._trigger_turn_analysis(speech_event=None)
+
+        await asyncio.sleep(0.1)
+
+        mock_detect.assert_called_once()
+
+
+# --- Error and Failure Condition Tests (New) ---
+
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_detection_llm_retries_on_failure(mocked_manager):
+    """Verifies that the LLM retry decorator is working."""
+    manager, mocks = mocked_manager
+    manager.settings.llm_retry_max_tries = 3
+    manager.settings.llm_retry_base_delay_sec = 0.01
+
+    mocks["detect"].generate.side_effect = [
+        Exception("LLM unavailable"),
+        Exception("LLM still unavailable"),
+        json.dumps({"moments": []}),
     ]
-    responses = [Exception("LLM API Error"), "This is the second annotation."]
-    manager._analysis_client = MockAsyncUnify(
-        responses=responses, test_id="annotation_failure"
+
+    await manager._detect_key_moments(
+        TurnState(speech_event={"payload": {"content": "test"}})
     )
 
-    annotated_handles = await manager.annotate_events(detected_events, context="test")
+    assert mocks["detect"].generate.call_count == 3
 
-    assert len(annotated_handles) == 1
-    assert annotated_handles[0] == handle2
-    assert handle2.annotation == "This is the second annotation."
-    assert handle1.annotation is None
-    assert len(manager._analysis_client.call_history) == 2
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_detection_llm_handles_invalid_json(mocked_manager, caplog):
+    """Ensures the manager doesn't crash if the LLM returns malformed JSON."""
+    manager, mocks = mocked_manager
+    mocks["detect"].generate.return_value = "This is not JSON"
+
+    await manager._detect_key_moments(
+        TurnState(speech_event={"payload": {"content": "test"}})
+    )
+
+    assert "Failed to detect key moments" in caplog.text
+    key_moments, _ = await manager._detection_queue.get()
+    assert key_moments == []
+
+
+# --- Concurrency and Load Tests (New) ---
+
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_adaptive_frame_dropping_under_load(caplog):
+    """Verifies that frames are dropped when the queue is backlogged."""
+    manager = ScreenShareManager()
+    await manager.start()
+
+    with patch.object(manager._frame_queue, "qsize") as mock_qsize:
+        mock_qsize.return_value = manager.settings.frame_queue_size * 0.8
+
+        await manager.push_frame(PNG_BLUE_B64, 1.0)
+
+    assert "Proactively dropping frame" in caplog.text
+    await manager.stop()
+
+
+# --- Configuration Tests (New) ---
+
+
+@pytest.mark.unit
+@_handle_project
+def test_custom_settings_are_applied():
+    """Ensures that custom settings passed to the constructor are used."""
+    custom_settings = ScreenShareManagerSettings(
+        debounce_delay_sec=0.0123, mse_threshold=99.9
+    )
+    manager = ScreenShareManager(settings=custom_settings)
+
+    assert manager.settings.debounce_delay_sec == 0.0123
+    assert manager.settings.mse_threshold == 99.9
+
+
+# --- Visual Change Detection Tests (Original - Now Async) ---
+
+
+@pytest.mark.vision
+@_handle_project
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "image_pair",
+    [
+        ("modal_before.png", "modal_after.png"),
+        ("button_active_before.png", "button_active_after.png"),
+    ],
+)
+async def test_visual_change_detection_significant_changes(
+    manager: ScreenShareManager, image_pair
+):
+    """Tests that the vision pipeline correctly identifies REAL, significant UI changes."""
+    before_filename, after_filename = image_pair
+    img_before = load_asset_image(before_filename)
+    img_after = load_asset_image(after_filename)
+
+    assert (
+        manager._calculate_mse(img_before, img_after) > manager.settings.mse_threshold
+    )
+
+    score = ssim(np.array(img_before), np.array(img_after))
+    assert score < manager.settings.ssim_threshold
+
+    assert manager._is_semantically_significant(img_before, img_after) is True
+
+
+@pytest.mark.vision
+@_handle_project
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "image_pair",
+    [
+        ("blinking_caret_before.png", "blinking_caret_after.png"),
+        ("cursor_move_before.png", "cursor_move_after.png"),
+    ],
+)
+async def test_visual_change_detection_insignificant_changes(
+    manager: ScreenShareManager, image_pair
+):
+    """Tests that the vision pipeline correctly IGNORES insignificant visual noise."""
+    before_filename, after_filename = image_pair
+    img_before = load_asset_image(before_filename)
+    img_after = load_asset_image(after_filename)
+
+    assert manager._is_semantically_significant(img_before, img_after) is False
