@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
-from typing import Any, Mapping, Sequence, Union, get_args, get_origin
+from typing import Any, Mapping, Sequence, Union, get_args, get_origin, Annotated
 from types import UnionType  # Python 3.10+
 from pydantic import BaseModel
 
@@ -21,6 +21,9 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
       Unwraps ``Optional[X]`` / ``Union[X, None]`` automatically.
     • Pull the human-readable description from ``Field(..., description=...)``.
       Omit the key when no description was supplied.
+    • Honor a per-field Unify type override via either
+      ``Field(json_schema_extra={"unify_type": "..."})`` or
+      ``typing.Annotated[T, {"unify_type": "..."}]``.
 
     Examples
     --------
@@ -28,6 +31,40 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
     >>> unify.create_fields(fields_dict, context=ctx)
     """
     fields_source = model.model_fields
+
+    def _extract_unify_type(field_info: Any, annotation: Any) -> str | None:
+        """Return an explicit Unify data type override if specified.
+
+        Supported sources:
+        - Field(..., json_schema_extra={"unify_type": "..."})
+        - typing.Annotated[T, {"unify_type": "..."}] or an object with attribute ``unify_type``
+        """
+        # A) From Field(..., json_schema_extra={...})
+        try:
+            extra = getattr(field_info, "json_schema_extra", None)
+            if isinstance(extra, dict):
+                ut = extra.get("unify_type")
+                if isinstance(ut, str) and ut:
+                    return ut
+        except Exception:
+            pass
+
+        # B) From typing.Annotated[..., meta]
+        try:
+            if get_origin(annotation) is Annotated:
+                metas = get_args(annotation)[1:]
+                for m in metas:
+                    if isinstance(m, dict) and isinstance(m.get("unify_type"), str):
+                        return m["unify_type"]
+                    if hasattr(m, "unify_type") and isinstance(
+                        getattr(m, "unify_type"),
+                        str,
+                    ):
+                        return getattr(m, "unify_type")
+        except Exception:
+            pass
+
+        return None
 
     def infer_column_type(py_t: Any) -> str:
         """Map a (possibly nested) annotation to the closest ``ColumnType`` label."""
@@ -98,7 +135,9 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
     for name, field in fields_source.items():
 
         annotation = field.annotation
-        column_type = infer_column_type(annotation)
+        # Prefer explicit Unify type override when present
+        unify_type_override = _extract_unify_type(field, annotation)
+        column_type = unify_type_override or infer_column_type(annotation)
 
         entry: dict[str, Any] = {"type": column_type, "mutable": True}
         if getattr(field, "description", None):

@@ -1001,7 +1001,7 @@ class ImageManager(BaseImageManager):
             # In async mode, only return handles (ids are unknown yet)
             return handles
 
-        # Prepare payloads (preserve explicit_types; convert bytes → base64) – sync path only
+        # Prepare payloads (convert bytes → base64) – sync path only
         prepared: List[Dict[str, Any]] = []
         annotations: List[Optional[str]] = []
         auto_caption_flags: List[bool] = []
@@ -1216,12 +1216,7 @@ class ImageManager(BaseImageManager):
                 if isinstance(d, (bytes, bytearray)):
                     d = base64.b64encode(d).decode("utf-8")
                 entries["data"] = d
-                # Ensure backend keeps the data column typed as an image
-                existing_et = entries.get("explicit_types") or {}
-                et_for_data = dict(existing_et.get("data") or {})
-                et_for_data["type"] = "image"
-                existing_et["data"] = et_for_data
-                entries["explicit_types"] = existing_et
+                # No per-log explicit_types needed; field is strongly typed in schema
             if not entries:
                 continue
             ids = unify.get_logs(
