@@ -29,13 +29,18 @@ def serialize_tool_content(
             payload if isinstance(payload, dict) else {"message": str(payload)}
         )
         # Keep the tool name visible for progress/notification placeholders
-        return _dumps({"tool": tool_name, **content_payload}, indent=4)
+        return _dumps(
+            {"tool": tool_name, **content_payload},
+            indent=4,
+            context={"prune_empty": True, "shorthand": True},
+        )
 
     # Final result path – promote embedded images, keep a clean textual view without raw base64
     images: list[str] = []
     with suppress(Exception):
         _collect_images(payload, images)
 
+    # Do NOT apply shorthand/prune to the final content; preserve full keys and structure
     text_repr = _dumps(_strip_image_keys(payload), indent=4)
 
     if images:
