@@ -160,11 +160,11 @@ async def test_handle_requests_clarification():
 
     question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "clarify" in question.lower()
-    await down_q.put("Yes – focus on European clients.")
+    await down_q.put("It's the one ending in 123")
 
     answer = await h.result()
     assert isinstance(answer, str) and answer.strip()
-    assert "europe" in answer.lower()
+    assert "123" in answer.lower()
 
 
 # ────────────────────────────────────────────────────────────────────────────
