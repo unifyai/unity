@@ -9,6 +9,7 @@ from pydantic import (
 )
 from datetime import datetime
 from ...image_manager.types import AnnotatedImageRefs
+from typing import ClassVar
 
 UNASSIGNED = -1
 
@@ -51,7 +52,7 @@ class Message(BaseModel):
     )
 
     # Central, single source of truth for shorthand aliases (full → shorthand)
-    SHORTHAND_MAP: dict[str, str] = {
+    SHORTHAND_MAP: ClassVar[dict[str, str]] = {
         "message_id": "mid",
         "medium": "med",
         "sender_id": "sid",
