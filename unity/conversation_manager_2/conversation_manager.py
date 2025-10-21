@@ -259,7 +259,7 @@ class ConversationManager:
             )
             parsed_out = json.loads(out)
 
-        print(parsed_out)
+        print(f"parsed_out {parsed_out}")
         if parsed_out["actions"] is not None:
             for action in parsed_out["actions"]:
                 if action["action_name"].startswith("conductor_"):
@@ -270,14 +270,14 @@ class ConversationManager:
                             action_name=action["action_name"].replace(
                                 "conductor_handle_", ""
                             ),
-                            query=action["query"],
+                            query=parsed_out["thoughts"],
                             parent_chat_context=self.state.chat_history,
                         )
                     else:
                         # Create a new Conductor task via ManagersWorker
                         event = ConductorRequest(
                             action_name=action["action_name"].replace("conductor_", ""),
-                            query=action["query"],
+                            query=parsed_out["thoughts"],
                             parent_chat_context=self.state.chat_history,
                         )
                     asyncio.create_task(
