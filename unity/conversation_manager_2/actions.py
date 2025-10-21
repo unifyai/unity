@@ -7,37 +7,24 @@ from pydantic import BaseModel, Field, create_model
 
 # conductor
 class ConductorAction(BaseModel):
-    """
-    Ask or request the Conductor to perform a task.
-        "conductor_ask": read-only request
-        "conductor_request": read-write request
-    """
+    """Ask or request the Conductor to perform a task."""
 
-    action_name: Literal["conductor_ask", "conductor_request"]
-    query: str
+    action_name: Literal["conductor_ask", "conductor_request"] = Field(
+        ...,
+        description=(
+            "The action to perform on the Conductor. Options are:\n"
+            "'conductor_ask': read-only request\n"
+            "'conductor_request': read-write request\n"
+        ),
+    )
+    query: str = Field(
+        ...,
+        description="The query to send to the Conductor",
+    )
 
 
 class ConductorHandleAction(BaseModel):
-    """
-    Intervene on an existing Conductor handle.
-    You can't intervene on a handle that already has a result.
-
-    Args:
-        handle_id: the id of the handle to intervene on
-
-        action_name: the action to perform on the handle, ask/interject/clarify require
-        a query. Options are:
-            "conductor_handle_ask": ask something to the handle
-            "conductor_handle_interject": interject a message to the handle
-            "conductor_handle_stop": stop the handle
-            "conductor_handle_pause": pause the handle
-            "conductor_handle_resume": resume the handle
-            "conductor_handle_done": check if the handle is done
-            "conductor_handle_answer_clarification": answer a clarification question
-
-        query: the text to send to the handle (required for "conductor_handle_ask",
-        "conductor_handle_interject", "conductor_handle_answer_clarification" actions)
-    """
+    """Intervene on an existing Conductor handle."""
 
     handle_id: int
     action_name: Literal[
@@ -48,8 +35,28 @@ class ConductorHandleAction(BaseModel):
         "conductor_handle_resume",
         "conductor_handle_done",
         "conductor_handle_answer_clarification",
-    ]
-    query: str |  None = None
+    ] = Field(
+        ...,
+        description=(
+            "The action to perform on the handle. Options are:\n"
+            "'conductor_handle_ask': ask something to the handle through the query\n"
+            "'conductor_handle_interject': interject the handle through the query\n"
+            "'conductor_handle_stop': stop the handle\n"
+            "'conductor_handle_pause': pause the handle\n"
+            "'conductor_handle_resume': resume the handle\n"
+            "'conductor_handle_done': check if the handle is done\n"
+            "'conductor_handle_answer_clarification': answer a clarification question "
+            "through the query\n"
+        ),
+    )
+    query: str | None = Field(
+        None,
+        description=(
+            "The query to send to the handle, must be a non-empty string for the "
+            "following actions:\n'conductor_handle_ask'\n'conductor_handle_interject'\n"
+            "'conductor_handle_answer_clarification'\n. Leave blank for other actions."
+        ),
+    )
 
 
 # wait
