@@ -40,12 +40,12 @@ def serialize_tool_content(
     with suppress(Exception):
         _collect_images(payload, images)
 
-    # Apply prune_empty to final content so empty containers (e.g., images: []) are omitted
-    # Shorthand can be enabled later; for now keep full keys for final results
+    # Always apply prune + shorthand for final tool results so models that support
+    # these modes render compactly and consistently in tool outputs
     text_repr = _dumps(
         _strip_image_keys(payload),
         indent=4,
-        context={"prune_empty": True},
+        context={"prune_empty": True, "shorthand": True},
     )
 
     if images:
