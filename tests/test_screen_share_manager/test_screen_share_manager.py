@@ -39,20 +39,24 @@ def load_asset_image(filename: str) -> Image.Image:
 
 
 @pytest.fixture
-async def manager() -> (
-    ScreenShareManager
-):  # No change to type hint needed for async generator
+async def manager(request):
     """Provides a clean, started ScreenShareManager instance for each test."""
     ssm = ScreenShareManager()
     await ssm.start()
-    try:
-        yield ssm
-    finally:
-        await ssm.stop()
+
+    def finalizer():
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(ssm.stop())
+        except RuntimeError:
+            asyncio.run(ssm.stop())
+
+    request.addfinalizer(finalizer)
+    return ssm
 
 
 @pytest.fixture
-async def mocked_manager():
+async def mocked_manager(request):
     """Provides a manager with its LLM clients mocked out."""
     ssm = ScreenShareManager()
 
@@ -60,16 +64,29 @@ async def mocked_manager():
     patch_annotate = patch.object(ssm, "_analysis_client", new_callable=AsyncMock)
     patch_summary = patch.object(ssm, "_summary_client", new_callable=AsyncMock)
 
-    with patch_detect as mock_detect, patch_annotate as mock_annotate, patch_summary as mock_summary:
-        await ssm.start()
+    mock_detect = patch_detect.start()
+    mock_annotate = patch_annotate.start()
+    mock_summary = patch_summary.start()
+
+    await ssm.start()
+
+    def finalizer():
+        patch_detect.stop()
+        patch_annotate.stop()
+        patch_summary.stop()
         try:
-            yield ssm, {
-                "detect": mock_detect,
-                "annotate": mock_annotate,
-                "summary": mock_summary,
-            }
-        finally:
-            await ssm.stop()
+            loop = asyncio.get_running_loop()
+            loop.create_task(ssm.stop())
+        except RuntimeError:
+            asyncio.run(ssm.stop())
+
+    request.addfinalizer(finalizer)
+
+    return ssm, {
+        "detect": mock_detect,
+        "annotate": mock_annotate,
+        "summary": mock_summary,
+    }
 
 
 # --- High-Level API and Orchestration Tests ---
