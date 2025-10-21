@@ -154,8 +154,11 @@ async def test_sequential_annotation_builds_context(mocked_manager):
     mocked_manager = await mocked_manager
     manager, mocks = mocked_manager
 
+    red_b64 = PNG_RED_B64.split(",", 1)[1]
+    green_b64 = PNG_GREEN_B64.split(",", 1)[1]
+
     handles = manager._image_manager.add_images(
-        [{"data": PNG_RED_B64}, {"data": PNG_GREEN_B64}],
+        [{"data": red_b64}, {"data": green_b64}],
         synchronous=True,
         return_handles=True,
     )
@@ -195,8 +198,10 @@ async def test_summary_update_triggered_after_annotation(mocked_manager):
     manager, mocks = mocked_manager
     manager.set_session_context("Initial summary.")
 
+    red_b64 = PNG_RED_B64.split(",", 1)[1]
+
     handles = manager._image_manager.add_images(
-        [{"data": PNG_RED_B64}], synchronous=True, return_handles=True
+        [{"data": red_b64}], synchronous=True, return_handles=True
     )
     detected_events = [DetectedEvent(1.0, "test", handles[0])]
 
