@@ -103,17 +103,17 @@ class ScenarioBuilder:
 
 def _answer_semantic(ts: TaskScheduler, question: str) -> str:
     q = question.lower()
-    tasks = ts._filter_tasks()
+    tasks = ts._filter_tasks()["tasks"]
 
     if "currently primed" in q:
-        return next(t for t in tasks if t["status"] == "primed")["name"]
+        return next(t for t in tasks if str(t.status) == "primed").name
 
     if "tasks are queued" in q:
-        return str(sum(1 for t in tasks if t["status"] == "queued"))
+        return str(sum(1 for t in tasks if str(t.status) == "queued"))
 
     if "client meeting" in q and "scheduled" in q:
-        mtg = next(t for t in tasks if "client meeting" in t["name"].lower())
-        return mtg["schedule"]["start_at"].split("T")[0]
+        mtg = next(t for t in tasks if "client meeting" in t.name.lower())
+        return mtg.schedule.start_at.split("T")[0]
 
     if "priority" in q and "hotfix" in q:
         hotfix = next(t for t in tasks if "hotfix" in t["name"].lower())

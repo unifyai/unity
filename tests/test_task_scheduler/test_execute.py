@@ -326,7 +326,7 @@ async def test_execute_creates_new_task_and_executes(monkeypatch):
     # Description may be normalised (e.g. trailing period removed).  Accept any
     # task whose *name* or *description* contains our original phrase without
     # the trailing period.
-    created_tasks = ts._filter_tasks()
+    created_tasks = ts._filter_tasks()["tasks"]
     phrase = description.rstrip(".").casefold()
     assert any(
         phrase in (t.get("name", "") or "").casefold()
@@ -398,8 +398,8 @@ async def test_execute_sets_activated_by_explicit():
     await handle.result()
 
     # Verify activated_by on the activated instance (may already be completed)
-    rows = ts._filter_tasks(filter=f"task_id == {task_id}")
-    assert any(r.get("activated_by") == "explicit" for r in rows)
+    rows = ts._filter_tasks(filter=f"task_id == {task_id}")["tasks"]
+    assert any(str(getattr(r, "activated_by", None)) == "explicit" for r in rows)
 
 
 @pytest.mark.asyncio
@@ -419,15 +419,15 @@ async def test_update_status_cannot_force_active_and_does_not_set_activation_met
         ts._update_task(task_id=task_id, status="active")
 
     # Ensure no activation metadata exists prior to activation
-    rows = ts._filter_tasks(filter=f"task_id == {task_id}")
+    rows = ts._filter_tasks(filter=f"task_id == {task_id}")["tasks"]
     assert len(rows) == 1
-    assert rows[0].get("activated_by") in (None, "")
+    assert str(getattr(rows[0], "activated_by", "")) in (None, "", "None")
 
     # Change a non-active status and ensure activated_by remains unset
     ts._update_task(task_id=task_id, status="paused")
-    rows2 = ts._filter_tasks(filter=f"task_id == {task_id}")
-    assert rows2[0].get("status") == "paused"
-    assert rows2[0].get("activated_by") in (None, "")
+    rows2 = ts._filter_tasks(filter=f"task_id == {task_id}")["tasks"]
+    assert str(rows2[0].status) == "paused"
+    assert str(getattr(rows2[0], "activated_by", "")) in (None, "", "None")
 
 
 @pytest.mark.asyncio
@@ -480,18 +480,18 @@ async def test_isolated_execute_detaches_entirely(monkeypatch):
     )
     await handle.result()
 
-    rows_a = ts._filter_tasks(filter=f"task_id == {a}")
-    rows_b = ts._filter_tasks(filter=f"task_id == {b}")
-    rows_c = ts._filter_tasks(filter=f"task_id == {c}")
+    rows_a = ts._filter_tasks(filter=f"task_id == {a}")["tasks"]
+    rows_b = ts._filter_tasks(filter=f"task_id == {b}")["tasks"]
+    rows_c = ts._filter_tasks(filter=f"task_id == {c}")["tasks"]
 
     # B should be isolated as a single-task head (no prev/next followers)
-    sched_b = rows_b[0].get("schedule") or {}
+    sched_b = getattr(rows_b[0], "schedule", None)
     assert sched_b.get("prev_task") is None
     assert sched_b.get("next_task") is None
 
     # A should now link directly to C; C.prev_task should be A
     sched_a = rows_a[0].get("schedule") or {}
-    sched_c = rows_c[0].get("schedule") or {}
+    sched_c = getattr(rows_c[0], "schedule", None)
     assert sched_a.get("next_task") == c
     assert sched_c.get("prev_task") == a
 
@@ -519,14 +519,14 @@ async def test_isolated_execute_start_at_to_second_when_head_moves(monkeypatch):
     )
     await handle.result()
 
-    rows_x = ts._filter_tasks(filter=f"task_id == {x}")
-    rows_y = ts._filter_tasks(filter=f"task_id == {y}")
+    rows_x = ts._filter_tasks(filter=f"task_id == {x}")["tasks"]
+    rows_y = ts._filter_tasks(filter=f"task_id == {y}")["tasks"]
 
     # X detached
-    assert rows_x[0].get("schedule") in (None, {})
+    assert getattr(rows_x[0], "schedule", None) in (None, {})
 
     # Y becomes new head: prev_task=None and has start_at
-    sched_y = rows_y[0].get("schedule") or {}
+    sched_y = getattr(rows_y[0], "schedule", None) or {}
     assert sched_y.get("prev_task") is None
     assert "start_at" in sched_y and sched_y.get("start_at")
 
@@ -552,11 +552,11 @@ async def test_execute_default_keeps_followers():
     await asyncio.sleep(0)
 
     # Inspect linkage immediately after activation
-    rows_b = ts._filter_tasks(filter=f"task_id == {b}")
-    rows_c = ts._filter_tasks(filter=f"task_id == {c}")
+    rows_b = ts._filter_tasks(filter=f"task_id == {b}")["tasks"]
+    rows_c = ts._filter_tasks(filter=f"task_id == {c}")["tasks"]
 
-    sched_b = rows_b[0].get("schedule") or {}
-    sched_c = rows_c[0].get("schedule") or {}
+    sched_b = getattr(rows_b[0], "schedule", None) or {}
+    sched_c = getattr(rows_c[0], "schedule", None) or {}
 
     # B becomes sub-head of its chain
     assert sched_b.get("prev_task") is None

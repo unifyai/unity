@@ -96,9 +96,9 @@ def test_insert_primed_task_downgrades_to_queued():
     ts._set_queue(queue_id=qid, order=[0, 1, t_email])
 
     # 5) The scheduler must automatically downgrade the status to 'queued'
-    row = ts._filter_tasks(filter=f"task_id == {t_email}", limit=1)[0]
+    row = ts._filter_tasks(filter=f"task_id == {t_email}", limit=1)["tasks"][0]
     assert (
-        row["status"] == "queued"
+        str(row.status) == "queued"
     ), "Non-head tasks may not remain 'primed'; status should be 'queued'."
 
 
