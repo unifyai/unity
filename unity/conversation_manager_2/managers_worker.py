@@ -208,10 +208,11 @@ class ManagersWorker:
             await asyncio.sleep(1)
             print("[ManagersWorker] Not initialized yet, cannot publish bus event")
         event_dict = event.to_dict()["payload"]["event"]
+        event_name = event_dict["event_name"]
         bus_event = Event.from_dict(event_dict).to_bus_event()
         bus_event.payload.pop("api_key", None)
         bus_event.payload.pop("message_id", None)
-        print("Publishing bus event", bus_event)
+        print("Publishing bus event", event_name)
         await EVENT_BUS.publish(bus_event)
 
     async def _log_message(self, event: LogMessageRequest) -> None:
@@ -370,7 +371,10 @@ class ManagersWorker:
             self._memory_manager.update_contact_rolling_summary(t, contact_id=cid)
             for cid, t in zip(contacts_ids, transcripts)
         ]
-        await asyncio.gather(*tasks)
+        try:
+            await asyncio.gather(*tasks)
+        except Exception as e:
+            print(f"[ManagersWorker] Error updating contact rolling summary: {e}")
 
     async def _conductor_watch_result(
         self, handle_id: int, handle: SteerableToolHandle

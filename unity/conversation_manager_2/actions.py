@@ -17,10 +17,6 @@ class ConductorAction(BaseModel):
             "'conductor_request': read-write request\n"
         ),
     )
-    query: str = Field(
-        ...,
-        description="The query to send to the Conductor",
-    )
 
 
 class ConductorHandleAction(BaseModel):
@@ -39,22 +35,13 @@ class ConductorHandleAction(BaseModel):
         ...,
         description=(
             "The action to perform on the handle. Options are:\n"
-            "'conductor_handle_ask': ask the handle through the `query` field\n"
-            "'conductor_handle_interject': interject the handle through the `query` field\n"
+            "'conductor_handle_ask': ask about the conductor status to the handle\n"
+            "'conductor_handle_interject': interject the handle with more information\n"
             "'conductor_handle_stop': stop the handle\n"
             "'conductor_handle_pause': pause the handle\n"
             "'conductor_handle_resume': resume the handle\n"
             "'conductor_handle_done': check if the handle is done\n"
-            "'conductor_handle_answer_clarification': answer a clarification question "
-            "through the `query` field\n"
-        ),
-    )
-    query: str | None = Field(
-        None,
-        description=(
-            "The query to send to the handle, must be a non-empty string for the "
-            "following actions:\n'conductor_handle_ask'\n'conductor_handle_interject'\n"
-            "'conductor_handle_answer_clarification'\n. Leave blank for other actions."
+            "'conductor_handle_answer_clarification': answer a clarification question\n"
         ),
     )
 
