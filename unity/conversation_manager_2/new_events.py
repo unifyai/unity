@@ -369,6 +369,19 @@ class ConductorRequest(Event):
     query: str
     parent_chat_context: list[dict]
 
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        return (
+            f"{self.__class__.__name__}(action_name={self.action_name}, "
+            f"query={self.query}, "
+            f"parent_chat_context_len={len(self.parent_chat_context)})"
+        )
+
 
 @dataclass
 class ConductorResponse(Event):
@@ -388,6 +401,20 @@ class ConductorHandleRequest(Event):
     action_name: str
     query: str
     parent_chat_context: list[dict]
+
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        return (
+            f"{self.__class__.__name__}(handle_id={self.handle_id}, "
+            f"action_name={self.action_name}, "
+            f"query={self.query}, "
+            f"parent_chat_context_len={len(self.parent_chat_context)})"
+        )
 
 
 @dataclass
