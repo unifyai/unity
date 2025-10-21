@@ -55,6 +55,7 @@ def test_tool_filter_contacts_timing():
     cid = cm._create_contact(first_name="PerfFilter")["details"]["contact_id"]
     t0 = time.perf_counter()
     rows = cm._filter_contacts(filter=f"contact_id == {cid}")
+    rows = rows["contacts"]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert rows and rows[0].contact_id == cid
     assert elapsed_ms < 1800
@@ -135,6 +136,7 @@ def test_tool_search_contacts_timing():
     cm._create_contact(first_name="Bob", bio="prefers texts")
     t0 = time.perf_counter()
     results = cm._search_contacts(references={"bio": "emails"}, k=1)
+    results = results["contacts"]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(results, list) and results
     assert elapsed_ms < 6800

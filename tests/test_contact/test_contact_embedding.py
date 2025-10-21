@@ -34,7 +34,7 @@ def test_contact_embedding_and_search():
     # ------------------------------------------------------------------ #
     # 2️⃣  Keyword search for a term that does NOT appear verbatim       #
     # ------------------------------------------------------------------ #
-    keyword_hits = cm._filter_contacts(filter="'preferences' in bio")
+    keyword_hits = cm._filter_contacts(filter="'preferences' in bio")["contacts"]
     assert isinstance(keyword_hits, list) and len(keyword_hits) == 0
 
     # ------------------------------------------------------------------ #
@@ -42,17 +42,19 @@ def test_contact_embedding_and_search():
     # ------------------------------------------------------------------ #
     query = "favorite means of communication"
     nearest_k1 = cm._search_contacts(references={"bio": query}, k=1)
-    assert len(nearest_k1) == 1
-    assert nearest_k1[0].bio == entries[1][1]  # Bob is best match
+    assert len(nearest_k1["contacts"]) == 1
+    assert nearest_k1["contacts"][0].bio == entries[1][1]  # Bob is best match
 
     # ------------------------------------------------------------------ #
     # 4️⃣  Nearest-neighbour search (k=2) – ordering + limit respected   #
     # ------------------------------------------------------------------ #
     nearest_k2 = cm._search_contacts(references={"bio": query}, k=2)
-    assert len(nearest_k2) == 2
-    assert nearest_k2[0].bio == nearest_k1[0].bio
-    remaining_descriptions = [e[1] for e in entries if e[1] != nearest_k1[0].bio]
-    assert nearest_k2[1].bio in remaining_descriptions
+    assert len(nearest_k2["contacts"]) == 2
+    assert nearest_k2["contacts"][0].bio == nearest_k1["contacts"][0].bio
+    remaining_descriptions = [
+        e[1] for e in entries if e[1] != nearest_k1["contacts"][0].bio
+    ]
+    assert nearest_k2["contacts"][1].bio in remaining_descriptions
 
     # ------------------------------------------------------------------ #
     # 5️⃣  Derived vector column should now exist                         #

@@ -82,7 +82,8 @@ def test_filter_contacts_repopulates_data_store():
     ds.clear()
 
     # Read via filter_contacts and ensure cache is repopulated
-    rows = cm._filter_contacts(filter=f"contact_id == {cid}")
+    rows = cm._filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    rows = cm._filter_contacts(filter=f"contact_id == {cid}")["contacts"]
     assert rows and rows[0].contact_id == cid
 
     row = ds[cid]
@@ -105,7 +106,7 @@ def test_search_contacts_repopulates_data_store():
 
     # Trigger semantic path (references provided) which writes-through filled rows
     results = cm._search_contacts(references={"bio": "emails"}, k=1)
-    assert results and results[0].contact_id == cid
+    assert results and results["contacts"][0].contact_id == cid
 
     row = ds[cid]
     assert row["contact_id"] == cid

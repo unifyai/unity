@@ -1675,7 +1675,7 @@ class ContactManager(BaseContactManager):
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
-    ) -> List[Contact]:
+    ) -> Dict[str, Any]:
         """
         Semantic search over contacts using one or more reference texts.
 
@@ -1736,7 +1736,12 @@ class ContactManager(BaseContactManager):
                 self._data_store.put(r)
         except Exception:
             pass
-        return [Contact(**r) for r in filled]
+        contacts_list = [Contact(**r) for r in filled]
+        return {
+            "contact_keys_to_shorthand": Contact.shorthand_map(),
+            "contacts": contacts_list,
+            "shorthand_to_contact_keys": Contact.shorthand_inverse_map(),
+        }
 
     @read_only
     def _filter_contacts(
@@ -1745,7 +1750,7 @@ class ContactManager(BaseContactManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[Contact]:
+    ) -> Dict[str, Any]:
         """
         Filter contacts using a boolean Python expression evaluated per row.
 
@@ -1826,7 +1831,12 @@ class ContactManager(BaseContactManager):
                 self._data_store.put(lg.entries)
         except Exception:
             pass
-        return [Contact(**lg.entries) for lg in logs]
+        contacts_list = [Contact(**lg.entries) for lg in logs]
+        return {
+            "contact_keys_to_shorthand": Contact.shorthand_map(),
+            "contacts": contacts_list,
+            "shorthand_to_contact_keys": Contact.shorthand_inverse_map(),
+        }
 
     # ------------------------------------------------------------------ #
     #  Small internal helpers (LLM client + tool policies)               #
