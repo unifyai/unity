@@ -51,25 +51,35 @@ async def test_tm_stateful_memory_serial_asks():
     """
     Two consecutive .ask() calls should share the same conversation context
     because the manager's LLM is stateful.
+
+    To reduce brittleness from formatting/phrasing, we seed the first turn with
+    a unique token and then require that the second turn recalls that exact
+    token somewhere in its response.
     """
+    import uuid
+
     tm = SimulatedTranscriptManager()
 
-    # 1) Ask for a unique codename – expect a non-empty answer
+    # 1) Seed a unique token inside a realistic transcript request
+    token = f"TICKET-{uuid.uuid4()}"
     handle1 = await tm.ask(
-        "Please invent a unique project codename for our upcoming initiative. "
-        "Respond with *only* the codename.",
+        "Please produce exactly one realistic transcript message. "
+        f"Ensure the message content includes this exact ticket number verbatim: {token}",
     )
-    codename = (await handle1.result()).strip()
-    assert codename, "Codename should not be empty"
+    first_answer = (await handle1.result()).strip()
+    assert first_answer, "First answer should not be empty"
 
-    # 2) Ask the LLM to recall what it just said
-    handle2 = await tm.ask("Great. What codename did you suggest earlier?")
-    answer2 = (await handle2.result()).lower()
-
-    # The second answer should mention the same codename exactly
+    # 2) Ask the LLM to recall the previously mentioned token
+    handle2 = await tm.ask(
+        "What ticket number did you mention earlier? Quote it verbatim in your answer.",
+    )
+    answer2 = await handle2.result()
     assert (
-        codename.lower().split(" ")[-1].replace("*", "") in answer2
-    ), "LLM should recall the previous codename"
+        isinstance(answer2, str) and answer2.strip()
+    ), "Second answer should be non-empty"
+
+    # The second answer should mention the exact token (substring check is robust to formatting)
+    assert token in answer2, "LLM should recall the previously mentioned token"
 
 
 # ────────────────────────────────────────────────────────────────────────────
