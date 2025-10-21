@@ -13,6 +13,7 @@ Prerequisites:
 - Optional: DEEPGRAM_API_KEY and CARTESIA_API_KEY for --voice mode.
 ===================================================================
 """
+
 from __future__ import annotations
 
 import asyncio
