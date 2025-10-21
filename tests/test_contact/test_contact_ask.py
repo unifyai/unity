@@ -46,8 +46,14 @@ def _llm_judge_contact_retrieval(
         "candidate_answer": candidate_answer,
     }
     if all_contacts_for_context:  # Provide more context to the judge if helpful
+        # Hide system contacts (ids 0 and 1) to match the assistant's own filtering
+        filtered_contacts = [
+            c
+            for c in all_contacts_for_context
+            if getattr(c, "contact_id", None) not in (0, 1)
+        ]
         payload_dict["relevant_contacts_data_for_context"] = [
-            c.model_dump_json() for c in all_contacts_for_context
+            c.model_dump_json() for c in filtered_contacts
         ]
 
     payload = json.dumps(payload_dict, indent=2)
