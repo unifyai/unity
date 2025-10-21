@@ -270,7 +270,10 @@ async def test_filter_messages_contacts_table_output():
     messages = result["messages"]
 
     # Validate uniqueness and coverage of contacts
-    contact_ids_from_table = {c.get("contact_id") for c in contacts}
+    contact_ids_from_table = {
+        (c.get("contact_id") if isinstance(c, dict) else getattr(c, "contact_id", None))
+        for c in contacts
+    }
     assert len(contact_ids_from_table) == len(contacts)
 
     referenced_ids = set()
