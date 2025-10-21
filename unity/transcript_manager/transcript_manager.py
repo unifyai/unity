@@ -1752,20 +1752,17 @@ class TranscriptManager(BaseTranscriptManager):
     #  Formatting helper: single contacts table + messages                #
     # ------------------------------------------------------------------ #
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        """Return a dictionary with keys 'contacts' and 'messages'.
+        """Return a combined payload for contacts and messages.
 
         - Collect unique contact ids from senders and receivers.
-        - Fetch full contact rows via ContactManager._filter_contacts using an
-          id-membership filter.
-        - Return a dict containing:
-            contacts,
-            message_keys_to_shorthand (legend: full → shorthand),
-            messages (Message models),
-            shorthand_to_message_keys (legend: shorthand → full).
+        - Fetch contact rows via ContactManager._filter_contacts (returns a three‑keyed
+          dict) and unpack it directly into the result without hard‑coding any key name.
+        - Append message shorthand legends and the list of Message models.
+        - When there are no messages, return an empty dict.
         """
 
         if not messages:
-            return {"contacts": [], "messages": []}
+            return {}
 
         # Collect unique contact ids
         unique_ids: set[int] = set()
@@ -1781,19 +1778,18 @@ class TranscriptManager(BaseTranscriptManager):
                     except Exception:
                         pass
 
-        contacts_list: list[dict] = []
+        contacts_payload: Dict[str, Any] = {}
         if unique_ids:
             # Build filter expression: contact_id in [1, 2, 3]
             ids_expr = ", ".join(str(i) for i in sorted(unique_ids))
             flt = f"contact_id in [{ids_expr}]"
             try:
-                contacts = self._contact_manager._filter_contacts(
+                contacts_payload = self._contact_manager._filter_contacts(
                     filter=flt,
                     limit=len(unique_ids),
                 )
-                contacts_list = [c.model_dump(mode="json") for c in contacts]
             except Exception:
-                contacts_list = []
+                contacts_payload = {}
 
         # Define stable shorthand legend for Message fields (full → shorthand)
         message_keys_to_shorthand: dict[str, str] = Message.shorthand_map()
@@ -1802,7 +1798,7 @@ class TranscriptManager(BaseTranscriptManager):
 
         # Ordered return shape as requested
         return {
-            "contacts": contacts_list,
+            **contacts_payload,
             "message_keys_to_shorthand": message_keys_to_shorthand,
             "messages": messages,  # keep models; centralized serializer handles JSON
             "shorthand_to_message_keys": shorthand_to_message_keys,
