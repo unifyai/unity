@@ -335,6 +335,13 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
+    client.set_system_message(
+        "Use the `ask_image` tool to identify the colour of each listed image (by id). "
+        "Do not attach images or answer without calling `ask_image`. "
+        "First, call `ask_image` for John's and David's image ids and wait. "
+        "After I interject with Jenny, call `ask_image` for Jenny as well. "
+        "Only then answer with a single final colour word.",
+    )
 
     handle = start_async_tool_loop(
         client=client,
