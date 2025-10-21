@@ -426,13 +426,41 @@ class ConversationManagerState:
                 self.register_conductor_handle(
                     handle_id=e.handle_id,
                     query=e.query,
+                    response=e.response,
                 )
-            case ConductorHandleResponse() as e:
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="started",
+                    query=e.query,
+                    response=e.response,
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Conductor started: {e.query}",
+                        e.timestamp,
+                    ),
+                )
+            case ConductorHandleRequest() as e:
                 self.add_conductor_handle_action(
                     handle_id=e.handle_id,
                     action_name=e.action_name,
                     query=e.query,
+                    response="",
+                )
+            case ConductorHandleResponse() as e:
+                self.update_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name=e.action_name,
+                    query=None,
                     response=e.response,
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Conductor handle {e.action_name} response: {e.response}",
+                        e.timestamp,
+                    ),
                 )
             case ConductorClarificationRequest() as e:
                 self.add_conductor_handle_action(
@@ -441,12 +469,33 @@ class ConversationManagerState:
                     query=e.query,
                     response="",
                 )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Conductor clarification request: {e.query}",
+                        e.timestamp,
+                    ),
+                )
+            case ConductorClarificationResponse() as e:
+                self.update_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="clarification",
+                    query=None,
+                    response=e.response,
+                )
             case ConductorResult() as e:
                 self.add_conductor_handle_action(
                     handle_id=e.handle_id,
                     action_name="result",
                     query="",
                     response=e.result,
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Conductor result: {e.result}",
+                        e.timestamp,
+                    ),
                 )
 
     def snapshot(self):
@@ -513,8 +562,8 @@ class ConversationManagerState:
         print(f"Available actions: {available_actions}")
 
     # conductor handle tracking helpers
-    def register_conductor_handle(self, handle_id: str, query: str) -> None:
-        self.conductor_handles[handle_id] = {"query": query, "handle_actions": []}
+    def register_conductor_handle(self, handle_id: str, query: str, response: str) -> None:
+        self.conductor_handles[handle_id] = {"query": query, "response": response, "handle_actions": []}
 
     def add_conductor_handle_action(
         self, handle_id: str, action_name: str, query: str, response: str
@@ -527,6 +576,18 @@ class ConversationManagerState:
                     "response": response,
                 }
             )
+
+    def update_conductor_handle_action(
+        self, handle_id: str, action_name: str, query: str | None, response: str
+    ) -> None:
+        if handle_id in self.conductor_handles:
+            if query is None:
+                query = self.conductor_handles[handle_id]["handle_actions"][-1]["query"]
+            self.conductor_handles[handle_id]["handle_actions"][-1].update({
+                "action_name": action_name,
+                "query": query,
+                "response": response,
+            })
 
     def get_details(self) -> dict:
         return {
@@ -640,7 +701,7 @@ class ConversationManagerState:
         response_policy: Optional[str] = None,
     ):
         contact = None
-        print("curernt contacts", self.inverted_contacts_map)
+        print("current contacts", self.inverted_contacts_map)
         if contact_id != -1:  # update branch
             contact = self.get_contact(
                 contact_id,
