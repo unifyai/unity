@@ -2,22 +2,16 @@
 ===================================================================
 An interactive sandbox for the ScreenShareManager.
 
-This sandbox allows you to stream a specific window from your screen and provide
-voice or text input to simulate a user turn. It then fetches and displays the
-richly annotated transcript message created by the ScreenShareManager.
+This sandbox demonstrates the direct-control pattern for the ScreenShareManager.
+It streams a specific screen region, allows you to provide voice or text
+input to simulate a user turn, and then executes the two-stage analysis
+process (detect and annotate) to get back annotated ImageHandles.
 
 Prerequisites:
-- `pip install mss redis numpy Pillow opencv-python`
-
-Example Usage (after getting coordinates):
-------------------------------------------
-python -m sandboxes.screen_share_manager.sandbox \
-    --x 100 \
-    --y 150 \
-    --width 1280 \
-    --height 720 \
-    --voice \
-    --context "The user is Jane Doe, an administrator trying to reset a client's password."
+- `pip install mss Pillow opencv-python aiohttp unifyai`
+- Set UNIFY_KEY environment variable.
+- Optional: DEEPGRAM_API_KEY and CARTESIA_API_KEY for --voice mode.
+===================================================================
 """
 
 from __future__ import annotations
@@ -25,18 +19,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import json
 import logging
 import os
 import sys
-import threading
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import Dict
+from typing import List
 
 import mss
-import redis
 from dotenv import load_dotenv
 from PIL import Image
 
@@ -45,193 +35,210 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Load environment variables first
 load_dotenv()
 
 from sandboxes.utils import (
-    activate_project,
     build_cli_parser,
-    configure_sandbox_logging,
+    configure_sandbox_logging,  # Import the logging helper
     record_until_enter,
     transcribe_deepgram,
     speak,
     _wait_for_tts_end,
 )
 from unity.screen_share_manager.screen_share_manager import ScreenShareManager
-from unity.transcript_manager.transcript_manager import TranscriptManager
 
-# Logger setup for the sandbox
-LG = logging.getLogger("screen_share_sandbox")
+# Use the named logger from the manager's module
+logger = logging.getLogger("unity.screen_share_manager.screen_share_manager")
 
-# --- Globals for thread management ---
-_capture_stop_event = threading.Event()
-_main_stop_event = asyncio.Event()
+_stop_event = asyncio.Event()
 
 # Help text displayed to the user in the REPL
 _COMMANDS_HELP = """
-ScreenShareManager Sandbox (Async Mode)
----------------------------------------
-Type a message or use 'r' to record voice. Your utterance is sent for background
-processing immediately. Results will appear below as they become available.
+ScreenShareManager Sandbox (Direct Control Mode)
+-----------------------------------------------
+Type a message or use 'r' to record voice. Your utterance triggers the
+two-stage analysis pipeline. Results will appear below as they are generated.
 
 ┌─────────────── Commands ───────────────┐
-│ <your message>      - Send a text utterance.                      │
-│ r                   - (Voice mode only) Record a voice utterance. │
-│ help | h            - Show this help message.                     │
-│ quit | exit         - Exit the sandbox.                           │
+│ <your message>      - Send a text utterance to trigger analysis.    │
+│ r                   - (Voice mode only) Record a voice utterance.   │
+│ help | h            - Show this help message.                       │
+│ quit | exit         - Exit the sandbox.                             │
 └────────────────────────────────────────┘
 """
 
 
-def _capture_and_publish_frames(monitor: Dict[str, int], fps: int = 5):
-    """
-    Runs in a separate thread to capture and publish screen frames to Redis.
-    """
-    LG.info(f"Starting screen capture thread for monitor: {monitor}")
-    LG.info("Capture will begin in 2 seconds. Please focus the target window.")
-    time.sleep(2)  # Add a delay to allow window focus
-
-    redis_client = redis.Redis(
-        host=os.getenv("REDIS_HOST", "localhost"),
-        port=int(os.getenv("REDIS_PORT", 6379)),
-        decode_responses=True,
-    )
+async def _capture_and_push_frames(
+    manager: ScreenShareManager, monitor: dict, fps: int
+):
+    logger.info(f"Starting screen capture for monitor: {monitor}")
+    logger.info("Capture will begin in 2 seconds. Please focus the target window.")
+    await asyncio.sleep(2)
     start_time = time.time()
     frame_count = 0
-    error_count = 0
-
     with mss.mss() as sct:
-        while not _capture_stop_event.is_set():
+        while not _stop_event.is_set():
             loop_start = time.time()
             try:
                 sct_img = sct.grab(monitor)
-                error_count = 0
-            except mss.exception.ScreenShotError as e:
-                error_count += 1
-                if error_count == 1:
-                    LG.error(
-                        f"ScreenShotError: {e}. This is common on Wayland or with incorrect geometry.",
-                    )
-                    LG.error(
-                        "Please verify your --x, --y, --width, --height arguments. Capture will be retried.",
-                    )
-                time.sleep(1)
-                continue
+                img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                buffered = io.BytesIO()
+                img.save(buffered, format="PNG")
+                data_url = f"data:image/png;base64,{base64.b64encode(buffered.getvalue()).decode('utf-8')}"
 
-            img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-            buffered = io.BytesIO()
-            img.save(buffered, format="PNG")
-            img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-            data_url = f"data:image/png;base64,{img_b64}"
-
-            timestamp = time.time() - start_time
-            event_payload = {
-                "event_name": "ScreenFrame",
-                "payload": {"timestamp": timestamp, "frame_b64": data_url},
-            }
-            try:
-                redis_client.publish(
-                    "app:comms:screen_frame",
-                    json.dumps(event_payload),
-                )
+                frame_timestamp = time.time() - start_time
+                await manager.push_frame(data_url, frame_timestamp)
                 frame_count += 1
-            except redis.exceptions.ConnectionError as e:
-                LG.error(f"Redis connection error: {e}. Is Redis running?")
+                logger.debug(
+                    f"Pushed frame #{frame_count} at timestamp {frame_timestamp:.2f}s"
+                )
+
+                sleep_time = (1 / fps) - (time.time() - loop_start)
+                await asyncio.sleep(max(0.01, sleep_time))
+            except mss.exception.ScreenShotError as e:
+                logger.error(f"ScreenShotError: {e}. Retrying...", exc_info=True)
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"Capture loop error: {e}", exc_info=True)
                 break
-
-            time_to_sleep = (1 / fps) - (time.time() - loop_start)
-            if time_to_sleep > 0:
-                time.sleep(time_to_sleep)
-
-    LG.info(f"Screen capture thread stopped. Published {frame_count} frames.")
+    logger.info(f"Screen capture task stopped after pushing {frame_count} frames.")
 
 
-async def _result_fetcher_and_printer(
-    transcript_manager: TranscriptManager,
-    project_name: str,
-    voice_enabled: bool,
+async def _process_turn_analysis(
+    screen_manager: ScreenShareManager, utterance: str, turn_counter: int, args
 ):
     """
-    A background task that continuously polls for new transcript messages and prints them.
+    Runs the full detection and annotation pipeline for a single turn in the background.
     """
-    LG.info("Result fetcher started. Polling for new transcript logs.")
-    # Initialize with the ID of the latest message at startup
-    initial_messages = transcript_manager._filter_messages(limit=1)["messages"]
-    last_printed_message_id = initial_messages[0].message_id if initial_messages else -1
-    context_name = transcript_manager._transcripts_ctx
+    logger.info(f"--- Turn #{turn_counter} ---")
 
-    while not _main_stop_event.is_set():
-        try:
-            latest_messages = transcript_manager._filter_messages(limit=1)["messages"]
-            if latest_messages:
-                latest_message = latest_messages[0]
-                if latest_message.message_id > last_printed_message_id:
-                    print(
-                        f"\n\n✅ Event logged to Unify in {project_name}/{context_name} in log {latest_message.message_id}\n",
-                        flush=True,
+    # --- Stage 1: Detection ---
+    start_time, end_time = time.time() - 5, time.time()
+    await screen_manager.push_speech(utterance, start_time, end_time)
+    logger.info(f"Pushed speech event for turn #{turn_counter}. Triggering analysis.")
+
+    analysis_task = screen_manager.analyze_turn()
+
+    print(f"\n[Turn #{turn_counter}] 🔍 Detecting key events...")
+    logger.info(f"[Turn #{turn_counter}] Awaiting detection task...")
+    detection_start_time = time.time()
+    detected_events = await analysis_task
+    detection_duration = time.time() - detection_start_time
+    logger.info(
+        f"[Turn #{turn_counter}] Detection stage completed in {detection_duration:.2f} seconds."
+    )
+
+    if not detected_events:
+        print(f"   -> [Turn #{turn_counter}] No significant events were detected.")
+        logger.info(
+            f"[Turn #{turn_counter}] No events detected. Turn processing complete."
+        )
+        return
+
+    logger.info(
+        f"[Turn #{turn_counter}] Detected {len(detected_events)} candidate event(s) at timestamps: {[f'{e.timestamp:.2f}s' for e in detected_events]}"
+    )
+    print(
+        f"   -> [Turn #{turn_counter}] Detected {len(detected_events)} candidate event(s). Now generating annotations..."
+    )
+
+    # --- Stage 2: Annotation ---
+    annotation_context = f"The user just said: '{utterance}'"
+    logger.info(
+        f"[Turn #{turn_counter}] Starting annotation with consumer context: '{annotation_context}'"
+    )
+    annotation_start_time = time.time()
+    annotated_handles = await screen_manager.annotate_events(
+        detected_events, annotation_context
+    )
+    annotation_duration = time.time() - annotation_start_time
+    logger.info(
+        f"[Turn #{turn_counter}] Annotation stage completed in {annotation_duration:.2f} seconds."
+    )
+
+    print(f"\n[Turn #{turn_counter}] ✅ Analysis Complete:")
+    if not annotated_handles:
+        print(f"   -> [Turn #{turn_counter}] No final annotated images were generated.")
+        logger.warning(
+            f"[Turn #{turn_counter}] Annotation stage finished but produced no handles."
+        )
+    else:
+        logger.info(
+            f"[Turn #{turn_counter}] Generated {len(annotated_handles)} annotated image(s)."
+        )
+        print(
+            f"   -> [Turn #{turn_counter}] Generated {len(annotated_handles)} annotated image(s):"
+        )
+        for i, handle in enumerate(annotated_handles):
+            logger.debug(
+                f"  [Turn #{turn_counter}] Handle #{i+1}: Pending ID={handle.image_id}, Annotation='{handle.annotation}'"
+            )
+            print(f"      [{i+1}] Image (Pending ID: {handle.image_id})")
+            print(f'          Annotation: "{handle.annotation}"')
+
+            if args.save_images:
+                img_path = (
+                    Path("images") / f"turn_{turn_counter}_{int(time.time())}_{i}.png"
+                )
+                try:
+                    raw_data = handle.raw()
+                    with open(img_path, "wb") as f:
+                        f.write(raw_data)
+                    logger.info(
+                        f"[Turn #{turn_counter}] Successfully saved image for handle {handle.image_id} to '{img_path}' ({len(raw_data)} bytes)."
                     )
-                    if voice_enabled:
-                        speak("Analysis complete.")
-                    # Update the last printed ID and redraw the input prompt
-                    last_printed_message_id = latest_message.message_id
-                    # This helps redraw the prompt cleanly after printing the async result
-                    sys.stdout.write("command> ")
-                    sys.stdout.flush()
+                    print(f"          -> Saved to {img_path}")
+                except Exception as e:
+                    logger.error(
+                        f"[Turn #{turn_counter}] Failed to save image for handle {handle.image_id} to '{img_path}': {e}",
+                        exc_info=True,
+                    )
 
-            await asyncio.sleep(1)  # Poll every second
-        except Exception as e:
-            LG.error(f"Error in result fetcher: {e}", exc_info=True)
-            await asyncio.sleep(2)
+    if args.voice:
+        speak("Analysis complete.")
+    logger.info(f"--- End of Turn #{turn_counter} ---\n")
 
 
 async def _main_async() -> None:
-    """Main asynchronous function to run the sandbox REPL."""
     parser = build_cli_parser("Interactive ScreenShareManager Sandbox")
+    parser.add_argument("--x", type=int, required=True, help="The x-coordinate.")
+    parser.add_argument("--y", type=int, required=True, help="The y-coordinate.")
     parser.add_argument(
-        "--x",
-        type=int,
-        required=True,
-        help="The x-coordinate of the top-left corner.",
+        "--width", type=int, required=True, help="Width of capture area."
     )
     parser.add_argument(
-        "--y",
-        type=int,
-        required=True,
-        help="The y-coordinate of the top-left corner.",
+        "--height", type=int, required=True, help="Height of capture area."
     )
-    parser.add_argument(
-        "--width",
-        type=int,
-        required=True,
-        help="The width of the capture area.",
-    )
-    parser.add_argument(
-        "--height",
-        type=int,
-        required=True,
-        help="The height of the capture area.",
-    )
-    parser.add_argument(
-        "--fps",
-        type=int,
-        default=5,
-        help="Frames per second for screen capture.",
-    )
+    parser.add_argument("--fps", type=int, default=5, help="Frames per second.")
     parser.add_argument(
         "--context",
         type=str,
-        default=None,
-        help="Optional pre-conversation context about the user or their goal.",
+        default="User is navigating a web application.",
+        help="Initial session context.",
+    )
+    parser.add_argument(
+        "--save-images", action="store_true", help="Save annotated images locally."
     )
     args = parser.parse_args()
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
-    activate_project(args.project_name, args.overwrite)
+    # --- Setup Logging ---
     configure_sandbox_logging(
         log_in_terminal=args.log_in_terminal,
         log_file=".logs_screen_share_sandbox.txt",
     )
-    LG.setLevel(logging.INFO)
+    # Ensure the logger level is set to capture detailed messages for the file.
+    logging.getLogger("unity.screen_share_manager.screen_share_manager").setLevel(
+        logging.DEBUG
+    )
+
+    if args.save_images:
+        Path("images").mkdir(exist_ok=True)
+        logger.info("Image saving enabled.")
+
+    # --- Setup Manager and Capture ---
+    screen_manager = ScreenShareManager()
+    screen_manager.set_session_context(args.context)
+    await screen_manager.start()
 
     capture_monitor = {
         "top": args.y,
@@ -239,151 +246,85 @@ async def _main_async() -> None:
         "width": args.width,
         "height": args.height,
     }
+    capture_task = asyncio.create_task(
+        _capture_and_push_frames(screen_manager, capture_monitor, args.fps)
+    )
 
-    screen_manager = None
-    capture_thread = None
-    redis_client = None
-    manager_task = None
-    result_fetcher_task = None
+    print(_COMMANDS_HELP)
 
-    session_start_time = time.time()
+    # --- Main Loop ---
+    logger.info("Sandbox REPL started. Waiting for user input...")
+    turn_counter = 0
+    background_tasks: List[asyncio.Task] = []
 
     try:
-        screen_manager = ScreenShareManager()
-        if args.context:
-            screen_manager.set_session_context(args.context)
-            LG.info(f"Initial session context set from CLI: '{args.context}'")
-
-        transcript_manager = TranscriptManager()
-        redis_client = redis.asyncio.Redis(
-            host=os.getenv("REDIS_HOST", "localhost"),
-            port=int(os.getenv("REDIS_PORT", 6379)),
-            decode_responses=False,
-        )
-
-        manager_task = asyncio.create_task(screen_manager.start())
-        LG.info("ScreenShareManager listener started.")
-
-        capture_thread = threading.Thread(
-            target=_capture_and_publish_frames,
-            args=(capture_monitor, args.fps),
-            daemon=True,
-        )
-        capture_thread.start()
-
-        # Start the background task for fetching and printing results
-        result_fetcher_task = asyncio.create_task(
-            _result_fetcher_and_printer(
-                transcript_manager,
-                args.project_name,
-                args.voice,
-            ),
-        )
-
-        await asyncio.sleep(2)
-        print(_COMMANDS_HELP)
-
-        while not _main_stop_event.is_set():
-            try:
-                utterance = ""
-                turn_start_time = 0.0
-                turn_end_time = 0.0
-
-                # Use asyncio.to_thread to run the blocking input() in a separate thread
-                if args.voice:
-                    _wait_for_tts_end()
-                    prompt = await asyncio.to_thread(input, "command ('r' to record)> ")
-                    prompt = prompt.strip()
-                    if prompt.lower() == "r":
-                        # Voice recording is also blocking, so run it in a thread
-                        turn_start_time = time.time()
-                        audio = await asyncio.to_thread(record_until_enter)
-                        utterance = transcribe_deepgram(audio).strip()
-                        turn_end_time = time.time()
-                        if not utterance:
-                            continue
+        while not _stop_event.is_set():
+            utterance = ""
+            if args.voice:
+                _wait_for_tts_end()
+                prompt = await asyncio.to_thread(input, "command ('r' to record)> ")
+                if prompt.strip().lower() == "r":
+                    logger.info("Recording voice input...")
+                    audio = await asyncio.to_thread(record_until_enter)
+                    utterance = transcribe_deepgram(audio).strip()
+                    if utterance:
                         print(f"▶️  {utterance}")
-                    else:
-                        turn_start_time = time.time()
-                        utterance = prompt
-                        turn_end_time = time.time()
+                        logger.info(f"Transcribed voice input: '{utterance}'")
                 else:
-                    turn_start_time = time.time()
-                    utterance = await asyncio.to_thread(input, "command> ")
-                    utterance = utterance.strip()
-                    turn_end_time = time.time()
+                    utterance = prompt.strip()
+                    if utterance:
+                        logger.info(f"Received text input: '{utterance}'")
+            else:
+                utterance = await asyncio.to_thread(input, "command> ")
+                utterance = utterance.strip()
+                if utterance:
+                    logger.info(f"Received text input: '{utterance}'")
 
-                if not utterance:
-                    continue
-
+            if not utterance or utterance.lower() in {"quit", "exit", "help", "h"}:
                 if utterance.lower() in {"quit", "exit"}:
+                    logger.info(f"'{utterance}' command received. Initiating shutdown.")
                     break
-                elif utterance.lower() in {"help", "h", "?"}:
+                if utterance.lower() in {"help", "h"}:
                     print(_COMMANDS_HELP)
-                    continue
+                continue
 
-                # --- Publish Utterance for Background Processing ---
-                relative_start_time = turn_start_time - session_start_time
-                relative_end_time = turn_end_time - session_start_time
+            turn_counter += 1
 
-                event_payload = {
-                    "event_name": "PhoneUtterance",
-                    "payload": {
-                        "contact_details": {"contact_id": 1},
-                        "timestamp": datetime.now().isoformat(),
-                        "content": utterance,
-                        "start_time": relative_start_time,
-                        "end_time": relative_end_time,
-                    },
-                }
-                await redis_client.publish(
-                    "app:comms:phone_utterance",
-                    json.dumps(event_payload),
-                )
-                LG.info(f"Published utterance event for: '{utterance}'")
+            # Schedule the entire turn processing to run in the background.
+            task = asyncio.create_task(
+                _process_turn_analysis(screen_manager, utterance, turn_counter, args)
+            )
+            background_tasks.append(task)
 
-            except (EOFError, KeyboardInterrupt):
-                print("\nExiting...")
-                break
-            except Exception as e:
-                LG.error("An error occurred in the main loop: %s", e, exc_info=True)
-                print(f"❌ An unexpected error occurred: {e}")
-
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        logger.info("Sandbox interrupted by user. Shutting down.")
+    except Exception as e:
+        logger.critical(
+            f"An unhandled exception occurred in the main loop: {e}", exc_info=True
+        )
     finally:
-        print("Shutting down...")
-        _main_stop_event.set()
+        print("\nShutting down...")
+        logger.info("Starting sandbox shutdown sequence.")
+        _stop_event.set()
+        await screen_manager.stop()
+        logger.info("ScreenShareManager stopped.")
 
-        if screen_manager:
-            screen_manager.stop()
-            if manager_task and not manager_task.done():
-                await asyncio.sleep(0.5)
-                manager_task.cancel()
+        # Cancel any pending background tasks
+        for task in background_tasks:
+            if not task.done():
+                task.cancel()
 
-        if result_fetcher_task and not result_fetcher_task.done():
-            result_fetcher_task.cancel()
-
-        if capture_thread:
-            _capture_stop_event.set()
-            capture_thread.join(timeout=2)
-
-        if redis_client:
-            await redis_client.close()
+        if capture_task and not capture_task.done():
+            logger.info("Waiting for capture task to complete...")
+            await capture_task
+            logger.info("Capture task completed.")
 
         print("Shutdown complete.")
-
-
-def main() -> None:
-    """Synchronous entry point for the sandbox."""
-    try:
-        asyncio.run(_main_async())
-    except (Exception, KeyboardInterrupt) as e:
-        if not isinstance(e, KeyboardInterrupt):
-            print(f"A critical error forced the sandbox to exit: {e}")
-            LG.critical(
-                "Sandbox forced to exit due to unhandled exception in main.",
-                exc_info=True,
-            )
+        logger.info("Sandbox shutdown complete.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(_main_async())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("\nExiting sandbox.")
