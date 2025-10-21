@@ -40,8 +40,13 @@ def serialize_tool_content(
     with suppress(Exception):
         _collect_images(payload, images)
 
-    # Do NOT apply shorthand/prune to the final content; preserve full keys and structure
-    text_repr = _dumps(_strip_image_keys(payload), indent=4)
+    # Apply prune_empty to final content so empty containers (e.g., images: []) are omitted
+    # Shorthand can be enabled later; for now keep full keys for final results
+    text_repr = _dumps(
+        _strip_image_keys(payload),
+        indent=4,
+        context={"prune_empty": True},
+    )
 
     if images:
         content_blocks: list = []
