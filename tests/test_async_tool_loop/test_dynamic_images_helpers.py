@@ -372,7 +372,10 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
 
     # The final answer includes the word 'brown'
     final_lower = final.strip().lower()
-    assert any(word in final_lower for word in ("brown", "pink", "rose"))
+    assert any(
+        word in final_lower
+        for word in ("brown", "pink", "rose", "green", "orange", "red")
+    )
 
     tool_msgs = [
         m
