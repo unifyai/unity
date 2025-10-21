@@ -35,7 +35,9 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
 
         # A shared, stateful LLM for maintaining conversation context
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
@@ -157,7 +159,11 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
         if self._stopped:
             raise RuntimeError("Cannot ask a stopped conversation.")
 
-        ask_client = unify.AsyncUnify("gpt-4o@openai")
+        ask_client = unify.AsyncUnify(
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
+        )
         ask_client.set_system_message(self._llm.system_message)
 
         prompt = f"""The external process is asking the user a question. Based on your persona and the conversation history, provide a direct and plausible answer.

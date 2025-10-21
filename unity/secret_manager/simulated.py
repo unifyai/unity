@@ -184,7 +184,9 @@ class SimulatedSecretManager(BaseSecretManager):
 
         # Shared, stateful async LLM
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=True,
             traced=True,
             stateful=True,
