@@ -45,7 +45,7 @@ def manager(request, event_loop):
     event_loop.run_until_complete(ssm.start())
 
     def finalizer():
-        ssm.stop()
+        event_loop.run_until_complete(ssm.stop())
 
     request.addfinalizer(finalizer)
     return ssm
@@ -70,7 +70,7 @@ def mocked_manager(request, event_loop):
         patcher_detect.stop()
         patcher_annotate.stop()
         patcher_summary.stop()
-        ssm.stop()
+        event_loop.run_until_complete(ssm.stop())
 
     request.addfinalizer(finalizer)
 
@@ -245,6 +245,7 @@ async def test_start_and_stop_lifecycle():
 
     def mock_create_task(coro):
         task = MagicMock(spec=asyncio.Task)
+        task.done.return_value = False
         created_tasks.append(task)
         return task
 
@@ -256,7 +257,7 @@ async def test_start_and_stop_lifecycle():
         expected_task_count = 2 + manager.settings.max_frame_workers
         assert len(created_tasks) == expected_task_count
 
-        manager.stop()
+        await manager.stop()
 
         for task in created_tasks:
             task.cancel.assert_called_once()
@@ -378,7 +379,7 @@ async def test_adaptive_frame_dropping_under_load(caplog):
         await manager.push_frame(PNG_BLUE_B64, 1.0)
 
     assert "Proactively dropping frame" in caplog.text
-    manager.stop()
+    await manager.stop()
 
 
 # --- Configuration Tests (New) ---

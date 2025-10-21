@@ -306,11 +306,8 @@ async def _main_async() -> None:
         print("\nShutting down...")
         logger.info("Starting sandbox shutdown sequence.")
         _stop_event.set()
-        screen_manager.stop()
+        await screen_manager.stop()
         logger.info("ScreenShareManager stopped.")
-
-        # Add a small delay to allow tasks to cancel
-        await asyncio.sleep(0.1)
 
         # Cancel any pending background tasks
         for task in background_tasks:

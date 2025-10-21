@@ -203,18 +203,23 @@ class ScreenShareManager:
         ]
         self._inactivity_task = asyncio.create_task(self._inactivity_flush_loop())
 
-    def stop(self):
+    async def stop(self):
         logger.info("ScreenShareManager stopping...")
         self._stop_event.set()
-        for task in [
+        tasks = [
             self._sequencer_task,
             self._inactivity_task,
             self._summary_update_task,
             self._debounce_task,
             *self._frame_workers,
-        ]:
+        ]
+        for task in tasks:
             if task and not task.done():
                 task.cancel()
+
+        # Yield control to allow cancellation to propagate
+        await asyncio.sleep(0)
+
         self._cpu_executor.shutdown(wait=False, cancel_futures=True)
 
     def set_session_context(self, context_text: str):
