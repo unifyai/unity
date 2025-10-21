@@ -331,7 +331,9 @@ class SimulatedActor(BaseActor):
 
         # One shared, memory-retaining LLM for all activities
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             stateful=True,

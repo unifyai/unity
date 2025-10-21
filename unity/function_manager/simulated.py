@@ -36,7 +36,9 @@ class SimulatedFunctionManager(BaseFunctionManager):
 
         # One shared, *stateful* LLM for the simulation
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,

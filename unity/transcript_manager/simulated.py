@@ -195,7 +195,9 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
 
         # Shared, *stateful* **asynchronous** LLM
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
