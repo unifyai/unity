@@ -35,17 +35,47 @@ ADDITIONAL VISUAL CONTEXT:
 - {burst_details}
 """
     prompt = f"""
-You are an ultra-fast analysis assistant. Your job is to identify a small, selective list of key moments from a screen share session.
+You are an expert, ultra-fast analysis assistant. Your job is to consolidate and identify key moments from a screen share session.
+
+PRIMARY DIRECTIVE:
+Your main goal is to consolidate speech and visual events that describe the same user action into a single, definitive moment. When this happens, you MUST prioritize the timestamp of the **visual event**, as it represents the tangible outcome of the user's stated intent.
+
+---
+EXAMPLE OF CONSOLIDATION:
 
 CONTEXT:
+- User Speech: "Okay, I'm clicking on the 'Submit' button now." (Occurred at t=10.5s)
+- Visual Change: A "Success!" modal appears on the screen. (Occurred at t=11.2s)
+
+❌ BAD RESPONSE (Incorrect):
+{{
+  "moments": [
+    {{ "timestamp": 10.5, "reason": "user_speech" }},
+    {{ "timestamp": 11.2, "reason": "visual_change" }}
+  ]
+}}
+(Reasoning: This is redundant. The speech and the visual change are part of the same 'submit' action.)
+
+✅ GOOD RESPONSE (Correct):
+{{
+  "moments": [
+    {{ "timestamp": 11.2, "reason": "user_speech" }}
+  ]
+}}
+(Reasoning: This correctly identifies the visual outcome as the single key moment and discards the redundant speech event.)
+---
+
+YOUR CURRENT TURN CONTEXT:
 - Session Summary: {current_summary}
 - This Turn: {speech_text} {visual_text}
 {burst_section}
 
-TASK:
-Your goal is to be selective. Instead of listing every visual change, identify only the timestamps that represent the completion of a distinct user action. If a user's speech implies multiple steps, return a moment for the outcome of each step. For a single action that causes multiple visual changes (like an animation), only return the timestamp for the final, stable frame of that action.
+CRITICAL RULES:
+1.  **Prioritize Outcomes:** Always favor the visual result of an action over the spoken intent when they refer to the same event.
+2.  **Be Selective with Animations:** For a single action that causes multiple visual changes (like an animation or a window opening), **only return the timestamp for the final, stable frame of that action.**
+3.  **Handle Multi-Step Actions:** If a user's speech implies multiple distinct steps, it is appropriate to return a moment for the outcome of each step.
 
-Respond with a JSON object containing a single key "moments", which is a list of objects. Each object must have a "timestamp" (float) and a "reason" (string, e.g., "user_speech" or "visual_change").
+Respond with a JSON object containing a single key "moments", which is a list of objects. Each object must have a "timestamp" (float) and a "reason" (string). Provide ONLY the JSON object.
 
 Example of a GOOD, selective response for a multi-step action:
 {{
