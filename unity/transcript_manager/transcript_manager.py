@@ -1796,20 +1796,9 @@ class TranscriptManager(BaseTranscriptManager):
                 contacts_list = []
 
         # Define stable shorthand legend for Message fields (full → shorthand)
-        message_keys_to_shorthand: dict[str, str] = {
-            "message_id": "mid",
-            "medium": "med",
-            "sender_id": "sid",
-            "receiver_ids": "rids",
-            "timestamp": "ts",
-            "content": "c",
-            "exchange_id": "xid",
-            "images": "imgs",
-        }
+        message_keys_to_shorthand: dict[str, str] = Message.shorthand_map()
         # Inverse legend (shorthand → full)
-        shorthand_to_message_keys: dict[str, str] = {
-            v: k for k, v in message_keys_to_shorthand.items()
-        }
+        shorthand_to_message_keys: dict[str, str] = Message.shorthand_inverse_map()
 
         # Ordered return shape as requested
         return {

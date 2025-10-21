@@ -245,6 +245,10 @@ def build_ask_prompt(
     # Early exit policy for mutation-intent requests reaching ask()
     mutation_exit_block = read_only_ask_mutation_exit_block()
 
+    # Legend for shorthand fields (single source of truth from Message model)
+    shorthand_forward = json.dumps(Message.shorthand_map(), indent=4)
+    shorthand_inverse = json.dumps(Message.shorthand_inverse_map(), indent=4)
+
     return "\n".join(
         [
             activity_block,
@@ -281,6 +285,12 @@ def build_ask_prompt(
             f"Contact  = {json.dumps(Contact.model_json_schema(), indent=4)}",
             "",
             f"Message  = {json.dumps(Message.model_json_schema(), indent=4)}",
+            "",
+            "Message field shorthand (full → shorthand):",
+            shorthand_forward,
+            "",
+            "Message field shorthand (shorthand → full):",
+            shorthand_inverse,
             "",
             f"Current UTC time: {_now()}.",
             clar_section,
