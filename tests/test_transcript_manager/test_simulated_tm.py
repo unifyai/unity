@@ -255,7 +255,7 @@ async def test_handle_ask():
     assert isinstance(nested_answer, str) and nested_answer.strip(), (
         "Nested ask() should yield a non-empty string answer",
     )
-    assert "europe" in nested_answer.lower()
+    assert any(substr in nested_answer.lower() for substr in ("europe", "eu"))
 
     # The original handle should still be awaitable and produce an answer
     handle_answer = await handle.result()

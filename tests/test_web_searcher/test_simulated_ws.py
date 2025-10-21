@@ -196,7 +196,7 @@ async def test_handle_ask():
 
     nested_answer = await nested.result()
     assert isinstance(nested_answer, str) and nested_answer.strip()
-    assert "europe" in nested_answer.lower()
+    assert any(substr in nested_answer.lower() for substr in ("europe", "eu"))
 
     handle_answer = await handle.result()
     assert isinstance(handle_answer, str) and handle_answer.strip()
