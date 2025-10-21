@@ -21,16 +21,22 @@ class ConductorHandleAction(BaseModel):
     """
     Intervene on an existing Conductor handle.
     You can't intervene on a handle that already has a result.
-        handle_id: the id of the handle
-        action_name: the action to perform on the handle
-            "conductor_handle_ask": read-only request on the status of the handle
+
+    Args:
+        handle_id: the id of the handle to intervene on
+
+        action_name: the action to perform on the handle, ask/interject/clarify require
+        a query. Options are:
+            "conductor_handle_ask": ask something to the handle
             "conductor_handle_interject": interject a message to the handle
             "conductor_handle_stop": stop the handle
             "conductor_handle_pause": pause the handle
             "conductor_handle_resume": resume the handle
             "conductor_handle_done": check if the handle is done
             "conductor_handle_answer_clarification": answer a clarification question
-        query: the text to send to the handle
+
+        query: the text to send to the handle (required for "conductor_handle_ask",
+        "conductor_handle_interject", "conductor_handle_answer_clarification" actions)
     """
 
     handle_id: int
@@ -43,7 +49,7 @@ class ConductorHandleAction(BaseModel):
         "conductor_handle_done",
         "conductor_handle_answer_clarification",
     ]
-    query: str
+    query: str |  None = None
 
 
 # wait

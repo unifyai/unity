@@ -282,6 +282,12 @@ class ConversationManager:
                         )
                     asyncio.create_task(
                         self.event_broker.publish(
+                            "app:conductor:request",
+                            event.to_json(),
+                        )
+                    )
+                    asyncio.create_task(
+                        self.event_broker.publish(
                             "app:managers:input",
                             event.to_json(),
                         )

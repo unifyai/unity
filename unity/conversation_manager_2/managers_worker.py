@@ -505,25 +505,32 @@ class ManagersWorker:
         # perform intervention
         match event.action_name:
             case "ask":
-                handle.ask(
+                ask_handle = await handle.ask(
                     event.query,
                     parent_chat_context_cont=event.parent_chat_context,
                 )
+                result = await ask_handle.result()
             case "interject":
-                handle.interject(
+                interject_handle = await handle.interject(
                     event.query,
                     parent_chat_context_cont=event.parent_chat_context,
                 )
+                result = await interject_handle.result()
             case "stop":
                 handle.stop(reason=event.query)
+                result = "Handle Stopped"
             case "pause":
                 handle.pause()
+                result = "Handle Paused"
             case "resume":
                 handle.resume()
+                result = "Handle Resumed"
             case "done":
                 handle.done()
+                result = "Handle Done"
             case "answer_clarification":
                 handle.answer_clarification(event.call_id, event.query)
+                result = "Clarification Answered"
             case _:
                 print(
                     f"[ManagersWorker] Unknown action_name={event.action_name} for intervention"
@@ -537,7 +544,7 @@ class ManagersWorker:
                 handle_id=event.handle_id,
                 action_name=event.action_name,
                 query=event.query,
-                response=f"Intervened: {event.action_name} {event.query}",
+                response=f"Intervened: {event.action_name} {result}",
             ).to_json(),
         )
 
