@@ -50,6 +50,28 @@ class Message(BaseModel):
         ),
     )
 
+    # Central, single source of truth for shorthand aliases (full → shorthand)
+    SHORTHAND_MAP: dict[str, str] = {
+        "message_id": "mid",
+        "medium": "med",
+        "sender_id": "sid",
+        "receiver_ids": "rids",
+        "timestamp": "ts",
+        "content": "c",
+        "exchange_id": "xid",
+        "images": "imgs",
+    }
+
+    @classmethod
+    def shorthand_map(cls) -> dict[str, str]:
+        """Return a copy of the full→shorthand mapping for Message fields."""
+        return dict(cls.SHORTHAND_MAP)
+
+    @classmethod
+    def shorthand_inverse_map(cls) -> dict[str, str]:
+        """Return shorthand→full mapping for Message fields."""
+        return {v: k for k, v in cls.SHORTHAND_MAP.items()}
+
     @model_validator(mode="before")
     @classmethod
     def _inject_sentinel(cls, data: dict) -> dict:
@@ -139,16 +161,7 @@ class Message(BaseModel):
 
         if shorthand and isinstance(out, dict):
             # Minimal, stable aliases for top-level fields
-            alias_map = {
-                "message_id": "mid",
-                "medium": "med",
-                "sender_id": "sid",
-                "receiver_ids": "rids",
-                "timestamp": "ts",
-                "content": "c",
-                "exchange_id": "xid",
-                "images": "imgs",
-            }
+            alias_map = type(self).SHORTHAND_MAP
             try:
                 out = {alias_map.get(k, k): v for k, v in out.items()}
             except Exception:
