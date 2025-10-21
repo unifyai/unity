@@ -56,7 +56,7 @@ def test_merge_contacts_private():
     assert deleted_id == cid2
 
     # Verify database state
-    remaining = cm._filter_contacts(filter=f"contact_id == {kept_id}")
+    remaining = cm._filter_contacts(filter=f"contact_id == {kept_id}")["contacts"]
     assert len(remaining) == 1, "Merged contact should exist under kept_id"
 
     merged = remaining[0]
@@ -67,7 +67,7 @@ def test_merge_contacts_private():
 
     # Deleted contact must be gone
     assert (
-        len(cm._filter_contacts(filter=f"contact_id == {deleted_id}")) == 0
+        len(cm._filter_contacts(filter=f"contact_id == {deleted_id}")["contacts"]) == 0
     ), "Deleted contact should be removed after merge"
 
 
@@ -177,8 +177,8 @@ async def test_merge_contacts_via_update():
     await handle.result()
 
     # Surviving contact must be *cid1* with combined fields
-    remaining_1 = cm._filter_contacts(filter=f"contact_id == {cid1}")
-    remaining_2 = cm._filter_contacts(filter=f"contact_id == {cid2}")
+    remaining_1 = cm._filter_contacts(filter=f"contact_id == {cid1}")["contacts"]
+    remaining_2 = cm._filter_contacts(filter=f"contact_id == {cid2}")["contacts"]
 
     assert len(remaining_1) == 1, "Merged contact should remain under cid1"
     assert len(remaining_2) == 0, "cid2 should be deleted after merge"
