@@ -95,8 +95,7 @@ class GoogleDriveAdapter(BaseFileSystemAdapter):
 
     @property
     def name(self) -> str:
-        folder_name = self._get_folder_name(self._root_folder_id)
-        return f"GoogleDrive[{folder_name}]"
+        return f"GoogleDrive"
 
     @property
     def capabilities(self) -> FileSystemCapabilities:

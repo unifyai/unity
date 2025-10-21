@@ -247,7 +247,7 @@ class InteractFileSystemAdapter(BaseFileSystemAdapter):
 
     @property
     def name(self) -> str:
-        return f"Interact[{self._space}]"
+        return f"Interact"
 
     @property
     def capabilities(self) -> FileSystemCapabilities:
