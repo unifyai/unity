@@ -110,7 +110,7 @@ async def test_handle_requests_clarification():
     down_q: asyncio.Queue[str] = asyncio.Queue()
 
     h = await ws.ask(
-        "Find the latest updates for my client's product,",
+        "Find the latest updates on the Toys R US social media accounts,",
         clarification_up_q=up_q,
         clarification_down_q=down_q,
         _requests_clarification=True,
@@ -118,11 +118,13 @@ async def test_handle_requests_clarification():
 
     question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "clarify" in question.lower()
-    await down_q.put("Focus on European updates only.")
+    await down_q.put(
+        "Let's focus on Twitter, and let me know if the most recent was a tweet or a retweet.",
+    )
 
     answer = await h.result()
     assert isinstance(answer, str) and answer.strip()
-    assert "europe" in answer.lower()
+    assert "tweet" in answer.lower()
 
 
 # ────────────────────────────────────────────────────────────────────────────
