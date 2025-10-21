@@ -31,9 +31,9 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
         """
@@ -83,9 +83,9 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
             When *True*, :pyfunc:`SteerableToolHandle.result` returns a
             tuple ``(answer, messages)`` where *messages* is the invisible
             chain-of-thought exchanged with the LLM.
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             **Read-only** conversation context to prepend to the tool loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Optional duplex channels.  When supplied the LLM can ask the human
             follow-up questions via *up_q* and must read answers from
             *down_q*.
@@ -112,9 +112,9 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
         """
@@ -147,7 +147,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         text : str
             The user's request (e.g. *"Add Sarah Connor's phone number …"*).
         _return_reasoning_steps, parent_chat_context,
-        clarification_up_q, clarification_down_q
+        _clarification_up_q, _clarification_down_q
             Same semantics as in :py:meth:`ask`.
         images : dict[str, Any] | None
             Optional live images aligned to the initial user message. Keys are span
