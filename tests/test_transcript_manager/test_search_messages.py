@@ -333,7 +333,7 @@ async def test_search_messages_contacts_table_output():
     messages = result["messages"]
 
     # The messages must reference only ids present in contacts
-    contact_ids_from_table = {c.get("contact_id") for c in contacts}
+    contact_ids_from_table = {c.contact_id for c in contacts}
     for m in messages:
         assert m.sender_id in contact_ids_from_table
         for rid in getattr(m, "receiver_ids", []) or []:
