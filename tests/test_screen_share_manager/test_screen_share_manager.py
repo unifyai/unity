@@ -39,10 +39,10 @@ def load_asset_image(filename: str) -> Image.Image:
 
 
 @pytest.fixture
-async def manager(request):
+def manager(request, event_loop):
     """Provides a clean, started ScreenShareManager instance for each test."""
     ssm = ScreenShareManager()
-    await ssm.start()
+    event_loop.run_until_complete(ssm.start())
 
     def finalizer():
         ssm.stop()
@@ -52,11 +52,10 @@ async def manager(request):
 
 
 @pytest.fixture
-async def mocked_manager(request):
+def mocked_manager(request, event_loop):
     """Provides a manager with its LLM clients mocked out."""
     ssm = ScreenShareManager()
 
-    # Manually manage patchers to control their lifecycle
     patcher_detect = patch.object(ssm, "_detection_client", new_callable=AsyncMock)
     patcher_annotate = patch.object(ssm, "_analysis_client", new_callable=AsyncMock)
     patcher_summary = patch.object(ssm, "_summary_client", new_callable=AsyncMock)
@@ -65,7 +64,7 @@ async def mocked_manager(request):
     mock_annotate = patcher_annotate.start()
     mock_summary = patcher_summary.start()
 
-    await ssm.start()
+    event_loop.run_until_complete(ssm.start())
 
     def finalizer():
         patcher_detect.stop()
