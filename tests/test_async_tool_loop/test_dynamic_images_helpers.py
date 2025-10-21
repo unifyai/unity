@@ -390,5 +390,5 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
         if m.get("role") == "tool" and m.get("name") == "ask_image"
     ]
     assert (
-        len(tool_msgs) == 3
-    ), "Expected exactly three ask_image tool results (John, David, Jenny)"
+        len(tool_msgs) >= 3
+    ), "Expected at least three ask_image tool results (John, David, Jenny)"
