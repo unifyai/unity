@@ -280,10 +280,13 @@ def test_private_filter_contacts_basic():
     )
 
     # Use a permissive filter and small limit to keep runtime low
-    results = cm._filter_contacts(
+    results_dict = cm._filter_contacts(
         filter="first_name is None or first_name is not None",
         offset=0,
         limit=3,
+    )
+    results = (
+        results_dict["contacts"] if isinstance(results_dict, dict) else results_dict
     )
 
     assert isinstance(results, list)
