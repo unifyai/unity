@@ -104,7 +104,9 @@ def test_create_contacts():
         response_policy=custom_policy,
     )
     user_contacts = [
-        c for c in contact_manager._filter_contacts() if c.contact_id not in (0, 1)
+        c
+        for c in contact_manager._filter_contacts()["contacts"]
+        if c.contact_id not in (0, 1)
     ]
     assert len(user_contacts) == 2
     tom_contact = next(c for c in user_contacts if c.first_name == "Tom")
