@@ -1757,7 +1757,11 @@ class TranscriptManager(BaseTranscriptManager):
         - Collect unique contact ids from senders and receivers.
         - Fetch full contact rows via ContactManager._filter_contacts using an
           id-membership filter.
-        - Return a dict containing the contacts list and the list of message dicts.
+        - Return a dict containing:
+            contacts,
+            message_keys_to_shorthand (legend: full → shorthand),
+            messages (Message models),
+            shorthand_to_message_keys (legend: shorthand → full).
         """
 
         if not messages:
@@ -1791,5 +1795,26 @@ class TranscriptManager(BaseTranscriptManager):
             except Exception:
                 contacts_list = []
 
-        # Return Message models directly for 'messages' to preserve rich types
-        return {"contacts": contacts_list, "messages": messages}
+        # Define stable shorthand legend for Message fields (full → shorthand)
+        message_keys_to_shorthand: dict[str, str] = {
+            "message_id": "mid",
+            "medium": "med",
+            "sender_id": "sid",
+            "receiver_ids": "rids",
+            "timestamp": "ts",
+            "content": "c",
+            "exchange_id": "xid",
+            "images": "imgs",
+        }
+        # Inverse legend (shorthand → full)
+        shorthand_to_message_keys: dict[str, str] = {
+            v: k for k, v in message_keys_to_shorthand.items()
+        }
+
+        # Ordered return shape as requested
+        return {
+            "contacts": contacts_list,
+            "message_keys_to_shorthand": message_keys_to_shorthand,
+            "messages": messages,  # keep models; centralized serializer handles JSON
+            "shorthand_to_message_keys": shorthand_to_message_keys,
+        }
