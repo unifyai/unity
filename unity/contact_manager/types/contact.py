@@ -1,5 +1,13 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+    model_serializer,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+)
+from typing import Optional, ClassVar
 
 UNICODE_NAME_RE = r"^[^\W\d_](?:[^\W\d_]|[ .'-])*$"  # ← one reusable constant
 
@@ -7,6 +15,20 @@ UNASSIGNED = -1
 
 
 class Contact(BaseModel):
+    # Central, single source of truth for shorthand aliases (full → shorthand)
+    SHORTHAND_MAP: ClassVar[dict[str, str]] = {
+        "contact_id": "cid",
+        "first_name": "fn",
+        "surname": "sn",
+        "email_address": "email",
+        "phone_number": "phone",
+        "whatsapp_number": "whatsapp",
+        "bio": "bio",
+        "rolling_summary": "rs",
+        "respond_to": "resp",
+        "response_policy": "policy",
+    }
+
     contact_id: int = Field(
         default=UNASSIGNED,
         description="Unique identifier for the contact",
@@ -64,6 +86,15 @@ class Contact(BaseModel):
         exclude = {"contact_id"} if self.contact_id == UNASSIGNED else {}
         return self.model_dump(mode="json", exclude=exclude)
 
+    # Shorthand helpers (parity with Message model)
+    @classmethod
+    def shorthand_map(cls) -> dict[str, str]:
+        return dict(cls.SHORTHAND_MAP)
+
+    @classmethod
+    def shorthand_inverse_map(cls) -> dict[str, str]:
+        return {v: k for k, v in cls.SHORTHAND_MAP.items()}
+
     @field_validator(
         "first_name",
         "surname",
@@ -85,3 +116,66 @@ class Contact(BaseModel):
         return v
 
     model_config = {"extra": "allow"}
+
+    # Only affect JSON-mode serialisation: prune empty fields and/or alias keys
+    # when explicitly requested via context (parity with Message model)
+    @model_serializer(mode="wrap")
+    def _prune_empty_on_serialize(
+        self,
+        handler: SerializerFunctionWrapHandler,
+        info: SerializationInfo,
+    ) -> dict:  # type: ignore[no-redef]
+        data = handler(self)
+
+        prune = False
+        shorthand = False
+        try:
+            ctx = info.context or {}
+            if "prune_empty" in ctx:
+                prune = bool(ctx["prune_empty"])  # explicit override
+            if "shorthand" in ctx:
+                shorthand = bool(ctx["shorthand"])  # explicit aliasing
+        except Exception:
+            pass
+
+        out = data
+        if prune:
+
+            def _is_empty(value):
+                try:
+                    if value is None:
+                        return True
+                    # Treat empty strings as empty; keep False/0 as meaningful
+                    if isinstance(value, str):
+                        return value.strip() == ""
+                    if isinstance(value, (list, tuple, set, dict)):
+                        return len(value) == 0
+                    return False
+                except Exception:
+                    return False
+
+            def _prune(obj):
+                try:
+                    if isinstance(obj, dict):
+                        pruned = {k: _prune(v) for k, v in obj.items()}
+                        return {k: v for k, v in pruned.items() if not _is_empty(v)}
+                    if isinstance(obj, list):
+                        pruned_list = [_prune(v) for v in obj]
+                        return [v for v in pruned_list if not _is_empty(v)]
+                    return obj
+                except Exception:
+                    return obj
+
+            try:
+                out = _prune(out)
+            except Exception:
+                out = data
+
+        if shorthand and isinstance(out, dict):
+            alias_map = type(self).SHORTHAND_MAP
+            try:
+                out = {alias_map.get(k, k): v for k, v in out.items()}
+            except Exception:
+                out = out
+
+        return out
