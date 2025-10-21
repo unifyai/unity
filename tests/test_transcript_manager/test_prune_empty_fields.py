@@ -26,7 +26,7 @@ def test_message_json_omits_empty_fields_and_keeps_non_empty():
         content="no images",
         exchange_id=4242,
     )
-    dumped_empty = msg_empty.model_dump(mode="json")
+    dumped_empty = msg_empty.model_dump(mode="json", context={"prune_empty": True})
     assert "images" not in dumped_empty, "empty images field should be omitted"
     assert "screen_share" not in dumped_empty, "empty screen_share should be omitted"
 
@@ -47,7 +47,10 @@ def test_message_json_omits_empty_fields_and_keeps_non_empty():
             ],
         ),
     )
-    dumped_with_image = msg_with_image.model_dump(mode="json")
+    dumped_with_image = msg_with_image.model_dump(
+        mode="json",
+        context={"prune_empty": True},
+    )
     assert "images" in dumped_with_image, "non-empty images should be present"
     # screen_share remains empty here and should still be omitted
     assert "screen_share" not in dumped_with_image
