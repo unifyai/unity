@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import pytest
 import json
+import re
 from typing import List, Dict, Any, Optional
 
 import unify
@@ -50,13 +51,71 @@ def _llm_judge_contact_retrieval(
         ]
 
     payload = json.dumps(payload_dict, indent=2)
-    result_json = judge.generate(payload)
+    result_text = judge.generate(payload)
 
-    try:
-        verdict = json.loads(result_json)
-        is_correct = verdict.get("correct")
-    except json.JSONDecodeError:
-        is_correct = False  # Failed to parse judge's response
+    # Be tolerant to non-JSON wrappers (markdown fences, extra prose) while
+    # preserving the same semantic contract: a boolean "correct" field decides.
+    def _extract_correct_bool(text: str) -> Optional[bool]:
+        s = (text or "").strip()
+
+        # 1) Direct JSON
+        try:
+            obj = json.loads(s)
+            if isinstance(obj, dict) and isinstance(obj.get("correct"), bool):
+                return obj.get("correct")
+        except Exception:
+            pass
+
+        # 2) Code fences (```json ... ``` or ``` ... ```)
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", s, re.IGNORECASE)
+        if m:
+            inner = m.group(1).strip()
+            try:
+                obj = json.loads(inner)
+                if isinstance(obj, dict) and isinstance(obj.get("correct"), bool):
+                    return obj.get("correct")
+            except Exception:
+                pass
+
+        # 3) First balanced JSON object in the string (best-effort)
+        def _balanced_json_candidates(text_: str):
+            start = None
+            depth = 0
+            for i, ch in enumerate(text_):
+                if ch == "{":
+                    if start is None:
+                        start = i
+                    depth += 1
+                elif ch == "}":
+                    if depth > 0:
+                        depth -= 1
+                        if depth == 0 and start is not None:
+                            yield text_[start : i + 1]
+                            start = None
+
+        for cand in _balanced_json_candidates(s):
+            try:
+                obj = json.loads(cand)
+                if isinstance(obj, dict) and isinstance(obj.get("correct"), bool):
+                    return obj.get("correct")
+            except Exception:
+                continue
+
+        # 4) Loose regex on key:value pairs (e.g., correct: true)
+        m2 = re.search(r"\b\"?correct\"?\s*[:=]\s*(true|false)\b", s, re.IGNORECASE)
+        if m2:
+            return m2.group(1).lower() == "true"
+
+        # 5) Bare booleans (rare, but cheap to support)
+        bare = s.lower()
+        if bare == "true":
+            return True
+        if bare == "false":
+            return False
+        return None
+
+    verdict_bool = _extract_correct_bool(result_text)
+    is_correct = bool(verdict_bool) if verdict_bool is not None else False
 
     assert is_correct is True, assertion_failed(
         f"Answer containing '{expected_answer_fragment}'",
