@@ -68,7 +68,7 @@ async def test_tm_stateful_memory_serial_asks():
 
     # The second answer should mention the same codename exactly
     assert (
-        codename.lower().split(" ")[-1] in answer2
+        codename.lower().split(" ")[-1].replace("*", "") in answer2
     ), "LLM should recall the previous codename"
 
 
