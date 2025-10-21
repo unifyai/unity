@@ -39,46 +39,35 @@ def load_asset_image(filename: str) -> Image.Image:
 
 
 @pytest.fixture
-def manager(request, event_loop):
+async def manager() -> ScreenShareManager:
     """Provides a clean, started ScreenShareManager instance for each test."""
     ssm = ScreenShareManager()
-    event_loop.run_until_complete(ssm.start())
-
-    def finalizer():
-        event_loop.run_until_complete(ssm.stop())
-
-    request.addfinalizer(finalizer)
-    return ssm
+    await ssm.start()
+    yield ssm
+    await ssm.stop()
 
 
 @pytest.fixture
-def mocked_manager(request, event_loop):
+async def mocked_manager():
     """Provides a manager with its LLM clients mocked out."""
     ssm = ScreenShareManager()
 
-    patcher_detect = patch.object(ssm, "_detection_client", new_callable=AsyncMock)
-    patcher_annotate = patch.object(ssm, "_analysis_client", new_callable=AsyncMock)
-    patcher_summary = patch.object(ssm, "_summary_client", new_callable=AsyncMock)
+    with patch.object(
+        ssm, "_detection_client", new_callable=AsyncMock
+    ) as mock_detect, patch.object(
+        ssm, "_analysis_client", new_callable=AsyncMock
+    ) as mock_annotate, patch.object(
+        ssm, "_summary_client", new_callable=AsyncMock
+    ) as mock_summary:
+        await ssm.start()
 
-    mock_detect = patcher_detect.start()
-    mock_annotate = patcher_annotate.start()
-    mock_summary = patcher_summary.start()
+        yield ssm, {
+            "detect": mock_detect,
+            "annotate": mock_annotate,
+            "summary": mock_summary,
+        }
 
-    event_loop.run_until_complete(ssm.start())
-
-    def finalizer():
-        patcher_detect.stop()
-        patcher_annotate.stop()
-        patcher_summary.stop()
-        event_loop.run_until_complete(ssm.stop())
-
-    request.addfinalizer(finalizer)
-
-    return ssm, {
-        "detect": mock_detect,
-        "annotate": mock_annotate,
-        "summary": mock_summary,
-    }
+        await ssm.stop()
 
 
 # --- High-Level API and Orchestration Tests ---
