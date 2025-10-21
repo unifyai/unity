@@ -39,14 +39,14 @@ class ConductorHandleAction(BaseModel):
         ...,
         description=(
             "The action to perform on the handle. Options are:\n"
-            "'conductor_handle_ask': ask something to the handle through the query\n"
-            "'conductor_handle_interject': interject the handle through the query\n"
+            "'conductor_handle_ask': ask the handle through the `query` field\n"
+            "'conductor_handle_interject': interject the handle through the `query` field\n"
             "'conductor_handle_stop': stop the handle\n"
             "'conductor_handle_pause': pause the handle\n"
             "'conductor_handle_resume': resume the handle\n"
             "'conductor_handle_done': check if the handle is done\n"
             "'conductor_handle_answer_clarification': answer a clarification question "
-            "through the query\n"
+            "through the `query` field\n"
         ),
     )
     query: str | None = Field(
