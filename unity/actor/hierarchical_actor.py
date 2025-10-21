@@ -46,6 +46,7 @@ from unity.common._async_tool.loop_config import (
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
+from unity.conversation_manager_2.handle import ConversationManagerHandle
 
 current_run_id_var = contextvars.ContextVar("hp_run_id", default=0)
 current_interaction_sink_var = contextvars.ContextVar(
@@ -869,7 +870,100 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
     def __getattr__(self, name: str) -> Any:
         return getattr(self._real_handle, name)
 
+    async def stop(
+        self,
+        reason: str | None = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ):
+        return await self._real_handle.stop(
+            reason,
+            parent_chat_context_cont=parent_chat_context_cont,
+        )
+
+    async def pause(self):
+        return await self._real_handle.pause()
+
+    async def resume(self):
+        return await self._real_handle.resume()
+
+    async def done(self):
+        return await self._real_handle.done()
+
+    async def next_clarification(self) -> dict:
+        return await self._real_handle.next_clarification()
+
+    async def next_notification(self) -> dict:
+        return await self._real_handle.next_notification()
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        return await self._real_handle.answer_clarification(call_id, answer)
+
+    async def ask(
+        self,
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ):
+        return await self._real_handle.ask(
+            question,
+            parent_chat_context_cont=parent_chat_context_cont,
+        )
+
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ):
+        return await self._real_handle.interject(
+            message,
+            parent_chat_context_cont=parent_chat_context_cont,
+        )
+
     async def result(self) -> str:
+        if not isinstance(self._cache_key, tuple):
+            raise TypeError(
+                f"Expected cache_key to be a tuple, got {type(self._cache_key)}",
+            )
+
+        result_cache_key_list = list(self._cache_key)
+        if len(result_cache_key_list) > 3 and isinstance(result_cache_key_list[3], str):
+            result_cache_key_list[3] += "->result()"
+            result_cache_key = tuple(result_cache_key_list)
+        else:
+            logger.warning(
+                f"Unexpected cache key structure for result caching: {self._cache_key}. "
+                f"Using modified repr.",
+            )
+            result_cache_key = (*self._cache_key, "->result()")
+
+        logger.debug(
+            f"HISTORY PROXY RESULT: Using cache key: {result_cache_key}",
+        )
+        if result_cache_key in self._plan.idempotency_cache:
+            cached_data = self._plan.idempotency_cache[result_cache_key]
+            cached_result = cached_data["result"]
+            cached_interaction = cached_data["interaction_log"]
+
+            self._plan.action_log.append(
+                f"CACHE HIT: Using cached result for {self._call_repr} -> .result()",
+            )
+            logger.debug(f"HISTORY PROXY CACHE HIT for: {self._call_repr} -> .result()")
+
+            interactions_log = current_interaction_sink_var.get()
+            if interactions_log is not None:
+                if len(cached_interaction) < 4:
+                    cached_interaction = (*cached_interaction, [])
+                interactions_log.append(cached_interaction)
+
+            return cached_result
+
+        self._plan.action_log.append(
+            f"CACHE MISS: Executing {self._call_repr} -> .result()",
+        )
+        logger.debug(f"HISTORY PROXY CACHE MISS for: {self._call_repr} -> .result()")
+
         final_result = await self._real_handle.result()
 
         sub_loop_history = []
@@ -878,7 +972,7 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
 
         interaction_to_cache = (
             "handle_method_call",
-            self._call_repr,
+            f"{self._call_repr} -> .result()",
             str(final_result),
             sub_loop_history,
         )
@@ -887,7 +981,7 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
         if interactions_log is not None:
             interactions_log.append(interaction_to_cache)
 
-        self._plan.idempotency_cache[self._cache_key] = {
+        self._plan.idempotency_cache[result_cache_key] = {
             "result": final_result,
             "interaction_log": interaction_to_cache,
             "meta": self._meta,
@@ -926,9 +1020,11 @@ class _SteerableToolHandleProxy:
             call_repr: str,
             is_cached: bool,
             cached_data: dict | None,
+            tool_name: str,
+            original_cache_key: tuple,
         ):
             if is_cached:
-                cached_result = cached_data["result"]
+                cached_result_value = cached_data["result"]
                 cached_interaction = cached_data["interaction_log"]
                 self._plan.action_log.append(
                     f"CACHE HIT: Using cached result for {call_repr}",
@@ -939,7 +1035,31 @@ class _SteerableToolHandleProxy:
                     if len(cached_interaction) < 4:
                         cached_interaction = (*cached_interaction, [])
                     interactions_log.append(cached_interaction)
-                return cached_result
+
+                if (
+                    isinstance(cached_result_value, dict)
+                    and "handle_id" in cached_result_value
+                ):
+                    handle_id = cached_result_value["handle_id"]
+                    real_handle = self._plan.live_handles.get(handle_id)
+                    if not real_handle:
+                        logger.error(
+                            f"Cache consistency error: Could not find live handle for ID {handle_id} "
+                            f"during cache hit for {call_repr}. Forcing cache miss.",
+                        )
+                        return None
+
+                    meta = cached_data.get("meta", {})
+
+                    return _HistoryCapturingHandleProxy(
+                        real_handle,
+                        self._plan,
+                        call_repr,
+                        original_cache_key,
+                        meta,
+                    )
+                else:
+                    return cached_result_value
             return None
 
         async def async_method_wrapper(*args, **kwargs):
@@ -955,11 +1075,15 @@ class _SteerableToolHandleProxy:
             )
 
             if cache_key in self._plan.idempotency_cache:
-                return handle_method_logic(
+                cached_result = handle_method_logic(
                     call_repr,
                     True,
                     self._plan.idempotency_cache[cache_key],
+                    tool_name,
+                    cache_key,
                 )
+                if cached_result is not None:
+                    return cached_result
 
             if self._plan.runtime.cache_miss_counter:
                 self._plan.runtime.cache_miss_counter[-1] += 1
@@ -969,10 +1093,16 @@ class _SteerableToolHandleProxy:
             output = await real_attr(*args, **kwargs)
 
             if isinstance(output, SteerableToolHandle):
+                sub_handle_name = f"{name}_handle"
+                sub_handle_id = str(uuid.uuid4())
+                self._plan.live_handles[sub_handle_id] = output
+
+                result_to_cache = {"handle_id": sub_handle_id}
+
                 initial_interaction = (
                     "handle_method_call",
                     call_repr,
-                    f"Returned handle: {output.__class__.__name__}",
+                    f"Returned handle: {output.__class__.__name__} (ID: {sub_handle_id})",
                 )
                 interactions_log = current_interaction_sink_var.get()
                 if interactions_log is not None:
@@ -993,6 +1123,12 @@ class _SteerableToolHandleProxy:
                     "tool": tool_name,
                     "url": url,
                     "impure": False,
+                }
+
+                self._plan.idempotency_cache[cache_key] = {
+                    "result": result_to_cache,
+                    "interaction_log": initial_interaction,
+                    "meta": meta,
                 }
 
                 return _HistoryCapturingHandleProxy(
@@ -1045,11 +1181,15 @@ class _SteerableToolHandleProxy:
             )
 
             if cache_key in self._plan.idempotency_cache:
-                return handle_method_logic(
+                cached_result = handle_method_logic(
                     call_repr,
                     True,
                     self._plan.idempotency_cache[cache_key],
+                    tool_name,
+                    cache_key,
                 )
+                if cached_result is not None:
+                    return cached_result
 
             if self._plan.runtime.cache_miss_counter:
                 self._plan.runtime.cache_miss_counter[-1] += 1
@@ -1102,6 +1242,20 @@ class _ActionProviderProxy:
         is accessed on the proxy instance.
         """
         real_attr = getattr(self._real_action_provider, name)
+        if name == "conversation_manager" and isinstance(
+            real_attr,
+            ConversationManagerHandle,
+        ):
+            handle_id = f"cm_handle"
+            if handle_id not in self._plan.live_handles:
+                self._plan.live_handles[handle_id] = real_attr
+            return _SteerableToolHandleProxy(
+                real_attr,
+                self._plan,
+                "conversation_manager",
+                handle_id,
+            )
+
         if not callable(real_attr):
             return real_attr
 
