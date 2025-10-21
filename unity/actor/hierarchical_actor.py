@@ -939,7 +939,7 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
             result_cache_key = (*self._cache_key, "->result()")
 
         logger.debug(
-            f"HISTORY PROXY RESULT: Using cache key: {result_cache_key}",
+            f"RESULT: Using cache key: {result_cache_key}",
         )
         if result_cache_key in self._plan.idempotency_cache:
             cached_data = self._plan.idempotency_cache[result_cache_key]
@@ -949,7 +949,7 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
             self._plan.action_log.append(
                 f"CACHE HIT: Using cached result for {self._call_repr} -> .result()",
             )
-            logger.debug(f"HISTORY PROXY CACHE HIT for: {self._call_repr} -> .result()")
+            logger.debug(f"CACHE HIT for: {self._call_repr} -> .result()")
 
             interactions_log = current_interaction_sink_var.get()
             if interactions_log is not None:
@@ -962,7 +962,7 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
         self._plan.action_log.append(
             f"CACHE MISS: Executing {self._call_repr} -> .result()",
         )
-        logger.debug(f"HISTORY PROXY CACHE MISS for: {self._call_repr} -> .result()")
+        logger.debug(f"CACHE MISS for: {self._call_repr} -> .result()")
 
         final_result = await self._real_handle.result()
 
@@ -1029,7 +1029,7 @@ class _SteerableToolHandleProxy:
                 self._plan.action_log.append(
                     f"CACHE HIT: Using cached result for {call_repr}",
                 )
-                logger.debug(f"HANDLE CACHE HIT for: {call_repr}")
+                logger.debug(f"CACHE HIT for: {call_repr}")
                 interactions_log = current_interaction_sink_var.get()
                 if interactions_log is not None:
                     if len(cached_interaction) < 4:
@@ -1088,7 +1088,7 @@ class _SteerableToolHandleProxy:
             if self._plan.runtime.cache_miss_counter:
                 self._plan.runtime.cache_miss_counter[-1] += 1
             self._plan.action_log.append(f"CACHE MISS: Executing {call_repr}")
-            logger.debug(f"HANDLE CACHE MISS for: {call_repr}")
+            logger.debug(f"CACHE MISS for: {call_repr}")
 
             output = await real_attr(*args, **kwargs)
 
@@ -2238,17 +2238,11 @@ class HierarchicalPlan(BaseActiveTask):
                     )
 
                     async with self._interject_lock:
-                        if self._execution_task and not self._execution_task.done():
-                            self._execution_task.cancel()
-
                         for patch in assessment.refinements:
                             self._update_plan_with_new_code(
                                 patch.function_name,
                                 patch.new_code,
                             )
-
-                        old_run_id = self.run_id
-                        self._restart_execution_loop(old_run_id)
 
             except asyncio.CancelledError:
                 logger.warning(
@@ -2488,9 +2482,6 @@ class HierarchicalPlan(BaseActiveTask):
                     item.function_name,
                 )
 
-            old_run_id = self.run_id
-            self.run_id += 1
-
             await self._handle_dynamic_implementation(
                 function_name=item.function_name,
                 replan_reason=assessment.reason,
@@ -2551,7 +2542,7 @@ class HierarchicalPlan(BaseActiveTask):
 
             self._invalidate_cache_from_function(item.function_name, item.parent_stack)
 
-            self._restart_execution_loop(old_run_id)
+            self._restart_execution_loop("replay_after_verification_recovery")
 
         except Exception as e:
             logger.error(
@@ -2671,11 +2662,15 @@ class HierarchicalPlan(BaseActiveTask):
         final_keys = proposed | impure_guard
         return final_keys
 
-    def _restart_execution_loop(self, old_run_id: int):
-        """Reuses the plan restart and state cleanup logic from interjections."""
-        logger.info(f"Restarting execution loop. New run_id: {self.run_id}")
+    def _restart_execution_loop(self, mode: str):
+        """Restart the execution loop with a new run_id."""
+        old_run_id = self.run_id
+        self.run_id += 1
+        logger.info(
+            f"🔄 RUN TRANSITION: run_id={old_run_id} -> run_id={self.run_id} ({mode})",
+        )
         self.action_log.append(
-            f"RESTART: Restarting execution loop (old_run_id={old_run_id} → new_run_id={self.run_id}).",
+            f"RESTART: Restarting execution loop (old_run_id={old_run_id} → new_run_id={self.run_id}, reason: {mode}).",
         )
 
         asyncio.create_task(self._cancel_all_background_tasks())
@@ -2690,7 +2685,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.interaction_stack.append([])
 
         self._execution_task = asyncio.create_task(
-            self._initialize_and_run(mode="replay_after_verification_recovery"),
+            self._initialize_and_run(mode=mode),
         )
 
     async def _cancel_all_background_tasks(self):
@@ -3013,52 +3008,8 @@ class HierarchicalPlan(BaseActiveTask):
             else:
                 self.goal = f"Incrementally taught plan:\n- {modification_reason}"
 
-            if self._child_tasks:
-                self.action_log.append(
-                    f"Cancelling {len(self._child_tasks)} child tasks.",
-                )
-                for task in self._child_tasks:
-                    task.cancel()
-                await asyncio.gather(*self._child_tasks, return_exceptions=True)
-                self._child_tasks.clear()
+            self._restart_execution_loop("modify_task interjection")
 
-            if self._execution_task and not self._execution_task.done():
-                self.action_log.append(
-                    f"Cancelling previous run task (ID: {self.run_id}).",
-                )
-                logger.debug(f"Cancelling previous run task (ID: {self.run_id}).")
-                self._execution_task.cancel()
-                try:
-                    await self._execution_task
-                except asyncio.CancelledError:
-                    self.action_log.append("Previous run task successfully cancelled.")
-                    logger.debug("Previous run task successfully cancelled.")
-                except Exception as e:
-                    self.action_log.append(f"Exception during task cancellation: {e}")
-                    logger.debug(f"Exception during task cancellation: {e}")
-
-            old_run_id = self.run_id
-            self.run_id += 1
-            self.action_log.append(
-                f"Interjection applied. Transitioning from run_id={old_run_id} to run_id={self.run_id}",
-            )
-            if DIAGNOSTIC_MODE:
-                logger.info(
-                    f"🔄 RUN TRANSITION: run_id={old_run_id} -> run_id={self.run_id} (modify_task interjection)",
-                )
-
-            if old_run_id in self.runtime.call_stacks:
-                del self.runtime.call_stacks[old_run_id]
-
-            self.interaction_stack.clear()
-            self.call_stack.clear()
-            self.runtime.path_context.clear()
-
-            self.interaction_stack.append([])
-
-            self._execution_task = asyncio.create_task(
-                self._initialize_and_run(mode="replay_after_modification"),
-            )
             if self._state in (
                 _HierarchicalPlanState.PAUSED,
                 _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
@@ -3149,45 +3100,14 @@ class HierarchicalPlan(BaseActiveTask):
             )
             self.actor._load_plan_module(self)
 
-            if self._execution_task and not self._execution_task.done():
-                self.action_log.append(
-                    f"Cancelling previous run task (ID: {self.run_id}) for refactor.",
-                )
-                self._execution_task.cancel()
-                try:
-                    await self._execution_task
-                except asyncio.CancelledError:
-                    self.action_log.append("Previous run task successfully cancelled.")
-                    logger.debug("Previous run task successfully cancelled.")
-                except Exception as e:
-                    self.action_log.append(f"Exception during task cancellation: {e}")
-                    logger.debug(f"Exception during task cancellation: {e}")
-
-            old_run_id = self.run_id
-            self.run_id += 1
-            self.action_log.append(
-                f"Plan refactored. Transitioning from run_id={old_run_id} to run_id={self.run_id}",
-            )
-            if DIAGNOSTIC_MODE:
-                logger.info(
-                    f"🔄 RUN TRANSITION: run_id={old_run_id} -> run_id={self.run_id} (refactor_and_generalize interjection)",
-                )
-
-            if old_run_id in self.runtime.call_stacks:
-                del self.runtime.call_stacks[old_run_id]
-
-            self.interaction_stack.clear()
-            self.call_stack.clear()
-            self.runtime.path_context.clear()
-            self.interaction_stack.append([])
             self.action_log.append(
                 "CACHE INVALIDATION: Clearing entire cache after refactoring to ensure a clean state for the new, generalized plan.",
             )
             logger.info("Clearing idempotency cache due to refactor_and_generalize.")
             self.idempotency_cache.clear()
-            self._execution_task = asyncio.create_task(
-                self._initialize_and_run(mode="fresh_after_refactor"),
-            )
+
+            self._restart_execution_loop("refactor_and_generalize interjection")
+
             return "Plan successfully refactored. Resuming execution with the new modular plan."
 
         elif decision.action == "explore_detached":
