@@ -50,7 +50,7 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
 
     @property
     def name(self) -> str:
-        return f"CodeSandbox[{self._sandbox_id}]"
+        return f"CodeSandbox"
 
     @property
     def capabilities(self) -> FileSystemCapabilities:

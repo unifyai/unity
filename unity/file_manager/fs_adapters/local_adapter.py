@@ -22,7 +22,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
 
     @property
     def name(self) -> str:
-        return f"Local[{self._root}]"
+        return f"Local"
 
     @property
     def capabilities(self) -> FileSystemCapabilities:

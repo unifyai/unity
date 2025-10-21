@@ -80,7 +80,7 @@ class FileManager(BaseFileManager):
         except Exception:
             raw_alias = "files"
 
-        self._fs_alias = self._sanitize_ctx_component(str(raw_alias))
+        self._fs_alias = self._safe(str(raw_alias))
 
         # Extract clean filesystem type for LLM prompts (without path/details)
         self._fs_type = self._extract_filesystem_type(raw_alias)
@@ -101,7 +101,7 @@ class FileManager(BaseFileManager):
         ), "read and write contexts must be the same when instantiating a FileManager."
         base_ctx = read_ctx or "default"
         # Use a single Files namespace and a per‑filesystem suffix
-        self._ctx = f"{base_ctx}/Files__{self._fs_alias}"
+        self._ctx = f"{base_ctx}/Files/{self._fs_alias}"
 
         # Ensure context and fields exist
         self._store = TableStore(
@@ -155,7 +155,7 @@ class FileManager(BaseFileManager):
         self.add_tools("organize", organize_tools)
 
     @staticmethod
-    def _sanitize_ctx_component(value: Any) -> str:
+    def _safe(value: Any) -> str:
         """
         Uniform sanitizer for any single context path component.
 
@@ -190,6 +190,27 @@ class FileManager(BaseFileManager):
             return "Unknown"
         # Split on '[' and take the first part (the type)
         return adapter_name.split("[")[0].strip() or adapter_name
+
+    # Helpers #
+    # --------#
+
+    def _ctx_for_table(self, filename: str, table: str) -> str:
+        """
+        Return the fully‑qualified Unify context name for ``table``.
+
+        Parameters
+        ----------
+        filename: str
+        The filename of the file to get the context for.
+        table : str
+            Logical table name as used by this manager (e.g. ``"Products"``).
+
+        Returns
+        -------
+        str
+            The fully‑qualified Unify context.
+        """
+        return f"{self._ctx}/{self._safe(filename)}/Tables/{self._safe(table)}"
 
     # ---------- Adapter wrappers (bytes + identifiers only) ----------------- #
     def _adapter_list(self) -> List[str]:
@@ -644,7 +665,7 @@ class FileManager(BaseFileManager):
                 "status": "success",
                 "error": None,
                 "records": records,
-                "full_text": full_text,
+                "full_text": safe_full_text,
                 "metadata": {
                     "document_id": getattr(document, "document_id", ""),
                     "total_records": len(records),
@@ -694,6 +715,9 @@ class FileManager(BaseFileManager):
         )
         document_index_offset: int = int(options.pop("document_index_offset", 0))
 
+        # Control per-table ingestion batch size for spreadsheet rows
+        table_rows_batch_size: int = int(options.pop("table_rows_batch_size", 100))
+
         # Validate and prepare paths
         if isinstance(filenames, str):
             filenames = [filenames]
@@ -705,6 +729,7 @@ class FileManager(BaseFileManager):
 
         # Create a temporary directory to hold exported files with their original names
         temp_dir = tempfile.mkdtemp(prefix="filemanager_parse_")
+        print(f"[FileManager] Created temporary directory: {temp_dir}")
 
         try:
             # Export files from the underlying filesystem to temp directory
@@ -716,9 +741,11 @@ class FileManager(BaseFileManager):
                 try:
                     # Export file with original filename preserved
                     exported_path = self.export_file(name, temp_dir)
+                    print(f"[FileManager] Exported file to: {exported_path}")
                     file_paths.append(exported_path)
                     filename_to_path[exported_path] = name
-                except Exception:
+                except Exception as e:
+                    print(f"[FileManager] Error exporting file {name}: {e}")
                     invalid.append(name)
 
             for bad in invalid:
@@ -763,6 +790,7 @@ class FileManager(BaseFileManager):
                             self._ingest_tables_for_file(
                                 filename=name,
                                 document=document,
+                                table_rows_batch_size=table_rows_batch_size,
                             )
                         except Exception as e:
                             print(f"Error ingesting tables for file {name}: {e}")
@@ -795,6 +823,7 @@ class FileManager(BaseFileManager):
                                 self._ingest_tables_for_file(
                                     filename=name,
                                     document=document,
+                                    table_rows_batch_size=table_rows_batch_size,
                                 )
                             except Exception as e:
                                 print(f"Error ingesting tables for file {name}: {e}")
@@ -858,6 +887,9 @@ class FileManager(BaseFileManager):
             None,
         )
         document_index_offset: int = int(options.pop("document_index_offset", 0))
+
+        # Control per-table ingestion batch size for spreadsheet rows
+        table_rows_batch_size: int = int(options.pop("table_rows_batch_size", 100))
 
         if isinstance(filenames, str):
             filenames = [filenames]
@@ -923,6 +955,7 @@ class FileManager(BaseFileManager):
                             self._ingest_tables_for_file(
                                 filename=name,
                                 document=document,
+                                table_rows_batch_size=table_rows_batch_size,
                             )
                         except Exception as e:
                             print(f"Error ingesting tables for file {name}: {e}")
@@ -1168,11 +1201,17 @@ class FileManager(BaseFileManager):
         }
 
     # ---------- Per-table ingestion for spreadsheets (CSV/XLSX/Sheets) ----- #
-    def _ingest_tables_for_file(self, *, filename: str, document: Any) -> None:
+    def _ingest_tables_for_file(
+        self,
+        *,
+        filename: str,
+        document: Any,
+        table_rows_batch_size: int = 100,
+    ) -> None:
         """
         Create one sub-context per extracted table and log its rows.
 
-        Context naming: <FilesCtx>/Tables__<fs_alias>/<safe_filename>/<safe_table_label>
+        Context naming: <FilesCtx>/<fs_alias>/<safe_filename>/<safe_table_label>
         Schema: dynamic per table – inferred from detected column names (str), with
         an auto-incrementing unique key `row_id`.
         """
@@ -1181,8 +1220,6 @@ class FileManager(BaseFileManager):
             from unity.knowledge_manager.types import ColumnType
         except Exception:
             ColumnType = None  # type: ignore
-
-        safe = self._sanitize_ctx_component
 
         tables = getattr(getattr(document, "metadata", None), "tables", []) or []
         if not tables:
@@ -1203,15 +1240,16 @@ class FileManager(BaseFileManager):
 
             # Build a stable table context name
             sheet_name = getattr(tbl, "sheet_name", None)
-            table_label = f"{idx:02d}_{sheet_name}" if sheet_name else f"{idx:02d}"
-            table_ctx = f"{self._ctx}/Tables__{self._fs_alias}/{safe(filename)}/{safe(table_label)}"
+            table_label = f"{sheet_name}" if sheet_name else f"{idx:02d}"
+            table_ctx = self._ctx_for_table(filename, table_label)
+
             try:
                 unify.create_context(
                     table_ctx,
                     unique_keys={"row_id": "int"},
                     auto_counting={"row_id": None},
                     description=(
-                        f"Rows for table #{idx} from file '{filename}'"
+                        f"Rows for Table: {table_label} in file '{filename}'"
                         + (f" (sheet: {sheet_name})" if sheet_name else "")
                     ),
                 )
@@ -1221,16 +1259,31 @@ class FileManager(BaseFileManager):
             # Rely on backend to infer fields/types from logged rows; do not create fields explicitly
             # since we cannot differentiate between ambiguous entries e.g. "2025-01-01" can be a date or a string
 
+            # Batch rows for efficient logging via create_logs
+            batch: List[Dict[str, Any]] = []
             for r in rows:
+                entry = {
+                    str(col): (str(val) if val is not None else "")
+                    for col, val in zip(columns, r)
+                }
+                batch.append(entry)
+                if len(batch) >= max(1, int(table_rows_batch_size)):
+                    try:
+                        unify.create_logs(
+                            context=table_ctx,
+                            entries=batch,
+                            batched=True,
+                        )
+                    except Exception as e:
+                        print(f"Error logging table rows batch: {e}")
+                    batch = []
+
+            # Flush any remaining rows
+            if batch:
                 try:
-                    entry = {
-                        str(col): (str(val) if val is not None else "")
-                        for col, val in zip(columns, r)
-                    }
-                    unify.log(context=table_ctx, **entry, new=True, mutable=True)
+                    unify.create_logs(context=table_ctx, entries=batch, batched=True)
                 except Exception as e:
-                    print(f"Error logging table row: {e}")
-                    continue
+                    print(f"Error logging final table rows batch: {e}")
 
     # ---------- High-level importers (delegated to adapter) ---------------- #
     def import_file(self, file_path: Any) -> str:
@@ -1385,7 +1438,7 @@ class FileManager(BaseFileManager):
         system_msg = build_file_manager_ask_prompt(
             tools=tools,
             num_files=len(self.list()),
-            columns={},
+            columns=self._list_columns(),
             include_activity=include_activity,
         )
         client.set_system_message(system_msg)
@@ -1575,7 +1628,7 @@ class FileManager(BaseFileManager):
         system_msg = build_file_manager_organize_prompt(
             tools=tools,
             num_files=len(self.list()),
-            columns={},
+            columns=self._list_columns(),
             include_activity=include_activity,
         )
         client.set_system_message(system_msg)
