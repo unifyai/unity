@@ -384,10 +384,12 @@ async def test_search_messages_combined_sender_and_receiver_terms():
 
     assert len(nearest) >= 1
     top = nearest[0]
-    s = cm._filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[0]
+    s = cm._filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[
+        "contacts"
+    ][0]
     assert s.first_name == "Alice"
     # Ensure Bob is among receivers
-    bob_rec = cm._filter_contacts(filter="first_name == 'Bob'", limit=1)[0]
+    bob_rec = cm._filter_contacts(filter="first_name == 'Bob'", limit=1)["contacts"][0]
     assert bob_rec.contact_id in top.receiver_ids
 
 

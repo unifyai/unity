@@ -148,7 +148,9 @@ async def test_real_conductor_contact_update_calls_contact_manager():
     }, f"Assistant should request only ContactManager_update, saw: {sorted(set(requested_list))}"
 
     # Verify the mutation took effect
-    rows = cm._filter_contacts(filter="email_address == 'bob.update@example.com'")
+    rows = cm._filter_contacts(filter="email_address == 'bob.update@example.com'")[
+        "contacts"
+    ]
     assert rows and rows[0].phone_number == "5557778888"
 
     # Global exclusivity: verify no other manager tools ran
