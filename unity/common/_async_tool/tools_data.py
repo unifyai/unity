@@ -206,7 +206,7 @@ class ToolsData:
         if propagate_chat_context:
             cur_msgs = [m for m in self._client.messages if not m.get("_ctx_header")]
             ctx_repr = chat_context_repr(parent_chat_context, cur_msgs)
-            extra_kwargs["parent_chat_context"] = ctx_repr
+            extra_kwargs["_parent_chat_context"] = ctx_repr
 
         sig = inspect.signature(fn)
         params = sig.parameters
