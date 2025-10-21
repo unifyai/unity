@@ -5,7 +5,7 @@ This sandbox lets you experiment with the `ScreenShareManager` in isolation by d
 The manager's core responsibility is to analyze screen and speech events and provide annotated `ImageHandle` objects for a consumer to use. This sandbox acts as that consumer.
 
 ### Demo
-A demo video walking through a sample run can be found here: [Loom Video](https://www.loom.com/share/9040bec558804ef49ea0ba40dd7d5b9a?sid=19767836-0226-434a-bc9b-a465ea0eb974)
+A demo video walking through a sample run can be found here: [Loom Video](https://www.loom.com/share/e2b576b329b147c884d2ce9b12f0a85b?sid=2c0852c5-2bda-4065-a455-d5d5f5d72f1b)
 
 ### Running the sandbox
 
