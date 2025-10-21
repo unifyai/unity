@@ -43,8 +43,10 @@ async def manager() -> ScreenShareManager:
     """Provides a clean, started ScreenShareManager instance for each test."""
     ssm = ScreenShareManager()
     await ssm.start()
-    yield ssm
-    await ssm.stop()
+    try:
+        return ssm
+    finally:
+        await ssm.stop()
 
 
 @pytest.fixture
@@ -52,22 +54,20 @@ async def mocked_manager():
     """Provides a manager with its LLM clients mocked out."""
     ssm = ScreenShareManager()
 
-    with patch.object(
-        ssm, "_detection_client", new_callable=AsyncMock
-    ) as mock_detect, patch.object(
-        ssm, "_analysis_client", new_callable=AsyncMock
-    ) as mock_annotate, patch.object(
-        ssm, "_summary_client", new_callable=AsyncMock
-    ) as mock_summary:
+    patch_detect = patch.object(ssm, "_detection_client", new_callable=AsyncMock)
+    patch_annotate = patch.object(ssm, "_analysis_client", new_callable=AsyncMock)
+    patch_summary = patch.object(ssm, "_summary_client", new_callable=AsyncMock)
+
+    with patch_detect as mock_detect, patch_annotate as mock_annotate, patch_summary as mock_summary:
         await ssm.start()
-
-        yield ssm, {
-            "detect": mock_detect,
-            "annotate": mock_annotate,
-            "summary": mock_summary,
-        }
-
-        await ssm.stop()
+        try:
+            return ssm, {
+                "detect": mock_detect,
+                "annotate": mock_annotate,
+                "summary": mock_summary,
+            }
+        finally:
+            await ssm.stop()
 
 
 # --- High-Level API and Orchestration Tests ---
