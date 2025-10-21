@@ -39,12 +39,14 @@ def load_asset_image(filename: str) -> Image.Image:
 
 
 @pytest.fixture
-async def manager() -> ScreenShareManager:
+async def manager() -> (
+    ScreenShareManager
+):  # No change to type hint needed for async generator
     """Provides a clean, started ScreenShareManager instance for each test."""
     ssm = ScreenShareManager()
     await ssm.start()
     try:
-        return ssm
+        yield ssm
     finally:
         await ssm.stop()
 
@@ -61,7 +63,7 @@ async def mocked_manager():
     with patch_detect as mock_detect, patch_annotate as mock_annotate, patch_summary as mock_summary:
         await ssm.start()
         try:
-            return ssm, {
+            yield ssm, {
                 "detect": mock_detect,
                 "annotate": mock_annotate,
                 "summary": mock_summary,
