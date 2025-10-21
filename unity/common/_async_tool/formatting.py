@@ -110,14 +110,15 @@ def sanitize_tool_msg_for_logging(msg: dict) -> dict:
         return obj
 
     cloned = copy.deepcopy(msg)
-    # If content is a JSON string, parse → sanitize → re-dump for readability
+    # If content is a JSON string, parse → sanitize → embed parsed object for readability
     try:
         content = cloned.get("content")
         if isinstance(content, str):
             with suppress(Exception):
                 parsed = json.loads(content)
                 parsed = _sanitize_obj(parsed)
-                cloned["content"] = json.dumps(parsed, indent=4)
+                # Embed parsed object so outer json.dumps(..., indent=4) pretty-prints it
+                cloned["content"] = parsed
         else:
             cloned["content"] = _sanitize_obj(content)
     except Exception:
