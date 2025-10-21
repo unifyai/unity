@@ -214,36 +214,36 @@ class ToolsData:
             p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
         )
 
-        sig_accepts_interject_q = "interject_queue" in params or has_varkw
-        sig_accepts_pause_event = "pause_event" in params or has_varkw
+        sig_accepts_interject_q = "_interject_queue" in params or has_varkw
+        sig_accepts_pause_event = "_pause_event" in params or has_varkw
         sig_accepts_clar_qs = (
-            "clarification_up_q" in params and "clarification_down_q" in params
+            "_clarification_up_q" in params and "_clarification_down_q" in params
         ) or has_varkw
-        sig_accepts_progress = "notification_up_q" in params or has_varkw
+        sig_accepts_progress = "_notification_up_q" in params or has_varkw
 
         pause_ev: Optional[asyncio.Event] = None
         if sig_accepts_pause_event:
             pause_ev = asyncio.Event()
             pause_ev.set()  # start running
-            extra_kwargs["pause_event"] = pause_ev
+            extra_kwargs["_pause_event"] = pause_ev
 
         clar_up_q: Optional[asyncio.Queue[str]] = None
         clar_down_q: Optional[asyncio.Queue[str]] = None
         if sig_accepts_clar_qs:
             clar_up_q = asyncio.Queue()
             clar_down_q = asyncio.Queue()
-            extra_kwargs["clarification_up_q"] = clar_up_q
-            extra_kwargs["clarification_down_q"] = clar_down_q
+            extra_kwargs["_clarification_up_q"] = clar_up_q
+            extra_kwargs["_clarification_down_q"] = clar_down_q
 
         progress_q: Optional[asyncio.Queue[dict]] = None
         if sig_accepts_progress:
             progress_q = asyncio.Queue()
-            extra_kwargs["notification_up_q"] = progress_q
+            extra_kwargs["_notification_up_q"] = progress_q
 
         sub_q: Optional[asyncio.Queue[str]] = None
         if sig_accepts_interject_q:
             sub_q = asyncio.Queue()
-            extra_kwargs["interject_queue"] = sub_q
+            extra_kwargs["_interject_queue"] = sub_q
 
         # Parse args
         with suppress(Exception):
@@ -287,7 +287,7 @@ class ToolsData:
             call_idx=call_idx,
             is_interjectable=sig_accepts_interject_q,
             interject_queue=sub_q,
-            chat_context=extra_kwargs.get("parent_chat_context"),
+            chat_context=extra_kwargs.get("_parent_chat_context"),
             clar_up_queue=clar_up_q,
             clar_down_queue=clar_down_q,
             notification_queue=progress_q,
