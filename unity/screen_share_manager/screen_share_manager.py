@@ -583,60 +583,54 @@ class ScreenShareManager:
         if not text_prompts:
             await self._detection_queue.put(([], {}))
             return
-        try:
-            logger.debug("Calling detection LLM...")
-            response_str = await self._detection_client.generate(
-                user_message="Identify key moments based on the context provided."
-            )
-            result = json.loads(response_str)
-            key_moments = result.get("moments", [])
-            key_moments.sort(key=lambda x: x["timestamp"])
-            for moment in key_moments:
-                ts = moment["timestamp"]
-                if ts not in frame_map and self._frame_buffer:
-                    _, closest_frame = min(
-                        self._frame_buffer, key=lambda x: abs(x[0] - ts)
+
+        logger.debug("Calling detection LLM...")
+        response_str = await self._detection_client.generate(
+            user_message="Identify key moments based on the context provided."
+        )
+        result = json.loads(response_str)
+        key_moments = result.get("moments", [])
+        key_moments.sort(key=lambda x: x["timestamp"])
+        for moment in key_moments:
+            ts = moment["timestamp"]
+            if ts not in frame_map and self._frame_buffer:
+                _, closest_frame = min(self._frame_buffer, key=lambda x: abs(x[0] - ts))
+                frame_map[ts] = closest_frame
+        if turn_state.speech_event is None:
+            logger.info(f"Detected {len(key_moments)} silent visual events.")
+            images_to_add, moment_map = [], {}
+            for i, moment in enumerate(key_moments):
+                if frame_map.get(moment["timestamp"]):
+                    images_to_add.append(
+                        {
+                            "data": self._strip_data_url_prefix(
+                                frame_map[moment["timestamp"]]
+                            ),
+                            "caption": "Silent screen event",
+                        }
                     )
-                    frame_map[ts] = closest_frame
-            if turn_state.speech_event is None:
-                logger.info(f"Detected {len(key_moments)} silent visual events.")
-                images_to_add, moment_map = [], {}
-                for i, moment in enumerate(key_moments):
-                    if frame_map.get(moment["timestamp"]):
-                        images_to_add.append(
-                            {
-                                "data": self._strip_data_url_prefix(
-                                    frame_map[moment["timestamp"]]
-                                ),
-                                "caption": "Silent screen event",
-                            }
-                        )
-                        moment_map[i] = moment
-                if images_to_add:
-                    handles = await asyncio.to_thread(
-                        self._image_manager.add_images,
-                        images_to_add,
-                        synchronous=False,
-                        return_handles=True,
-                    )
-                    async with self._state_lock:
-                        for i, handle in enumerate(handles):
-                            if handle and i in moment_map:
-                                self._stored_silent_detected_events.append(
-                                    DetectedEvent(
-                                        timestamp=moment_map[i]["timestamp"],
-                                        detection_reason=moment_map[i].get(
-                                            "reason", "visual_change"
-                                        ),
-                                        image_handle=handle,
-                                    )
+                    moment_map[i] = moment
+            if images_to_add:
+                handles = await asyncio.to_thread(
+                    self._image_manager.add_images,
+                    images_to_add,
+                    synchronous=False,
+                    return_handles=True,
+                )
+                async with self._state_lock:
+                    for i, handle in enumerate(handles):
+                        if handle and i in moment_map:
+                            self._stored_silent_detected_events.append(
+                                DetectedEvent(
+                                    timestamp=moment_map[i]["timestamp"],
+                                    detection_reason=moment_map[i].get(
+                                        "reason", "visual_change"
+                                    ),
+                                    image_handle=handle,
                                 )
-            else:
-                await self._detection_queue.put((key_moments, frame_map))
-        except Exception as e:
-            logger.error(f"Failed to detect key moments: {e}", exc_info=True)
-            if turn_state.speech_event is not None:
-                await self._detection_queue.put(([], {}))
+                            )
+        else:
+            await self._detection_queue.put((key_moments, frame_map))
 
     @llm_retry_decorator(max_tries=3, base_delay=1.0)
     async def _get_llm_annotation_for_event(
