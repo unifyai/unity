@@ -15,7 +15,7 @@ async def test_lazy_contact_creation_creates_contacts_and_logs_message():
     tm = TranscriptManager()
 
     # Baseline contact count
-    initial_contacts = tm._contact_manager._filter_contacts()
+    initial_contacts = tm._contact_manager._filter_contacts()["contacts"]
     initial_count = len(initial_contacts)
 
     # Define new (non-persisted) contacts
@@ -38,7 +38,7 @@ async def test_lazy_contact_creation_creates_contacts_and_logs_message():
     tm.join_published()
 
     # New contacts must have been created
-    all_contacts = tm._contact_manager._filter_contacts()
+    all_contacts = tm._contact_manager._filter_contacts()["contacts"]
     assert (
         len(all_contacts) == initial_count + 2
     ), "Exactly two new contacts should be created."
@@ -56,10 +56,10 @@ async def test_lazy_contact_creation_creates_contacts_and_logs_message():
     # Verify the newly created contact details match the originals
     sender_contact = tm._contact_manager._filter_contacts(
         filter=f"contact_id == {stored.sender_id}",
-    )[0]
+    )["contacts"][0]
     receiver_contact = tm._contact_manager._filter_contacts(
         filter=f"contact_id == {stored.receiver_ids[0]}",
-    )[0]
+    )["contacts"][0]
 
     assert sender_contact.email_address == "lazy@example.com"
     assert receiver_contact.phone_number == "+15551234567"
