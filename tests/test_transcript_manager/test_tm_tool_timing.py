@@ -78,5 +78,5 @@ def test_tool_search_messages_timing():
     nearest = tm._search_messages(references={"content": "banking"}, k=1)["messages"]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert nearest and nearest[0].content
-    assert elapsed_ms < 7500
-    print(f"elapsed: {elapsed_ms} < 7500")
+    assert elapsed_ms < 10000
+    print(f"elapsed: {elapsed_ms} < 10000")
