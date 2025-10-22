@@ -62,7 +62,7 @@ def get_broader_context(
             cm._filter_contacts(
                 filter="(contact_id == 0) or (contact_id == 1)",
                 limit=2,
-            ),
+            )["contacts"],
             key=lambda x: x.contact_id,
         )
 
