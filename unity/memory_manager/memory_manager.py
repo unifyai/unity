@@ -567,7 +567,7 @@ class MemoryManager(BaseMemoryManager):
                 self._contact_manager._filter_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
-            )
+            )["contacts"]
             c0 = contacts[0] if contacts else None
             contact_name_val = (
                 " ".join(p for p in [c0.first_name, c0.surname] if p).strip()
