@@ -45,7 +45,8 @@ class ReintegrationManager:
     def _is_viable(self, neighbour_tid: Optional[int]) -> bool:
         if neighbour_tid is None:
             return False
-        rows = self._s._filter_tasks(filter=f"task_id == {neighbour_tid}", limit=1)
+        rows_out = self._s._filter_tasks(filter=f"task_id == {neighbour_tid}", limit=1)
+        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
         if not rows:
             return False
         return (
@@ -54,7 +55,8 @@ class ReintegrationManager:
 
     def apply(self, *, task_id: int, allow_active: bool = False) -> Dict[str, str]:
         # Locate plan (prefer non-terminal instance)
-        rows = self._s._filter_tasks(filter=f"task_id == {task_id}", limit=10)
+        rows_out = self._s._filter_tasks(filter=f"task_id == {task_id}", limit=10)
+        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
         live = [
             r
             for r in rows
@@ -88,7 +90,12 @@ class ReintegrationManager:
         original_start_at = plan.start_at
         original_status = plan.original_status
 
-        cur_rows = self._s._filter_tasks(filter=f"task_id == {tid}", limit=1)
+        cur_rows_out = self._s._filter_tasks(filter=f"task_id == {tid}", limit=1)
+        cur_rows = (
+            cur_rows_out.get("tasks", [])
+            if isinstance(cur_rows_out, dict)
+            else cur_rows_out
+        )
         cur_row = cur_rows[0] if cur_rows else {}
 
         if (
@@ -180,9 +187,14 @@ class ReintegrationManager:
         if was_head and final_next is not None:
 
             def _fix_next_status():
-                next_rows = self._s._filter_tasks(
+                next_rows_out = self._s._filter_tasks(
                     filter=f"task_id == {final_next}",
                     limit=1,
+                )
+                next_rows = (
+                    next_rows_out.get("tasks", [])
+                    if isinstance(next_rows_out, dict)
+                    else next_rows_out
                 )
                 if next_rows:
                     next_row = next_rows[0]

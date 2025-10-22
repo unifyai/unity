@@ -507,9 +507,14 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         except ValueError:
             # Fallback: read the current row and follow its schedule.next_task
             try:
-                rows = self._s._filter_tasks(
+                rows_out = self._s._filter_tasks(
                     filter=f"task_id == {int(self._current_task_id)}",
                     limit=1,
+                )
+                rows = (
+                    rows_out.get("tasks", [])
+                    if isinstance(rows_out, dict)
+                    else rows_out
                 )
                 if not rows:
                     return None
@@ -552,9 +557,14 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 # Record successful completion of the just-finished task when not stopped/deferred
                 if not was_stopped and "stopped" not in text.lower():
                     try:
-                        rows = self._s._filter_tasks(
+                        rows_out = self._s._filter_tasks(
                             filter=f"task_id == {int(self._current_task_id)}",
                             limit=1,
+                        )
+                        rows = (
+                            rows_out.get("tasks", [])
+                            if isinstance(rows_out, dict)
+                            else rows_out
                         )
                         if rows:
                             name = (
@@ -651,9 +661,14 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 # Emit a standardized started notification
                 try:
                     # Best-effort fetch for name/metadata
-                    _rows = self._s._filter_tasks(
+                    _rows_out = self._s._filter_tasks(
                         filter=f"task_id == {int(next_tid)}",
                         limit=1,
+                    )
+                    _rows = (
+                        _rows_out.get("tasks", [])
+                        if isinstance(_rows_out, dict)
+                        else _rows_out
                     )
                     _nm = (
                         _rows[0].get("name")
