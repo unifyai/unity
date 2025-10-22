@@ -152,7 +152,7 @@ def test_create_tasks_multi_queues_with_start_times():
     assert q1[0].schedule and q1[0].schedule.start_at
     assert q1[0].schedule.start_at.isoformat() == "2036-01-02T10:00:00+00:00"
     row1 = ts._filter_tasks(filter="task_id == 1", limit=1)["tasks"][0]
-    assert row1["status"] == "scheduled"
+    assert str(row1.status) == "scheduled"
 
 
 @_handle_project
