@@ -286,6 +286,7 @@ async def test_prune_tools():
             "say_goodbye": say_goodbye,
             "find_contact": find_contact,
         },
+        semantic_cache="write",
     )
 
     await handle.result()
