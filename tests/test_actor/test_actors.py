@@ -459,7 +459,7 @@ async def test_plan_requests_clarification(
 
     plan_handle = await actor.act(
         task_description,
-        clarification_up_q=clarification_up_q,
+        _clarification_up_q=clarification_up_q,
         clarification_down_q=clarification_down_q,
     )
 

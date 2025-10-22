@@ -247,8 +247,8 @@ async def test_fm_requests_clarification():
     handle = await fm.ask(
         "data.txt",
         "Please analyze this file thoroughly.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
         _requests_clarification=True,
     )
 

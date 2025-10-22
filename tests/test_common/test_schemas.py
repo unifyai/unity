@@ -151,17 +151,17 @@ def test_private_optional_parameters_are_hidden_from_tool_schema() -> None:
 
 
 # --------------------------------------------------------------------------- #
-#  `parent_chat_context` MUST NEVER BE EXPOSED                                #
+#  `_parent_chat_context` MUST NEVER BE EXPOSED                                #
 # --------------------------------------------------------------------------- #
 def test_parent_chat_context_parameter_is_always_hidden() -> None:
     """
-    The special ``parent_chat_context`` argument is injected automatically by
+    The special ``_parent_chat_context`` argument is injected automatically by
     the tool-loop.  It must be hidden from both the schema **and** the
     docstring that is sent to the LLM.
     """
 
     @unify.traced
-    def tool_with_ctx(a: int, parent_chat_context: list[dict]):
+    def tool_with_ctx(a: int, _parent_chat_context: list[dict]):
         """
         Dummy tool.
 
@@ -169,7 +169,7 @@ def test_parent_chat_context_parameter_is_always_hidden() -> None:
         ----------
         a : int
             Some value.
-        parent_chat_context : list[dict]
+        _parent_chat_context : list[dict]
             Internal plumbing, never surfaced.
         """
         return a
@@ -177,14 +177,14 @@ def test_parent_chat_context_parameter_is_always_hidden() -> None:
     @unify.traced
     def tool_with_ctx_optional(
         a: int,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
     ):
         """
         Dummy tool (optional ctx).
 
         Args:
             a: Some value.
-            parent_chat_context: Internal plumbing, never surfaced.
+            _parent_chat_context: Internal plumbing, never surfaced.
         """
         return a
 
@@ -194,10 +194,10 @@ def test_parent_chat_context_parameter_is_always_hidden() -> None:
         required = schema["function"]["parameters"]["required"]
         desc = schema["function"]["description"]
 
-        assert "parent_chat_context" not in props
-        assert "parent_chat_context" not in required
+        assert "_parent_chat_context" not in props
+        assert "_parent_chat_context" not in required
         # docstring has been scrubbed
-        assert "parent_chat_context" not in desc
+        assert "_parent_chat_context" not in desc
 
 
 # --------------------------------------------------------------------------- #

@@ -168,8 +168,8 @@ async def test_ts_requests_clarification():
 
     handle = await ts.ask(
         "Please prioritise everything appropriately.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
         _requests_clarification=True,
     )
 

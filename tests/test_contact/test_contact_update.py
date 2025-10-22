@@ -135,7 +135,7 @@ async def test_update_with_parent_context_identification(
 
     handle = await cm.update(
         command,
-        parent_chat_context=parent_ctx,
+        _parent_chat_context=parent_ctx,
     )
     await handle.result()
 
@@ -170,8 +170,8 @@ async def test_update_with_clarification_needed(
 
     handle = await cm.update(
         command,
-        clarification_up_q=clar_up_q,
-        clarification_down_q=clar_down_q,
+        _clarification_up_q=clar_up_q,
+        _clarification_down_q=clar_down_q,
     )
 
     target_name = "Alice Wonder"
