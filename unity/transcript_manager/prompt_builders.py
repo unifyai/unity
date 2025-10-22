@@ -222,14 +222,7 @@ def build_ask_prompt(
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
-    # Conditional guidance about asking questions in final responses
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
-    )
+    # Keep clarification guidance single-sourced via clarification_guidance(tools)
 
     # High-level execution guidance provided by common helper
 
@@ -246,7 +239,6 @@ def build_ask_prompt(
             "You are an assistant specialised in **querying and analysing communication transcripts**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
-            clar_sentence,
             "",
             mutation_exit_block,
             "",

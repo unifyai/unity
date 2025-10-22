@@ -63,25 +63,12 @@ def provision_storage(self) -> None:
         # Non-fatal; logging will still work without the helper if backend creates implicitly
         pass
 
-    # Update columns cache best-effort
-    try:
-        self._columns_cache_all = dict(self._store.get_columns())
-    except Exception:
-        self._columns_cache_all = {}
+    # No local columns cache; always read from TableStore when needed
 
 
 def get_columns(self) -> Dict[str, str]:
     """Return {column_name: column_type} for the transcripts table."""
-    # Serve from the in-process cache when available; otherwise fetch once
-    # and remember for subsequent reads within this manager's lifetime.
-    if getattr(self, "_columns_cache_all", None):
-        return dict(self._columns_cache_all)
-    cols = self._store.get_columns()
-    try:
-        self._columns_cache_all = dict(cols)
-    except Exception:
-        pass
-    return cols
+    return self._store.get_columns()
 
 
 def list_columns(
@@ -121,11 +108,7 @@ def clear(self) -> None:
     except Exception:
         pass
 
-    # Reset local cached state
-    try:
-        self._columns_cache_all = {}
-    except Exception:
-        pass
+    # No local cache to reset
 
     # Drop ensure memo then re-provision via shared helper
     try:

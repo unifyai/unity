@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import threading
 import functools
 from typing import List, Optional, Dict, Any
@@ -23,6 +21,7 @@ from ..events.manager_event_logging import (
 )
 from ..common.simulated import mirror_transcript_manager_tools
 from .types.message import Message
+from ..common.llm_client import new_llm_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -193,15 +192,13 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
-        # Shared, *stateful* **asynchronous** LLM
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        # Shared, *stateful* **asynchronous** LLM (reusing common client)
+        self._llm = new_llm_client()
+        try:
+            # Ensure the client is stateful for simulated interactions
+            self._llm.stateful = True  # type: ignore[attr-defined]
+        except Exception:
+            pass
         # Use shared helper to mirror the real TranscriptManager's tools
         tools_for_prompt = mirror_transcript_manager_tools()
         # Provide placeholder counts/columns for the simulated environment
