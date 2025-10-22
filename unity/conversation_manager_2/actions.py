@@ -46,6 +46,14 @@ class ConductorHandleAction(BaseModel):
     )
 
 
+class ConductorAnswerClarificationAction(BaseModel):
+    """Answer a clarification question."""
+
+    action_name: Literal["conductor_answer_clarification"]
+    handle_id: int
+    call_id: str
+
+
 # wait
 class WaitForNextEvent(BaseModel):
     action_name: Literal["wait"]

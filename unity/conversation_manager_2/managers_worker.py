@@ -490,6 +490,34 @@ class ManagersWorker:
         asyncio.create_task(self._conductor_watch_notifications(handle_id, handle))
         asyncio.create_task(self._conductor_watch_clarifications(handle_id, handle))
 
+    async def _handle_conductor_clarification_response(
+        self, event: ConductorClarificationResponse
+    ) -> None:
+        """Handle a Conductor clarification response."""
+        # get handle
+        handle_data = self._handle_registry.get(event.handle_id)
+        if not handle_data:
+            print(
+                f"[ManagersWorker] Unknown handle_id={event.handle_id} for clarification response"
+            )
+            return
+
+        # record intervention
+        handle_data["handle_actions"].append(
+            {
+                "action_name": event.action_name,
+                "query": event.query,
+            }
+        )
+        handle: SteerableToolHandle = handle_data["handle"]
+
+        # perform intervention
+        try:
+            handle.answer_clarification(event.call_id, event.response)
+        except Exception as e:
+            print(f"[ManagersWorker] Error answering clarification: {e}")
+            return
+
     async def _handle_conductor_handle_request(
         self, event: ConductorHandleRequest
     ) -> None:
@@ -538,9 +566,6 @@ class ManagersWorker:
                 case "done":
                     done_result = handle.done()
                     result = "Handle Done" if done_result else "Handle Not Done"
-                case "answer_clarification":
-                    handle.answer_clarification(event.call_id, event.query)
-                    result = "Clarification Answered"
                 case _:
                     print(
                         f"[ManagersWorker] Unknown action_name={event.action_name} for intervention"
@@ -597,6 +622,8 @@ class ManagersWorker:
                 asyncio.create_task(self._handle_conductor_request(event))
             case ConductorHandleRequest():
                 asyncio.create_task(self._handle_conductor_handle_request(event))
+            case ConductorClarificationResponse():
+                asyncio.create_task(self._handle_conductor_clarification_response(event))
             case _:
                 print(
                     f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}"
