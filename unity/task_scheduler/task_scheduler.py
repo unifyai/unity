@@ -82,7 +82,6 @@ from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
 from .llm import new_llm_client
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
-from ..common.tool_spec import read_only
 
 
 # Sentinel for optional-argument presence detection
@@ -182,50 +181,12 @@ class TaskScheduler(BaseTaskScheduler):
         # Instantiate a ContactManager once so its bound methods can act as tools
         self._contact_manager = ContactManager()
 
-        # Query-only helpers – safe, read-only operations.  Include the *external* contact lookup
-        # Tool wrappers that provide shorthand/pruned payloads for task lists
-        @functools.wraps(self._search_tasks, updated=())
-        @read_only
-        def _search_tasks_tool(
-            *,
-            references: Optional[Dict[str, str]] = None,
-            k: int = 10,
-        ) -> Dict[str, Any]:  # type: ignore[override]
-            tasks_list = self._search_tasks(references=references, k=k)
-            return {
-                "task_keys_to_shorthand": Task.shorthand_map(),
-                "tasks": tasks_list,
-                "shorthand_to_task_keys": Task.shorthand_inverse_map(),
-            }
-
-        @functools.wraps(self._filter_tasks, updated=())
-        @read_only
-        def _filter_tasks_tool(
-            *,
-            filter: Optional[str] = None,
-            offset: int = 0,
-            limit: int = 100,
-        ) -> Dict[str, Any]:  # type: ignore[override]
-            rows = self._filter_tasks(filter=filter, offset=offset, limit=limit)
-            # Convert raw rows to Task models so shorthand/prune modes can apply
-            task_models: List[Task] = []
-            for r in rows:
-                try:
-                    task_models.append(Task(**r))
-                except Exception:
-                    # Best-effort: if model construction fails for a row, keep it as-is
-                    # (serializer will still prune empties at top-level where possible)
-                    pass
-            return {
-                "task_keys_to_shorthand": Task.shorthand_map(),
-                "tasks": task_models if task_models else rows,  # fall back to rows
-                "shorthand_to_task_keys": Task.shorthand_inverse_map(),
-            }
-
+        # Query-only helpers – safe, read-only operations.
+        # Expose the original methods directly so their docstrings surface to the LLM.
         ask_tools = {
             **methods_to_tool_dict(
-                _filter_tasks_tool,
-                _search_tasks_tool,
+                self._filter_tasks,
+                self._search_tasks,
                 self._get_queue,
                 self._get_queue_for_task,
                 include_class_name=False,  # redundant, all same class (this one)
