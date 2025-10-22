@@ -12,6 +12,7 @@ from ..common.prompt_helpers import (
     now_utc_str,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
+    parallelism_guidance,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -163,15 +164,6 @@ Anti‑patterns to avoid
     # ─ Clarification guidance ─
     clar_section = clarification_guidance(tools)
 
-    # Conditional guidance about asking questions in final responses
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
-    )
-
     # ─ Special contacts guidance ─
     special_contacts_block = textwrap.dedent(
         """
@@ -183,16 +175,7 @@ Anti‑patterns to avoid
     ).strip()
 
     activity_block = "{broader_context}" if include_activity else ""
-    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
-    parallelism_block = textwrap.dedent(
-        """
-        Parallelism and single‑call preference
-        -------------------------------------
-        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
-        • When you need multiple independent reads or small writes, plan them together and run them in parallel rather than a serial drip of micro‑calls.
-        • Batch arguments where possible (set multiple fields in one `_update_contact` call) and avoid confirmatory re‑queries unless new ambiguity arises.
-        """,
-    ).strip()
+    # High-level execution guidance is provided by common helper
 
     # Early exit policy for mutation-intent requests reaching ask()
     mutation_exit_block = read_only_ask_mutation_exit_block()
@@ -203,7 +186,6 @@ Anti‑patterns to avoid
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
-            clar_sentence,
             "",
             mutation_exit_block,
             "",
@@ -220,7 +202,7 @@ Anti‑patterns to avoid
             "",
             usage_examples,
             "",
-            parallelism_block,
+            parallelism_guidance(),
             "",
             clar_section,
             "",
@@ -278,15 +260,6 @@ Clarification
         ).strip()
         if request_clar_fname
         else ""
-    )
-
-    # Conditional guidance about asking questions in final responses
-    clar_sentence_upd = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
     )
 
     usage_examples_base = f"""
@@ -372,16 +345,7 @@ Anti‑patterns to avoid
         )
 
     activity_block = "{broader_context}" if include_activity else ""
-    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
-    parallelism_block = textwrap.dedent(
-        """
-        Parallelism and single‑call preference
-        -------------------------------------
-        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
-        • When several reads or writes are independent, plan them together and run them in parallel rather than a serial drip of micro‑calls.
-        • Batch arguments where possible (set multiple fields in one `_update_contact` call) and avoid confirmatory re‑queries unless new ambiguity arises.
-        """,
-    ).strip()
+    # High-level execution guidance is provided by common helper
     clar_section = clarification_guidance(tools)
 
     # ─ Special contacts guidance ─
@@ -400,8 +364,7 @@ Anti‑patterns to avoid
             "You are an assistant in charge of **creating or editing contacts**.",
             "Choose tools based on the user's intent and the specificity of the target record.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",
-            f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect contacts that already exist. For human clarifications about new contacts or missing creation details, call `{request_clar_fname}` when available.",
-            clar_sentence_upd,
+            f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect contacts that already exist.",
             "Before creating new contacts or making edits, briefly check whether similar contacts already exist (via `"
             + ask_fname
             + "`) to avoid duplicates.",
@@ -417,7 +380,7 @@ Anti‑patterns to avoid
             "",
             usage_examples,
             "",
-            parallelism_block,
+            parallelism_guidance(),
             "",
             clar_section,
             "",
