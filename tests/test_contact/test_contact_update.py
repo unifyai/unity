@@ -50,7 +50,7 @@ async def test_update_create_new_contact(
     cm, _ = contact_manager_scenario
     command = (
         "Add a new contact: Eve Adams, email eve@paradise.com, "
-        "phone 777-000-1111, bio 'Digital nomad and writer'."
+        "phone 7770001111, bio 'Digital nomad and writer'."
     )
 
     handle = await cm.update(command)
