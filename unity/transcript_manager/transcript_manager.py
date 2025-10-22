@@ -158,8 +158,7 @@ class TranscriptManager(BaseTranscriptManager):
         # leaving the actual network I/O to an internal worker thread.
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
-        # Initialise cache then provision storage (contexts, fields, columns)
-        self._columns_cache_all: Dict[str, str] = {}
+        # Provision storage (contexts, fields, columns)
         self._provision_storage()
 
     @classmethod
