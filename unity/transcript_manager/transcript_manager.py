@@ -3,17 +3,14 @@ from __future__ import annotations
 import asyncio
 import functools
 from typing import List, Dict, Optional, Union, Any, Callable, Literal
-import base64
 
 import unify
-from ..common.embed_utils import ensure_vector_column
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message, UNASSIGNED
 
 # New: allow Contact objects to appear in messages
 from ..contact_manager.types.contact import Contact
-from ..common.model_to_fields import model_to_fields
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     inject_broader_context,
@@ -31,20 +28,30 @@ from ..events.manager_event_logging import (
 )
 from .prompt_builders import build_ask_prompt
 from .base import BaseTranscriptManager
-from ..common.context_store import TableStore
-from ..common.search_utils import (
-    is_plain_identifier,
-    ensure_vector_for_source,
-    fetch_top_k_by_terms,
-    fetch_top_k_by_terms_with_score,
-    fetch_scores_for_ids,
-)
-from ..image_manager.image_manager import ImageManager
 from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
-from ..common.filter_utils import normalize_filter_expr
+from .storage import (
+    provision_storage as _storage_provision,
+    get_columns as _storage_get_columns,
+    list_columns as _storage_list_columns,
+    num_messages as _storage_num_messages,
+    clear as _storage_clear,
+    ensure_exchanges_records as _storage_ensure_exchanges,
+)
+from .search import (
+    search_messages as _search_messages_impl,
+    filter_messages as _filter_messages_impl,
+    format_contacts_and_messages as _format_contacts_and_messages_impl,
+)
+from .images import (
+    ensure_image_manager as _ensure_image_manager,
+    get_images_for_message as _get_images_for_message_impl,
+    ask_image as _ask_image_impl,
+    attach_image_to_context as _attach_image_to_context_impl,
+    attach_message_images_to_context as _attach_message_images_to_context_impl,
+)
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -82,11 +89,7 @@ class TranscriptManager(BaseTranscriptManager):
             offset: int = 0,
             limit: int = 100,
         ) -> Dict[str, Any]:  # type: ignore[override]
-            return self._filter_messages(  # type: ignore[misc]
-                filter=filter,
-                offset=offset,
-                limit=limit,
-            )
+            return self._filter_messages(filter=filter, offset=offset, limit=limit)  # type: ignore[misc]
 
         @functools.wraps(self._search_messages, updated=())
         @read_only
@@ -95,10 +98,7 @@ class TranscriptManager(BaseTranscriptManager):
             references: Optional[Dict[str, str]] = None,
             k: int = 10,
         ) -> Dict[str, Any]:  # type: ignore[override]
-            return self._search_messages(  # type: ignore[misc]
-                references=references,
-                k=k,
-            )
+            return self._search_messages(references=references, k=k)  # type: ignore[misc]
 
         ask_tools = {
             **methods_to_tool_dict(
@@ -141,7 +141,7 @@ class TranscriptManager(BaseTranscriptManager):
             self._exchanges_ctx = "Exchanges"
 
         # Image support: lazy-safe image manager and image-aware tools
-        self._image_manager: ImageManager = ImageManager()
+        _ensure_image_manager(self)
         ask_tools.update(
             methods_to_tool_dict(
                 self._get_images_for_message,
@@ -214,8 +214,8 @@ class TranscriptManager(BaseTranscriptManager):
         client.set_system_message(
             build_ask_prompt(
                 tools,
-                num_messages=self._num_messages(),
-                transcript_columns=self._list_columns(),
+                num_messages=_storage_num_messages(self),
+                transcript_columns=_storage_list_columns(self),
                 contact_columns=self._contact_manager._list_columns(),
                 include_activity=include_activity,
             ),
@@ -270,10 +270,8 @@ class TranscriptManager(BaseTranscriptManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require search_messages on the first step; auto thereafter."""
-        if step_index < 1 and "search_messages" in current_tools:
-            return ("required", {"search_messages": current_tools["search_messages"]})
-        return ("auto", current_tools)
+        # Deprecated: use common.llm_policies.require_first("search_messages") instead.
+        return require_first("search_messages")(step_index, current_tools)
 
     async def summarize(self, *args, **kwargs):
         """Deprecated: summarize functionality removed."""
@@ -661,440 +659,7 @@ class TranscriptManager(BaseTranscriptManager):
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> Dict[str, Any]:
-        """
-        Semantic search across transcript messages using one or more reference texts, ranked by the summed cosine similarity across all provided terms.
-
-        Two tables and how they are used
-        --------------------------------
-        - Transcripts table (Message schema): fields like `content`, `medium`, `timestamp`, `sender_id`, `receiver_ids`.
-        - Contacts table (Contact schema): fields describing the sender, e.g., `bio`, `first_name`, `surname`, plus any custom contact columns.
-
-        Provide a mapping of source expressions to reference texts. Each source expression can target either side:
-        - Message-side fields (columns in the `Message` schema), e.g. "content" or a derived expression like "str({content}).lower()".
-        - Contact-side fields scoped to either the sender or the receivers, by prefixing with either "sender_" or "receiver_" (e.g., "sender_bio", "receiver_bio").
-          Backwards-compat: unprefixed contact fields (e.g., "bio") are treated as sender-side.
-
-        The function automatically ensures embedding columns exist for every source expression and then ranks messages by the sum of cosine similarities between each term's embedding and its reference text embedding. If at least one sender-side contact term is present, a temporary join between Transcripts (messages) and Contacts (senders) is performed on `sender_id == contact_id` to compute the combined ranking. When receiver-side terms are present, each message is scored using the minimum (best) cosine distance among all of its receivers against the receiver-side terms, and this value is added to the sender/message score for final ranking.
-
-        Parameters
-        ----------
-        references : Dict[str, str] | None, default None
-            Mapping of `source_expr → reference_text` that defines the semantic query.
-            - source_expr: Either a plain identifier naming a field on `Message` (message-side) or `Contact` (contact-side), or a full Unify expression that can reference fields using `{field_name}` placeholders.
-              Examples:
-                - Message-side (plain): "content"
-                - Message-side (derived): "str({content}).lower()"
-                - Contact-side (plain): "bio", "first_name", "surname"
-                - Contact-side (derived): "str({first_name}) + ' ' + str({bio})"
-            - reference_text: The free-form text to embed and compare against each row’s source embedding for this term.
-            Notes:
-            - When an expression is not a plain identifier, any `{...}` placeholders must reference valid fields on the selected side (message vs contact). Mixed-side expressions are not allowed; if placeholders include any message fields, the term is treated as message-side; if placeholders include only contact fields, the term is contact-side.
-            - If you supply only contact-side terms, a join with the contacts table is performed and the top-k messages are returned based on their senders' similarity to the provided references.
-            - The embeddings model and derived columns are managed automatically.
-        k : int, default 10
-            Maximum number of closest results to return. Must be a positive integer (k ≥ 1). Larger values may increase latency.
-
-        Returns
-        -------
-        List[Message]
-            Up to `k` messages sorted by best match first (highest summed cosine similarity / lowest summed distance). Each element is a validated `Message` model from the original transcripts context. Private embedding columns (those ending with `_emb`) are not included in the returned models.
-
-        Behaviour and Details
-        ---------------------
-        - Term classification:
-          • Plain identifiers are classified as message-side if they are valid `Message` fields, otherwise as contact-side if they are valid `Contact` fields.
-          • Derived expressions are classified by their placeholders: any placeholder that matches a `Message` field makes the term message-side; if placeholders exist and all match `Contact` fields (and none match message fields), the term is contact-side.
-        - Ranking:
-          • Single term: messages ranked by cosine similarity to that reference.
-          • Multiple terms: messages ranked by the sum of per-term cosine similarities, favouring rows that are jointly similar across all terms.
-        - Join semantics:
-          • When at least one sender contact-side term exists, the method creates a temporary joined context between Transcripts and Contacts on `sender_id == contact_id`.
-          • Receiver contact-side terms do not materialize a join per receiver. Instead, receivers are scored in the Contacts table and each message aggregates its receivers by the minimum distance.
-        - Column management:
-          • For plain identifiers, the function embeds the referenced column directly.
-          • For derived expressions, a stable derived source column is created (if needed) and then embedded.
-
-        Examples
-        --------
-        - Message content only:
-            references = {"content": "let's meet up soon"}
-        - Combine message content with sender bio:
-            references = {"content": "contract renewal", "bio": "procurement manager"}
-        - Derived contact expression (full name) + message content:
-            references = {"str({first_name}) + ' ' + str({surname})": "Jane Doe", "content": "invoice"}
-
-        Notes
-        -----
-        - This tool considers the sender contact only. If you need to factor in receivers, perform a separate search and then filter/merge as needed.
-        - Avoid quoting issues in expressions; use single quotes inside expressions where necessary. The API will create any required derived columns automatically.
-        - For exact, column-wise filtering (e.g., by `medium` or `sender_id`), prefer `_filter_messages` instead of this semantic search; `_filter_messages` cannot reference Contact fields.
-        """
-        # Default behaviour: when references is None/empty, skip semantic search and
-        # return the most recent messages directly from transcripts context.
-        if not references:
-            logs = unify.get_logs(
-                context=self._transcripts_ctx,
-                limit=k,
-                # Restrict payload to the Message schema to avoid a fields lookup
-                from_fields=list(Message.model_fields.keys()),
-                sorting={"timestamp": "descending"},
-            )
-            results = [Message(**lg.entries) for lg in logs]
-            return self._format_contacts_and_messages(results)
-
-        # Field name sets to classify expressions as message-side vs contact-side
-        msg_fields = set(Message.model_fields.keys())
-        contact_fields = set(Contact.model_fields.keys())
-
-        def _extract_placeholders(expr: str) -> list[str]:
-            import re as _re
-
-            return _re.findall(r"\{\s*([a-zA-Z_][\w]*)\s*\}", expr)
-
-        # Ensure/embed columns and gather terms
-        msg_embed_columns: list[tuple[str, str]] = []
-        sender_contact_embed_columns: list[tuple[str, str]] = []
-        receiver_contact_embed_columns: list[tuple[str, str]] = []
-
-        # For deterministic naming of derived columns and the join context
-        import hashlib
-
-        canonical = "|".join(f"{k}=>{references[k]}" for k in sorted(references.keys()))
-        query_hash = hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
-
-        # 1) Prepare message-side vector columns in transcripts context
-        for source_expr, ref_text in references.items():
-            placeholders = (
-                _extract_placeholders(source_expr)
-                if not is_plain_identifier(source_expr)
-                else []
-            )
-            is_message_side = False
-            if is_plain_identifier(source_expr):
-                # Only treat as message-side if it's a Message field and not a prefixed contact key
-                is_message_side = (
-                    source_expr in msg_fields
-                    and not source_expr.startswith("sender_")
-                    and not source_expr.startswith("receiver_")
-                )
-            else:
-                # If any placeholder matches a message field, treat as message-side
-                is_message_side = any(ph in msg_fields for ph in placeholders)
-
-            if is_message_side:
-                embed_column_name = ensure_vector_for_source(
-                    self._transcripts_ctx,
-                    source_expr,
-                )
-                msg_embed_columns.append((embed_column_name, ref_text))
-
-        # 2) Prepare contact-side vector columns in contacts context via ContactManager helper
-        for source_expr, ref_text in references.items():
-            placeholders = (
-                _extract_placeholders(source_expr)
-                if not is_plain_identifier(source_expr)
-                else []
-            )
-            # Determine contact role and base expression/key
-            role: Optional[str] = None
-            base_expr = source_expr
-            if is_plain_identifier(source_expr):
-                if source_expr.startswith("sender_"):
-                    role = "sender"
-                    base_expr = source_expr[len("sender_") :]
-                elif source_expr.startswith("receiver_"):
-                    role = "receiver"
-                    base_expr = source_expr[len("receiver_") :]
-                elif (source_expr in contact_fields) and (
-                    source_expr not in msg_fields
-                ):
-                    # Backward-compat: unprefixed contact field → sender
-                    role = "sender"
-                    base_expr = source_expr
-            else:
-                # Derived expressions for contacts are only supported if placeholders
-                # are exclusively contact fields; treat as sender-side unless explicitly
-                # prefixed (we do not support derived receiver_* expressions for now).
-                if (
-                    (len(placeholders) > 0)
-                    and all(ph in contact_fields for ph in placeholders)
-                    and not any(ph in msg_fields for ph in placeholders)
-                ):
-                    if base_expr.startswith("sender_"):
-                        role = "sender"
-                        base_expr = base_expr[len("sender_") :]
-                    elif base_expr.startswith("receiver_"):
-                        role = "receiver"  # best-effort; see note above
-                        base_expr = base_expr[len("receiver_") :]
-                    else:
-                        role = "sender"
-
-            if role is not None:
-                embed_column_name = ensure_vector_for_source(
-                    self._contact_manager._ctx,
-                    base_expr,
-                )
-                if role == "sender":
-                    sender_contact_embed_columns.append((embed_column_name, ref_text))
-                else:
-                    receiver_contact_embed_columns.append((embed_column_name, ref_text))
-
-        # 3) If there are no contact-side terms (sender/receiver), compute directly in transcripts context (no join)
-        if not sender_contact_embed_columns and not receiver_contact_embed_columns:
-            # Ensure at least one message-side term exists; otherwise default to content
-            if not msg_embed_columns:
-                ensure_vector_column(self._transcripts_ctx, self._MSG_EMB, "content")
-                msg_embed_columns = [(self._MSG_EMB, next(iter(references.values())))]
-
-            rows = fetch_top_k_by_terms(
-                self._transcripts_ctx,
-                msg_embed_columns,
-                k=k,
-            )
-            results = [Message(**lg) for lg in rows]
-            return self._format_contacts_and_messages(results)
-
-        # 4) Build sender-join context and compute base scores (message + sender)
-        left_ctx = self._transcripts_ctx
-        right_ctx = self._contact_manager._ctx  # Contacts table
-
-        sender_join_ctx = f"{left_ctx}__sender_join__{query_hash}"
-
-        # Perform sender join selecting derived embedding columns directly.
-        # IMPORTANT: alias columns so the join context exposes the exact
-        # embedding column names expected by the ranking step. Passing a
-        # plain list (without aliases) means the columns may only be
-        # accessible via fully-qualified names, breaking downstream
-        # expressions that reference just `embed_col`.
-        select: Dict[str, str] = {}
-        # Include all message fields so we can reconstruct results without a second fetch
-        for mf in Message.model_fields.keys():
-            select[f"{left_ctx}.{mf}"] = mf
-        # Include required embedding columns for ranking (alias to bare names)
-        for embed_col, _ in msg_embed_columns:
-            select[f"{left_ctx}.{embed_col}"] = embed_col
-        for embed_col, _ in sender_contact_embed_columns:
-            select[f"{right_ctx}.{embed_col}"] = embed_col
-
-        unify.join_logs(
-            pair_of_args=(
-                {"context": left_ctx},
-                {"context": right_ctx},
-            ),
-            join_expr=f"{left_ctx}.sender_id == {right_ctx}.contact_id",
-            mode="inner",
-            new_context=sender_join_ctx,
-            # Use aliased column mapping so downstream sorting can reference
-            # bare embedding column names.
-            columns=select,
-            # Aliases require a materialized copy in the backend; enable it so
-            # the joined context exposes the expected bare column names.
-            copy=True,
-        )
-
-        # Base terms for sender join ranking
-        base_terms = list(msg_embed_columns) + list(sender_contact_embed_columns)
-
-        # If there are no base terms (only receiver terms supplied), select candidates by top receiver contacts
-        candidate_rows: list[dict]
-        candidate_score_key = ""
-        if base_terms:
-            # Oversample to allow receiver score to influence final ranking
-            oversample = max(k * 5, 50)
-            candidate_rows, candidate_score_key = fetch_top_k_by_terms_with_score(
-                sender_join_ctx,
-                base_terms,
-                k=oversample,
-            )
-        else:
-            # Receiver-only search: rank contacts by receiver terms, then batch-fetch
-            # messages that include any of those contacts as receivers using OR-batched filters.
-            top_contacts_limit = max(k * 10, 200)
-            top_contact_rows, recv_score_key = fetch_top_k_by_terms_with_score(
-                right_ctx,
-                receiver_contact_embed_columns,
-                k=top_contacts_limit,
-            )
-
-            # Build contact_id -> score map
-            contact_scores: dict[int, float] = {}
-            for contact_row in top_contact_rows:
-                cid = contact_row.get("contact_id")
-                if cid is None:
-                    continue
-                try:
-                    cid_int = int(cid)
-                except Exception:
-                    continue
-                try:
-                    c_score = float(contact_row.get(recv_score_key, 0))
-                except Exception:
-                    c_score = 0.0
-                contact_scores[cid_int] = c_score
-
-            # Accumulate candidate messages keyed by message_id with provisional score (min over receivers)
-            msg_to_score: dict[int, float] = {}
-            oversample_target = max(k * 5, 100)
-            # Batch OR-size to reduce backend calls
-            BATCH_OR_SIZE = 50
-            contact_ids: list[int] = list(contact_scores.keys())
-            for i in range(0, len(contact_ids), BATCH_OR_SIZE):
-                batch = contact_ids[i : i + BATCH_OR_SIZE]
-                if not batch:
-                    continue
-                or_expr = " or ".join(f"{cid} in receiver_ids" for cid in batch)
-                rows = unify.get_logs(
-                    context=left_ctx,
-                    filter=or_expr,
-                    # Only need message_id and receiver_ids at this stage
-                    from_fields=["message_id", "receiver_ids"],
-                    limit=oversample_target,
-                )
-                for lg in rows:
-                    entries = lg.entries
-                    mid = entries.get("message_id")
-                    rids = entries.get("receiver_ids", [])
-                    if mid is None or not isinstance(rids, list):
-                        continue
-                    try:
-                        mid_int = int(mid)
-                    except Exception:
-                        continue
-                    # Compute min receiver score across all receivers for this message
-                    min_recv = 2.0
-                    for rid in rids:
-                        try:
-                            sc = contact_scores.get(int(rid))
-                            if sc is not None and sc < min_recv:
-                                min_recv = sc
-                        except Exception:
-                            continue
-                    prev = msg_to_score.get(mid_int)
-                    if (prev is None) or (min_recv < prev):
-                        msg_to_score[mid_int] = min_recv
-                if len(msg_to_score) >= oversample_target:
-                    break
-
-            # Turn into candidate rows with only message_id and receiver_ids; we'll refine later
-            candidate_rows = []
-            if msg_to_score:
-                # Batch-fetch receiver_ids for these messages
-                ids_expr = ", ".join(str(i) for i in msg_to_score.keys())
-                rows = unify.get_logs(
-                    context=left_ctx,
-                    filter=f"message_id in [{ids_expr}]",
-                    from_fields=["message_id", "receiver_ids"],
-                    limit=len(msg_to_score),
-                )
-                # Build lookup to avoid re-reads later
-                for lg in rows:
-                    row = dict(lg.entries)
-                    row["_receiver_only_base"] = 0.0
-                    candidate_rows.append(row)
-
-        # Fast path: no receiver terms → return top-k by base ranking
-        if not receiver_contact_embed_columns:
-            # Reconstruct messages directly from the joined rows (we included all message fields)
-            results: List[Message] = []
-            taken = 0
-            msg_field_keys = set(Message.model_fields.keys())
-            for row in candidate_rows:
-                if taken >= k:
-                    break
-                # Filter to Message schema fields only
-                msg_payload = {k: row.get(k) for k in msg_field_keys if k in row}
-                try:
-                    results.append(Message(**msg_payload))
-                    taken += 1
-                except Exception:
-                    continue
-            return self._format_contacts_and_messages(results)
-
-        # 5) Receiver terms present → compute per-contact receiver scores and combine per message (min over receivers)
-        # Collect unique receiver ids across candidates
-        receiver_id_set: set[int] = set()
-        for row in candidate_rows:
-            rids = row.get("receiver_ids", [])
-            if isinstance(rids, list):
-                for rid in rids:
-                    try:
-                        receiver_id_set.add(int(rid))
-                    except Exception:
-                        continue
-
-        # Fetch scores for those receiver contacts
-        receiver_scores_map, receiver_score_key = fetch_scores_for_ids(
-            right_ctx,
-            receiver_contact_embed_columns,
-            id_field="contact_id",
-            ids=sorted(receiver_id_set),
-        )
-
-        # Combine scores per message_id
-        combined: list[tuple[int, float]] = []
-        for row in candidate_rows:
-            mid = row.get("message_id")
-            if mid is None:
-                continue
-            # Base score (if available); when only receiver terms were provided, treat base score as 0
-            base_score = 0.0
-            if candidate_score_key and (candidate_score_key in row):
-                try:
-                    base_score = float(row.get(candidate_score_key, 0))
-                except Exception:
-                    base_score = 0.0
-
-            # Min receiver score across this message's receivers
-            min_recv = 2.0
-            rids = row.get("receiver_ids", [])
-            if isinstance(rids, list) and rids:
-                for rid in rids:
-                    try:
-                        rv = receiver_scores_map.get(int(rid))
-                        if rv is not None:
-                            if rv < min_recv:
-                                min_recv = rv
-                    except Exception:
-                        continue
-            # If there are no receivers or no scores, keep min_recv at worst-case 2.0
-            combined.append((int(mid), base_score + min_recv))
-
-        # Sort by combined score ascending and take top-k message_ids
-        combined.sort(key=lambda t: t[1])
-        top_ids = [mid for mid, _ in combined[:k]]
-
-        # Build final results: fetch full Message rows for the selected ids
-        if not top_ids:
-            return self._format_contacts_and_messages([])
-
-        # Fetch the complete message payloads in one go
-        ids_expr = ", ".join(str(i) for i in top_ids)
-        full_rows = unify.get_logs(
-            context=left_ctx,
-            filter=f"message_id in [{ids_expr}]",
-            from_fields=list(Message.model_fields.keys()),
-            limit=len(top_ids),
-        )
-        full_by_id: dict[int, dict] = {}
-        for lg in full_rows:
-            try:
-                mid_val = int(lg.entries.get("message_id"))
-            except Exception:
-                continue
-            full_by_id[mid_val] = dict(lg.entries)
-
-        results: List[Message] = []
-        for mid in top_ids:
-            payload = full_by_id.get(mid)
-            if not payload:
-                continue
-            try:
-                results.append(Message(**payload))
-            except Exception:
-                # Defensive: skip malformed rows rather than failing the whole search
-                continue
-
-        return self._format_contacts_and_messages(results)
+        return _search_messages_impl(self, references=references, k=k)
 
     def _filter_messages(
         self,
@@ -1103,51 +668,7 @@ class TranscriptManager(BaseTranscriptManager):
         offset: int = 0,
         limit: int | None = 100,
     ) -> Dict[str, Any]:
-        """
-        Filter transcript messages using an exact column-wise boolean expression evaluated per row.
-
-        Use this tool for precise filters on structured fields (ids, mediums, equality checks, simple membership). For fuzzy substring or semantic matching across free-text columns, prefer `_search_messages`.
-
-        Parameters
-        ----------
-        filter : str | None, default None
-            A Python-like boolean expression evaluated with `Message` columns in scope for each row. Examples:
-            - "medium == 'email' and sender_id == 3"
-            - "'urgent' in content and medium != 'sms'"
-            - "timestamp >= '2024-01-01T00:00:00' and timestamp < '2024-02-01T00:00:00'" (if your backend supports datetime comparisons)
-            When `None`, all messages are returned (subject to `offset`/`limit`).
-            Notes:
-            - String comparisons are case-sensitive unless you explicitly normalize (e.g., `content.lower().contains('foo')` if supported by your Unify backend).
-            - Only `Message` fields are available here. Contact fields are not in scope; to filter by sender attributes, either precompute columns or combine with results from `_search_messages`.
-        offset : int, default 0
-            Zero-based index of the first row to include. Must be non-negative. Use for pagination together with `limit`.
-        limit : int, default 100
-            Maximum number of rows to return. Must be a positive integer. Larger values may increase latency.
-
-        Returns
-        -------
-        List[Message]
-            Matching messages as validated `Message` models. Results are sorted by `timestamp` in descending order. Any private embedding columns (those ending with `_emb`) are excluded from the payload to keep responses compact.
-
-        Guidance
-        --------
-        - Prefer equality or explicit range filters for reliability. Substring checks on large free-text columns can be brittle; consider `_search_messages` for robust semantic queries.
-        - Quote strings with single quotes inside the filter expression to avoid escaping issues.
-        - If you need deterministic pagination, keep your filter stable and page using consistent `offset`/`limit` values.
-        """
-        normalized = normalize_filter_expr(filter)
-        logs = unify.get_logs(
-            context=self._transcripts_ctx,
-            filter=normalized,
-            offset=offset,
-            limit=limit,
-            sorting={"timestamp": "descending"},
-            # Limit payload strictly to the Message schema to avoid fetching
-            # private/embedding columns and to remove an extra fields lookup.
-            from_fields=list(Message.model_fields.keys()),
-        )
-        results = [Message(**lg.entries) for lg in logs]
-        return self._format_contacts_and_messages(results)
+        return _filter_messages_impl(self, filter=filter, offset=offset, limit=limit)
 
     def _update_contact_id(
         self,
@@ -1250,51 +771,7 @@ class TranscriptManager(BaseTranscriptManager):
         - timestamp: str (ISO8601)
         - annotation: str  → freeform explanation of how the image relates to the text
         """
-        logs = unify.get_logs(
-            context=self._transcripts_ctx,
-            filter=f"message_id == {int(message_id)}",
-            limit=1,
-            from_fields=list(Message.model_fields.keys()),
-        )
-        if not logs:
-            return []
-        try:
-            msg = Message(**logs[0].entries)
-        except Exception:
-            return []
-        refs = getattr(msg.images, "root", None) or []
-        if not refs:
-            return []
-        image_ids: List[int] = []
-        for ref in refs:
-            try:
-                image_ids.append(int(ref.raw_image_ref.image_id))
-            except Exception:
-                continue
-        handles = self._image_manager.get_images(image_ids)
-        by_id = {h.image_id: h for h in handles}
-        out: List[Dict[str, Any]] = []
-        for ref in refs:
-            try:
-                iid = int(ref.raw_image_ref.image_id)
-            except Exception:
-                continue
-            h = by_id.get(iid)
-            if h is None:
-                continue
-            try:
-                ts_str = h.timestamp.isoformat()
-            except Exception:
-                ts_str = ""
-            out.append(
-                {
-                    "image_id": int(h.image_id),
-                    "caption": h.caption,
-                    "timestamp": ts_str,
-                    "annotation": ref.annotation,
-                },
-            )
-        return out
+        return _get_images_for_message_impl(self, message_id=message_id)
 
     @read_only
     async def _ask_image(self, *, image_id: int, question: str) -> str:
@@ -1323,14 +800,7 @@ class TranscriptManager(BaseTranscriptManager):
             ``attach_image_to_context``/``attach_message_images_to_context``
             when subsequent steps should keep seeing the image(s).
         """
-        handles = self._image_manager.get_images([int(image_id)])
-        if not handles:
-            raise ValueError(f"No image found with image_id {image_id}")
-        handle = handles[0]
-        answer = await handle.ask(question)
-        if not isinstance(answer, str):
-            answer = str(answer)
-        return answer
+        return await _ask_image_impl(self, image_id=image_id, question=question)
 
     def _attach_image_to_context(
         self,
@@ -1363,21 +833,7 @@ class TranscriptManager(BaseTranscriptManager):
             where ``image`` is the raw bytes of the image encoded as base64
             (PNG or JPEG). Downstream should render this as an image block.
         """
-        handles = self._image_manager.get_images([int(image_id)])
-        if not handles:
-            raise ValueError(f"No image found with image_id {image_id}")
-        h = handles[0]
-        try:
-            raw_bytes = h.raw()
-        except Exception as exc:
-            raise ValueError("Failed to load raw image bytes") from exc
-        b64 = base64.b64encode(raw_bytes).decode("utf-8")
-        payload: Dict[str, Any] = {
-            "note": note
-            or f"Attached image {h.image_id} for persistent context (caption={h.caption!r}).",
-            "image": b64,
-        }
-        return payload
+        return _attach_image_to_context_impl(self, image_id=image_id, note=note)
 
     def _attach_message_images_to_context(
         self,
@@ -1404,62 +860,11 @@ class TranscriptManager(BaseTranscriptManager):
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
             Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, and optional ``annotation``.
         """
-        logs = unify.get_logs(
-            context=self._transcripts_ctx,
-            filter=f"message_id == {int(message_id)}",
-            limit=1,
-            from_fields=list(Message.model_fields.keys()),
+        return _attach_message_images_to_context_impl(
+            self,
+            message_id=message_id,
+            limit=limit,
         )
-        if not logs:
-            return {"attached_count": 0, "images": []}
-        try:
-            msg = Message(**logs[0].entries)
-        except Exception:
-            return {"attached_count": 0, "images": []}
-        refs = getattr(msg.images, "root", None) or []
-        if not refs:
-            return {"attached_count": 0, "images": []}
-        ids_to_attach: List[int] = []
-        annotations_by_index: List[str] = []
-        for ref in refs:
-            try:
-                ids_to_attach.append(int(ref.raw_image_ref.image_id))
-                annotations_by_index.append(ref.annotation)
-            except Exception:
-                continue
-
-        if limit is not None:
-            try:
-                limit = int(limit)
-            except Exception:
-                limit = 3
-            if limit >= 0:
-                ids_to_attach = ids_to_attach[:limit]
-                annotations_by_index = annotations_by_index[:limit]
-
-        handles = self._image_manager.get_images(ids_to_attach)
-        images: List[Dict[str, Any]] = []
-        for idx, h in enumerate(handles):
-            try:
-                raw_bytes = h.raw()
-                b64 = base64.b64encode(raw_bytes).decode("utf-8")
-            except Exception:
-                continue
-            annotation_val = (
-                annotations_by_index[idx] if idx < len(annotations_by_index) else ""
-            )
-            images.append(
-                {
-                    "meta": {
-                        "image_id": int(h.image_id),
-                        "caption": h.caption,
-                        "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
-                        "annotation": annotation_val,
-                    },
-                    "image": b64,
-                },
-            )
-        return {"attached_count": len(images), "images": images}
 
     # (Span substring helper removed – images now aligned via freeform annotations)
 
@@ -1476,16 +881,7 @@ class TranscriptManager(BaseTranscriptManager):
         Dict[str, str]
             Dictionary mapping column names to their types.
         """
-        # Serve from the in-process cache when available; otherwise fetch once
-        # and remember for subsequent reads within this manager's lifetime.
-        if getattr(self, "_columns_cache_all", None):
-            return dict(self._columns_cache_all)
-        cols = self._store.get_columns()
-        try:
-            self._columns_cache_all = dict(cols)
-        except Exception:
-            pass
-        return cols
+        return _storage_get_columns(self)
 
     def _list_columns(
         self,
@@ -1507,146 +903,27 @@ class TranscriptManager(BaseTranscriptManager):
             are omitted from the result to reduce payload size and avoid exposing
             vector/derived fields. Set to True to return all columns.
         """
-        cols = self._get_columns()
-        if not include_private:
-            cols = {k: v for k, v in cols.items() if not str(k).startswith("_")}
-        return cols if include_types else list(cols)
+        cols = _storage_list_columns(
+            self,
+            include_types=include_types,
+            include_private=include_private,
+        )
+        return cols
 
     def _num_messages(self) -> int:
         """Return the total number of messages in transcripts."""
-        ret = unify.get_logs_metric(
-            metric="count",
-            key="message_id",
-            context=self._transcripts_ctx,
-        )
-        if ret is None:
-            return 0
-        return int(ret)
+        return _storage_num_messages(self)
 
     @functools.wraps(BaseTranscriptManager.clear, updated=())
     def clear(self) -> None:
 
-        # Best-effort deletion of both contexts
-        try:
-            unify.delete_context(self._transcripts_ctx)
-        except Exception:
-            pass
-        try:
-            unify.delete_context(self._exchanges_ctx)
-        except Exception:
-            pass
-
-        # Reset local cached state
-        try:
-            self._columns_cache_all = {}
-        except Exception:
-            pass
-
-        # Drop ensure memo then re-provision via shared helper
-        try:
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._transcripts_ctx))
-            except Exception:
-                pass
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._exchanges_ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        # Recreate contexts and required columns via shared helper
-        self._provision_storage()
-
-        # Verify both contexts become visible before returning
-        try:
-            import time as _time  # local import
-
-            for _ in range(3):
-                try:
-                    unify.get_fields(context=self._transcripts_ctx)
-                    break
-                except Exception:
-                    _time.sleep(0.05)
-        except Exception:
-            pass
-
-        try:
-            import time as _time  # local import
-
-            for _ in range(3):
-                try:
-                    unify.get_fields(context=self._exchanges_ctx)
-                    break
-                except Exception:
-                    _time.sleep(0.05)
-        except Exception:
-            pass
+        _storage_clear(self)
 
     # ------------------------------------------------------------------ #
     #  Internal provisioning helper                                      #
     # ------------------------------------------------------------------ #
     def _provision_storage(self) -> None:
-        """Ensure contexts, fields, helper columns and local caches exist."""
-        # Ensure transcripts context and fields deterministically
-        self._store = TableStore(
-            self._transcripts_ctx,
-            unique_keys={"message_id": "int"},
-            auto_counting={"message_id": None, "exchange_id": None},
-            description=(
-                "List of *all* timestamped messages sent between *all* contacts across *all* mediums."
-            ),
-            fields=model_to_fields(Message),
-        )
-        self._store.ensure_context()
-
-        # Exchanges context: one row per exchange_id with optional metadata
-        self._exchanges_store = TableStore(
-            self._exchanges_ctx,
-            unique_keys={"exchange_id": "int"},
-            description="One row per conversation exchange/thread with optional metadata.",
-            fields={
-                "exchange_id": {
-                    "type": "int",
-                    "description": "Unique identifier for the exchange/thread",
-                },
-                "metadata": {
-                    "type": "dict",
-                    "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
-                },
-                "medium": {
-                    "type": "string",
-                    "description": "Communication medium for the exchange (same semantics as Message.medium)",
-                },
-            },
-        )
-        self._exchanges_store.ensure_context()
-
-        # Ensure a private `_metadata` column exists (dict, mutable)
-        try:
-            existing_fields = unify.get_fields(context=self._transcripts_ctx)
-            if "_metadata" not in existing_fields:
-                unify.create_fields(
-                    {
-                        "_metadata": {
-                            "type": "dict",
-                            "mutable": True,
-                            "description": "Internal, non user-facing metadata for infrastructure.",
-                        },
-                    },
-                    context=self._transcripts_ctx,
-                )
-        except Exception:
-            # Non-fatal; logging will still work without the helper if backend creates implicitly
-            pass
-
-        # Update columns cache best-effort
-        try:
-            self._columns_cache_all = dict(self._store.get_columns())
-        except Exception:
-            self._columns_cache_all = {}
+        _storage_provision(self)
 
     # ------------------------------------------------------------------ #
     #  Exchanges helper                                                   #
@@ -1657,102 +934,10 @@ class TranscriptManager(BaseTranscriptManager):
         *,
         eid_to_medium: Optional[Dict[int, str]] = None,
     ) -> None:
-        """Idempotently create rows in the Exchanges context for given ids.
-
-        Creates a blank metadata row for each ``exchange_id`` that does not yet
-        exist. Safe to call repeatedly; uniqueness is enforced at the context level.
-        """
-        if not exchange_ids:
-            return
-        try:
-            ids_expr = ", ".join(str(i) for i in sorted(exchange_ids))
-            existing: set[int] = set()
-            try:
-                rows = unify.get_logs(
-                    context=self._exchanges_ctx,
-                    filter=f"exchange_id in [{ids_expr}]",
-                    from_fields=["exchange_id"],
-                    limit=len(exchange_ids),
-                )
-                for lg in rows or []:
-                    try:
-                        existing.add(int(lg.entries.get("exchange_id")))
-                    except Exception:
-                        continue
-            except Exception:
-                existing = set()
-
-            missing = [eid for eid in exchange_ids if eid not in existing]
-            for eid in missing:
-                try:
-                    unify.log(
-                        context=self._exchanges_ctx,
-                        exchange_id=int(eid),
-                        metadata={},
-                        medium=(eid_to_medium or {}).get(int(eid), ""),
-                        new=True,
-                        mutable=True,
-                        params={},
-                    )
-                except Exception:
-                    # Ignore duplicates or backend races
-                    pass
-        except Exception:
-            # Defensive: never propagate to caller
-            pass
+        _storage_ensure_exchanges(self, exchange_ids, eid_to_medium=eid_to_medium)
 
     # ------------------------------------------------------------------ #
     #  Formatting helper: single contacts table + messages                #
     # ------------------------------------------------------------------ #
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        """Return a combined payload for contacts and messages.
-
-        - Collect unique contact ids from senders and receivers.
-        - Fetch contact rows via ContactManager._filter_contacts (returns a three‑keyed
-          dict) and unpack it directly into the result without hard‑coding any key name.
-        - Append message shorthand legends and the list of Message models.
-        - When there are no messages, return an empty dict.
-        """
-
-        if not messages:
-            return {}
-
-        # Collect unique contact ids
-        unique_ids: set[int] = set()
-        for m in messages:
-            try:
-                unique_ids.add(int(m.sender_id))
-            except Exception:
-                pass
-            if isinstance(m.receiver_ids, list):
-                for rid in m.receiver_ids:
-                    try:
-                        unique_ids.add(int(rid))
-                    except Exception:
-                        pass
-
-        contacts_payload: Dict[str, Any] = {}
-        if unique_ids:
-            # Build filter expression: contact_id in [1, 2, 3]
-            ids_expr = ", ".join(str(i) for i in sorted(unique_ids))
-            flt = f"contact_id in [{ids_expr}]"
-            try:
-                contacts_payload = self._contact_manager._filter_contacts(
-                    filter=flt,
-                    limit=len(unique_ids),
-                )
-            except Exception:
-                contacts_payload = {}
-
-        # Define stable shorthand legend for Message fields (full → shorthand)
-        message_keys_to_shorthand: dict[str, str] = Message.shorthand_map()
-        # Inverse legend (shorthand → full)
-        shorthand_to_message_keys: dict[str, str] = Message.shorthand_inverse_map()
-
-        # Ordered return shape as requested
-        return {
-            **contacts_payload,
-            "message_keys_to_shorthand": message_keys_to_shorthand,
-            "messages": messages,  # keep models; centralized serializer handles JSON
-            "shorthand_to_message_keys": shorthand_to_message_keys,
-        }
+        return _format_contacts_and_messages_impl(self, messages)
