@@ -195,10 +195,11 @@ async def test_tool_is_re_called():
         _call_count += 1
         return ret
 
+    query = "How is the weather? Call the current_weather tool and reply with the result only"
     client = create_client()
     handle = start_async_tool_loop(
         client,
-        "How is the weather?",
+        query,
         tools={"current_weather": current_weather},
         semantic_cache="write",
     )
@@ -211,7 +212,7 @@ async def test_tool_is_re_called():
     client = create_client()
     handle = start_async_tool_loop(
         client,
-        "How is the weather?",
+        query,
         tools={"current_weather": current_weather},
         semantic_cache="read",
     )
