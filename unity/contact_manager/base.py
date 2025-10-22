@@ -146,7 +146,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         ----------
         text : str
             The user's request (e.g. *"Add Sarah Connor's phone number …"*).
-        _return_reasoning_steps, parent_chat_context,
+        _return_reasoning_steps, _parent_chat_context,
         _clarification_up_q, _clarification_down_q
             Same semantics as in :py:meth:`ask`.
         images : dict[str, Any] | None
