@@ -272,6 +272,12 @@ class ConversationManager:
                             query=parsed_out["thoughts"],
                             parent_chat_context=self.state.chat_history,
                         )
+                    elif action["action_name"] == "conductor_answer_clarification":
+                        event = ConductorClarificationResponse(
+                            handle_id=action["handle_id"],
+                            response=parsed_out["thoughts"],
+                            call_id=action["call_id"],
+                        )
                     else:
                         # Create a new Conductor task via ManagersWorker
                         event = ConductorRequest(
@@ -281,7 +287,7 @@ class ConversationManager:
                         )
                     asyncio.create_task(
                         self.event_broker.publish(
-                            "app:conductor:request",
+                            "app:conductor:input_events",
                             event.to_json(),
                         )
                     )
@@ -761,7 +767,13 @@ class ConversationManager:
             )
 
         elif isinstance(
-            event, (ConductorResponse, ConductorHandleResponse, ConductorResult)
+            event,
+            (
+                ConductorResponse,
+                ConductorHandleResponse,
+                ConductorResult,
+                ConductorClarificationRequest,
+            ),
         ):
             await self.schedule_llm_run(0, cancel_running=True)
 

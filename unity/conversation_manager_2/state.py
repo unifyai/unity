@@ -562,8 +562,14 @@ class ConversationManagerState:
         print(f"Available actions: {available_actions}")
 
     # conductor handle tracking helpers
-    def register_conductor_handle(self, handle_id: str, query: str, response: str) -> None:
-        self.conductor_handles[handle_id] = {"query": query, "response": response, "handle_actions": []}
+    def register_conductor_handle(
+        self, handle_id: str, query: str, response: str
+    ) -> None:
+        self.conductor_handles[handle_id] = {
+            "query": query,
+            "response": response,
+            "handle_actions": [],
+        }
 
     def add_conductor_handle_action(
         self, handle_id: str, action_name: str, query: str, response: str
@@ -583,11 +589,13 @@ class ConversationManagerState:
         if handle_id in self.conductor_handles:
             if query is None:
                 query = self.conductor_handles[handle_id]["handle_actions"][-1]["query"]
-            self.conductor_handles[handle_id]["handle_actions"][-1].update({
-                "action_name": action_name,
-                "query": query,
-                "response": response,
-            })
+            self.conductor_handles[handle_id]["handle_actions"][-1].update(
+                {
+                    "action_name": action_name,
+                    "query": query,
+                    "response": response,
+                }
+            )
 
     def get_details(self) -> dict:
         return {
@@ -870,6 +878,8 @@ Body:
                 handles.append(f"\t\t\t<query>{action['query']}</query>")
                 if action["response"]:
                     handles.append(f"\t\t\t<response>{action['response']}</response>")
+                if "call_id" in action:
+                    handles.append(f"\t\t\t<call_id>{action['call_id']}</call_id>")
                 handles.append(f"\t\t</action>")
             handles.append(f"\t</handle_actions>")
             handles.append(f"</conductor_handle>")
