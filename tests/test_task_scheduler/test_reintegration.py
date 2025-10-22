@@ -86,9 +86,9 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
     # Sanity: A is scheduled (head with start_at), B and C are queued
-    row_a = ts._filter_tasks(filter=f"task_id == {a}")[0]
-    row_b = ts._filter_tasks(filter=f"task_id == {b}")[0]
-    row_c = ts._filter_tasks(filter=f"task_id == {c}")[0]
+    row_a = ts._filter_tasks(filter=f"task_id == {a}")["tasks"][0]
+    row_b = ts._filter_tasks(filter=f"task_id == {b}")["tasks"][0]
+    row_c = ts._filter_tasks(filter=f"task_id == {c}")["tasks"][0]
     assert row_a["status"] == "scheduled"
     assert row_b["status"] == "queued"
     assert row_c["status"] == "queued"
@@ -99,7 +99,7 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
     handle = await ts.execute(text=str(a), isolated=True)
 
     # After detachment, B becomes the new head and should inherit start_at and be scheduled
-    row_b2 = ts._filter_tasks(filter=f"task_id == {b}")[0]
+    row_b2 = ts._filter_tasks(filter=f"task_id == {b}")["tasks"][0]
     sched_b2 = row_b2.get("schedule") or {}
     assert sched_b2.get("prev_task") is None
     assert sched_b2.get("start_at") == original_start
@@ -115,9 +115,9 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
     await handle.result()
 
     # After reinstatement, restore A→B→C with head A carrying start_at and scheduled
-    row_a3 = ts._filter_tasks(filter=f"task_id == {a}")[0]
-    row_b3 = ts._filter_tasks(filter=f"task_id == {b}")[0]
-    row_c3 = ts._filter_tasks(filter=f"task_id == {c}")[0]
+    row_a3 = ts._filter_tasks(filter=f"task_id == {a}")["tasks"][0]
+    row_b3 = ts._filter_tasks(filter=f"task_id == {b}")["tasks"][0]
+    row_c3 = ts._filter_tasks(filter=f"task_id == {c}")["tasks"][0]
 
     sa3 = row_a3.get("schedule") or {}
     sb3 = row_b3.get("schedule") or {}
@@ -147,9 +147,9 @@ async def test_starting_middle_detaches_and_links_neighbors():
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
     # Sanity: A is scheduled (head with start_at), B and C are queued
-    row_a = ts._filter_tasks(filter=f"task_id == {a}")[0]
-    row_b = ts._filter_tasks(filter=f"task_id == {b}")[0]
-    row_c = ts._filter_tasks(filter=f"task_id == {c}")[0]
+    row_a = ts._filter_tasks(filter=f"task_id == {a}")["tasks"][0]
+    row_b = ts._filter_tasks(filter=f"task_id == {b}")["tasks"][0]
+    row_c = ts._filter_tasks(filter=f"task_id == {c}")["tasks"][0]
     assert row_a["status"] == "scheduled"
     assert row_b["status"] == "queued"
     assert row_c["status"] == "queued"
@@ -160,9 +160,9 @@ async def test_starting_middle_detaches_and_links_neighbors():
     handle = await ts.execute(text=str(b), isolated=True)
 
     # After detachment of B, A and C should be directly linked; B should have no schedule
-    row_a2 = ts._filter_tasks(filter=f"task_id == {a}")[0]
-    row_b2 = ts._filter_tasks(filter=f"task_id == {b}")[0]
-    row_c2 = ts._filter_tasks(filter=f"task_id == {c}")[0]
+    row_a2 = ts._filter_tasks(filter=f"task_id == {a}")["tasks"][0]
+    row_b2 = ts._filter_tasks(filter=f"task_id == {b}")["tasks"][0]
+    row_c2 = ts._filter_tasks(filter=f"task_id == {c}")["tasks"][0]
 
     sa2 = row_a2.get("schedule") or {}
     sb2 = row_b2.get("schedule")
@@ -191,9 +191,9 @@ async def test_starting_middle_detaches_and_links_neighbors():
     await handle.result()
 
     # After reinstatement, restore A→B→C with head A carrying start_at and scheduled
-    row_a3 = ts._filter_tasks(filter=f"task_id == {a}")[0]
-    row_b3 = ts._filter_tasks(filter=f"task_id == {b}")[0]
-    row_c3 = ts._filter_tasks(filter=f"task_id == {c}")[0]
+    row_a3 = ts._filter_tasks(filter=f"task_id == {a}")["tasks"][0]
+    row_b3 = ts._filter_tasks(filter=f"task_id == {b}")["tasks"][0]
+    row_c3 = ts._filter_tasks(filter=f"task_id == {c}")["tasks"][0]
 
     sa3 = row_a3.get("schedule") or {}
     sb3 = row_b3.get("schedule") or {}
@@ -230,8 +230,8 @@ async def test_reinstate_head_restores_head_and_start_at():
     out = ts._reinstate_task_to_previous_queue(task_id=head_id)
     assert out["outcome"].startswith("task reinstated"), out
 
-    rows_h = ts._filter_tasks(filter=f"task_id == {head_id}")[0]
-    rows_n = ts._filter_tasks(filter=f"task_id == {next_id}")[0]
+    rows_h = ts._filter_tasks(filter=f"task_id == {head_id}")["tasks"][0]
+    rows_n = ts._filter_tasks(filter=f"task_id == {next_id}")["tasks"][0]
     sched_h = rows_h.get("schedule") or {}
     sched_n = rows_n.get("schedule") or {}
 
@@ -257,9 +257,9 @@ async def test_reinstate_middle_restores_links():
     # Reinstate B → expect A→B→C restored
     _ = ts._reinstate_task_to_previous_queue(task_id=b)
 
-    row_a = ts._filter_tasks(filter=f"task_id == {a}")[0]
-    row_b = ts._filter_tasks(filter=f"task_id == {b}")[0]
-    row_c = ts._filter_tasks(filter=f"task_id == {c}")[0]
+    row_a = ts._filter_tasks(filter=f"task_id == {a}")["tasks"][0]
+    row_b = ts._filter_tasks(filter=f"task_id == {b}")["tasks"][0]
+    row_c = ts._filter_tasks(filter=f"task_id == {c}")["tasks"][0]
 
     sa = row_a.get("schedule") or {}
     sb = row_b.get("schedule") or {}
@@ -287,7 +287,7 @@ async def test_reinstate_with_deleted_next_fallback():
     # Reinstate – should still place X as new head and restore start_at; next may be new head (Z) or None
     _ = ts._reinstate_task_to_previous_queue(task_id=head_id)
 
-    row_x = ts._filter_tasks(filter=f"task_id == {head_id}")[0]
+    row_x = ts._filter_tasks(filter=f"task_id == {head_id}")["tasks"][0]
     sched_x = row_x.get("schedule") or {}
     assert sched_x.get("prev_task") is None
     assert "start_at" in sched_x and sched_x.get("start_at")
@@ -328,7 +328,7 @@ async def test_reinstate_head_with_all_neighbors_deleted_fallback():
     # Reinstate – should restore as a standalone head with original start_at and scheduled status
     _ = ts._reinstate_task_to_previous_queue(task_id=head_id)
 
-    row_h = ts._filter_tasks(filter=f"task_id == {head_id}")[0]
+    row_h = ts._filter_tasks(filter=f"task_id == {head_id}")["tasks"][0]
     sched_h = row_h.get("schedule") or {}
     assert sched_h.get("prev_task") is None
     assert sched_h.get("next_task") is None
@@ -368,7 +368,7 @@ async def test_reinstate_primed_conflict_downgrades_to_queued():
     )["details"]["task_id"]
 
     # Sanity: head is 'primed'
-    head_row = ts._filter_tasks(filter=f"task_id == {h_id}")[0]
+    head_row = ts._filter_tasks(filter=f"task_id == {h_id}")["tasks"][0]
     assert head_row["status"] in ("primed",)
 
     # Activate head and cancel
@@ -378,12 +378,12 @@ async def test_reinstate_primed_conflict_downgrades_to_queued():
 
     # Create a new task now – with no active and no primed, this becomes the new 'primed'
     new_tid = ts._create_task(name="NewPrimed", description="np")["details"]["task_id"]
-    new_row = ts._filter_tasks(filter=f"task_id == {new_tid}")[0]
+    new_row = ts._filter_tasks(filter=f"task_id == {new_tid}")["tasks"][0]
     assert new_row["status"] == "primed"
 
     # Reinstate original head – original status was primed but conflict exists → should downgrade to queued
     _ = ts._reinstate_task_to_previous_queue(task_id=h_id)
-    reinstated = ts._filter_tasks(filter=f"task_id == {h_id}")[0]
+    reinstated = ts._filter_tasks(filter=f"task_id == {h_id}")["tasks"][0]
     assert reinstated["status"] == "queued"
 
 
@@ -432,7 +432,7 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
     )["details"]["task_id"]
 
     # Capture the original head's start_at to compare later
-    row_h = ts._filter_tasks(filter=f"task_id == {head_id}")[0]
+    row_h = ts._filter_tasks(filter=f"task_id == {head_id}")["tasks"][0]
     original_start = (row_h.get("schedule") or {}).get("start_at")
     assert original_start
 
@@ -449,14 +449,14 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
     await handle.result()
 
     # The middle task should now be reinstated as the head with the original start_at and scheduled status
-    row_mid = ts._filter_tasks(filter=f"task_id == {mid_id}")[0]
+    row_mid = ts._filter_tasks(filter=f"task_id == {mid_id}")["tasks"][0]
     sched_mid = row_mid.get("schedule") or {}
     assert sched_mid.get("prev_task") is None
     assert sched_mid.get("start_at") == original_start
     assert row_mid["status"] == "scheduled"
 
     # The tail should be queued behind the reinstated head without a start_at
-    row_tail = ts._filter_tasks(filter=f"task_id == {tail_id}")[0]
+    row_tail = ts._filter_tasks(filter=f"task_id == {tail_id}")["tasks"][0]
     sched_tail = row_tail.get("schedule") or {}
     assert sched_tail.get("prev_task") == mid_id
     assert "start_at" not in sched_tail or not sched_tail.get("start_at")

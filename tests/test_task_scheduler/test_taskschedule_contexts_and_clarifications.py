@@ -144,7 +144,7 @@ async def test_ts_update_uses_parent_context():
         )
     ).result()
 
-    row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
+    row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)["tasks"][0]
     assert row["status"] == "completed", assertion_failed(
         "Task status 'completed'",
         json.dumps(row, indent=2),
@@ -205,7 +205,7 @@ async def test_ts_update_requests_clarification():
 
     await asyncio.wait_for(task, timeout=300)
 
-    row = ts._filter_tasks(filter=f"task_id == {tid_report}", limit=1)[0]
+    row = ts._filter_tasks(filter=f"task_id == {tid_report}", limit=1)["tasks"][0]
     assert row["priority"] == "high", assertion_failed(
         "Task priority 'high'",
         json.dumps(row, indent=2),

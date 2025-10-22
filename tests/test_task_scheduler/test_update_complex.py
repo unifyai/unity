@@ -37,7 +37,7 @@ async def test_update_reorder_queue(basic_task_scenario):
     await handle.result()
 
     # After update, verify that the new order matches expectation by reading the queue that contains ids[0]
-    row = ts._filter_tasks(filter=f"task_id == {ids[0]}")[0]
+    row = ts._filter_tasks(filter=f"task_id == {ids[0]}")["tasks"][0]
     qid = row.get("queue_id")
     # Resolve the queue that contains the report task under explicit-queue semantics
     chain = (
@@ -67,7 +67,7 @@ async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
     handle = await ts.update(text="Please cancel all tasks related to sending emails.")
     await handle.result()
 
-    tasks = ts._filter_tasks()
+    tasks = ts._filter_tasks()["tasks"]
     for t in tasks:
         if "email" in t["description"].lower():
             assert t["status"] == "cancelled"
@@ -95,7 +95,7 @@ async def test_update_lower_priority_for_future_date(basic_task_scenario):
 
     # create one future scheduled task with high priority
     # Use an explicit queue id; no implicit default exists
-    row0 = ts._filter_tasks(limit=1)[0]
+    row0 = ts._filter_tasks(limit=1)["tasks"][0]
     existing_qid = row0.get("queue_id")
     # If no existing queue, allocate one
     qid = existing_qid if existing_qid is not None else ts._allocate_new_queue_id()
@@ -116,7 +116,7 @@ async def test_update_lower_priority_for_future_date(basic_task_scenario):
     )
     await handle.result()
 
-    task = ts._filter_tasks(filter="'KPI report' in name")[0]
+    task = ts._filter_tasks(filter="'KPI report' in name")["tasks"][0]
     assert task["priority"] == Priority.normal
 
 
@@ -145,5 +145,5 @@ async def test_update_bulk_description_replace(basic_task_scenario):
     )
     await handle.result()
 
-    for t in ts._filter_tasks(filter="'Mr. Smith' in description"):
+    for t in ts._filter_tasks(filter="'Mr. Smith' in description")["tasks"]:
         assert re.search(r"Mr\.\s?Smith", t["description"]) is not None

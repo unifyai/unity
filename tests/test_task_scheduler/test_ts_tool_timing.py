@@ -95,7 +95,8 @@ def test_tool_search_tasks_timing():
     ts = TaskScheduler()
     ts._create_task(name="TT Search " + _uniq(), description="banking and budgeting")
     t0 = time.perf_counter()
-    results = ts._search_tasks(references={"description": "banking"}, k=1)
+    res = ts._search_tasks(references={"description": "banking"}, k=1)
+    results = res["tasks"] if isinstance(res, dict) else res
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     assert isinstance(results, list)
     assert elapsed_ms < 5100

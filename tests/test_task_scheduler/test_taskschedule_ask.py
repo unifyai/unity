@@ -45,7 +45,12 @@ class ScenarioBuilder:
     ) -> None:
         """Idempotent create: only add when a task with the same name is absent."""
         try:
-            existing = self.ts._filter_tasks(filter=f"name == {name!r}", limit=1)
+            existing_out = self.ts._filter_tasks(filter=f"name == {name!r}", limit=1)
+            existing = (
+                existing_out["tasks"]
+                if isinstance(existing_out, dict)
+                else existing_out
+            )
         except Exception:
             existing = []
         if existing:
