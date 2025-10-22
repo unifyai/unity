@@ -1,6 +1,5 @@
 from typing import List, Dict, Optional, Callable, Any, Tuple, Union
 import asyncio
-import json
 import functools
 import re
 from .prompt_builders import build_ask_prompt, build_update_prompt
@@ -163,21 +162,6 @@ class ContactManager(BaseContactManager):
     #  Assistant syncing helpers
     # ──────────────────────────────────────────────────────────────────────
 
-    def _fetch_assistant_info(self) -> List[Dict[str, Any]]:
-        """Return the list of assistants configured for the current account.
-
-        The API is expected to return a JSON object with an ``info`` key
-        containing the assistant records.  If the request fails, an
-        exception is raised via ``_handle_exceptions`` so callers do not
-        silently proceed with incomplete data.
-
-        Returns
-        -------
-        List[Dict[str, Any]]
-            The list of assistants for the current account.
-        """
-        return unify.list_assistants()
-
     def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
         _sys_ensure_columns_exist(self, extra_fields)
 
@@ -187,58 +171,6 @@ class ContactManager(BaseContactManager):
     # ------------------------------------------------------------------
     #  Default *user* contact helpers (contact_id == 1)
     # ------------------------------------------------------------------
-    def _fetch_user_info(self) -> Dict[str, Any]:
-        """Return basic information for the authenticated human user (contact_id == 1).
-
-        Attempts to fetch the real details from the backend endpoint
-        ``/user/basic-info``.  On *any* failure (network, authentication,
-        unexpected payload, etc.) the function falls back to a dummy
-        placeholder user so that offline test-suites continue to operate
-        unchanged.
-
-        Returns
-        -------
-        Dict[str, Any]
-            Basic user information mapping.
-        """
-
-        user_info: Dict[str, Any] = {}
-
-        data: Any = unify.get_user_basic_info()
-        # Map API payload → expected field names
-        mapped: Dict[str, Any] = {
-            "first_name": data.get("first"),
-            "last_name": data.get("last"),
-            "email": data.get("email"),
-        }
-
-        # Filter out *None* values so downstream logic does not
-        # inadvertently overwrite existing data with nulls.
-        user_info.update({k: v for k, v in mapped.items() if v is not None})
-
-        from .. import ASSISTANT
-
-        if ASSISTANT is not None:
-            phone = ASSISTANT.get("user_phone")
-            whatsapp = ASSISTANT.get("user_whatsapp_number")
-            mapped_extra: Dict[str, Any] = {
-                "phone_number": phone,
-                "whatsapp_number": whatsapp,
-            }
-            user_info.update(
-                {k: v for k, v in mapped_extra.items() if v is not None},
-            )
-
-        # If we managed to retrieve *any* real data, return it.
-        if user_info:
-            return user_info
-
-        # ── fallback: dummy user ──────────────────────────────────────────
-        return {
-            "first_name": "John",
-            "last_name": "Doe",
-            "email": "john.doe@email.com",
-        }
 
     def _sync_user_contact(self) -> None:
         _sys_sync_user_contact(self)
@@ -638,53 +570,6 @@ class ContactManager(BaseContactManager):
         _storage_provision(self)
 
     # Helper to derive a unique shorthand for a given custom column name.
-    def _derive_shorthand(self, column_name: str) -> str:
-        from .types.contact import Contact as _C
-
-        parts = [p for p in str(column_name).split("_") if p]
-        base = "".join(p[:2] for p in parts) or str(column_name)[:3]
-        base = re.sub(r"[^a-z0-9_]", "", base.lower())
-        if not base or not re.match(r"^[a-z]", base):
-            base = ("c_" + base) if base else "c"
-        used = set(_C.shorthand_map().values())
-        used.update(getattr(self, "_custom_shorthand", {}).values())
-        cand = base
-        idx = 1
-        while cand in used:
-            cand = f"{base}{idx}"
-            idx += 1
-        return cand
-
-    def _sanitize_custom_columns(
-        self,
-        custom_columns: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Return a filtered copy of custom columns safe for JSON logging.
-
-        - Drops internal control keys injected by the async tool loop
-          (pause/interject/clarification/context channels).
-        - Drops any values that are not JSON-serialisable.
-        """
-        internal_keys = {
-            "parent_chat_context",
-            "interject_queue",
-            "pause_event",
-            "clarification_up_q",
-            "clarification_down_q",
-            "kwargs",
-            "_log_id",
-        }
-        safe: Dict[str, Any] = {}
-        for key, value in (custom_columns or {}).items():
-            if key in internal_keys:
-                continue
-            try:
-                json.dumps(value)
-            except Exception:
-                # Skip non-serialisable values (e.g. asyncio.Event, queues, etc.)
-                continue
-            safe[key] = value
-        return safe
 
     def _create_contact(
         self,
@@ -1126,44 +1011,3 @@ class ContactManager(BaseContactManager):
             if allowed_first_turn:
                 return ("required", allowed_first_turn)
         return ("auto", current_tools)
-
-    @staticmethod
-    def _inject_broader_context(msgs: list[dict]) -> list[dict]:
-        """Replace the ``{broader_context}`` placeholder in *system* messages.
-
-        The helper is fed into ``start_async_tool_loop`` via the
-        ``preprocess_msgs`` parameter so that **every** LLM invocation sees a
-        *fresh* broader-context snippet pulled from ``MemoryManager`` just
-        before the request is dispatched.
-
-        Parameters
-        ----------
-        msgs : list[dict]
-            Messages to preprocess.
-
-        Returns
-        -------
-        list[dict]
-            Messages with the broader context injected into system prompts.
-        """
-
-        import copy
-
-        from unity.memory_manager.memory_manager import (
-            MemoryManager,
-        )  # local to avoid cycles
-
-        patched = copy.deepcopy(msgs)
-
-        try:
-            broader_ctx = MemoryManager.get_rolling_activity()
-        except Exception:
-            broader_ctx = ""
-
-        for m in patched:
-            if m.get("role") == "system" and "{broader_context}" in (
-                m.get("content") or ""
-            ):
-                m["content"] = m["content"].replace("{broader_context}", broader_ctx)
-
-        return patched
