@@ -50,9 +50,9 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:  # noqa: D401 – full docstring below
         """
         Apply a **mutation** request – create, edit, delete or merge knowledge –
@@ -82,12 +82,12 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
             When *True*, :pyfunc:`SteerableToolHandle.result` returns a tuple
             ``(answer, messages)`` where *messages* is the invisible
             chain‑of‑thought exchanged with the LLM.
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             **Read‑only** conversation context to prepend to the tool loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Optional duplex channels enabling interactive follow‑ups. If
-            supplied, the LLM may push a question onto *clarification_up_q* and
-            must read the human's answer from *clarification_down_q*.
+            supplied, the LLM may push a question onto *_clarification_up_q* and
+            must read the human's answer from *_clarification_down_q*.
 
         Returns
         -------
@@ -102,9 +102,9 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing knowledge** (read‑only) and obtain a live
@@ -149,14 +149,14 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
             yields ``(answer, messages)`` – the first element is the
             assistant's reply, the second the hidden chain‑of‑thought (useful
             for debugging).
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Optional read‑only chat history that will be provided to all nested
             tool calls.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Duplex channels enabling interactive clarification questions. If
             supplied the LLM may push a follow‑up question onto
-            *clarification_up_q* and must read the human's answer from
-            *clarification_down_q*.
+            *_clarification_up_q* and must read the human's answer from
+            *_clarification_down_q*.
 
         Returns
         -------
@@ -171,9 +171,9 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         **Restructure the schema** of *all* knowledge tables **and** the
@@ -192,8 +192,8 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
             names and introduce surrogate primary keys where appropriate."* –
             the low‑level operations are carried out by the LLM via the exposed
             table/column‑manipulation tools.
-        _return_reasoning_steps, parent_chat_context,
-        clarification_up_q, clarification_down_q
+        _return_reasoning_steps, _parent_chat_context,
+        _clarification_up_q, _clarification_down_q
             Behaviour identical to :py:meth:`update`.
 
         Returns
