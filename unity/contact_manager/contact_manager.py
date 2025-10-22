@@ -2,7 +2,6 @@ from typing import List, Dict, Optional, Callable, Any, Tuple, Union
 import asyncio
 import json
 import functools
-import os
 import re
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..knowledge_manager.types import ColumnType
@@ -18,21 +17,20 @@ from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     inject_broader_context,
-    make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
     start_async_tool_loop,
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
-from ..events.event_bus import EVENT_BUS, Event
 from ..events.manager_event_logging import log_manager_call
-import asyncio
 from ..common.search_utils import table_search_top_k
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.filter_utils import normalize_filter_expr
+from ..common.llm_client import new_llm_client
+from ..common.clarification_tools import add_clarification_tool_with_events
 
 
 class ContactManager(BaseContactManager):
@@ -657,46 +655,19 @@ class ContactManager(BaseContactManager):
         _call_id: Optional[str] = None,
         images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         # Build a *live* tools-dict so the prompt never hard-codes
         # either the number of tools or their names/argspecs.
         tools = dict(self.get_tools("ask"))
         if clarification_up_q is not None and clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "ContactManager",
-                            "method": "ask",
-                            "action": "clarification_request",
-                            "question": q,
-                        },
-                    ),
-                )
-
-            async def _on_answer(ans: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "ContactManager",
-                            "method": "ask",
-                            "action": "clarification_answer",
-                            "answer": ans,
-                        },
-                    ),
-                )
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 clarification_up_q,
                 clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="ContactManager",
+                method="ask",
+                call_id=_call_id,
             )
 
         include_activity = (
@@ -766,44 +737,17 @@ class ContactManager(BaseContactManager):
         _call_id: Optional[str] = None,
         images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("update"))
         if clarification_up_q is not None and clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "ContactManager",
-                            "method": "update",
-                            "action": "clarification_request",
-                            "question": q,
-                        },
-                    ),
-                )
-
-            async def _on_answer(ans: str):
-                await EVENT_BUS.publish(
-                    Event(
-                        type="ManagerMethod",
-                        calling_id=_call_id,
-                        payload={
-                            "manager": "ContactManager",
-                            "method": "update",
-                            "action": "clarification_answer",
-                            "answer": ans,
-                        },
-                    ),
-                )
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 clarification_up_q,
                 clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="ContactManager",
+                method="update",
+                call_id=_call_id,
             )
 
         include_activity = (
@@ -1867,15 +1811,7 @@ class ContactManager(BaseContactManager):
     #  Small internal helpers (LLM client + tool policies)               #
     # ------------------------------------------------------------------ #
 
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        """Construct a configured AsyncUnify client for the given model."""
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+    # Deprecated: client construction is centralized in unity.common.llm_client.new_llm_client
 
     @staticmethod
     def _default_ask_tool_policy(
