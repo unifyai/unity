@@ -381,12 +381,16 @@ class ManagersWorker:
     ) -> None:
         """Await final result and publish completion (or failure), then cleanup."""
         # await result
-        result = await handle.result()
+        try:
+            result = await handle.result()
+        except Exception as e:
+            result = f"Error getting conductor result: {e}"
+            print(f"[ManagersWorker] {result}")
         await self._event_broker.publish(
             self._publish_channel,
             ConductorResult(
                 handle_id=handle_id,
-                success=True,
+                success=False if "Error" in result else True,
                 result=result,
             ).to_json(),
         )
@@ -507,39 +511,44 @@ class ManagersWorker:
         handle: SteerableToolHandle = handle_data["handle"]
 
         # perform intervention
-        match event.action_name:
-            case "ask":
-                ask_handle = await handle.ask(
-                    event.query,
-                    parent_chat_context_cont=event.parent_chat_context,
-                )
-                result = await ask_handle.result()
-            case "interject":
-                interject_handle = await handle.interject(
-                    event.query,
-                    parent_chat_context_cont=event.parent_chat_context,
-                )
-                result = await interject_handle.result()
-            case "stop":
-                handle.stop(reason=event.query)
-                result = "Handle Stopped"
-            case "pause":
-                handle.pause()
-                result = "Handle Paused"
-            case "resume":
-                handle.resume()
-                result = "Handle Resumed"
-            case "done":
-                done_result = handle.done()
-                result = "Handle Done" if done_result else "Handle Not Done"
-            case "answer_clarification":
-                handle.answer_clarification(event.call_id, event.query)
-                result = "Clarification Answered"
-            case _:
-                print(
-                    f"[ManagersWorker] Unknown action_name={event.action_name} for intervention"
-                )
-                return
+        result = ""
+        try:
+            match event.action_name:
+                case "ask":
+                    ask_handle = await handle.ask(
+                        event.query,
+                        parent_chat_context_cont=event.parent_chat_context,
+                    )
+                    result = await ask_handle.result()
+                case "interject":
+                    interject_handle = await handle.interject(
+                        event.query,
+                        parent_chat_context_cont=event.parent_chat_context,
+                    )
+                    result = await interject_handle.result()
+                case "stop":
+                    handle.stop(reason=event.query)
+                    result = "Handle Stopped"
+                case "pause":
+                    handle.pause()
+                    result = "Handle Paused"
+                case "resume":
+                    handle.resume()
+                    result = "Handle Resumed"
+                case "done":
+                    done_result = handle.done()
+                    result = "Handle Done" if done_result else "Handle Not Done"
+                case "answer_clarification":
+                    handle.answer_clarification(event.call_id, event.query)
+                    result = "Clarification Answered"
+                case _:
+                    print(
+                        f"[ManagersWorker] Unknown action_name={event.action_name} for intervention"
+                    )
+                    return
+        except Exception as e:
+            result = f"Error in conductor handle request: {e}"
+            print(f"[ManagersWorker] {result}")
 
         # publish response
         await self._event_broker.publish(
