@@ -2584,7 +2584,11 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Validate existence, reject terminal/trigger-based; single consolidated read
         rows_out = self._filter_tasks(filter=f"task_id in {block}")
-        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+        rows_raw = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+        rows = [
+            (r.model_dump(mode="json") if hasattr(r, "model_dump") else r)
+            for r in (rows_raw or [])
+        ]
         ids_found = {r.get("task_id") for r in rows}
         missing = [tid for tid in block if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
@@ -2748,7 +2752,11 @@ class TaskScheduler(BaseTaskScheduler):
             }
 
         rows_out = self._filter_tasks(filter=f"task_id in {order}")
-        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+        rows_raw = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+        rows = [
+            (r.model_dump(mode="json") if hasattr(r, "model_dump") else r)
+            for r in (rows_raw or [])
+        ]
         ids_found = {r.get("task_id") for r in rows}
         missing = [tid for tid in order if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
@@ -2811,11 +2819,15 @@ class TaskScheduler(BaseTaskScheduler):
                         f"queue_id == {int(target_qid)}"
                     ),
                 )
-                rows_in_queue: List[TaskRow] = (
+                rows_in_queue_raw = (
                     rows_in_queue_out.get("tasks", [])
                     if isinstance(rows_in_queue_out, dict)
                     else rows_in_queue_out
                 )
+                rows_in_queue: List[TaskRow] = [
+                    (r.model_dump(mode="json") if hasattr(r, "model_dump") else r)
+                    for r in (rows_in_queue_raw or [])
+                ]
             except Exception:
                 rows_in_queue = []
 
@@ -3055,7 +3067,11 @@ class TaskScheduler(BaseTaskScheduler):
 
         # 2) Single read for all target rows
         rows_out = self._filter_tasks(filter=f"task_id in {list(by_id.keys())}")
-        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+        rows_raw = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+        rows = [
+            (r.model_dump(mode="json") if hasattr(r, "model_dump") else r)
+            for r in (rows_raw or [])
+        ]
         ids_found = {r.get("task_id") for r in rows}
         missing = [tid for tid in by_id.keys() if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
@@ -3092,11 +3108,15 @@ class TaskScheduler(BaseTaskScheduler):
             ext_rows_out = self._filter_tasks(
                 filter=f"task_id in {list(external_neighbours)}",
             )
-            ext_rows_list = (
+            ext_rows_list_raw = (
                 ext_rows_out.get("tasks", [])
                 if isinstance(ext_rows_out, dict)
                 else ext_rows_out
             )
+            ext_rows_list = [
+                (r.model_dump(mode="json") if hasattr(r, "model_dump") else r)
+                for r in (ext_rows_list_raw or [])
+            ]
             for r in ext_rows_list:
                 try:
                     rows_by_id[int(r.get("task_id"))] = r
@@ -3640,8 +3660,20 @@ class TaskScheduler(BaseTaskScheduler):
         if task_id is None:
             return
 
-        rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
-        row = rows[0] if rows else None
+        rows_out = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
+        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+        row = (
+            rows[0].model_dump(mode="json")
+            if rows and hasattr(rows[0], "model_dump")
+            else (rows[0] if rows else None)
+        )
+        rows_out = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
+        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+        row = (
+            rows[0].model_dump(mode="json")
+            if rows and hasattr(rows[0], "model_dump")
+            else (rows[0] if rows else None)
+        )
         # Only cache when the referenced row is actually in 'primed' state
         if row is not None and self._to_status(row.get("status")) == Status.primed:
             self._primed_task = row
