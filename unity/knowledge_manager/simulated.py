@@ -356,7 +356,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
@@ -378,7 +378,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         instruction = build_simulated_method_prompt(
             "retrieve",
             text,
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         handle = _SimulatedKnowledgeHandle(
             self._llm,

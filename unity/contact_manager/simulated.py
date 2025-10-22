@@ -448,7 +448,7 @@ class SimulatedContactManager(BaseContactManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
@@ -470,7 +470,7 @@ class SimulatedContactManager(BaseContactManager):
         instruction = build_simulated_method_prompt(
             "update",
             text,
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         handle = _SimulatedContactHandle(
             self._llm,
