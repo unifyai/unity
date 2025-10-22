@@ -605,8 +605,14 @@ class TaskScheduler(BaseTaskScheduler):
         # Also guard against orphan 'active' rows (e.g., after crash) even if pointer is None.
         try:
             active_out = self._filter_tasks(filter="status == 'active'", limit=1)
-            tasks = active_out.get("tasks", []) if isinstance(active_out, dict) else []
-            any_active = any(getattr(t, "status", None) == Status.active for t in tasks)
+            tasks = (
+                active_out.get("tasks", [])
+                if isinstance(active_out, dict)
+                else active_out
+            )
+            any_active = any(
+                getattr(t, "status", None) == Status.active for t in (tasks or [])
+            )
         except Exception:
             any_active = False
         if any_active:
@@ -774,7 +780,27 @@ class TaskScheduler(BaseTaskScheduler):
         if self._to_status(
             getattr(task_model, "status", "queued"),
         ) == Status.triggerable or getattr(task_model, "repeat", None):
-            self._clone_task_instance(task_row)
+            # Convert model to a dict for cloning helpers
+            try:
+                _tm_row = task_model.model_dump(mode="json")  # type: ignore[attr-defined]
+            except Exception:
+                _tm_row = {
+                    "task_id": getattr(task_model, "task_id", None),
+                    "instance_id": getattr(task_model, "instance_id", None),
+                    "name": getattr(task_model, "name", None),
+                    "description": getattr(task_model, "description", None),
+                    "status": getattr(task_model, "status", None),
+                    "schedule": getattr(task_model, "schedule", None),
+                    "trigger": getattr(task_model, "trigger", None),
+                    "deadline": getattr(task_model, "deadline", None),
+                    "repeat": getattr(task_model, "repeat", None),
+                    "priority": getattr(task_model, "priority", None),
+                    "response_policy": getattr(task_model, "response_policy", None),
+                    "queue_id": getattr(task_model, "queue_id", None),
+                    "entrypoint": getattr(task_model, "entrypoint", None),
+                    "activated_by": getattr(task_model, "activated_by", None),
+                }
+            self._clone_task_instance(_tm_row)
 
         # Promote status to active (and record the activation reason) and clear the primed pointer if needed
 
@@ -783,21 +809,28 @@ class TaskScheduler(BaseTaskScheduler):
         if activated_by is not None:
             reason = activated_by
         else:
-            sched = task_row.get("schedule") or {}
-            if task_row.get("trigger") is not None:
+            try:
+                _sched_dict = (
+                    getattr(task_model, "schedule", None).model_dump()
+                    if hasattr(getattr(task_model, "schedule", None), "model_dump")
+                    else dict(getattr(task_model, "schedule", None) or {})
+                )
+            except Exception:
+                _sched_dict = dict(getattr(task_model, "schedule", None) or {})
+            if getattr(task_model, "trigger", None) is not None:
                 reason = ActivatedBy.trigger
-            elif (sched.get("prev_task") is None) and (
-                sched.get("start_at") is not None
+            elif (_sched_dict.get("prev_task") is None) and (
+                _sched_dict.get("start_at") is not None
             ):
                 reason = ActivatedBy.schedule
-            elif sched.get("prev_task") is not None:
+            elif _sched_dict.get("prev_task") is not None:
                 reason = ActivatedBy.queue
             else:
                 reason = ActivatedBy.explicit
 
         self._update_task_status_instance(
             task_id=task_id,
-            instance_id=task_row["instance_id"],
+            instance_id=getattr(task_model, "instance_id", 0),
             new_status="active",
             activated_by=reason,
         )
@@ -1719,8 +1752,13 @@ class TaskScheduler(BaseTaskScheduler):
             # tasks to 'queued' before applying the requested head policy.
             if primed_requests == 1 and not _primed_existed_before:
                 try:
-                    auto_primed_rows = self._filter_tasks(
+                    auto_primed_rows_out = self._filter_tasks(
                         filter=f"task_id in {created_ids} and status == 'primed'",
+                    )
+                    auto_primed_rows = (
+                        auto_primed_rows_out.get("tasks", [])
+                        if isinstance(auto_primed_rows_out, dict)
+                        else auto_primed_rows_out
                     )
                 except Exception:
                     auto_primed_rows = []
@@ -1978,9 +2016,13 @@ class TaskScheduler(BaseTaskScheduler):
             if out_fast:
                 return out_fast
 
+        _out_all = self._filter_tasks()
+        _rows_all = (
+            _out_all.get("tasks", []) if isinstance(_out_all, dict) else _out_all
+        )
         rows = [
             r
-            for r in self._filter_tasks()
+            for r in _rows_all
             if r.get("schedule") is not None
             and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
         ]
@@ -2122,15 +2164,15 @@ class TaskScheduler(BaseTaskScheduler):
             return ordered
 
         # Fallback: single filtered read of all runnable rows in this queue
+        _out_q = self._filter_tasks(
+            filter=(
+                "schedule is not None and "
+                "status not in ('completed','cancelled','failed') and "
+                f"queue_id == {int(queue_id)}"
+            ),
+        )
         rows_in_queue: List[TaskRow] = [
-            r
-            for r in self._filter_tasks(
-                filter=(
-                    "schedule is not None and "
-                    "status not in ('completed','cancelled','failed') and "
-                    f"queue_id == {int(queue_id)}"
-                ),
-            )
+            r for r in (_out_q.get("tasks", []) if isinstance(_out_q, dict) else _out_q)
         ]
         if not rows_in_queue:
             return []
@@ -2238,9 +2280,14 @@ class TaskScheduler(BaseTaskScheduler):
                 prev_id = (head.get("schedule") or {}).get("prev_task")
                 if prev_id is None:
                     break
-                prev_rows = self._filter_tasks(
+                prev_rows_out = self._filter_tasks(
                     filter=f"task_id == {int(prev_id)}",
                     limit=1,
+                )
+                prev_rows = (
+                    prev_rows_out.get("tasks", [])
+                    if isinstance(prev_rows_out, dict)
+                    else prev_rows_out
                 )
                 head = prev_rows[0] if prev_rows else None
         except Exception:
@@ -2269,7 +2316,15 @@ class TaskScheduler(BaseTaskScheduler):
             nxt_id = (node.get("schedule") or {}).get("next_task")
             if nxt_id is None:
                 break
-            nxt_rows = self._filter_tasks(filter=f"task_id == {int(nxt_id)}", limit=1)
+            nxt_rows_out = self._filter_tasks(
+                filter=f"task_id == {int(nxt_id)}",
+                limit=1,
+            )
+            nxt_rows = (
+                nxt_rows_out.get("tasks", [])
+                if isinstance(nxt_rows_out, dict)
+                else nxt_rows_out
+            )
             node = nxt_rows[0] if nxt_rows else None
 
         return ordered
@@ -2378,7 +2433,12 @@ class TaskScheduler(BaseTaskScheduler):
                 ]
             else:
                 # Rare path: non-numeric queue_id (e.g., None) → derive membership locally
-                all_rows = self._filter_tasks()
+                all_rows_out = self._filter_tasks()
+                all_rows = (
+                    all_rows_out.get("tasks", [])
+                    if isinstance(all_rows_out, dict)
+                    else all_rows_out
+                )
                 in_queue_rows = [
                     r
                     for r in all_rows
@@ -2519,7 +2579,8 @@ class TaskScheduler(BaseTaskScheduler):
         self._ensure_not_active_task(block)
 
         # Validate existence, reject terminal/trigger-based; single consolidated read
-        rows = self._filter_tasks(filter=f"task_id in {block}")
+        rows_out = self._filter_tasks(filter=f"task_id in {block}")
+        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
         ids_found = {r.get("task_id") for r in rows}
         missing = [tid for tid in block if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
@@ -2682,7 +2743,8 @@ class TaskScheduler(BaseTaskScheduler):
                 "details": {"queue_id": queue_id, "order": []},
             }
 
-        rows = self._filter_tasks(filter=f"task_id in {order}")
+        rows_out = self._filter_tasks(filter=f"task_id in {order}")
+        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
         ids_found = {r.get("task_id") for r in rows}
         missing = [tid for tid in order if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
@@ -2738,12 +2800,17 @@ class TaskScheduler(BaseTaskScheduler):
         # - current membership to compute removals.
         if queue_id is not None and not assume_empty_target_queue:
             try:
-                rows_in_queue: List[TaskRow] = self._filter_tasks(
+                rows_in_queue_out = self._filter_tasks(
                     filter=(
                         "schedule is not None and "
                         "status not in ('completed','cancelled','failed') and "
                         f"queue_id == {int(target_qid)}"
                     ),
+                )
+                rows_in_queue: List[TaskRow] = (
+                    rows_in_queue_out.get("tasks", [])
+                    if isinstance(rows_in_queue_out, dict)
+                    else rows_in_queue_out
                 )
             except Exception:
                 rows_in_queue = []
@@ -2983,7 +3050,8 @@ class TaskScheduler(BaseTaskScheduler):
             by_id[tid] = sch
 
         # 2) Single read for all target rows
-        rows = self._filter_tasks(filter=f"task_id in {list(by_id.keys())}")
+        rows_out = self._filter_tasks(filter=f"task_id in {list(by_id.keys())}")
+        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
         ids_found = {r.get("task_id") for r in rows}
         missing = [tid for tid in by_id.keys() if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
@@ -3017,10 +3085,15 @@ class TaskScheduler(BaseTaskScheduler):
                 except Exception:
                     continue
         if external_neighbours:
-            ext_rows = self._filter_tasks(
+            ext_rows_out = self._filter_tasks(
                 filter=f"task_id in {list(external_neighbours)}",
             )
-            for r in ext_rows:
+            ext_rows_list = (
+                ext_rows_out.get("tasks", [])
+                if isinstance(ext_rows_out, dict)
+                else ext_rows_out
+            )
+            for r in ext_rows_list:
                 try:
                     rows_by_id[int(r.get("task_id"))] = r
                 except Exception:
@@ -3440,8 +3513,13 @@ class TaskScheduler(BaseTaskScheduler):
                 rows_by_id: Dict[int, Dict[str, Any]] = {}
                 if neighbour_ids:
                     try:
-                        rows = self._filter_tasks(
+                        rows_out = self._filter_tasks(
                             filter=f"task_id in {neighbour_ids}",
+                        )
+                        rows = (
+                            rows_out.get("tasks", [])
+                            if isinstance(rows_out, dict)
+                            else rows_out
                         )
                     except Exception:
                         rows = []
@@ -3597,7 +3675,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Invariant checks for queue/schedule-sensitive statuses
         if new_status_enum in {Status.scheduled, Status.queued}:
-            rows = self._filter_tasks(filter=f"task_id in {task_ids}")
+            rows_out = self._filter_tasks(filter=f"task_id in {task_ids}")
+            rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
             for row in rows:
                 self._validate_scheduled_invariants(
                     status=new_status_enum,
@@ -4136,7 +4215,8 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _get_single_row_or_raise(self, task_id: int) -> TaskRow:
         """Fetch exactly one task row by id or raise ValueError."""
-        rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
+        rows_out = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
+        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
         if not rows:
             raise ValueError(f"No task found with id={task_id}")
         return rows[0]
@@ -4180,10 +4260,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Also guard against orphan 'active' rows (e.g., after crash) even if pointer is None.
         try:
-            any_active = any(
-                r.get("status") == str(Status.active)
-                for r in self._filter_tasks(filter="status == 'active'", limit=1)
-            )
+            out = self._filter_tasks(filter="status == 'active'", limit=1)
+            rows = out.get("tasks", []) if isinstance(out, dict) else out
+            any_active = any(r.get("status") == str(Status.active) for r in rows)
         except Exception:
             any_active = False
         if any_active:
