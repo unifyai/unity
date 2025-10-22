@@ -1882,7 +1882,7 @@ async def async_tool_loop_inner(
                                 m for m in client.messages if not m.get("_ctx_header")
                             ]
                             ctx_repr = chat_context_repr(parent_chat_context, cur_msgs)
-                            extra_kwargs["parent_chat_context"] = ctx_repr
+                            extra_kwargs["_parent_chat_context"] = ctx_repr
 
                         sig = inspect.signature(fn)
                         params = sig.parameters
@@ -1946,7 +1946,7 @@ async def async_tool_loop_inner(
                             call_dict=call_dict,
                             call_idx=idx,
                             is_interjectable=False,
-                            chat_context=extra_kwargs.get("parent_chat_context"),
+                            chat_context=extra_kwargs.get("_parent_chat_context"),
                             pause_event=None,
                             # Debug helpers for failure logging
                             tool_schema=method_to_schema(
