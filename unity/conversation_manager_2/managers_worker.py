@@ -373,6 +373,7 @@ class ManagersWorker:
         ]
         try:
             await asyncio.gather(*tasks)
+            print("[ManagersWorker] Contact rolling summary updated")
         except Exception as e:
             print(f"[ManagersWorker] Error updating contact rolling summary: {e}")
 
