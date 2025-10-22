@@ -7,7 +7,11 @@ import os
 import unify
 
 
-def new_llm_client(model: str = "gpt-5@openai") -> "unify.AsyncUnify":
+def new_llm_client(
+    model: str = "gpt-5@openai",
+    *,
+    stateful: bool = False,
+) -> "unify.AsyncUnify":
     """
     Create a configured AsyncUnify client for gpt-5@openai with sane defaults.
 
@@ -21,4 +25,5 @@ def new_llm_client(model: str = "gpt-5@openai") -> "unify.AsyncUnify":
         traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         reasoning_effort="high",
         service_tier="priority",
+        stateful=stateful,
     )

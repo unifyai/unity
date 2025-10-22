@@ -193,12 +193,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         self._simulation_guidance = simulation_guidance
 
         # Shared, *stateful* **asynchronous** LLM (reusing common client)
-        self._llm = new_llm_client()
-        try:
-            # Ensure the client is stateful for simulated interactions
-            self._llm.stateful = True  # type: ignore[attr-defined]
-        except Exception:
-            pass
+        self._llm = new_llm_client(stateful=True)
         # Use shared helper to mirror the real TranscriptManager's tools
         tools_for_prompt = mirror_transcript_manager_tools()
         # Provide placeholder counts/columns for the simulated environment
@@ -276,7 +271,6 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
                 "TranscriptManager",
                 "ask",
             )
-
         return handle
 
     @functools.wraps(BaseTranscriptManager.clear, updated=())
