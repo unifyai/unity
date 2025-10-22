@@ -1696,9 +1696,13 @@ class TaskScheduler(BaseTaskScheduler):
         if queue_ordering:
             # Single read to determine primed existence for policy validation
             try:
-                _primed_existed_before = bool(
-                    self._filter_tasks(filter="status == 'primed'", limit=1),
+                _primed_out = self._filter_tasks(filter="status == 'primed'", limit=1)
+                _primed_list = (
+                    _primed_out.get("tasks", [])
+                    if isinstance(_primed_out, dict)
+                    else _primed_out
                 )
+                _primed_existed_before = bool(_primed_list)
             except Exception:
                 _primed_existed_before = self._primed_task is not None
             # Normalise queue_ordering into a list of {order: [...], head_policy: {...}}

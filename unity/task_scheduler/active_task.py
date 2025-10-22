@@ -324,10 +324,11 @@ class ActiveTask(BaseActiveTask):
         ret = await self._actor_handle.result()
         # If the task wasn't explicitly cancelled/failed, mark as completed.
         if self._scheduler and self._task_id is not None and not self._was_stopped:
-            rows = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
+            rows_out = self._scheduler._filter_tasks(  # type: ignore[attr-defined]
                 filter=f"task_id == {self._task_id} and instance_id == {self._instance_id}",
                 limit=1,
             )
+            rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
             cur_status = None
             try:
                 if rows:
