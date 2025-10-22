@@ -153,3 +153,63 @@ def test_get_images_for_message_includes_annotation():
     items = tm._get_images_for_message(message_id=int(mid))
     assert items and isinstance(items[0].get("annotation"), (str, type(None)))
     assert items[0]["annotation"].strip() == "this button"
+
+
+@pytest.mark.unit
+@_handle_project
+def test_transcripts_images_field_schema_is_nested_and_enforced_tm():
+    tm = TranscriptManager()
+
+    # 1) The Transcripts context should expose a nested JSON schema for the images field
+    fields = unify.get_fields(context=tm._transcripts_ctx)
+    assert "images" in fields
+    dtype = str(fields["images"].get("data_type"))
+    # Expect array/list with object items including raw_image_ref + annotation and nested image_id
+    assert "raw_image_ref" in dtype and "annotation" in dtype and "image_id" in dtype
+
+    # 2) Valid nested payload – should succeed
+    common = {
+        "medium": "email",
+        "sender_id": 1,
+        "receiver_ids": [2],
+        "timestamp": datetime.now(UTC).isoformat(),
+        "content": "hello",
+    }
+
+    valid_payload = {
+        **common,
+        "images": [
+            {"raw_image_ref": {"image_id": 101}, "annotation": "blue square"},
+        ],
+    }
+    _ = unify.log(context=tm._transcripts_ctx, **valid_payload, new=True, mutable=True)
+
+    # 3) Invalid nested payload – wrong key name for image id → must be rejected
+    invalid_payload_bad_key = {
+        **common,
+        "images": [
+            {"raw_image_ref": {"image_idx": 999}, "annotation": "oops"},
+        ],
+    }
+    with pytest.raises(Exception):
+        unify.log(
+            context=tm._transcripts_ctx,
+            **invalid_payload_bad_key,
+            new=True,
+            mutable=True,
+        )
+
+    # 4) Invalid nested payload – wrong type for annotation → must be rejected
+    invalid_payload_bad_type = {
+        **common,
+        "images": [
+            {"raw_image_ref": {"image_id": 202}, "annotation": 123},
+        ],
+    }
+    with pytest.raises(Exception):
+        unify.log(
+            context=tm._transcripts_ctx,
+            **invalid_payload_bad_type,
+            new=True,
+            mutable=True,
+        )
