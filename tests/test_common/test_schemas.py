@@ -320,7 +320,7 @@ def test_images_field_schema_is_nested_and_enforced() -> None:
     invalid_payload_bad_key = {
         **common,
         "images": [
-            {"raw_image_ref": {"id": 999}, "annotation": "oops"},  # wrong key
+            {"raw_image_ref": {"image_idx": 999}, "annotation": "oops"},  # wrong key
         ],
     }
     with pytest.raises(Exception):
