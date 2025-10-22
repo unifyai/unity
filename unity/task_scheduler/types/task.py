@@ -154,7 +154,7 @@ class Task(BaseModel):
         # Allow backend auto-increment for queue_id by omitting it when unset
         if self.queue_id is None:
             exclude.add("queue_id")
-        return self.model_dump(mode="json", exclude=exclude)
+        return self.model_dump(mode="json", exclude=exclude, exclude_none=True)
 
     # Shorthand helpers (parity with Message/Contact models)
     @classmethod
