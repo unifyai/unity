@@ -45,7 +45,7 @@ with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
     SYS = f.read()
 
 
-MAX_CONV_MANAGER_MSGS = 30
+MAX_CONV_MANAGER_MSGS = 50
 
 # so basically, whenever the total count of a contact message > 10
 # we are going to ask the contact manager/transcript manager to provide an update rolling summary
@@ -121,7 +121,6 @@ class ConversationManager:
             user_whatsapp_number=user_whatsapp_number,
         )
 
-        self.chat_history = self.state.chat_history
         self.call_proc = None
         # self.summarizing = False
 
@@ -147,7 +146,7 @@ class ConversationManager:
             # Compute filler text first; avoid blocking after start
             filler_text = ""
             try:
-                filler_text = self.user_turn_end_callback(self.chat_history) or ""
+                filler_text = self.user_turn_end_callback(self.state.chat_history) or ""
             except Exception:
                 filler_text = ""
 
@@ -406,7 +405,7 @@ class ConversationManager:
             and not self.state.summarizing
         ):
             print("CLEARING CHAT HISTORY, REACHED MAX NUM")
-            # self.chat_history = []
+            self.state.chat_history = []
             # DUMMY_EVENT_BUS.append(ClearContext())
             try:
                 event = UpdateContactRollingSummaryRequest(
