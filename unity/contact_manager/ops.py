@@ -1,0 +1,347 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Optional, Set
+
+import unify
+
+from ..common.tool_outcome import ToolOutcome
+from .types.contact import Contact
+from .custom_columns import sanitize_custom_columns
+
+
+def _unique_fields() -> Set[str]:
+    return {
+        f
+        for f in Contact.model_fields
+        if f.endswith("_address") or f.endswith("_number")
+    }
+
+
+def _assert_no_duplicate_unique(
+    self,
+    payload: Dict[str, Any],
+    *,
+    exclude_contact_id: Optional[int] = None,
+) -> None:
+    uniq = _unique_fields()
+    constraints = [
+        f"{k} == {v!r}" for k, v in payload.items() if k in uniq and v is not None
+    ]
+    if not constraints:
+        return
+    or_expr = " or ".join(constraints)
+    filt = (
+        or_expr
+        if exclude_contact_id is None
+        else f"({or_expr}) and contact_id != {exclude_contact_id}"
+    )
+    dupes = unify.get_logs(
+        context=self._ctx,
+        filter=filt,
+        limit=1,
+        return_ids_only=True,
+    )
+    if dupes:
+        raise ValueError(
+            "Another contact already exists with one of the provided unique fields.",
+        )
+
+
+def create_contact(
+    self,
+    *,
+    first_name: Optional[str] = None,
+    surname: Optional[str] = None,
+    email_address: Optional[str] = None,
+    phone_number: Optional[str] = None,
+    whatsapp_number: Optional[str] = None,
+    bio: Optional[str] = None,
+    rolling_summary: Optional[str] = None,
+    respond_to: bool = False,
+    response_policy: Optional[str] = None,
+    **kwargs: Any,
+) -> ToolOutcome:
+    if "kwargs" in kwargs:
+        kwargs = {**kwargs, **kwargs.pop("kwargs")}
+
+    contact_details = {
+        "first_name": first_name,
+        "surname": surname,
+        "email_address": email_address,
+        "phone_number": phone_number,
+        "whatsapp_number": whatsapp_number,
+        "bio": bio,
+        "rolling_summary": rolling_summary,
+        "respond_to": respond_to,
+        "response_policy": response_policy,
+    }
+    if contact_details["response_policy"] is None:
+        contact_details["response_policy"] = self.DEFAULT_RESPONSE_POLICY
+
+    if kwargs:
+        safe_custom = sanitize_custom_columns(kwargs)
+        contact_details.update(safe_custom)
+        try:
+            for k in safe_custom.keys():
+                if k not in self._BUILTIN_FIELDS:
+                    if hasattr(self, "_known_custom_fields"):
+                        self._known_custom_fields.add(k)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    if not any(v is not None for v in contact_details.values()):
+        raise AssertionError("At least one contact detail must be provided.")
+
+    _assert_no_duplicate_unique(self, contact_details)
+
+    log = unify.log(context=self._ctx, **contact_details, new=True, mutable=True)
+    try:
+        self._data_store.put(log.entries)
+    except Exception:
+        pass
+    return {
+        "outcome": "contact created successfully",
+        "details": {"contact_id": log.entries["contact_id"]},
+    }
+
+
+def update_contact(
+    self,
+    *,
+    contact_id: int,
+    first_name: Optional[str] = None,
+    surname: Optional[str] = None,
+    email_address: Optional[str] = None,
+    phone_number: Optional[str] = None,
+    whatsapp_number: Optional[str] = None,
+    bio: Optional[str] = None,
+    rolling_summary: Optional[str] = None,
+    respond_to: Optional[bool] = None,
+    response_policy: Optional[str] = None,
+    _log_id: Optional[int] = None,
+    **kwargs: Any,
+) -> ToolOutcome:
+    if "kwargs" in kwargs:
+        kwargs = {**kwargs, **kwargs.pop("kwargs")}
+
+    contact_details = {
+        "first_name": first_name,
+        "surname": surname,
+        "email_address": email_address,
+        "phone_number": phone_number,
+        "whatsapp_number": whatsapp_number,
+        "bio": bio,
+        "rolling_summary": rolling_summary,
+        "respond_to": respond_to,
+        "response_policy": response_policy,
+    }
+    if kwargs:
+        safe_custom = sanitize_custom_columns(kwargs)
+        contact_details.update(safe_custom)
+        try:
+            for k in safe_custom.keys():
+                if k not in self._BUILTIN_FIELDS:
+                    if hasattr(self, "_known_custom_fields"):
+                        self._known_custom_fields.add(k)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+    updates_dict = {k: v for k, v in contact_details.items() if v is not None}
+    if not updates_dict:
+        raise ValueError("At least one contact detail must be provided for an update.")
+
+    _assert_no_duplicate_unique(self, contact_details, exclude_contact_id=contact_id)
+
+    if _log_id is None:
+        target_ids = unify.get_logs(
+            context=self._ctx,
+            filter=f"contact_id == {contact_id}",
+            return_ids_only=True,
+        )
+        if not target_ids:
+            raise ValueError(
+                f"No contact found with contact_id {contact_id} to update.",
+            )
+        if len(target_ids) > 1:
+            raise ValueError(
+                f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
+            )
+        log_to_update_id = target_ids[0]
+    else:
+        log_to_update_id = _log_id
+
+    unify.update_logs(
+        logs=[log_to_update_id],
+        context=self._ctx,
+        entries=updates_dict,
+        overwrite=True,
+    )
+    try:
+        rows = unify.get_logs(
+            context=self._ctx,
+            filter=f"contact_id == {contact_id}",
+            limit=1,
+            from_fields=self._allowed_fields(),
+        )
+        if rows:
+            self._data_store.put(rows[0].entries)
+    except Exception:
+        pass
+    return {"outcome": "contact updated", "details": {"contact_id": contact_id}}
+
+
+def delete_contact(
+    self,
+    *,
+    contact_id: int,
+    _log_id: Optional[int] = None,
+) -> ToolOutcome:
+    if contact_id in (0, 1):
+        raise RuntimeError("Cannot delete system contacts with id 0 or 1.")
+
+    if _log_id is None:
+        log_ids = unify.get_logs(
+            context=self._ctx,
+            filter=f"contact_id == {contact_id}",
+            limit=2,
+            return_ids_only=True,
+        )
+        if not log_ids:
+            raise ValueError(
+                f"No contact found with contact_id {contact_id} to delete.",
+            )
+        if len(log_ids) > 1:
+            raise RuntimeError(
+                f"Multiple contacts found with contact_id {contact_id}. Data integrity issue.",
+            )
+        resolved_id = log_ids[0]
+    else:
+        resolved_id = _log_id
+
+    unify.delete_logs(context=self._ctx, logs=resolved_id)
+    try:
+        self._data_store.delete(contact_id)
+    except Exception:
+        pass
+    return {"outcome": "contact deleted", "details": {"contact_id": contact_id}}
+
+
+def merge_contacts(
+    self,
+    *,
+    contact_id_1: int,
+    contact_id_2: int,
+    overrides: Optional[Dict[str, int]] = None,
+) -> ToolOutcome:
+    if contact_id_1 == contact_id_2:
+        raise ValueError("contact_id_1 and contact_id_2 must be distinct.")
+    if overrides is not None and any(v not in (1, 2) for v in overrides.values()):
+        raise ValueError(
+            "Override values must be 1 or 2, referring to the corresponding contact id argument.",
+        )
+    overrides = overrides or {}
+
+    rows = unify.get_logs(
+        context=self._ctx,
+        filter=f"contact_id in [{contact_id_1}, {contact_id_2}]",
+        limit=2,
+        from_fields=self._allowed_fields(),
+    )
+    if not rows or len(rows) < 2:
+        present_ids: set[int] = set()
+        for lg in rows or []:
+            try:
+                present_ids.add(int(lg.entries.get("contact_id")))
+            except Exception:
+                pass
+        missing = contact_id_1 if contact_id_1 not in present_ids else contact_id_2
+        raise ValueError(f"No contact found with contact_id {missing}.")
+
+    by_id: Dict[int, Any] = {}
+    for lg in rows:
+        try:
+            by_id[int(lg.entries.get("contact_id"))] = lg
+        except Exception:
+            continue
+    log1 = by_id[contact_id_1]
+    log2 = by_id[contact_id_2]
+
+    keep_id = contact_id_1 if overrides.get("contact_id", 1) == 1 else contact_id_2
+    delete_id = contact_id_2 if keep_id == contact_id_1 else contact_id_1
+    if delete_id in (0, 1):
+        raise RuntimeError("Cannot delete system contacts with id 0 or 1 during merge.")
+
+    entries1 = log1.entries
+    entries2 = log2.entries
+    all_cols = set(entries1.keys()) | set(entries2.keys())
+    all_cols.discard("contact_id")
+
+    consolidated: Dict[str, Any] = {}
+    for col in all_cols:
+        if col.endswith("_emb"):
+            continue
+        if col in overrides:
+            source = overrides[col]
+            value = entries1.get(col) if source == 1 else entries2.get(col)
+        else:
+            value = (
+                entries1.get(col)
+                if entries1.get(col) is not None
+                else entries2.get(col)
+            )
+        if value is not None:
+            consolidated[col] = value
+
+    builtin_updates = {
+        k: v for k, v in consolidated.items() if k in self._BUILTIN_FIELDS
+    }
+    custom_updates = {
+        k: v for k, v in consolidated.items() if k not in self._BUILTIN_FIELDS
+    }
+
+    if builtin_updates or custom_updates:
+        kept_log_id = getattr(by_id[keep_id], "id", None)
+        update_contact(
+            self,
+            contact_id=keep_id,
+            _log_id=kept_log_id,
+            **{
+                k: builtin_updates.get(k)
+                for k in self._BUILTIN_FIELDS
+                if k in builtin_updates
+            },
+            **(custom_updates or {}),
+        )
+
+    delete_log_id = getattr(by_id[delete_id], "id", None)
+    delete_contact(self, contact_id=delete_id, _log_id=delete_log_id)
+
+    # Rewrite transcripts if needed
+    try:
+        ctxs = unify.get_active_context()
+        read_ctx = ctxs.get("read")
+    except Exception:
+        read_ctx = None
+    transcripts_ctx = f"{read_ctx}/Transcripts" if read_ctx else "Transcripts"
+
+    try:
+        referenced = unify.get_logs(
+            context=transcripts_ctx,
+            filter=f"(sender_id == {delete_id}) or ({delete_id} in receiver_ids)",
+            limit=1,
+            return_ids_only=True,
+        )
+    except Exception:
+        referenced = []
+    if referenced:
+        from unity.transcript_manager.transcript_manager import (
+            TranscriptManager,
+        )  # local import
+
+        tm = TranscriptManager(contact_manager=self)
+        tm._update_contact_id(original_contact_id=delete_id, new_contact_id=keep_id)
+
+    return {
+        "outcome": "contacts merged successfully",
+        "details": {"kept_contact_id": keep_id, "deleted_contact_id": delete_id},
+    }
