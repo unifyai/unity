@@ -30,9 +30,10 @@ def test_search_tasks_single_reference_basic():
         ts._create_task(name=name, description=description)
 
     query = "short messages"
-    results = ts._search_tasks(references={"description": query}, k=3)
+    res = ts._search_tasks(references={"description": query}, k=3)
+    tasks = res["tasks"] if isinstance(res, dict) else res
 
-    assert results[0].name == "Send quick status text"
+    assert tasks[0].name == "Send quick status text"
 
     # Ensure vector column was created for the referenced source
     cols = unify.get_fields(context=ts._ctx)
@@ -62,11 +63,12 @@ def test_search_tasks_multi_columns_json_and_vec_created():
     query = "quick text pings"
     # Provide separate references; ranking should still pick the texting task
     refs = {"description": query, "name": "irrelevant"}
-    results = ts._search_tasks(references=refs, k=2)
+    res = ts._search_tasks(references=refs, k=2)
+    tasks = res["tasks"] if isinstance(res, dict) else res
 
-    assert len(results) == 2
+    assert len(tasks) == 2
     # The task mentioning texting and quick pings – should be the top hit
-    assert results[0].name == "Set up quick texting"
+    assert tasks[0].name == "Set up quick texting"
 
     # Ensure vector columns were created for each referenced source
     cols = unify.get_fields(context=ts._ctx)
@@ -97,10 +99,11 @@ def test_search_tasks_all_columns_default_derivation():
     # Build a composite expression spanning multiple task fields
     expr = "str({name}) + ' ' + str({description}) + ' ' + str({response_policy}) + ' ' + str({priority})"
     query = "best to emails"
-    results = ts._search_tasks(references={expr: query}, k=2)
+    res = ts._search_tasks(references={expr: query}, k=2)
+    tasks = res["tasks"] if isinstance(res, dict) else res
 
-    assert len(results) == 2
-    assert results[0].name == "Configure email notifications"
+    assert len(tasks) == 2
+    assert tasks[0].name == "Configure email notifications"
 
     # Ensure a derived embedding column exists for the composite expression
     cols = unify.get_fields(context=ts._ctx)
@@ -137,9 +140,10 @@ def test_search_tasks_mean_of_cosine_ranking():
         "response_policy": "VIP",
         "description": "phone call last week",
     }
-    results = ts._search_tasks(references=refs, k=3)
-    assert len(results) == 3
-    names = [t.name for t in results]
+    res = ts._search_tasks(references=refs, k=3)
+    tasks = res["tasks"] if isinstance(res, dict) else res
+    assert len(tasks) == 3
+    names = [t.name for t in tasks]
 
     # Ensure the task matching both is ranked above the others
     assert names[0] == "Follow up on training call"
@@ -193,10 +197,11 @@ def test_search_tasks_backfills_when_insufficient_similarity_results():
     )
 
     k = 4
-    results = ts._search_tasks(references={"response_policy": "needle"}, k=k)
+    res = ts._search_tasks(references={"response_policy": "needle"}, k=k)
 
-    assert len(results) == k
-    names = [t.name for t in results]
+    tasks = res["tasks"] if isinstance(res, dict) else res
+    assert len(tasks) == k
+    names = [t.name for t in tasks]
     # Carla should be the top semantic match
     assert names[0] == "Coordinate contract with Carla"
     # Remaining should be backfilled from latest creation order without duplicates
@@ -208,13 +213,21 @@ def test_search_tasks_backfills_when_insufficient_similarity_results():
 
     # When references is None/empty, skip semantic search and return most recent tasks
     recent_only = ts._search_tasks(references=None, k=3)
-    assert [t.name for t in recent_only] == [
+    recent_tasks = (
+        recent_only["tasks"] if isinstance(recent_only, dict) else recent_only
+    )
+    assert [t.name for t in recent_tasks] == [
         "Schedule sync with Frank",
         "Draft plan for Evelyn",
         "Prepare follow-up for Darren",
     ]
     recent_only_empty = ts._search_tasks(references={}, k=3)
-    assert [t.name for t in recent_only_empty] == [
+    recent_empty_tasks = (
+        recent_only_empty["tasks"]
+        if isinstance(recent_only_empty, dict)
+        else recent_only_empty
+    )
+    assert [t.name for t in recent_empty_tasks] == [
         "Schedule sync with Frank",
         "Draft plan for Evelyn",
         "Prepare follow-up for Darren",
