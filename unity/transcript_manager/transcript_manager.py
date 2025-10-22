@@ -55,11 +55,17 @@ from .images import (
 
 
 class TranscriptManager(BaseTranscriptManager):
+    # ──────────────────────────────────────────────────────────────────────
+    #  Class-level constants / configuration
+    # ──────────────────────────────────────────────────────────────────────
     _LOGGER = unify.AsyncLoggerManager(name="TranscriptManager", num_consumers=16)
 
     # Vector embedding column names
     _MSG_EMB = "_content_emb"
 
+    # ──────────────────────────────────────────────────────────────────────
+    #  Construction & tool registration
+    # ──────────────────────────────────────────────────────────────────────
     def __init__(
         self,
         *,
@@ -161,15 +167,10 @@ class TranscriptManager(BaseTranscriptManager):
         # Provision storage (contexts, fields, columns)
         self._provision_storage()
 
-    @classmethod
-    def _get_logger(cls) -> unify.AsyncLoggerManager:
-        return cls._LOGGER
-
-    # Public #
-    # -------#
-
+    # ──────────────────────────────────────────────────────────────────────
+    #  Public API (English-only entrypoints for the LLM)
+    # ──────────────────────────────────────────────────────────────────────
     # English-Text Question
-
     @functools.wraps(BaseTranscriptManager.ask, updated=())
     @manager_tool
     @log_manager_call("TranscriptManager", "ask", payload_key="question")
@@ -261,25 +262,18 @@ class TranscriptManager(BaseTranscriptManager):
 
         return handle
 
-    # ------------------------------------------------------------------ #
-    #  Default tool-policy helper                                        #
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def _default_ask_tool_policy(
-        step_index: int,
-        current_tools: Dict[str, Any],
-    ) -> tuple[str, Dict[str, Any]]:
-        # Deprecated: use common.llm_policies.require_first("search_messages") instead.
-        return require_first("search_messages")(step_index, current_tools)
+    @functools.wraps(BaseTranscriptManager.clear, updated=())
+    def clear(self) -> None:
 
+        _storage_clear(self)
+
+    # (Optional) Public programmatic helpers (non-LLM)
     async def summarize(self, *args, **kwargs):
         """Deprecated: summarize functionality removed."""
         raise NotImplementedError(
             "Summarize functionality has been removed from TranscriptManager.",
         )
 
-    # Helpers #
-    # --------#
     def log_messages(
         self,
         messages: Union[
@@ -556,10 +550,6 @@ class TranscriptManager(BaseTranscriptManager):
     def join_published(self):
         self._get_logger().join()
 
-    # ------------------------------------------------------------------ #
-    #  Shared helper – convert event/message payloads to plain-text
-    # ------------------------------------------------------------------ #
-
     @staticmethod
     def build_plain_transcript(
         messages: list[dict],
@@ -646,12 +636,10 @@ class TranscriptManager(BaseTranscriptManager):
 
         return "\n".join(lines)
 
-    # Broader context injection is provided by `inject_broader_context` from
-    # `unity.common.llm_helpers` and wired via `start_async_tool_loop`.
-
-    # Tools #
-    # ------#
-
+    # ──────────────────────────────────────────────────────────────────────
+    #  Private tools (LLM-exposed to tool loops)
+    #    – these are the underscore-prefixed methods you pass into add_tools
+    # ──────────────────────────────────────────────────────────────────────
     def _search_messages(
         self,
         *,
@@ -756,10 +744,9 @@ class TranscriptManager(BaseTranscriptManager):
             },
         }
 
-    # ────────────────────────────────────────────────────────────────────
-    # Image helpers (parallel to GuidanceManager image tools)
-    # ────────────────────────────────────────────────────────────────────
-
+    # ──────────────────────────────────────────────────────────────────────
+    #  Image tools
+    # ──────────────────────────────────────────────────────────────────────
     @read_only
     def _get_images_for_message(self, *, message_id: int) -> List[Dict[str, Any]]:
         """Return image metadata (no raw data) for images referenced by a message.
@@ -867,10 +854,10 @@ class TranscriptManager(BaseTranscriptManager):
 
     # (Span substring helper removed – images now aligned via freeform annotations)
 
-    # ────────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
+    #  Internal helpers (not exposed as tools)
+    # ──────────────────────────────────────────────────────────────────────
     # Column and metrics helpers (paralleling ContactManager)
-    # ────────────────────────────────────────────────────────────────────
-
     def _get_columns(self) -> Dict[str, str]:
         """
         Return {column_name: column_type} for the transcripts table.
@@ -913,20 +900,11 @@ class TranscriptManager(BaseTranscriptManager):
         """Return the total number of messages in transcripts."""
         return _storage_num_messages(self)
 
-    @functools.wraps(BaseTranscriptManager.clear, updated=())
-    def clear(self) -> None:
-
-        _storage_clear(self)
-
-    # ------------------------------------------------------------------ #
-    #  Internal provisioning helper                                      #
-    # ------------------------------------------------------------------ #
+    # Internal provisioning helper
     def _provision_storage(self) -> None:
         _storage_provision(self)
 
-    # ------------------------------------------------------------------ #
-    #  Exchanges helper                                                   #
-    # ------------------------------------------------------------------ #
+    # Exchanges helper
     def _ensure_exchanges_records(
         self,
         exchange_ids: set[int],
@@ -935,8 +913,19 @@ class TranscriptManager(BaseTranscriptManager):
     ) -> None:
         _storage_ensure_exchanges(self, exchange_ids, eid_to_medium=eid_to_medium)
 
-    # ------------------------------------------------------------------ #
-    #  Formatting helper: single contacts table + messages                #
-    # ------------------------------------------------------------------ #
+    # Formatting helper: single contacts table + messages
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
         return _format_contacts_and_messages_impl(self, messages)
+
+    # Misc small utilities (kept last)
+    @classmethod
+    def _get_logger(cls) -> unify.AsyncLoggerManager:
+        return cls._LOGGER
+
+    @staticmethod
+    def _default_ask_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        # Deprecated: use common.llm_policies.require_first("search_messages") instead.
+        return require_first("search_messages")(step_index, current_tools)
