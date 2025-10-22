@@ -55,7 +55,7 @@ from .search import (
 
 class ContactManager(BaseContactManager):
     # ──────────────────────────────────────────────────────────────────────
-    #  Class-level constants for response policy
+    #  Class-level constants / configuration
     # ──────────────────────────────────────────────────────────────────────
 
     DEFAULT_RESPONSE_POLICY: str = (
@@ -66,18 +66,20 @@ class ContactManager(BaseContactManager):
 
     USER_MANAGER_RESPONSE_POLICY: str = (
         "Your immediate manager, please do whatever they ask you to do within reason, and do *not* withhold any "
-        "information from them"
+        "information from them."
     )
 
+    # ──────────────────────────────────────────────────────────────────────
+    #  Construction & tool registration
+    # ──────────────────────────────────────────────────────────────────────
     def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
         """
         Responsible for managing the list of contact details stored upstream.
 
         Parameters
         ----------
-        batched : bool, default ``False``
-            • ``False`` – expose the original *atomic* tools\
-            • ``True``  – expose only the new *batched* variants
+        rolling_summary_in_prompts : bool, default ``True``
+            Whether to include the rolling activity summary in prompts by default.
         """
         super().__init__()
 
@@ -98,7 +100,7 @@ class ContactManager(BaseContactManager):
                 pass
         assert (
             read_ctx == write_ctx
-        ), "read and write contexts must be the same when instantiating a TranscriptManager."
+        ), "read and write contexts must be the same when instantiating a ContactManager."
         self._ctx = f"{read_ctx}/Contacts"
 
         # Local DataStore mirror (write-through only; never read from it)
@@ -129,7 +131,7 @@ class ContactManager(BaseContactManager):
         }
         self.add_tools("ask", ask_tools)
 
-        # update-side tools are can read and write
+        # update-side tools can read and write
         update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.ask,
@@ -159,86 +161,8 @@ class ContactManager(BaseContactManager):
         self._sync_user_contact()
 
     # ──────────────────────────────────────────────────────────────────────
-    #  Assistant syncing helpers
+    #  Public API (English-only entrypoints for the LLM)
     # ──────────────────────────────────────────────────────────────────────
-
-    def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
-        _sys_ensure_columns_exist(self, extra_fields)
-
-    def _sync_assistant_contact(self) -> None:
-        _sys_sync_assistant_contact(self)
-
-    # ------------------------------------------------------------------
-    #  Default *user* contact helpers (contact_id == 1)
-    # ------------------------------------------------------------------
-
-    def _sync_user_contact(self) -> None:
-        _sys_sync_user_contact(self)
-
-    # ──────────────────────────────────────────────────────────────────────
-    #  Column helpers (single-table version of KnowledgeManager's helpers)
-    # ──────────────────────────────────────────────────────────────────────
-
-    def _get_columns(self) -> Dict[str, str]:
-        return _storage_get_columns(self)
-
-    # Apply timing to tool methods
-    @read_only
-    def _list_columns(
-        self,
-        *,
-        include_types: bool = True,
-    ) -> Dict[str, Any] | List[str]:
-        """
-        Return the list of available columns in the contacts table, optionally with types.
-
-        Parameters
-        ----------
-        include_types : bool, default True
-            Controls the shape of the returned value:
-            - When True: returns a mapping ``{column_name: column_type}`` where
-              ``column_type`` is a string label used by Unify (e.g. ``"str"``,
-              ``"int"``, ``"bool"``, ``"list"``, ``"dict"``, ``"datetime"``).
-            - When False: returns a ``set`` of column names (types omitted). This is
-              useful to check for presence/absence without caring about data types.
-
-        Returns
-        -------
-        Dict[str, Any] | List[str]
-            - If ``include_types=True``: ``dict`` mapping column names to their types.
-            - If ``include_types=False``: ``list`` of column names.
-
-        Notes
-        -----
-        - Columns that store embeddings (those whose names end with ``"_emb"``)
-          may exist in the backend but are not filtered out here; consumers that
-          don't want to see private vector columns should filter them out
-          themselves (other tools in this class exclude them where appropriate).
-        - Column names follow snake_case. Built‑in columns are derived directly from
-          the Pydantic ``Contact`` model and are immutable.
-        """
-        cols = self._get_columns()
-        return cols if include_types else list(cols)
-
-    def _create_custom_column(
-        self,
-        *,
-        column_name: str,
-        column_type: ColumnType | str,
-        column_description: Optional[str] = None,
-    ) -> Dict[str, str]:
-        return _cc_create(
-            self,
-            column_name=column_name,
-            column_type=column_type,
-            column_description=column_description,
-        )
-
-    def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
-        return _cc_delete(self, column_name=column_name)
-
-    # Public #
-    # -------#
     @functools.wraps(BaseContactManager.ask, updated=())
     @manager_tool
     @log_manager_call("ContactManager", "ask", payload_key="question")
@@ -385,32 +309,56 @@ class ContactManager(BaseContactManager):
 
         return handle
 
-    # Helpers #
-    # --------#
-
-    def _allowed_fields(self) -> list[str]:
-        """Return the list of columns safe to fetch (exclude private/vector)."""
-        cols = self._get_columns()
-        # Exclude private (leading underscore) and vector columns ("*_emb")
-        allowed = [
-            name
-            for name in cols.keys()
-            if not str(name).startswith("_") and not str(name).endswith("_emb")
-        ]
-        # Ensure all built-ins are present even if schema drifted
-        for b in self._BUILTIN_FIELDS:
-            if b not in allowed:
-                allowed.append(b)
-        # Include any custom fields created/observed during this manager's lifetime
+    @functools.wraps(BaseContactManager.clear, updated=())
+    def clear(self) -> None:
         try:
-            for k in getattr(self, "_known_custom_fields", set()):
-                if k not in allowed:
-                    allowed.append(k)
+            # Drop the entire contacts table for this active assistant context
+            unify.delete_context(self._ctx)
+        except Exception:
+            # Proceed even if deletion fails (context may already be absent)
+            pass
+
+        # Clear local cache and custom-field state so subsequent reads/writes
+        # operate against a clean slate
+        try:
+            self._data_store.clear()
         except Exception:
             pass
-        return allowed
 
-    # Public non-tool method
+        # No per-instance custom field state to reset
+
+        # Ensure the schema exists again via shared provisioning helper
+        try:
+            # Remove any previous ensure memo and force re-provisioning
+            from ..common.context_store import TableStore as _TS  # local import
+
+            try:
+                _TS._ENSURED.discard((unify.active_project(), self._ctx))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        self._provision_storage()
+
+        # Verify the context is visible before attempting reads
+        try:
+            import time as _time  # local import to avoid polluting module namespace
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
+        # Recreate assistant and default user contacts (id 0 and 1)
+        self._sync_assistant_contact()
+        self._sync_user_contact()
+
+    # (Optional) Public programmatic helpers (non-LLM)
     def get_contact_info(
         self,
         contact_id: Union[int, List[int]],
@@ -493,84 +441,164 @@ class ContactManager(BaseContactManager):
 
         return results
 
-    def _num_contacts(
+    # ──────────────────────────────────────────────────────────────────────
+    #  Private tools (LLM-exposed to tool loops)
+    #    – these are the underscore-prefixed methods you pass into add_tools
+    # ──────────────────────────────────────────────────────────────────────
+    # Read-only tools
+    @read_only
+    def _list_columns(
         self,
-    ) -> int:
+        *,
+        include_types: bool = True,
+    ) -> Dict[str, Any] | List[str]:
         """
-        Get the total number of contacts stored in the contacts table.
+        Return the list of available columns in the contacts table, optionally with types.
+
+        Parameters
+        ----------
+        include_types : bool, default True
+            Controls the shape of the returned value:
+            - When True: returns a mapping ``{column_name: column_type}`` where
+              ``column_type`` is a string label used by Unify (e.g. ``"str"``,
+              ``"int"``, ``"bool"``, ``"list"``, ``"dict"``, ``"datetime"``).
+            - When False: returns a ``set`` of column names (types omitted). This is
+              useful to check for presence/absence without caring about data types.
 
         Returns
         -------
-        int
-            The total number of contacts.
+        Dict[str, Any] | List[str]
+            - If ``include_types=True``: ``dict`` mapping column names to their types.
+            - If ``include_types=False``: ``list`` of column names.
+
+        Notes
+        -----
+        - Columns that store embeddings (those whose names end with ``"_emb"``)
+          may exist in the backend but are not filtered out here; consumers that
+          don't want to see private vector columns should filter them out
+          themselves (other tools in this class exclude them where appropriate).
+        - Column names follow snake_case. Built‑in columns are derived directly from
+          the Pydantic ``Contact`` model and are immutable.
         """
-        ret = unify.get_logs_metric(
-            metric="count",
-            key="contact_id",
-            context=self._ctx,
-        )
-        if ret is None:
-            return 0
-        return int(ret)
+        cols = self._get_columns()
+        return cols if include_types else list(cols)
 
-    @functools.wraps(BaseContactManager.clear, updated=())
-    def clear(self) -> None:
-        try:
-            # Drop the entire contacts table for this active assistant context
-            unify.delete_context(self._ctx)
-        except Exception:
-            # Proceed even if deletion fails (context may already be absent)
-            pass
+    @read_only
+    def _filter_contacts(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        Filter contacts using a boolean Python expression evaluated per row.
 
-        # Clear local cache and custom-field state so subsequent reads/writes
-        # operate against a clean slate
-        try:
-            self._data_store.clear()
-        except Exception:
-            pass
+        Prefer this for exact, column‑wise filtering (e.g. id or equality checks). For
+        fuzzy or semantic matches across free‑text columns, use ``_search_contacts``.
 
-        # No per-instance custom field state to reset
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python boolean expression evaluated with column names in scope. Examples:
+            - ``"first_name == 'John' and surname == 'Doe'"``
+            - ``"contact_id != 0 and contact_id != 1"``
+            - ``"email_address.endswith('@company.com')"``
+            When ``None``, returns all contacts. String comparisons are case‑sensitive unless
+            your expression applies a case‑normalisation.
+        offset : int, default 0
+            Zero‑based index of the first result to include.
+        limit : int, default 100
+            Maximum number of records to return.
 
-        # Ensure the schema exists again via shared provisioning helper
-        try:
-            # Remove any previous ensure memo and force re-provisioning
-            from ..common.context_store import TableStore as _TS  # local import
+        Returns
+        -------
+        List[Contact]
+            Matching contacts as Pydantic ``Contact`` models in creation order. Embedding
+            columns (``*_emb``) are excluded from the payload to keep responses small.
 
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
+        Notes
+        -----
+        - Be careful with quoting inside the expression. Use single quotes to delimit string
+          literals inside the filter string.
+        - This tool is brittle for substring searches across text; prefer ``_search_contacts``
+          for that purpose.
+        """
+        # Prefer a single backend call that whitelists the built‑in columns to
+        # keep payloads small without a prior fields introspection request.
+        # Fast-path: tighten the requested limit when the filter guarantees
+        # at most a single match (unique equality) or a bounded small list.
+        eff_limit = limit
+        if isinstance(filter, str):
+            # contact_id == <int>
+            if re.fullmatch(r"\s*contact_id\s*==\s*\d+\s*", filter):
+                eff_limit = min(eff_limit, 1)
+            else:
+                # Equality on unique fields → at most one row
+                unique_eq_patterns = (
+                    r"\s*email_address\s*==\s*(['\"])\S.*?\1\s*",
+                    r"\s*phone_number\s*==\s*(['\"])\S.*?\1\s*",
+                    r"\s*whatsapp_number\s*==\s*(['\"])\S.*?\1\s*",
+                )
+                if any(re.fullmatch(p, filter) for p in unique_eq_patterns):
+                    eff_limit = min(eff_limit, 1)
+                else:
+                    # contact_id in [a, b, c] → cap at list length
+                    m = re.fullmatch(
+                        r"\s*contact_id\s*in\s*\[\s*([0-9,\s]+)\s*\]\s*",
+                        filter,
+                    )
+                    if m:
+                        count_ids = len(re.findall(r"\d+", m.group(1)))
+                        if count_ids > 0:
+                            eff_limit = min(eff_limit, count_ids)
 
-        self._provision_storage()
+        return _srch_filter(self, filter=filter, offset=offset, limit=limit)
 
-        # Verify the context is visible before attempting reads
-        try:
-            import time as _time  # local import to avoid polluting module namespace
+    @read_only
+    def _search_contacts(
+        self,
+        *,
+        references: Optional[Dict[str, str]] = None,
+        k: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        Semantic search over contacts using one or more reference texts.
 
-            for _ in range(3):
-                try:
-                    unify.get_fields(context=self._ctx)
-                    break
-                except Exception:
-                    _time.sleep(0.05)
-        except Exception:
-            pass
+        Parameters
+        ----------
+        references : Dict[str, str] | None, default None
+            Mapping of ``source_expr → reference_text`` terms that define the search space.
+            - ``source_expr`` can be either a simple column name (e.g. ``"bio"``,
+              ``"first_name"``) or a full Unify derived‑expression (e.g.
+              ``"str({first_name}) + ' ' + str({surname})"``). For expressions, a stable
+              derived source column is created automatically if needed.
+            - ``reference_text`` is free‑form text which will be embedded using the
+              configured embedding model.
+            When ``None`` or an empty dict, semantic search is skipped and the most recent
+            contacts are returned using backfill-only logic.
+        k : int, default 10
+            Maximum number of contacts to return. Must be a positive integer.
 
-        # Recreate assistant and default user contacts (id 0 and 1)
-        self._sync_assistant_contact()
-        self._sync_user_contact()
+        Returns
+        -------
+        List[Contact]
+            Up to ``k`` Pydantic ``Contact`` models. When semantic references are provided,
+            results are sorted by similarity (ascending cosine distance). When references
+            are omitted/empty, returns the most recent contacts. System contacts (ids ``0``
+            and ``1``) are excluded.
 
-    # Private #
-    # --------#
+        Notes
+        -----
+        - When a single term is provided, results are ranked by ``cosine(column_emb, ref)``.
+        - When multiple terms are provided, results are ranked by the sum of cosines across
+          all terms to favour contacts similar across several fields.
+        - Embedding columns (``*_emb``) are excluded from the returned models to keep payloads
+          compact.
+        """
+        return _srch_search(self, references=references, k=k)
 
-    def _provision_storage(self) -> None:
-        """Ensure Contacts context, schema, and local view exist (delegated)."""
-        _storage_provision(self)
-
-    # Helper to derive a unique shorthand for a given custom column name.
-
+    # Mutation tools
     def _create_contact(
         self,
         *,
@@ -848,127 +876,89 @@ class ContactManager(BaseContactManager):
             overrides=overrides,
         )
 
-    @read_only
-    def _search_contacts(
+    def _create_custom_column(
         self,
         *,
-        references: Optional[Dict[str, str]] = None,
-        k: int = 10,
-    ) -> Dict[str, Any]:
-        """
-        Semantic search over contacts using one or more reference texts.
+        column_name: str,
+        column_type: ColumnType | str,
+        column_description: Optional[str] = None,
+    ) -> Dict[str, str]:
+        return _cc_create(
+            self,
+            column_name=column_name,
+            column_type=column_type,
+            column_description=column_description,
+        )
 
-        Parameters
-        ----------
-        references : Dict[str, str] | None, default None
-            Mapping of ``source_expr → reference_text`` terms that define the search space.
-            - ``source_expr`` can be either a simple column name (e.g. ``"bio"``,
-              ``"first_name"``) or a full Unify derived‑expression (e.g.
-              ``"str({first_name}) + ' ' + str({surname})"``). For expressions, a stable
-              derived source column is created automatically if needed.
-            - ``reference_text`` is free‑form text which will be embedded using the
-              configured embedding model.
-            When ``None`` or an empty dict, semantic search is skipped and the most recent
-            contacts are returned using backfill-only logic.
-        k : int, default 10
-            Maximum number of contacts to return. Must be a positive integer.
+    def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
+        return _cc_delete(self, column_name=column_name)
+
+    # ──────────────────────────────────────────────────────────────────────
+    #  Internal helpers (not exposed as tools)
+    # ──────────────────────────────────────────────────────────────────────
+    # Storage / provisioning
+    def _provision_storage(self) -> None:
+        """Ensure Contacts context, schema, and local view exist (delegated)."""
+        _storage_provision(self)
+
+    def _num_contacts(
+        self,
+    ) -> int:
+        """
+        Get the total number of contacts stored in the contacts table.
 
         Returns
         -------
-        List[Contact]
-            Up to ``k`` Pydantic ``Contact`` models. When semantic references are provided,
-            results are sorted by similarity (ascending cosine distance). When references
-            are omitted/empty, returns the most recent contacts. System contacts (ids ``0``
-            and ``1``) are excluded.
-
-        Notes
-        -----
-        - When a single term is provided, results are ranked by ``cosine(column_emb, ref)``.
-        - When multiple terms are provided, results are ranked by the sum of cosines across
-          all terms to favour contacts similar across several fields.
-        - Embedding columns (``*_emb``) are excluded from the returned models to keep payloads
-          compact.
+        int
+            The total number of contacts.
         """
-        return _srch_search(self, references=references, k=k)
+        ret = unify.get_logs_metric(
+            metric="count",
+            key="contact_id",
+            context=self._ctx,
+        )
+        if ret is None:
+            return 0
+        return int(ret)
 
-    @read_only
-    def _filter_contacts(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> Dict[str, Any]:
-        """
-        Filter contacts using a boolean Python expression evaluated per row.
+    def _get_columns(self) -> Dict[str, str]:
+        return _storage_get_columns(self)
 
-        Prefer this for exact, column‑wise filtering (e.g. id or equality checks). For
-        fuzzy or semantic matches across free‑text columns, use ``_search_contacts``.
+    # System contact sync
+    def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
+        _sys_ensure_columns_exist(self, extra_fields)
 
-        Parameters
-        ----------
-        filter : str | None, default None
-            A Python boolean expression evaluated with column names in scope. Examples:
-            - ``"first_name == 'John' and surname == 'Doe'"``
-            - ``"contact_id != 0 and contact_id != 1"``
-            - ``"email_address.endswith('@company.com')"``
-            When ``None``, returns all contacts. String comparisons are case‑sensitive unless
-            your expression applies a case‑normalisation.
-        offset : int, default 0
-            Zero‑based index of the first result to include.
-        limit : int, default 100
-            Maximum number of records to return.
+    def _sync_assistant_contact(self) -> None:
+        _sys_sync_assistant_contact(self)
 
-        Returns
-        -------
-        List[Contact]
-            Matching contacts as Pydantic ``Contact`` models in creation order. Embedding
-            columns (``*_emb``) are excluded from the payload to keep responses small.
+    def _sync_user_contact(self) -> None:
+        _sys_sync_user_contact(self)
 
-        Notes
-        -----
-        - Be careful with quoting inside the expression. Use single quotes to delimit string
-          literals inside the filter string.
-        - This tool is brittle for substring searches across text; prefer ``_search_contacts``
-          for that purpose.
-        """
-        # Prefer a single backend call that whitelists the built‑in columns to
-        # keep payloads small without a prior fields introspection request.
-        # Fast-path: tighten the requested limit when the filter guarantees
-        # at most a single match (unique equality) or a bounded small list.
-        eff_limit = limit
-        if isinstance(filter, str):
-            # contact_id == <int>
-            if re.fullmatch(r"\s*contact_id\s*==\s*\d+\s*", filter):
-                eff_limit = min(eff_limit, 1)
-            else:
-                # Equality on unique fields → at most one row
-                unique_eq_patterns = (
-                    r"\s*email_address\s*==\s*(['\"])\S.*?\1\s*",
-                    r"\s*phone_number\s*==\s*(['\"])\S.*?\1\s*",
-                    r"\s*whatsapp_number\s*==\s*(['\"])\S.*?\1\s*",
-                )
-                if any(re.fullmatch(p, filter) for p in unique_eq_patterns):
-                    eff_limit = min(eff_limit, 1)
-                else:
-                    # contact_id in [a, b, c] → cap at list length
-                    m = re.fullmatch(
-                        r"\s*contact_id\s*in\s*\[\s*([0-9,\s]+)\s*\]\s*",
-                        filter,
-                    )
-                    if m:
-                        count_ids = len(re.findall(r"\d+", m.group(1)))
-                        if count_ids > 0:
-                            eff_limit = min(eff_limit, count_ids)
+    # Validation / sanitization
+    def _allowed_fields(self) -> list[str]:
+        """Return the list of columns safe to fetch (exclude private/vector)."""
+        cols = self._get_columns()
+        # Exclude private (leading underscore) and vector columns ("*_emb")
+        allowed = [
+            name
+            for name in cols.keys()
+            if not str(name).startswith("_") and not str(name).endswith("_emb")
+        ]
+        # Ensure all built-ins are present even if schema drifted
+        for b in self._BUILTIN_FIELDS:
+            if b not in allowed:
+                allowed.append(b)
+        # Include any custom fields created/observed during this manager's lifetime
+        try:
+            for k in getattr(self, "_known_custom_fields", set()):
+                if k not in allowed:
+                    allowed.append(k)
+        except Exception:
+            pass
+        return allowed
 
-        return _srch_filter(self, filter=filter, offset=offset, limit=limit)
-
-    # ------------------------------------------------------------------ #
-    #  Small internal helpers (LLM client + tool policies)               #
-    # ------------------------------------------------------------------ #
-
+    # Misc small utilities (kept last)
     # Deprecated: client construction is centralized in unity.common.llm_client.new_llm_client
-
     @staticmethod
     def _default_ask_tool_policy(
         step_index: int,
