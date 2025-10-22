@@ -139,7 +139,7 @@ class ManagersWorker:
                 self._contact_manager = ContactManager()
 
                 # clear rolling summary
-                # contacts = self._contact_manager._filter_contacts()
+                # contacts = self._contact_manager._filter_contacts()["contacts"]
                 # print("got contacts", contacts)
                 # for c in contacts:
                 #     self._contact_manager._update_contact(contact_id=c.contact_id, rolling_summary="")
@@ -283,7 +283,7 @@ class ManagersWorker:
 
         try:
             # Get all contacts from ContactManager and convert to dict
-            rows = self._contact_manager._filter_contacts()
+            rows = self._contact_manager._filter_contacts()["contacts"]
             contacts = [c.model_dump() for c in rows]
 
             # Publish reply as Event envelope
@@ -530,8 +530,8 @@ class ManagersWorker:
                 handle.resume()
                 result = "Handle Resumed"
             case "done":
-                handle.done()
-                result = "Handle Done"
+                done_result = handle.done()
+                result = "Handle Done" if done_result else "Handle Not Done"
             case "answer_clarification":
                 handle.answer_clarification(event.call_id, event.query)
                 result = "Clarification Answered"
