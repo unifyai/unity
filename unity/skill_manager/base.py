@@ -33,9 +33,9 @@ class BaseSkillManager(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the assistant's available skills and obtain a live handle.
@@ -56,9 +56,9 @@ class BaseSkillManager(BaseStateManager, metaclass=SingletonABCMeta):
         _return_reasoning_steps : bool, default False
             When True, `SteerableToolHandle.result` yields
             `(answer, messages)` where messages include hidden chain-of-thought.
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Optional read-only context to pass to the inner tool loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Optional duplex channels used to ask the human clarifying questions
             when an ambiguous skills question is asked.
 
