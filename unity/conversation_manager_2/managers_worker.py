@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import perf_counter
 from dotenv import load_dotenv
 import threading
 from datetime import datetime
@@ -11,6 +12,7 @@ import redis.asyncio as redis
 load_dotenv()
 
 import unity
+from unity.conversation_manager_2.handle import ConversationManagerHandle
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.events.event_bus import EVENT_BUS
@@ -71,6 +73,7 @@ class ManagersWorker:
         print("[ManagersWorker] Processing startup")
 
         async with self._init_lock:
+            start_time = perf_counter()
             if self._initialized:
                 print("[ManagersWorker] Already initialized, skipping")
                 return
@@ -170,12 +173,23 @@ class ManagersWorker:
                 )
                 print("[ManagersWorker] MemoryManager initialized")
 
-                # 5. Initialize Conductor with existing managers
+                # 5. Initialize ConversationManager
+                print("[ManagersWorker] Initializing ConversationManagerHandle...")
+                self._conversation_manager_handle = ConversationManagerHandle(
+                    event_broker=self._event_broker,
+                    conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
+                    contact_id="1",
+                    transcript_manager=self._transcript_manager,
+                )
+                print("[ManagersWorker] ConversationManagerHandle initialized")
+
+                # 6. Initialize Conductor with existing managers
                 print("[ManagersWorker] Initializing Conductor...")
                 try:
                     self._conductor = Conductor(
                         contact_manager=self._contact_manager,
                         transcript_manager=self._transcript_manager,
+                        conversation_manager=self._conversation_manager_handle,
                     )
                     print("[ManagersWorker] Conductor initialized")
                 except Exception as e:
@@ -190,6 +204,10 @@ class ManagersWorker:
             await self._event_broker.publish(
                 self._publish_channel,
                 ManagersStartupResponse(initialized=self._initialized).to_json(),
+            )
+            print(
+                "[ManagersWorker] Initialization complete in "
+                f"{perf_counter() - start_time:.2f} seconds"
             )
 
     async def _get_bus_events(self) -> None:
