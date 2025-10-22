@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import json
 import asyncio
 import functools
 from typing import List, Dict, Optional, Union, Any, Callable, Literal
@@ -18,9 +16,11 @@ from ..contact_manager.types.contact import Contact
 from ..common.model_to_fields import model_to_fields
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    make_request_clarification_tool,
     inject_broader_context,
 )
+from ..common.llm_client import new_llm_client
+from ..common.clarification_tools import add_clarification_tool_with_events
+from ..common.llm_policies import require_first
 from ..common.async_tool_loop import (
     start_async_tool_loop,
     SteerableToolHandle,
@@ -39,7 +39,6 @@ from ..common.search_utils import (
     fetch_top_k_by_terms_with_score,
     fetch_scores_for_ids,
 )
-from ..events.event_bus import EVENT_BUS, Event
 from ..image_manager.image_manager import ImageManager
 from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
@@ -167,19 +166,6 @@ class TranscriptManager(BaseTranscriptManager):
     def _get_logger(cls) -> unify.AsyncLoggerManager:
         return cls._LOGGER
 
-    # ------------------------------------------------------------------ #
-    #  Small internal helper – LLM client factory                        #
-    # ------------------------------------------------------------------ #
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        """Construct a configured AsyncUnify client for the given model."""
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
-
     # Public #
     # -------#
 
@@ -208,50 +194,17 @@ class TranscriptManager(BaseTranscriptManager):
         tools = dict(self.get_tools("ask"))
 
         if clarification_up_q is not None and clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "TranscriptManager",
-                                "method": "ask",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            async def _on_answer(ans: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "TranscriptManager",
-                                "method": "ask",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 clarification_up_q,
                 clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="TranscriptManager",
+                method="ask",
+                call_id=_call_id,
             )
 
         # ── 1.  Build LLM client & inject dynamic system-prompt ───────────
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
@@ -270,7 +223,7 @@ class TranscriptManager(BaseTranscriptManager):
 
         # Decide effective tool policy (default requires search_messages first)
         if tool_policy == "default":
-            effective_tool_policy = self._default_ask_tool_policy
+            effective_tool_policy = require_first("search_messages")
         else:
             effective_tool_policy = tool_policy
 
