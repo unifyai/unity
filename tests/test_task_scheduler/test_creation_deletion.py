@@ -15,7 +15,7 @@ def test_create_task():
         entrypoint=101,
     )
     out = task_scheduler._filter_tasks()
-    task_list = out["tasks"]
+    task_list = out["tasks"] if isinstance(out, dict) else out
     assert len(task_list) == 1
     row = task_list[0].model_dump(mode="json")
     # After refactor, _filter_tasks returns raw JSON-serialisable values (enums as strings)
@@ -48,13 +48,13 @@ def test_delete_task():
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
     out = task_scheduler._filter_tasks()
-    task_list = out["tasks"]
+    task_list = out["tasks"] if isinstance(out, dict) else out
     assert len(task_list) == 1
 
     # delete
     task_scheduler._delete_task(task_id=0)
     out = task_scheduler._filter_tasks()
-    task_list = out["tasks"]
+    task_list = out["tasks"] if isinstance(out, dict) else out
     assert task_list == []
 
 
@@ -75,7 +75,7 @@ def test_create_task_with_response_policy():
     )
 
     out = ts._filter_tasks()
-    rows = out["tasks"]
+    rows = out["tasks"] if isinstance(out, dict) else out
     assert len(rows) == 1
     assert rows[0].response_policy == policy
 
@@ -151,7 +151,7 @@ def test_create_tasks_multi_queues_with_start_times():
     assert [t.task_id for t in q1] == [1, 3]
     assert q1[0].schedule and q1[0].schedule.start_at
     assert q1[0].schedule.start_at.isoformat() == "2036-01-02T10:00:00+00:00"
-    row1 = ts._filter_tasks(filter="task_id == 1", limit=1)[0]
+    row1 = ts._filter_tasks(filter="task_id == 1", limit=1)["tasks"][0]
     assert row1["status"] == "scheduled"
 
 

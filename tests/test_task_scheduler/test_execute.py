@@ -326,7 +326,10 @@ async def test_execute_creates_new_task_and_executes(monkeypatch):
     # Description may be normalised (e.g. trailing period removed).  Accept any
     # task whose *name* or *description* contains our original phrase without
     # the trailing period.
-    created_tasks = ts._filter_tasks()["tasks"]
+    created_out = ts._filter_tasks()
+    created_tasks = (
+        created_out["tasks"] if isinstance(created_out, dict) else created_out
+    )
     phrase = description.rstrip(".").casefold()
     assert any(
         phrase in (t.get("name", "") or "").casefold()
@@ -398,7 +401,8 @@ async def test_execute_sets_activated_by_explicit():
     await handle.result()
 
     # Verify activated_by on the activated instance (may already be completed)
-    rows = ts._filter_tasks(filter=f"task_id == {task_id}")["tasks"]
+    out = ts._filter_tasks(filter=f"task_id == {task_id}")
+    rows = out["tasks"] if isinstance(out, dict) else out
     assert any(str(getattr(r, "activated_by", None)) == "explicit" for r in rows)
 
 
@@ -419,13 +423,15 @@ async def test_update_status_cannot_force_active_and_does_not_set_activation_met
         ts._update_task(task_id=task_id, status="active")
 
     # Ensure no activation metadata exists prior to activation
-    rows = ts._filter_tasks(filter=f"task_id == {task_id}")["tasks"]
+    out = ts._filter_tasks(filter=f"task_id == {task_id}")
+    rows = out["tasks"] if isinstance(out, dict) else out
     assert len(rows) == 1
     assert str(getattr(rows[0], "activated_by", "")) in (None, "", "None")
 
     # Change a non-active status and ensure activated_by remains unset
     ts._update_task(task_id=task_id, status="paused")
-    rows2 = ts._filter_tasks(filter=f"task_id == {task_id}")["tasks"]
+    out2 = ts._filter_tasks(filter=f"task_id == {task_id}")
+    rows2 = out2["tasks"] if isinstance(out2, dict) else out2
     assert str(rows2[0].status) == "paused"
     assert str(getattr(rows2[0], "activated_by", "")) in (None, "", "None")
 
@@ -480,9 +486,12 @@ async def test_isolated_execute_detaches_entirely(monkeypatch):
     )
     await handle.result()
 
-    rows_a = ts._filter_tasks(filter=f"task_id == {a}")["tasks"]
-    rows_b = ts._filter_tasks(filter=f"task_id == {b}")["tasks"]
-    rows_c = ts._filter_tasks(filter=f"task_id == {c}")["tasks"]
+    out_a = ts._filter_tasks(filter=f"task_id == {a}")
+    out_b = ts._filter_tasks(filter=f"task_id == {b}")
+    out_c = ts._filter_tasks(filter=f"task_id == {c}")
+    rows_a = out_a["tasks"] if isinstance(out_a, dict) else out_a
+    rows_b = out_b["tasks"] if isinstance(out_b, dict) else out_b
+    rows_c = out_c["tasks"] if isinstance(out_c, dict) else out_c
 
     # B should be isolated as a single-task head (no prev/next followers)
     sched_b = getattr(rows_b[0], "schedule", None)
@@ -519,8 +528,10 @@ async def test_isolated_execute_start_at_to_second_when_head_moves(monkeypatch):
     )
     await handle.result()
 
-    rows_x = ts._filter_tasks(filter=f"task_id == {x}")["tasks"]
-    rows_y = ts._filter_tasks(filter=f"task_id == {y}")["tasks"]
+    out_x = ts._filter_tasks(filter=f"task_id == {x}")
+    out_y = ts._filter_tasks(filter=f"task_id == {y}")
+    rows_x = out_x["tasks"] if isinstance(out_x, dict) else out_x
+    rows_y = out_y["tasks"] if isinstance(out_y, dict) else out_y
 
     # X detached
     assert getattr(rows_x[0], "schedule", None) in (None, {})
