@@ -123,9 +123,9 @@ class ActiveTask(BaseActiveTask):
         actor: BaseActor,
         *,
         task_description: str,
-        parent_chat_context: Optional[list[dict]] = None,
-        clarification_up_q: Optional["asyncio.Queue[str]"] = None,
-        clarification_down_q: Optional["asyncio.Queue[str]"] = None,
+        _parent_chat_context: Optional[list[dict]] = None,
+        _clarification_up_q: Optional["asyncio.Queue[str]"] = None,
+        _clarification_down_q: Optional["asyncio.Queue[str]"] = None,
         task_id: Optional[int] = None,
         instance_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
@@ -138,9 +138,9 @@ class ActiveTask(BaseActiveTask):
         """
         actor_steerable_handle = await actor.act(
             task_description,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            _parent_chat_context=_parent_chat_context,
+            _clarification_up_q=_clarification_up_q,
+            _clarification_down_q=_clarification_down_q,
         )
         return cls(
             actor_steerable_handle,  # type: ignore[arg-type]

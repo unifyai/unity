@@ -84,9 +84,9 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing task list** (read‑only) and obtain a live
@@ -132,14 +132,14 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         _log_tool_steps : bool, default ``True``
             If *True* the task‑scheduler logs every tool invocation to the
             server‑side logger.
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Optional read‑only conversation context to prepend to the internal
             tool‑use loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Duplex channels enabling interactive clarification questions. If
             supplied the LLM may push a follow‑up question onto
-            *clarification_up_q* and must read the human's answer from
-            *clarification_down_q*.
+            *_clarification_up_q* and must read the human's answer from
+            *_clarification_down_q*.
 
         Returns
         -------
@@ -156,9 +156,9 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Apply a **mutation** request – create, edit, delete or reorder tasks –
@@ -208,9 +208,9 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         isolated: Optional[bool] = None,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Start a **task** given a *free-form* textual instruction (*text*).
@@ -276,7 +276,7 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
             is left to the implementation (e.g., LLM decides for free‑form text;
             numeric fast‑path may default to chained semantics).
 
-        parent_chat_context, clarification_up_q, clarification_down_q
+        _parent_chat_context, _clarification_up_q, _clarification_down_q
             Same purpose and semantics as in :pymeth:`ask`.
 
         Returns
