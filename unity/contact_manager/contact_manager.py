@@ -122,12 +122,6 @@ class ContactManager(BaseContactManager):
         # rolling activity inclusion flag
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
-        # Track custom columns observed/created during this manager's lifetime so we can
-        # whitelist fields in a single read without a separate fields-introspection call.
-        # This avoids redundant backend calls inside tools like `_filter_contacts` while
-        # still returning custom fields commonly used right after creation/update.
-        self._known_custom_fields: set[str] = set()
-
         # (No per-instance shorthand registry; dynamic aliases are registered
         #  directly on the Contact class for minimal plumbing.)
 
@@ -552,15 +546,6 @@ class ContactManager(BaseContactManager):
                 "column_name must be snake_case: start with a letter, then letters/digits/underscores",
             )
 
-        # Avoid a pre-flight GET to check for existence; rely on our singleton's
-        # private state which is kept in sync at construction and on create/delete.
-        # This prevents an extra blocking backend read on every create call.
-        if (
-            getattr(self, "_known_custom_fields", None)
-            and column_name in self._known_custom_fields
-        ):
-            raise ValueError(f"Column '{column_name}' already exists.")
-
         column_info = {
             "type": str(column_type),
             "mutable": True,
@@ -571,11 +556,6 @@ class ContactManager(BaseContactManager):
             fields={column_name: column_info},
             context=self._ctx,
         )
-        # Remember the new column for subsequent reads within this manager instance
-        try:
-            self._known_custom_fields.add(column_name)
-        except Exception:
-            pass
         return response
 
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
@@ -613,13 +593,6 @@ class ContactManager(BaseContactManager):
             fields=[column_name],
             context=self._ctx,
         )
-
-        # Update local view of known custom columns on success
-        try:
-            if column_name in getattr(self, "_known_custom_fields", set()):
-                self._known_custom_fields.discard(column_name)
-        except Exception:
-            pass
 
         # Proactively remove the deleted column from cached rows in DataStore
         try:
@@ -790,16 +763,19 @@ class ContactManager(BaseContactManager):
     # --------#
 
     def _allowed_fields(self) -> list[str]:
-        """
-        Return the list of columns safe to fetch into the client.
-
-        Includes built-in fields and any known custom fields, excluding
-        private/vector columns implicitly by construction.
-        """
-        fields = list(self._BUILTIN_FIELDS)
-        if getattr(self, "_known_custom_fields", None):
-            fields.extend(sorted(self._known_custom_fields))
-        return fields
+        """Return the list of columns safe to fetch (exclude private/vector)."""
+        cols = self._get_columns()  # {name: type}
+        # Exclude private (leading underscore) and vector columns ("*_emb")
+        allowed = [
+            name
+            for name in cols.keys()
+            if not str(name).startswith("_") and not str(name).endswith("_emb")
+        ]
+        # Ensure all built-ins are present even if schema drifted
+        for b in self._BUILTIN_FIELDS:
+            if b not in allowed:
+                allowed.append(b)
+        return allowed
 
     # Public non-tool method
     def get_contact_info(
@@ -920,11 +896,7 @@ class ContactManager(BaseContactManager):
         except Exception:
             pass
 
-        try:
-            # Reset observed custom fields for this manager instance
-            self._known_custom_fields = set()
-        except Exception:
-            pass
+        # No per-instance custom field state to reset
 
         # Ensure the schema exists again via shared provisioning helper
         try:
@@ -972,15 +944,7 @@ class ContactManager(BaseContactManager):
         )
         self._store.ensure_context()
 
-        # Prefill known custom fields once to include any preexisting non-private columns
-        try:
-            existing_cols = self._get_columns()
-            for col in existing_cols:
-                if col not in self._REQUIRED_COLUMNS and not str(col).startswith("_"):
-                    self._known_custom_fields.add(col)
-        except Exception:
-            # Best-effort only; tools fall back safely
-            pass
+        # No per-instance custom field bookkeeping; reads derive allowed fields from schema
 
     # Helper to derive a unique shorthand for a given custom column name.
     def _derive_shorthand(self, column_name: str) -> str:
@@ -1134,13 +1098,7 @@ class ContactManager(BaseContactManager):
         if kwargs:
             safe_custom = self._sanitize_custom_columns(kwargs)
             contact_details.update(safe_custom)
-            # Track keys so subsequent reads in this instance can whitelist them
-            try:
-                for k in safe_custom.keys():
-                    if k not in self._BUILTIN_FIELDS:
-                        self._known_custom_fields.add(k)
-            except Exception:
-                pass
+            # Keys are permitted if they correspond to existing columns; no per-instance tracking required
 
         assert any(
             v is not None for v in contact_details.values()
@@ -1285,12 +1243,7 @@ class ContactManager(BaseContactManager):
         if kwargs:
             safe_custom = self._sanitize_custom_columns(kwargs)
             contact_details.update(safe_custom)
-            try:
-                for k in safe_custom.keys():
-                    if k not in self._BUILTIN_FIELDS:
-                        self._known_custom_fields.add(k)
-            except Exception:
-                pass
+            # No per-instance tracking of custom field names
 
         # Collapse updates into a single dict so we only perform one write op
         updates_dict = {k: v for k, v in contact_details.items() if v is not None}
@@ -1678,9 +1631,7 @@ class ContactManager(BaseContactManager):
         # Restrict payloads to built‑in + known custom columns to avoid an
         # upfront fields lookup and reduce transfer size. Semantic sorting uses
         # private columns server‑side and does not require them in the payload.
-        allowed_fields = list(self._BUILTIN_FIELDS)
-        if getattr(self, "_known_custom_fields", None):
-            allowed_fields.extend(sorted(self._known_custom_fields))
+        allowed_fields = list(self._allowed_fields())
 
         # Exclude system contacts (assistant/user) from search results
         system_filter = "contact_id != 0 and contact_id != 1"
@@ -1781,9 +1732,7 @@ class ContactManager(BaseContactManager):
                             eff_limit = min(eff_limit, count_ids)
 
         # Read built‑ins plus any custom columns we observed in this instance
-        from_fields = list(self._BUILTIN_FIELDS)
-        if getattr(self, "_known_custom_fields", None):
-            from_fields.extend(sorted(self._known_custom_fields))
+        from_fields = list(self._allowed_fields())
         normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._ctx,
