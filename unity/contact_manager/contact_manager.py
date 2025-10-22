@@ -130,6 +130,9 @@ class ContactManager(BaseContactManager):
         # still returning custom fields commonly used right after creation/update.
         self._known_custom_fields: set[str] = set()
 
+        # (No per-instance shorthand registry; dynamic aliases are registered
+        #  directly on the Contact class for minimal plumbing.)
+
         # Ensure context/schema and prefill known custom fields
         self._provision_storage()
 
@@ -1035,6 +1038,24 @@ class ContactManager(BaseContactManager):
             # Best-effort only; tools fall back safely
             pass
 
+    # Helper to derive a unique shorthand for a given custom column name.
+    def _derive_shorthand(self, column_name: str) -> str:
+        from .types.contact import Contact as _C
+
+        parts = [p for p in str(column_name).split("_") if p]
+        base = "".join(p[:2] for p in parts) or str(column_name)[:3]
+        base = re.sub(r"[^a-z0-9_]", "", base.lower())
+        if not base or not re.match(r"^[a-z]", base):
+            base = ("c_" + base) if base else "c"
+        used = set(_C.shorthand_map().values())
+        used.update(getattr(self, "_custom_shorthand", {}).values())
+        cand = base
+        idx = 1
+        while cand in used:
+            cand = f"{base}{idx}"
+            idx += 1
+        return cand
+
     def _sanitize_custom_columns(
         self,
         custom_columns: Dict[str, Any],
@@ -1737,10 +1758,12 @@ class ContactManager(BaseContactManager):
         except Exception:
             pass
         contacts_list = [Contact(**r) for r in filled]
+        fwd = Contact.shorthand_map()
+        inv = Contact.shorthand_inverse_map()
         return {
-            "contact_keys_to_shorthand": Contact.shorthand_map(),
+            "contact_keys_to_shorthand": fwd,
             "contacts": contacts_list,
-            "shorthand_to_contact_keys": Contact.shorthand_inverse_map(),
+            "shorthand_to_contact_keys": inv,
         }
 
     @read_only
@@ -1832,10 +1855,12 @@ class ContactManager(BaseContactManager):
         except Exception:
             pass
         contacts_list = [Contact(**lg.entries) for lg in logs]
+        fwd = Contact.shorthand_map()
+        inv = Contact.shorthand_inverse_map()
         return {
-            "contact_keys_to_shorthand": Contact.shorthand_map(),
+            "contact_keys_to_shorthand": fwd,
             "contacts": contacts_list,
-            "shorthand_to_contact_keys": Contact.shorthand_inverse_map(),
+            "shorthand_to_contact_keys": inv,
         }
 
     # ------------------------------------------------------------------ #

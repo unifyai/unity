@@ -29,6 +29,11 @@ class Contact(BaseModel):
         "response_policy": "policy",
     }
 
+    # Dynamic aliases for custom columns (full → shorthand); managers can
+    # register into this mapping at runtime. Kept on the class to avoid
+    # per‑instance plumbing.
+    SHORTHAND_MAP_DYNAMIC: ClassVar[dict[str, str]] = {}
+
     contact_id: int = Field(
         default=UNASSIGNED,
         description="Unique identifier for the contact",
@@ -89,11 +94,20 @@ class Contact(BaseModel):
     # Shorthand helpers (parity with Message model)
     @classmethod
     def shorthand_map(cls) -> dict[str, str]:
-        return dict(cls.SHORTHAND_MAP)
+        base = dict(cls.SHORTHAND_MAP)
+        try:
+            dyn = dict(getattr(cls, "SHORTHAND_MAP_DYNAMIC", {}) or {})
+            for k, v in dyn.items():
+                if k not in base:
+                    base[k] = v
+        except Exception:
+            pass
+        return base
 
     @classmethod
     def shorthand_inverse_map(cls) -> dict[str, str]:
-        return {v: k for k, v in cls.SHORTHAND_MAP.items()}
+        fwd = cls.shorthand_map()
+        return {v: k for k, v in fwd.items()}
 
     @field_validator(
         "first_name",
@@ -172,10 +186,49 @@ class Contact(BaseModel):
                 out = data
 
         if shorthand and isinstance(out, dict):
-            alias_map = type(self).SHORTHAND_MAP
+            alias_map = type(self).shorthand_map()
             try:
                 out = {alias_map.get(k, k): v for k, v in out.items()}
             except Exception:
                 out = out
 
         return out
+
+    # ------------------------- dynamic alias helpers -------------------------
+    @classmethod
+    def derive_unique_alias(cls, column_name: str) -> str:
+        import re as _re
+
+        parts = [p for p in str(column_name).split("_") if p]
+        base = "".join(p[:2] for p in parts) or str(column_name)[:3]
+        base = _re.sub(r"[^a-z0-9_]", "", base.lower())
+        if not base or not _re.match(r"^[a-z]", base):
+            base = ("c_" + base) if base else "c"
+        used = set(cls.shorthand_map().values())
+        cand = base
+        idx = 1
+        while cand in used:
+            cand = f"{base}{idx}"
+            idx += 1
+        return cand
+
+    @classmethod
+    def register_alias(cls, column_name: str, shorthand: Optional[str] = None) -> str:
+        import re as _re
+
+        if shorthand is None:
+            shorthand = cls.derive_unique_alias(column_name)
+        if not _re.fullmatch(r"[a-z][a-z0-9_]*", shorthand):
+            raise ValueError(
+                "shorthand must be snake_case: start with a letter, then letters/digits/underscores",
+            )
+        fwd = cls.shorthand_map()
+        if shorthand in set(fwd.values()):
+            raise ValueError(
+                f"shorthand '{shorthand}' already exists. Please choose a different alias.",
+            )
+        try:
+            cls.SHORTHAND_MAP_DYNAMIC[column_name] = shorthand
+        except Exception:
+            pass
+        return shorthand
