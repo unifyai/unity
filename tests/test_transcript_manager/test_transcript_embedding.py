@@ -4,6 +4,7 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message, VALID_MEDIA
 from tests.helpers import _handle_project
 import random
+from unity.contact_manager.contact_manager import ContactManager
 
 
 @pytest.mark.unit
@@ -16,29 +17,34 @@ async def test_transcript_embedding_semantic_search():
     """
     # Create the TranscriptManager instance
     tm = TranscriptManager()
+    cm = ContactManager()
+
+    # Create two real contacts and use their assigned ids
+    alice_id = cm._create_contact(first_name="Alice")["details"]["contact_id"]
+    bob_id = cm._create_contact(first_name="Bob")["details"]["contact_id"]
 
     # Create a few test messages
     msgs = [
         Message(
             medium=random.choice(VALID_MEDIA),
-            sender_id=1,
-            receiver_ids=[2],
+            sender_id=alice_id,
+            receiver_ids=[bob_id],
             timestamp="2025-05-19 12:00:00",
             content="Can you help me with my banking questions? I'm looking to set up a new account.",
             exchange_id=1,
         ),
         Message(
             medium=random.choice(VALID_MEDIA),
-            sender_id=2,
-            receiver_ids=[1],
+            sender_id=bob_id,
+            receiver_ids=[alice_id],
             timestamp="2025-05-19 12:00:01",
             content="I'd be happy to help with your banking needs! What type of account would you like to set up? Checking, savings, or investment?",
             exchange_id=1,
         ),
         Message(
             medium=random.choice(VALID_MEDIA),
-            sender_id=1,
-            receiver_ids=[2],
+            sender_id=alice_id,
+            receiver_ids=[bob_id],
             timestamp="2025-05-19 12:00:02",
             content="I'm interested in learning about Python programming, especially data science applications.",
             exchange_id=1,

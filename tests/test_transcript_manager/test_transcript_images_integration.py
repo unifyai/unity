@@ -11,6 +11,7 @@ from unity.transcript_manager.types.message import Message
 from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
 from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, AnnotatedImageRef
+from unity.contact_manager.types.contact import Contact
 
 
 PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
@@ -36,8 +37,8 @@ def test_get_images_for_message_returns_metadata_only_tm():
     # Log a message that references the image via AnnotatedImageRefs
     msg = Message(
         medium="whatsapp_call",
-        sender_id=101,
-        receiver_ids=[202],
+        sender_id=Contact(first_name="Zoe"),
+        receiver_ids=[Contact(first_name="Alex")],
         timestamp=datetime.now(timezone.utc),
         content="Video conference: screen looks one colour",
         exchange_id=424242,
@@ -119,18 +120,18 @@ async def test_ask_can_use_images_for_color_question_tm():
         ],
     )
 
-    # Log message linked to the image – note: keep content suggestive of a VC context
+    # Log message linked to the image – provide Contact objects so contacts are auto-created
     tm.log_messages(
-        Message(
-            medium="whatsapp_call",
-            sender_id=301,  # assume 'Zoe' in external context; ID is fine for this test
-            receiver_ids=[302],
-            timestamp=datetime.now(timezone.utc) - timedelta(days=7),
-            content=(
+        {
+            "medium": "whatsapp_call",
+            "sender_id": Contact(first_name="Zoe"),
+            "receiver_ids": [Contact(first_name="Sam")],
+            "timestamp": datetime.now(timezone.utc) - timedelta(days=7),
+            "content": (
                 "Zoe on video conference: my screen is one colour, what is happening?"
             ),
-            exchange_id=777001,
-            images=AnnotatedImageRefs.model_validate(
+            "exchange_id": 777001,
+            "images": AnnotatedImageRefs.model_validate(
                 [
                     AnnotatedImageRef(
                         raw_image_ref=RawImageRef(image_id=int(img_id)),
@@ -138,7 +139,7 @@ async def test_ask_can_use_images_for_color_question_tm():
                     ),
                 ],
             ),
-        ),
+        },
     )
     tm.join_published()
 
@@ -215,14 +216,14 @@ async def test_ask_boot_option_and_fourth_item_tm():
 
     # Log the walkthrough message with annotated image references
     tm.log_messages(
-        Message(
-            medium="unify_message",
-            sender_id=10,
-            receiver_ids=[20],
-            timestamp=datetime.now(timezone.utc),
-            content=user_message,
-            exchange_id=88001,
-            images=AnnotatedImageRefs.model_validate(
+        {
+            "medium": "unify_message",
+            "sender_id": Contact(first_name="Jamie"),
+            "receiver_ids": [Contact(first_name="Taylor")],
+            "timestamp": datetime.now(timezone.utc),
+            "content": user_message,
+            "exchange_id": 88001,
+            "images": AnnotatedImageRefs.model_validate(
                 [
                     AnnotatedImageRef(
                         raw_image_ref=RawImageRef(image_id=int(grub_id)),
@@ -234,7 +235,7 @@ async def test_ask_boot_option_and_fourth_item_tm():
                     ),
                 ],
             ),
-        ),
+        },
     )
     tm.join_published()
 
@@ -306,14 +307,14 @@ async def test_compare_two_screens_requires_raw_context_tm():
 
     # Log the walkthrough message with annotated image references
     tm.log_messages(
-        Message(
-            medium="unify_message",
-            sender_id=10,
-            receiver_ids=[20],
-            timestamp=datetime.now(timezone.utc),
-            content=user_message,
-            exchange_id=99001,
-            images=AnnotatedImageRefs.model_validate(
+        {
+            "medium": "unify_message",
+            "sender_id": Contact(first_name="Jamie"),
+            "receiver_ids": [Contact(first_name="Taylor")],
+            "timestamp": datetime.now(timezone.utc),
+            "content": user_message,
+            "exchange_id": 99001,
+            "images": AnnotatedImageRefs.model_validate(
                 [
                     AnnotatedImageRef(
                         raw_image_ref=RawImageRef(image_id=int(grub_id)),
@@ -325,7 +326,7 @@ async def test_compare_two_screens_requires_raw_context_tm():
                     ),
                 ],
             ),
-        ),
+        },
     )
     tm.join_published()
 

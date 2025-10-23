@@ -7,6 +7,7 @@ import unify
 from unity.transcript_manager.types.message import Message, VALID_MEDIA
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from tests.helpers import _handle_project
+from unity.contact_manager.contact_manager import ContactManager
 
 CONTACTS = [
     {
@@ -205,6 +206,10 @@ async def test_get_messages():
 async def test_multiple_receivers():
     """Ensure a single message can target multiple distinct receiver IDs."""
     tm = TranscriptManager()
+
+    # Ensure contact id 2 exists so participant contacts are resolvable
+    cm = ContactManager()
+    cm._create_contact(first_name="TempUser")
 
     msg = Message(
         medium="email",
