@@ -488,26 +488,28 @@ class ManagersWorker:
         asyncio.create_task(self._conductor_watch_notifications(handle_id, handle))
         asyncio.create_task(self._conductor_watch_clarifications(handle_id, handle))
 
-    async def _handle_conductor_clarification_response(
-        self, event: ConductorClarificationResponse
+    async def _register_handle_action(
+        self, handle_id: int, action_name: str, query: str
     ) -> None:
-        """Handle a Conductor clarification response."""
-        # get handle
-        handle_data = self._handle_registry.get(event.handle_id)
+        """Register a handle action."""
+        handle_data = self._handle_registry.get(handle_id)
         if not handle_data:
-            print(
-                f"[ManagersWorker] Unknown handle_id={event.handle_id} for clarification response"
-            )
+            print(f"[ManagersWorker] Unknown handle_id={handle_id} for action")
             return
 
         # record intervention
         handle_data["handle_actions"].append(
-            {
-                "action_name": event.action_name,
-                "query": event.query,
-            }
+            {"action_name": action_name, "query": query}
         )
-        handle: SteerableToolHandle = handle_data["handle"]
+        return handle_data["handle"]
+
+    async def _handle_conductor_clarification_response(
+        self, event: ConductorClarificationResponse
+    ) -> None:
+        """Handle a Conductor clarification response."""
+        handle: SteerableToolHandle = self._register_handle_action(
+            event.handle_id, event.action_name, event.query
+        )
 
         # perform intervention
         try:
@@ -519,22 +521,9 @@ class ManagersWorker:
     async def _handle_conductor_handle_request(
         self, event: ConductorHandleRequest
     ) -> None:
-        # get handle
-        handle_data = self._handle_registry.get(event.handle_id)
-        if not handle_data:
-            print(
-                f"[ManagersWorker] Unknown handle_id={event.handle_id} for intervention"
-            )
-            return
-
-        # record intervention
-        handle_data["handle_actions"].append(
-            {
-                "action_name": event.action_name,
-                "query": event.query,
-            }
+        handle: SteerableToolHandle = self._register_handle_action(
+            event.handle_id, event.action_name, event.query
         )
-        handle: SteerableToolHandle = handle_data["handle"]
 
         # perform intervention
         result = ""
