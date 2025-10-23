@@ -192,7 +192,7 @@ async def test_ask_forwards_parent_context_and_preprocess(monkeypatch):
     res = await handle.result()
 
     assert res == "ok"
-    assert captured.get("_parent_chat_context") is parent_ctx
+    assert captured.get("parent_chat_context") is parent_ctx
     assert captured.get("preprocess_msgs") is inject_broader_context
     assert {"search", "extract", "crawl", "map"}.issubset(
         captured.get("tool_names", set()),
@@ -229,7 +229,9 @@ def test_web_searcher_clear_initialises_and_resets_caches():
     assert hasattr(ws, "_last_maps") and ws._last_maps == {}
 
     # Tools should still be provisioned
-    assert {"search", "extract", "crawl", "map"}.issubset(set(ws._ask_tools.keys()))
+    assert {"search", "extract", "crawl", "map"}.issubset(
+        set(ws.get_tools("ask").keys()),
+    )
 
 
 @pytest.mark.unit
