@@ -102,7 +102,7 @@ def test_head_of_queue_scheduled_cannot_be_queued():
     )["details"]["task_id"]
 
     # Sanity: the task should have been stored as 'scheduled'
-    task_row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)["tasks"][0]
+    task_row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
     assert task_row["status"] == "scheduled"
 
     # Attempting to mark it as 'queued' must fail

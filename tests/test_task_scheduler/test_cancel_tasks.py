@@ -1,6 +1,5 @@
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.task_scheduler.types.status import Status
 import pytest
 
 
@@ -20,9 +19,8 @@ def test_cancel_single_task():
     ts._cancel_tasks([0])
 
     # Verify the task was cancelled
-    res = ts._filter_tasks()
-    tasks = res["tasks"] if isinstance(res, dict) else res
-    assert tasks[0].status == Status.cancelled
+    tasks = ts._filter_tasks()
+    assert tasks[0]["status"] == "cancelled"
 
 
 @_handle_project
@@ -45,11 +43,10 @@ def test_cancel_multiple_tasks():
     ts._cancel_tasks([0, 1])
 
     # Verify both tasks were cancelled
-    res = ts._filter_tasks()
-    tasks = res["tasks"] if isinstance(res, dict) else res
-    status_by_id = {t.task_id: t.status for t in tasks}
-    assert status_by_id[0] == Status.cancelled
-    assert status_by_id[1] == Status.cancelled
+    tasks = ts._filter_tasks()
+    status_by_id = {t["task_id"]: t["status"] for t in tasks}
+    assert status_by_id[0] == "cancelled"
+    assert status_by_id[1] == "cancelled"
 
 
 @_handle_project
