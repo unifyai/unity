@@ -142,7 +142,7 @@ class ManagersWorker:
                 self._contact_manager = ContactManager()
 
                 # clear rolling summary
-                # contacts = self._contact_manager._filter_contacts()["contacts"]
+                # contacts = self._contact_manager._filter_contacts().get("contacts", [])
                 # print("got contacts", contacts)
                 # for c in contacts:
                 #     self._contact_manager._update_contact(contact_id=c.contact_id, rolling_summary="")
@@ -301,7 +301,7 @@ class ManagersWorker:
 
         try:
             # Get all contacts from ContactManager and convert to dict
-            rows = self._contact_manager._filter_contacts()["contacts"]
+            rows = self._contact_manager._filter_contacts().get("contacts", [])
             contacts = [c.model_dump() for c in rows]
 
             # Publish reply as Event envelope
@@ -642,7 +642,9 @@ class ManagersWorker:
             case ConductorHandleRequest():
                 asyncio.create_task(self._handle_conductor_handle_request(event))
             case ConductorClarificationResponse():
-                asyncio.create_task(self._handle_conductor_clarification_response(event))
+                asyncio.create_task(
+                    self._handle_conductor_clarification_response(event)
+                )
             case _:
                 print(
                     f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}"
