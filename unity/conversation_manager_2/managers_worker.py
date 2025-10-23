@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 import threading
 from datetime import datetime
 import os
-from typing import Optional
+from typing import Optional, Any, Callable
+import contextlib
 import redis.asyncio as redis
 
 load_dotenv()
@@ -48,15 +49,27 @@ class ManagersWorker:
         self._conductor: Optional[Conductor] = None
 
         # State flags
-        self._initialized = False
         self._init_lock = asyncio.Lock()
         self._stop_event = threading.Event()
+
+        # Startup flag
+        self._initialized = False
 
         # Conductor handle registry: incrementing int handle_id -> handle
         self._next_handle_id: int = 0
         self._handle_registry: dict[int, dict[str, Any]] = {}
         # Minimal meta for tracing (per handle_id)
         self._handle_meta: dict[int, dict] = {}
+
+        # Per-requirement queues and consumer tasks
+        self._queues: dict[str, asyncio.Queue[tuple[Event, Callable[[], bool]]]] = {
+            "initialized": asyncio.Queue(),
+            "contact_manager": asyncio.Queue(),
+            "transcript_manager": asyncio.Queue(),
+            "memory_manager": asyncio.Queue(),
+            "conductor": asyncio.Queue(),
+        }
+        self._queue_consumers: list[asyncio.Task] = []
 
     # ──────────────────────────────────────────────────────────────────
     # Message handlers
@@ -175,7 +188,7 @@ class ManagersWorker:
 
                 # 5. Initialize ConversationManager
                 print("[ManagersWorker] Initializing ConversationManagerHandle...")
-                self._conversation_manager_handle = ConversationManagerHandle(
+                conversation_manager_handle = ConversationManagerHandle(
                     event_broker=self._event_broker,
                     conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
                     contact_id="1",
@@ -189,7 +202,7 @@ class ManagersWorker:
                     self._conductor = Conductor(
                         contact_manager=self._contact_manager,
                         transcript_manager=self._transcript_manager,
-                        conversation_manager=self._conversation_manager_handle,
+                        conversation_manager=conversation_manager_handle,
                     )
                     print("[ManagersWorker] Conductor initialized")
                 except Exception as e:
@@ -222,9 +235,6 @@ class ManagersWorker:
 
     async def _publish_bus_event(self, event: Event) -> None:
         """Publish an event to the EventBus."""
-        while not self._initialized:
-            await asyncio.sleep(1)
-            print("[ManagersWorker] Not initialized yet, cannot publish bus event")
         event_dict = event.to_dict()["payload"]["event"]
         event_name = event_dict["event_name"]
         bus_event = Event.from_dict(event_dict).to_bus_event()
@@ -235,16 +245,6 @@ class ManagersWorker:
 
     async def _log_message(self, event: LogMessageRequest) -> None:
         """Log a message via TranscriptManager."""
-        # Wait until initialization completes to avoid dropping logs that arrive early
-        while not self._initialized:
-            await asyncio.sleep(1)
-            print("[ManagersWorker] Not initialized yet, waiting to log message")
-        if not self._transcript_manager:
-            print(
-                "[ManagersWorker] TranscriptManager missing after init; cannot log message",
-            )
-            return
-
         try:
             print(f"[ManagersWorker] Logging message: {event.to_dict()}")
             medium = event.medium or "unify_message"
@@ -295,10 +295,6 @@ class ManagersWorker:
 
     async def _get_contacts(self) -> None:
         """Fetch all contacts and publish back."""
-        if not self._contact_manager:
-            print("[ManagersWorker] Not initialized, cannot get contacts")
-            return
-
         try:
             # Get all contacts from ContactManager and convert to dict
             rows = self._contact_manager._filter_contacts().get("contacts", [])
@@ -319,10 +315,6 @@ class ManagersWorker:
 
     async def _get_contact_by_id(self, contact_id: int) -> None:
         """Fetch a single contact by ID and publish back."""
-        if not self._contact_manager:
-            print("[ManagersWorker] Not initialized, cannot get contact")
-            return
-
         try:
             # get contact info from ContactManager
             contacts = self._contact_manager.get_contact_info([contact_id])
@@ -343,10 +335,6 @@ class ManagersWorker:
 
     async def _create_contact(self, contact: dict) -> None:
         """Create a contact in the ContactManager."""
-        if not self._contact_manager:
-            print("[ManagersWorker] Not initialized, cannot create contact")
-            return
-
         try:
             self._contact_manager._create_contact(
                 first_name=contact["first_name"],
@@ -363,10 +351,6 @@ class ManagersWorker:
 
     async def _update_contact(self, contact: dict) -> None:
         """Update a contact in the ContactManager."""
-        if not self._contact_manager:
-            print("[ManagersWorker] Not initialized, cannot update contact")
-            return
-
         try:
             self._contact_manager._update_contact(
                 contact_id=contact["contact_id"],
@@ -445,7 +429,6 @@ class ManagersWorker:
         self, handle_id: int, handle: SteerableToolHandle
     ) -> None:
         """Forward clarifications to CM until handle completes."""
-
         while not handle.done():
             # await clarification request
             try:
@@ -469,10 +452,6 @@ class ManagersWorker:
 
     async def _handle_conductor_request(self, event: ConductorRequest) -> None:
         """Start a Conductor ask/request, store handle, and publish started."""
-        if not self._conductor:
-            print("[ManagersWorker] Conductor not initialized;")
-            return
-
         if event.action_name == "ask":
             handle = await self._conductor.ask(
                 event.query,
@@ -606,53 +585,102 @@ class ManagersWorker:
         )
 
     # ──────────────────────────────────────────────────────────────────
-    # Message processing
+    # Message Routing Workers (ingress/egress)
     # ──────────────────────────────────────────────────────────────────
 
-    async def _process_message(self, event: Event) -> None:
-        """Process a single Event from the queue."""
-        match event:
-            case ManagersStartupRequest():
-                asyncio.create_task(self._startup(event.to_dict()["payload"]))
-            case GetBusEventsRequest():
-                asyncio.create_task(self._get_bus_events())
-            case PublishBusEventRequest():
-                asyncio.create_task(self._publish_bus_event(event))
-            case LogMessageRequest():
-                asyncio.create_task(self._log_message(event))
-            case GetContactsRequest():
-                asyncio.create_task(self._get_contacts())
-            case ContactInfoRequest():
-                asyncio.create_task(self._get_contact_by_id(event.contact_id))
-            case CreateContactRequest():
-                asyncio.create_task(self._create_contact(event.to_dict()["payload"]))
-            case UpdateContactRequest():
-                asyncio.create_task(self._update_contact(event.to_dict()["payload"]))
-            case UpdateContactRollingSummaryRequest():
-                print("REACHED")
-                asyncio.create_task(
-                    self._update_contact_rolling_summary(
-                        event.contacts_ids,
-                        event.transcripts,
-                    ),
-                )
-            # Conductor bridge
-            case ConductorRequest():
-                asyncio.create_task(self._handle_conductor_request(event))
-            case ConductorHandleRequest():
-                asyncio.create_task(self._handle_conductor_handle_request(event))
-            case ConductorClarificationResponse():
-                asyncio.create_task(
-                    self._handle_conductor_clarification_response(event)
-                )
-            case _:
-                print(
-                    f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}"
-                )
+    # Single-level routing: return (primary queue key, readiness checker)
+    def _route_for(self, event: Event) -> tuple[str, Callable[[], bool]]:
+        if isinstance(event, ManagersStartupRequest):
+            return ("initialized", lambda: True)
+        if isinstance(
+            event,
+            (
+                GetContactsRequest,
+                ContactInfoRequest,
+                CreateContactRequest,
+                UpdateContactRequest,
+            ),
+        ):
+            return ("contact_manager", lambda: self._contact_manager is not None)
+        if isinstance(event, LogMessageRequest):
+            return ("transcript_manager", lambda: self._transcript_manager is not None)
+        if isinstance(event, UpdateContactRollingSummaryRequest):
+            return ("memory_manager", lambda: self._memory_manager is not None)
+        if isinstance(
+            event,
+            (ConductorRequest, ConductorHandleRequest, ConductorClarificationResponse),
+        ):
+            return ("conductor", lambda: self._conductor is not None)
+        if isinstance(event, (GetBusEventsRequest, PublishBusEventRequest)):
+            return ("initialized", lambda: self._initialized)
+        return ("initialized", lambda: self._initialized)
 
-    async def _queue_processor(self) -> None:
-        """Worker task that processes messages from the queue in FIFO order."""
-        print("[ManagersWorker] Queue processor started")
+    async def _egress_worker(self, req_key: str) -> None:
+        print(f"[ManagersWorker] Egress worker for {req_key} starting")
+        q = self._queues[req_key]
+        while not self._stop_event.is_set():
+            try:
+                ev, ready = await asyncio.wait_for(q.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                waited = 0
+                while not ready() and not self._stop_event.is_set():
+                    if waited % 5 == 0:
+                        print(
+                            f"[ManagersWorker] Waiting for {req_key} readiness... {waited}s",
+                        )
+                    await asyncio.sleep(1)
+                    waited += 1
+                # Inline dispatch here to reduce call depth
+                match ev:
+                    case ManagersStartupRequest():
+                        asyncio.create_task(self._startup(ev.to_dict()["payload"]))
+                    case GetBusEventsRequest():
+                        asyncio.create_task(self._get_bus_events())
+                    case PublishBusEventRequest():
+                        asyncio.create_task(self._publish_bus_event(ev))
+                    case LogMessageRequest():
+                        asyncio.create_task(self._log_message(ev))
+                    case GetContactsRequest():
+                        asyncio.create_task(self._get_contacts())
+                    case ContactInfoRequest():
+                        asyncio.create_task(self._get_contact_by_id(ev.contact_id))
+                    case CreateContactRequest():
+                        asyncio.create_task(
+                            self._create_contact(ev.to_dict()["payload"])
+                        )
+                    case UpdateContactRequest():
+                        asyncio.create_task(
+                            self._update_contact(ev.to_dict()["payload"])
+                        )
+                    case UpdateContactRollingSummaryRequest():
+                        asyncio.create_task(
+                            self._update_contact_rolling_summary(
+                                ev.contacts_ids, ev.transcripts
+                            )
+                        )
+                    case ConductorRequest():
+                        asyncio.create_task(self._handle_conductor_request(ev))
+                    case ConductorHandleRequest():
+                        asyncio.create_task(self._handle_conductor_handle_request(ev))
+                    case ConductorClarificationResponse():
+                        asyncio.create_task(
+                            self._handle_conductor_clarification_response(ev)
+                        )
+                    case _:
+                        print(
+                            f"[ManagersWorker] Unknown event: {ev.to_dict()['event_name']}"
+                        )
+            except Exception as e:
+                print(f"[ManagersWorker] Error dispatching {req_key} event: {e}")
+            finally:
+                with contextlib.suppress(Exception):
+                    q.task_done()
+
+    async def _ingress_router(self) -> None:
+        """Worker task that processes messages from Redis and routes into per-requirement queues."""
+        print("[ManagersWorker] Ingress router started")
 
         while not self._stop_event.is_set():
             try:
@@ -662,17 +690,20 @@ class ManagersWorker:
                 except asyncio.TimeoutError:
                     continue
 
-                # Process message
-                await self._process_message(msg)
+                # Route event into the appropriate per-requirement queue; workers will drain
+                try:
+                    key, ready = self._route_for(msg)
+                    print(
+                        f"[ManagersWorker] Routed {msg.to_dict()['event_name']} to {key} queue",
+                    )
+                    self._queues[key].put_nowait((msg, ready))
+                except Exception as e:
+                    print(f"[ManagersWorker] Failed to enqueue event: {e}")
 
             except Exception as e:
-                print(f"[ManagersWorker] Error in queue processor: {e}")
+                print(f"[ManagersWorker] Error in ingress router: {e}")
 
-        print("[ManagersWorker] Queue processor stopped")
-
-    # ──────────────────────────────────────────────────────────────────
-    # Main event loop (Pub/Sub listener)
-    # ──────────────────────────────────────────────────────────────────
+        print("[ManagersWorker] Ingress router stopped")
 
     async def wait_for_events(self) -> None:
         """
@@ -688,8 +719,10 @@ class ManagersWorker:
         print(f"[ManagersWorker] Subscribe channel: {self._subscribe_channel}")
         print(f"[ManagersWorker] Publish channel: {self._publish_channel}")
 
-        # Start queue processor task
-        processor_task = asyncio.create_task(self._queue_processor())
+        # Start ingress router (Redis → internal queues) and per-requirement workers
+        ingress_task = asyncio.create_task(self._ingress_router())
+        for key in self._queues.keys():
+            self._queue_consumers.append(asyncio.create_task(self._egress_worker(key)))
 
         try:
             async with self._event_broker.pubsub() as pubsub:
@@ -724,7 +757,13 @@ class ManagersWorker:
             # Stop processor
             self._stop_event.set()
             await self._event_broker.aclose()
-            await processor_task
+            await ingress_task
+            # Cancel consumer tasks and wait for them to exit
+            for t in self._queue_consumers:
+                t.cancel()
+            for t in self._queue_consumers:
+                with contextlib.suppress(Exception):
+                    await t
             print("[ManagersWorker] Worker stopped")
 
     def stop(self) -> None:
