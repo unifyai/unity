@@ -197,7 +197,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         offset : int, default ``0``
             Zero‑based index of the first result to return.
         limit : int, default ``100``
-            Maximum number of results to return.
+            Maximum number of results to return. Must be <= 1000.
 
         Returns
         -------

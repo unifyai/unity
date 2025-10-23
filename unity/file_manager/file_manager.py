@@ -466,7 +466,7 @@ class FileManager(BaseFileManager):
             - reference_text is free-form text which will be embedded.
             When None or empty dict, returns the most recent files.
         k : int, default 10
-            Maximum number of files to return.
+            Maximum number of files to return. Must be <= 1000.
 
         Returns
         -------
@@ -513,7 +513,7 @@ class FileManager(BaseFileManager):
         offset : int, default 0
             Zero-based index of the first result to include.
         limit : int, default 100
-            Maximum number of records to return.
+            Maximum number of records to return. Must be <= 1000.
 
         Returns
         -------

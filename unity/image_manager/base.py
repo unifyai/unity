@@ -28,6 +28,16 @@ class BaseImageManager(BaseStateManager):
         """
         Return images that satisfy a Python expression filter.
 
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python boolean expression evaluated with column names in scope.
+            When None, returns all images.
+        offset : int, default 0
+            Zero-based index of the first result to include.
+        limit : int, default 100
+            Maximum number of records to return. Must be <= 1000.
+
         Examples
         --------
         - "image_id == 42"
@@ -44,7 +54,18 @@ class BaseImageManager(BaseStateManager):
     ) -> List["Image"]:
         """
         Semantic search over image captions using the provided free‑form text.
-        Returns up to ``k`` images ranked by similarity.
+
+        Parameters
+        ----------
+        reference_text : str
+            Free-form text to search for in image captions.
+        k : int, default 10
+            Maximum number of results to return. Must be <= 1000.
+
+        Returns
+        -------
+        List[Image]
+            Up to k images ranked by similarity.
         """
 
     @abstractmethod

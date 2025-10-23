@@ -1639,7 +1639,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 reference text to compare against. Supports multiple expressions; when more than one
                 is provided the ranking uses a sum of cosine distances over all terms.
         k : int, default 10
-                Maximum number of rows to return.
+                Maximum number of rows to return. Must be <= 1000.
         filter : str | None, default ``None``
                 Row-level predicate (evaluated with column names as variables).
                 *None* returns all rows.
@@ -1713,7 +1713,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             entries are provided, their scores are combined for ranking.
 
         k : int, default 5
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         filter : str | None, default ``None``
                 Row-level predicate (evaluated with column names as variables).
@@ -1798,7 +1798,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             semantic similarity. Multiple entries are combined for ranking.
 
         k : int, default 5
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         Returns
         -------
@@ -2027,7 +2027,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         offset : int, default ``0``
                 Pagination offset (0-based).
         limit : int, default ``100``
-                Maximum rows per table.
+                Maximum rows per table. Must be <= 1000.
         tables :  str | list[str]
                 Subset of tables to scan; ``None`` → all tables.
 
@@ -2156,7 +2156,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             names created by `select`.
 
         result_limit : int, default 100
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         result_offset : int, default 0
             Pagination offset into the result set.
@@ -2260,7 +2260,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             column names created by the final step's `select` mapping.
 
         result_limit : int, default 100
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         result_offset : int, default 0
             Pagination offset into the final result set.
