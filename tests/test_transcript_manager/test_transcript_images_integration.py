@@ -7,7 +7,6 @@ from unity.image_manager.utils import make_solid_png_base64
 import pytest
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import Message
 from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
 from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, AnnotatedImageRef
@@ -35,27 +34,29 @@ def test_get_images_for_message_returns_metadata_only_tm():
     )
 
     # Log a message that references the image via AnnotatedImageRefs
-    msg = Message(
-        medium="whatsapp_call",
-        sender_id=Contact(first_name="Zoe"),
-        receiver_ids=[Contact(first_name="Alex")],
-        timestamp=datetime.now(timezone.utc),
-        content="Video conference: screen looks one colour",
-        exchange_id=424242,
-        images=AnnotatedImageRefs.model_validate(
-            [
-                AnnotatedImageRef(
-                    raw_image_ref=RawImageRef(image_id=int(img_id)),
-                    annotation="blue screen",
-                ),
-            ],
-        ),
+    exchange_id = 424242
+    tm.log_messages(
+        {
+            "medium": "whatsapp_call",
+            "sender_id": Contact(first_name="Zoe"),
+            "receiver_ids": [Contact(first_name="Alex")],
+            "timestamp": datetime.now(timezone.utc),
+            "content": "Video conference: screen looks one colour",
+            "exchange_id": exchange_id,
+            "images": AnnotatedImageRefs.model_validate(
+                [
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(img_id)),
+                        annotation="blue screen",
+                    ),
+                ],
+            ),
+        },
     )
-    tm.log_messages(msg)
     tm.join_published()
 
     # Fetch message_id back then query image metadata via private tool
-    stored = tm._filter_messages(filter=f"exchange_id == {msg.exchange_id}")["messages"]
+    stored = tm._filter_messages(filter=f"exchange_id == {exchange_id}")["messages"]
     assert stored and len(stored) == 1
     mid = int(stored[0].message_id)
 
