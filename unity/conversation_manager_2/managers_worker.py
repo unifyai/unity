@@ -513,7 +513,7 @@ class ManagersWorker:
 
         # perform intervention
         try:
-            handle.answer_clarification(event.call_id, event.response)
+            await handle.answer_clarification(event.call_id, event.response)
         except Exception as e:
             print(f"[ManagersWorker] Error answering clarification: {e}")
             return
