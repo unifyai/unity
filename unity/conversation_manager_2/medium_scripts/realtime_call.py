@@ -66,6 +66,16 @@ from pathlib import Path
 
 event_broker = get_event_broker()
 
+contact_first_name = ""
+contact_surname = ""
+contact_is_boss_user = ""
+contact_email = ""
+boss_first_name = ""
+boss_surname = ""
+boss_phone_number = ""
+boss_email = ""
+is_boss_user = ""
+
 with open(Path(__file__).resolve().parent.parent / "prompts" / "realtime_phone_agent.md") as f:
     SYSTEM_PROMPT = f.read()
 
@@ -148,13 +158,28 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     # High-level behavior for the assistant.
+    print("HEEEELLOOOOO")
+    boss_first_name     = os.environ.get("BOSS_FIRST_NAME", "")
+    boss_surname        = os.environ.get("BOSS_SURNAME", "")
+    boss_phone_number   = os.environ.get("BOSS_PHONE_NUMBER", "")
+    boss_email          = os.environ.get("BOSS_EMAIL", "")
+    contact_first_name  = os.environ.get("CONTACT_FIRST_NAME", "")
+    contact_surname     = os.environ.get("CONTACT_SURNAME", "")
+    contact_email       = os.environ.get("CONTACT_EMAIL", "")
+    is_boss_user        = os.environ.get("IS_BOSS_USER", "False")
     system = Template(SYSTEM_PROMPT).render(
-            contact_id=1,
-            first_name="Yasser",
-            surname="Ahmed",
-            phone_number="+12697784020",
-            email_address="yasser@unify.ai",
+            boss_first_name=boss_first_name,
+            boss_surname=boss_surname,
+            boss_email_address=boss_email if boss_email != "None" else None,
+            boss_phone_number=boss_phone_number if boss_phone_number != "None" else None,
+            contact_first_name=contact_first_name,
+            contact_surname=contact_surname,
+            contact_phone_number=os.environ["CALL_FROM_NUMBER"],
+            contact_email=contact_email,
+            is_boss_user=True if is_boss_user == "True" else False
         )
+    print("PRINTING SYSTEM PROMPT")
+    print(system)
     agent = Assistant(
         instructions=system
     )
@@ -212,9 +237,31 @@ if __name__ == "__main__":
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
-        voice_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
-        voice_id = sys.argv[5]
-        outbound = sys.argv[7]
+        outbound = sys.argv[4]
+        
+        
+        # realtime specific stff
+        is_boss_user = sys.argv[5]
+        contact_first_name = sys.argv[6]
+        contact_surname = sys.argv[7]
+        contact_email = sys.argv[8]
+
+        # boss details
+        boss_first_name = sys.argv[9]
+        boss_surname = sys.argv[10]
+        boss_phone_number = sys.argv[11]
+        boss_email = sys.argv[12]
+
+        os.environ["BOSS_FIRST_NAME"]    = boss_first_name
+        os.environ["BOSS_SURNAME"]       = boss_surname
+        os.environ["BOSS_PHONE_NUMBER"]  = boss_phone_number
+        os.environ["BOSS_EMAIL"]         = boss_email
+        os.environ["CONTACT_FIRST_NAME"] = contact_first_name
+        os.environ["CONTACT_SURNAME"]    = contact_surname
+        os.environ["CONTACT_EMAIL"]      = contact_email
+        os.environ["IS_BOSS_USER"]       = is_boss_user
+
+
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint

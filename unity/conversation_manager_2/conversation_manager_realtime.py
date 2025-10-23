@@ -435,7 +435,7 @@ class ConversationManager:
 
     async def publish_transcript(self, event: Event):
         event_name = event.to_dict()["event_name"].lower()
-        print("publishing transcript", event_name)
+        # print("publishing transcript", event_name)
         medium = (
             "phone_call"
             if "phone" in event_name
@@ -597,15 +597,29 @@ class ConversationManager:
                 target_path = (
                     Path(__file__).parent.resolve() / "medium_scripts" / "realtime_call.py"
                 )
+                # get contact for realtime specific info
+                contact = self.state.get_contact(phone_number=event.contact)
+                boss = self.state.get_contact(contact_id=1)
+                print("FOUND BOSS", boss)
                 self.call_proc = run_script(
                     str(target_path),
                     "dev",
                     event.contact,
                     self.state.assistant_number,
-                    self.state.voice_provider,
-                    self.state.voice_id if self.state.voice_id else "None",
-                    "None",
                     str(False),
+
+                    # contact details
+                    str(contact.is_boss),
+                    str(contact.first_name),
+                    str(contact.surname),
+                    str(contact.email_address),
+
+                    # boss user details
+                    str(boss.first_name),
+                    str(boss.surname),
+                    str(boss.phone_number),
+                    str(boss.email_address)
+
                 )
 
         elif isinstance(event, PhoneCallStarted):

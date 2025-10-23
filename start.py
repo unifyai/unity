@@ -17,10 +17,12 @@ signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
+    import sys
+    use_realtime = "--realtime" in sys.argv
     print("Starting convo manager...")
 
     # Start the convo manager
-    if conversation_manager.start():
+    if conversation_manager.start(use_realtime=use_realtime):
         print("Convo manager started successfully...")
 
         # Keep running until the convo manager process is dead
