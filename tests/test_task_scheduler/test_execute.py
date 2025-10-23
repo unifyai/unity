@@ -358,8 +358,8 @@ async def test_execute_requests_clarification_for_unknown_id(monkeypatch):
 
     handle = await ts.execute(
         text=str(nonexistent_id),
-        clarification_up_q=clarification_up_q,
-        clarification_down_q=clarification_down_q,
+        _clarification_up_q=clarification_up_q,
+        _clarification_down_q=clarification_down_q,
     )
 
     # Wait for the assistant to push a clarification question.

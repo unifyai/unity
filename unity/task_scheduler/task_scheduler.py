@@ -417,9 +417,9 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         tool_policy: Union[
             Literal["default"],
@@ -435,8 +435,8 @@ class TaskScheduler(BaseTaskScheduler):
         # Add clarification tool when queues are provided
         self._maybe_add_clarification_tool(
             tools,
-            clarification_up_q,
-            clarification_down_q,
+            _clarification_up_q,
+            _clarification_down_q,
         )
 
         # Inject the dynamic system prompt
@@ -467,7 +467,7 @@ class TaskScheduler(BaseTaskScheduler):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
             tool_policy=effective_tool_policy,
             handle_cls=(
@@ -492,9 +492,9 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         tool_policy: Union[
             Literal["default"],
@@ -531,8 +531,8 @@ class TaskScheduler(BaseTaskScheduler):
         # Add clarification tool when queues are provided
         self._maybe_add_clarification_tool(
             tools,
-            clarification_up_q,
-            clarification_down_q,
+            _clarification_up_q,
+            _clarification_down_q,
         )
 
         # Inject the dynamic system prompt
@@ -564,7 +564,7 @@ class TaskScheduler(BaseTaskScheduler):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
             tool_policy=effective_tool_policy,
         )
@@ -585,9 +585,9 @@ class TaskScheduler(BaseTaskScheduler):
         text: str,
         *,
         isolated: Optional[bool] = None,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         freeform_text: str = text
 
@@ -616,17 +616,17 @@ class TaskScheduler(BaseTaskScheduler):
                 if isolated is True:
                     return await self._execute_queue_internal(
                         task_id=int(stripped),
-                        parent_chat_context=parent_chat_context,
-                        clarification_up_q=clarification_up_q,
-                        clarification_down_q=clarification_down_q,
+                        parent_chat_context=_parent_chat_context,
+                        clarification_up_q=_clarification_up_q,
+                        clarification_down_q=_clarification_down_q,
                         detach=True,
                     )
                 else:
                     return await self._execute_queue_internal(
                         task_id=int(stripped),
-                        parent_chat_context=parent_chat_context,
-                        clarification_up_q=clarification_up_q,
-                        clarification_down_q=clarification_down_q,
+                        parent_chat_context=_parent_chat_context,
+                        clarification_up_q=_clarification_up_q,
+                        clarification_down_q=_clarification_down_q,
                         detach=False,
                     )
             except (ValueError, RuntimeError):
@@ -649,9 +649,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         return self._start_execute_loop(
             freeform_text=freeform_text,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            parent_chat_context=_parent_chat_context,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
     # ------------------------------------------------------------------ #
@@ -737,9 +737,9 @@ class TaskScheduler(BaseTaskScheduler):
         handle = await ActiveTask.create(
             self._actor,
             task_description=_task_desc,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            _parent_chat_context=parent_chat_context,
+            _clarification_up_q=clarification_up_q,
+            _clarification_down_q=clarification_down_q,
             task_id=task_id,
             instance_id=task_row["instance_id"],
             scheduler=self,
@@ -4144,9 +4144,9 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         """
         Public entrypoint to start execution at a specific task id using queue semantics.
@@ -4174,9 +4174,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         return await self._execute_queue_internal(
             task_id=task_id,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            parent_chat_context=_parent_chat_context,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
     # Search Across Tasks

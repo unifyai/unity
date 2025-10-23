@@ -63,8 +63,8 @@ async def test_conductor_clear_requires_confirmation_then_calls_clear_with_targe
 
     handle = await conductor.request(
         text=user_request,
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
         _log_tool_steps=True,
     )
 

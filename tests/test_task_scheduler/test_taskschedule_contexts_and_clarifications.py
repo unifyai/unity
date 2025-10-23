@@ -43,7 +43,7 @@ async def test_ts_ask_uses_parent_context():
 
     handle = await ts.ask(
         "What is the priority level of the Thunderbolt task?",
-        parent_chat_context=parent_ctx,
+        _parent_chat_context=parent_ctx,
     )
     answer = await handle.result()
     assert _contains(answer, "high"), assertion_failed(
@@ -85,8 +85,8 @@ async def test_ts_ask_requests_clarification():
     # run ask in background (loop starts immediately)
     handle = await ts.ask(
         "What is the description of the high priority task? Please request clarification if there is more than one.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
 
     # expect a clarification question
@@ -140,7 +140,7 @@ async def test_ts_update_uses_parent_context():
     await (
         await ts.update(
             "Mark the 'Thunderbolt' task as completed.",
-            parent_chat_context=parent_ctx,
+            _parent_chat_context=parent_ctx,
         )
     ).result()
 
@@ -190,8 +190,8 @@ async def test_ts_update_requests_clarification():
         (
             await ts.update(
                 "Set the queued task's priority to high. Please request clarification if there is more than one.",
-                clarification_up_q=up_q,
-                clarification_down_q=down_q,
+                _clarification_up_q=up_q,
+                _clarification_down_q=down_q,
             )
         ).result(),
     )

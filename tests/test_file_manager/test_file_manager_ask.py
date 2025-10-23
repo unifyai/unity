@@ -129,8 +129,8 @@ async def test_ask_with_clarification_queues(supported_file_examples: dict):
             handle = await file_manager.ask(
                 display_name,
                 "What is this file about?",
-                clarification_up_q=up_q,
-                clarification_down_q=down_q,
+                _clarification_up_q=up_q,
+                _clarification_down_q=down_q,
             )
 
             # Verify tools included request_clarification

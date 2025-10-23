@@ -224,7 +224,7 @@ async def test_active_task_interject_implies_defer_and_reinstate(monkeypatch):
         async def _classify_steering_intent(
             self,
             message: str,
-            parent_chat_context=None,
+            _parent_chat_context=None,
         ):
             # Classify this interjection as a defer request
             return ("defer", message)

@@ -274,10 +274,10 @@ class SimulatedFileManager(BaseFileManager):
         question: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
         log_events: bool = False,
@@ -304,7 +304,7 @@ class SimulatedFileManager(BaseFileManager):
         instruction = build_simulated_method_prompt(
             "ask",
             f"File: {filename}\nQuestion: {question}",
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
 
         # Add file context
@@ -316,8 +316,8 @@ class SimulatedFileManager(BaseFileManager):
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:

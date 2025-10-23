@@ -188,11 +188,11 @@ async def test_ask_forwards_parent_context_and_preprocess(monkeypatch):
         {"role": "user", "content": "Context A."},
         {"role": "assistant", "content": "Context B."},
     ]
-    handle = await ws.ask("hello", parent_chat_context=parent_ctx)
+    handle = await ws.ask("hello", _parent_chat_context=parent_ctx)
     res = await handle.result()
 
     assert res == "ok"
-    assert captured.get("parent_chat_context") is parent_ctx
+    assert captured.get("_parent_chat_context") is parent_ctx
     assert captured.get("preprocess_msgs") is inject_broader_context
     assert {"search", "extract", "crawl", "map"}.issubset(
         captured.get("tool_names", set()),

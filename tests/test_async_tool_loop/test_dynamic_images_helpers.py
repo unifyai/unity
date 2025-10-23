@@ -23,11 +23,11 @@ from tests.test_async_tool_loop.async_helpers import (
 async def test_interject_dynamic_helper_appends_images() -> None:
     async def do_work(
         *,
-        interject_queue: asyncio.Queue[str],
-        notification_up_q: asyncio.Queue[dict],
+        _interject_queue: asyncio.Queue[str],
+        _notification_up_q: asyncio.Queue[dict],
     ):
-        await notification_up_q.put({"message": "ready"})
-        _ = await interject_queue.get()
+        await _notification_up_q.put({"message": "ready"})
+        _ = await _interject_queue.get()
         return {"ok": True}
 
     client = unify.AsyncUnify(
@@ -77,8 +77,8 @@ async def test_interject_dynamic_helper_appends_images() -> None:
 @pytest.mark.asyncio
 @_handle_project
 async def test_stop_dynamic_helper_appends_images() -> None:
-    async def wait_forever(*, notification_up_q: asyncio.Queue[dict]):
-        await notification_up_q.put({"message": "starting"})
+    async def wait_forever(*, _notification_up_q: asyncio.Queue[dict]):
+        await _notification_up_q.put({"message": "starting"})
         await asyncio.Event().wait()
         return {"ok": False}
 
@@ -133,16 +133,16 @@ async def test_stop_dynamic_helper_appends_images() -> None:
 async def test_clarify_helpers_append_images_for_request_and_answer() -> None:
     async def need_clar(
         *,
-        clarification_up_q: asyncio.Queue[str],
-        clarification_down_q: asyncio.Queue[str],
+        _clarification_up_q: asyncio.Queue[str],
+        _clarification_down_q: asyncio.Queue[str],
     ) -> dict:
-        await clarification_up_q.put(
+        await _clarification_up_q.put(
             {
                 "question": "What is the dominant color?",
                 "images": [RawImageRef(image_id=img_id)],
             },
         )
-        ans = await clarification_down_q.get()
+        ans = await _clarification_down_q.get()
         return {"answer": ans}
 
     client = unify.AsyncUnify(
@@ -185,8 +185,8 @@ async def test_clarify_helpers_append_images_for_request_and_answer() -> None:
 @pytest.mark.asyncio
 @_handle_project
 async def test_notification_payload_appends_images() -> None:
-    async def notify(*, notification_up_q: asyncio.Queue[dict]) -> dict:
-        await notification_up_q.put(
+    async def notify(*, _notification_up_q: asyncio.Queue[dict]) -> dict:
+        await _notification_up_q.put(
             {"message": "progress", "images": [RawImageRef(image_id=img_id)]},
         )
         return {"ok": True}

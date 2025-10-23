@@ -266,9 +266,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
@@ -284,7 +284,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         # 1️⃣  Prepare toolset (and optional live clarification helper)
         tools = dict(self.get_tools("refactor"))
 
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 try:
@@ -321,8 +321,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                     pass
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -349,7 +349,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=self._default_refactor_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
@@ -373,9 +373,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
         case_specific_instructions: str | None = None,
@@ -392,7 +392,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self.get_tools("update"))
 
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 try:
@@ -429,8 +429,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                     pass
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -459,7 +459,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
@@ -484,9 +484,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         case_specific_instructions: str | None = None,
         response_format: Any | None = None,
@@ -511,7 +511,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             multi_table_tools = dict(self.get_tools("ask.multi_table"))
             tools.update(multi_table_tools)
 
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 try:
@@ -548,8 +548,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                     pass
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -586,7 +586,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
             preprocess_msgs=inject_broader_context,
             response_format=response_format,

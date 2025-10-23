@@ -26,9 +26,9 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Answer a web research question and return a live SteerableToolHandle.
@@ -75,9 +75,9 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         _return_reasoning_steps : bool, default False
             When True, SteerableToolHandle.result returns (answer, messages)
             where messages are the internal tool-loop messages.
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Read-only conversation context to prepend to the tool loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Optional duplex channels for interactive clarification.
 
         Returns

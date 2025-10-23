@@ -270,10 +270,10 @@ async def test_interject_nested_handle(monkeypatch):
     # 2.  Inner tool that waits for the steer via `interject_queue`
     async def slow_topic(
         *,
-        interject_queue: asyncio.Queue[str],
+        _interject_queue: asyncio.Queue[str],
     ) -> str:
         try:
-            new = await asyncio.wait_for(interject_queue.get(), timeout=60)
+            new = await asyncio.wait_for(_interject_queue.get(), timeout=60)
             return f"topic={new}"
         except asyncio.TimeoutError:
             return "topic=cats"
@@ -465,11 +465,11 @@ async def test_clarification_nested_handle():
     # ── inner tool that *requires* clarification ─────────────────────────
     async def ask_colour(
         *,
-        clarification_up_q: asyncio.Queue[str],
-        clarification_down_q: asyncio.Queue[str],
+        _clarification_up_q: asyncio.Queue[str],
+        _clarification_down_q: asyncio.Queue[str],
     ) -> str:
-        await clarification_up_q.put("Which colour?")
-        colour = await clarification_down_q.get()
+        await _clarification_up_q.put("Which colour?")
+        colour = await _clarification_down_q.get()
         exec_log.append(colour)
         return f"Chose {colour}"
 
@@ -494,8 +494,8 @@ async def test_clarification_nested_handle():
 
         async def _ask_colour_wrapped() -> str:  # type: ignore[valid-type]
             return await ask_colour(
-                clarification_up_q=up_q,
-                clarification_down_q=down_q,
+                _clarification_up_q=up_q,
+                _clarification_down_q=down_q,
             )
 
         _ask_colour_wrapped.__name__ = "ask_colour"
@@ -561,13 +561,13 @@ async def test_notification_nested_handle():
     # ── inner tool that emits progress updates ───────────────────────────
     async def inner_progress(
         *,
-        notification_up_q: asyncio.Queue | None = None,
+        _notification_up_q: asyncio.Queue | None = None,
     ) -> str:
-        if notification_up_q is None:
+        if _notification_up_q is None:
             raise RuntimeError("notification queue missing")
-        await notification_up_q.put({"message": "Inner loop: preparing widget"})
+        await _notification_up_q.put({"message": "Inner loop: preparing widget"})
         await asyncio.sleep(0)
-        await notification_up_q.put({"message": "Inner loop: halfway"})
+        await _notification_up_q.put({"message": "Inner loop: halfway"})
         return "✅ inner finished"
 
     inner_progress.__name__ = "inner_progress"
@@ -576,7 +576,7 @@ async def test_notification_nested_handle():
     # ── outer tool launches a nested loop and bridges progress via parent's queue ──
     async def outer_tool(
         *,
-        notification_up_q: asyncio.Queue | None = None,
+        _notification_up_q: asyncio.Queue | None = None,
     ) -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-5@openai",
@@ -592,7 +592,7 @@ async def test_notification_nested_handle():
         )
 
         async def inner_bridge() -> str:
-            return await inner_progress(notification_up_q=notification_up_q)
+            return await inner_progress(_notification_up_q=_notification_up_q)
 
         return start_async_tool_loop(
             client=inner_client,

@@ -36,9 +36,9 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Answer a **read-only question** that may reference tasks, contacts,
@@ -57,10 +57,10 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
             ``(assistant_answer, hidden_messages)`` instead of just the answer.
         _log_tool_steps : bool, default ``True``
             Emit server-side logs for each internal tool call (debugging aid).
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Optional **read-only** context inherited from a parent conversation
             and made visible to the inner tool loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Two-way channels enabling interactive clarification questions:
             the LLM places a question on *up* and blocks waiting for the human
             answer on *down*.
@@ -83,9 +83,9 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Execute a **mutation request** – create / edit / delete tasks, contacts

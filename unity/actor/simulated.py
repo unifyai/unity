@@ -356,9 +356,9 @@ class SimulatedActor(BaseActor):
         self,
         description: str,
         *,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SimulatedActorHandle:
         # Pass the original TaskScheduler-provided description unchanged.
         return SimulatedActorHandle(
@@ -366,9 +366,9 @@ class SimulatedActor(BaseActor):
             description,
             steps=self._steps,
             duration=self._duration,
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             _requests_clarification=self._requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
             log_mode=self._log_mode,
         )

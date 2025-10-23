@@ -153,8 +153,8 @@ async def test_handle_requests_clarification():
 
     h = await cm.ask(
         "What is David's phone number?",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
         _requests_clarification=True,
     )
 

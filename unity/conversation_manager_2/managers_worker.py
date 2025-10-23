@@ -455,12 +455,12 @@ class ManagersWorker:
         if event.action_name == "ask":
             handle = await self._conductor.ask(
                 event.query,
-                parent_chat_context=event.parent_chat_context,
+                _parent_chat_context=event.parent_chat_context,
             )
         else:
             handle = await self._conductor.request(
                 event.query,
-                parent_chat_context=event.parent_chat_context,
+                _parent_chat_context=event.parent_chat_context,
             )
 
         # allocate handle id and register

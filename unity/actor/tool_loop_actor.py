@@ -847,9 +847,9 @@ class ToolLoopActor(BaseActor):
         self,
         description: str,
         *,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         **kwargs,
     ) -> ToolLoopPlan:
         logger.info(f"ToolLoopActor: Starting work on: '{description}'")
@@ -868,9 +868,9 @@ class ToolLoopActor(BaseActor):
         plan = ToolLoopPlan(
             task_description=description,
             tools=self._get_tools(),
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            parent_chat_context=_parent_chat_context,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
             main_event_loop=self._main_event_loop,
             persist=kwargs.get("persist", False),
             tool_policy=kwargs.get("tool_policy"),

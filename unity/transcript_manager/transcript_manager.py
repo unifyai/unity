@@ -179,9 +179,9 @@ class TranscriptManager(BaseTranscriptManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         tool_policy: Union[
             Literal["default"],
@@ -193,11 +193,11 @@ class TranscriptManager(BaseTranscriptManager):
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self.get_tools("ask"))
 
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
             add_clarification_tool_with_events(
                 tools,
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 manager="TranscriptManager",
                 method="ask",
                 call_id=_call_id,
@@ -240,7 +240,7 @@ class TranscriptManager(BaseTranscriptManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             preprocess_msgs=inject_broader_context,
             tool_policy=effective_tool_policy,
             semantic_cache=use_semantic_cache,
