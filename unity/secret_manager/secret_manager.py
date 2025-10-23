@@ -685,7 +685,7 @@ class SecretManager(BaseSecretManager):
             use a column name like ``"description"`` to search over secret descriptions.
             When None or empty, returns most-recent rows.
         k : int, default 10
-            Maximum number of results to return.
+            Maximum number of results to return. Must be <= 1000.
 
         Returns
         -------
@@ -729,7 +729,7 @@ class SecretManager(BaseSecretManager):
         offset : int, default 0
             Zero-based index of the first result to include.
         limit : int, default 100
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         Returns
         -------

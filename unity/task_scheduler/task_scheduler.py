@@ -4196,7 +4196,7 @@ class TaskScheduler(BaseTaskScheduler):
             Mapping of ``source_expr → reference_text`` terms. Each source expression
             can be a plain column (e.g. ``"name"``) or a derived expression.
         k : int, default ``10``
-            Maximum number of results to return.
+            Maximum number of results to return. Must be <= 1000.
 
         Returns
         -------
@@ -4257,7 +4257,7 @@ class TaskScheduler(BaseTaskScheduler):
         offset : int, default ``0``
             Zero-based row offset for pagination.
         limit : int, default ``100``
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         Returns
         -------

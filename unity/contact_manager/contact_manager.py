@@ -509,7 +509,7 @@ class ContactManager(BaseContactManager):
         offset : int, default 0
             Zero‑based index of the first result to include.
         limit : int, default 100
-            Maximum number of records to return.
+            Maximum number of records to return. Must be <= 1000.
 
         Returns
         -------
@@ -578,7 +578,7 @@ class ContactManager(BaseContactManager):
             When ``None`` or an empty dict, semantic search is skipped and the most recent
             contacts are returned using backfill-only logic.
         k : int, default 10
-            Maximum number of contacts to return. Must be a positive integer.
+            Maximum number of contacts to return. Must be a positive integer. Must be <= 1000.
 
         Returns
         -------

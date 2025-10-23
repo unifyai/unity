@@ -830,9 +830,19 @@ class GuidanceManager(BaseGuidanceManager):
     ) -> List[Guidance]:
         """Semantic search over guidance rows using shared table helper.
 
-        Returns up to k rows ranked by similarity, backfilled to k when
-        similarity yields fewer rows. Payload is restricted to built‑in
-        fields for efficiency.
+        Parameters
+        ----------
+        references : Dict[str, str] | None, default None
+            Mapping of source expressions to reference text for semantic search.
+        k : int, default 10
+            Maximum number of results to return. Must be <= 1000.
+
+        Returns
+        -------
+        List[Guidance]
+            Up to k rows ranked by similarity, backfilled to k when
+            similarity yields fewer rows. Payload is restricted to built‑in
+            fields for efficiency.
         """
         allowed_fields = list(self._BUILTIN_FIELDS)
         rows = table_search_top_k(
@@ -851,6 +861,24 @@ class GuidanceManager(BaseGuidanceManager):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Guidance]:
+        """
+        Filter guidance records using a boolean Python expression evaluated per row.
+
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python boolean expression evaluated with column names in scope.
+            When None, returns all guidance records.
+        offset : int, default 0
+            Zero-based index of the first result to include.
+        limit : int, default 100
+            Maximum number of records to return. Must be <= 1000.
+
+        Returns
+        -------
+        List[Guidance]
+            Matching guidance records as Guidance models.
+        """
         from_fields = list(self._BUILTIN_FIELDS)
         normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
