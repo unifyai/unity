@@ -43,16 +43,14 @@ current_running_response: asyncio.Task = None
 STT = None
 LLM = None
 VAD = None
-TURN_DETECTOR = None
 
-def prewarm(ctx: agents.JobContext):
-    global STT, LLM, VAD, TURN_DETECTOR
+def prewarm(_ctx=None):
+    global STT, LLM, VAD
     try:
         print("Prewarm: initializing STT, LLM, VAD and turn detector...")
         STT = deepgram.STT(model="nova-3", language="en-GB")
         LLM = openai.LLM(model="gpt-4o")
         VAD = silero.VAD.load(min_speech_duration=0.15)
-        TURN_DETECTOR = EnglishModel()
         print("Prewarm complete")
     except Exception as e:
         print(f"Prewarm failed: {e}")
@@ -60,7 +58,6 @@ def prewarm(ctx: agents.JobContext):
         STT = None
         LLM = None
         VAD = None
-        TURN_DETECTOR = None
 
 
 class Assistant(Agent):
@@ -144,7 +141,6 @@ async def entrypoint(ctx: agents.JobContext):
         STT = deepgram.STT(model="nova-3", language="en-GB")
         LLM = openai.LLM(model="gpt-4o")
         VAD = silero.VAD.load(min_speech_duration=0.15)
-        TURN_DETECTOR = EnglishModel()
 
     session = AgentSession(
         stt=STT,
@@ -160,7 +156,7 @@ async def entrypoint(ctx: agents.JobContext):
             )
         ),
         vad=VAD,
-        turn_detection=TURN_DETECTOR,
+        turn_detection=EnglishModel(),
     )
 
     async def end_call():
