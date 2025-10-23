@@ -102,8 +102,8 @@ async def test_handle_requests_clarification():
 
     handle = await actor.act(
         "Compile the quarterly report",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
 
     question = await asyncio.wait_for(up_q.get(), timeout=60)

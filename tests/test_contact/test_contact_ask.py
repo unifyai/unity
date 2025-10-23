@@ -203,7 +203,7 @@ async def test_ask_with_parent_context(
 
     handle = await cm.ask(
         question,
-        parent_chat_context=parent_ctx,
+        _parent_chat_context=parent_ctx,
         _return_reasoning_steps=True,
     )
     candidate_answer, reasoning_steps = await handle.result()
@@ -243,8 +243,8 @@ async def test_ask_with_clarification(
 
     handle = await cm.ask(
         question,
-        clarification_up_q=clar_up_q,
-        clarification_down_q=clar_down_q,
+        _clarification_up_q=clar_up_q,
+        _clarification_down_q=clar_down_q,
         _return_reasoning_steps=True,
     )
 

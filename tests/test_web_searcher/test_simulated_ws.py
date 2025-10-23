@@ -111,8 +111,8 @@ async def test_handle_requests_clarification():
 
     h = await ws.ask(
         "Find the latest updates on the Toys R US social media accounts,",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
         _requests_clarification=True,
     )
 

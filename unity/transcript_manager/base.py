@@ -28,9 +28,9 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing transcripts** (read‑only) and obtain a live
@@ -74,14 +74,14 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
             When ``True`` the handle's :pyfunc:`~SteerableToolHandle.result`
             yields ``(answer, messages)`` – the first element is the assistant's
             reply, the second the hidden chain‑of‑thought (useful for debugging).
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Optional read‑only chat history that will be provided to all nested
             tool calls.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Duplex channels enabling interactive clarification questions. If
             supplied the LLM may push a follow‑up question onto
-            *clarification_up_q* and must read the human's answer from
-            *clarification_down_q*.
+            *_clarification_up_q* and must read the human's answer from
+            *_clarification_down_q*.
 
         Returns
         -------

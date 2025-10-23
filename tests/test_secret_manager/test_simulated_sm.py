@@ -130,8 +130,8 @@ async def test_handle_requests_clarification_sm():
 
     h = await sm.ask(
         "Show me the placeholder for the database password. If ambiguous, request clarification.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
         _requests_clarification=True,
     )
 

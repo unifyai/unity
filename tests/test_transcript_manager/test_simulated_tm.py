@@ -146,8 +146,8 @@ async def test_handle_requests_clarification():
 
     handle = await tm.ask(
         "Find important messages.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
         _requests_clarification=True,
     )
 

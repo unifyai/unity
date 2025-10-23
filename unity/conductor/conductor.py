@@ -295,10 +295,10 @@ class Conductor(BaseConductor):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: list[dict] | None = None,  # Unused – synthetic
+        _parent_chat_context: list[dict] | None = None,  # Unused – synthetic
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
         rolling_summary_in_prompts: Optional[bool] = None,
     ):
@@ -320,13 +320,13 @@ class Conductor(BaseConductor):
 
         tools: Dict[str, Callable] = dict(self.get_tools("ask"))
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if _clarification_up_q is not None or _clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
+                if _clarification_up_q is None or _clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                await _clarification_up_q.put(question)
+                return await _clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
 
@@ -358,7 +358,7 @@ class Conductor(BaseConductor):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
             # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
             tool_policy=tool_policy,
@@ -440,9 +440,9 @@ class Conductor(BaseConductor):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
         rolling_summary_in_prompts: Optional[bool] = None,
     ):
@@ -465,13 +465,13 @@ class Conductor(BaseConductor):
 
         tools: Dict[str, Callable] = dict(self.get_tools("request"))
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if _clarification_up_q is not None or _clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
+                if _clarification_up_q is None or _clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                await _clarification_up_q.put(question)
+                return await _clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
 
@@ -496,7 +496,7 @@ class Conductor(BaseConductor):
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
             # Hide Actor.act and TaskScheduler.execute while a session is active
             tool_policy=self._mask_act_execute_policy(),

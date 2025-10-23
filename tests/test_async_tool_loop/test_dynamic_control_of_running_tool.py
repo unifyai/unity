@@ -199,16 +199,16 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     pause_called_gate = asyncio.Event()
     resume_called_gate = asyncio.Event()
 
-    async def pausable_fn(*, pause_event: asyncio.Event) -> str:
+    async def pausable_fn(*, _pause_event: asyncio.Event) -> str:
         # Run until the PAUSE helper has been observed.
         while not pause_called_gate.is_set():
-            await pause_event.wait()
+            await _pause_event.wait()
             await asyncio.sleep(0.05)
         # Do not finish until RESUME helper has been observed.
         await resume_called_gate.wait()
         # Perform a small amount of additional work after resume to ensure ordering.
         for _ in range(10):
-            await pause_event.wait()
+            await _pause_event.wait()
             await asyncio.sleep(0.05)
         return "ok"
 
@@ -283,16 +283,16 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
     pause_called_gate = asyncio.Event()
     resume_called_gate = asyncio.Event()
 
-    async def pausable_fn(*, pause_event: asyncio.Event) -> str:
+    async def pausable_fn(*, _pause_event: asyncio.Event) -> str:
         # Wait until pause helper has been invoked
         while not pause_called_gate.is_set():
-            await pause_event.wait()
+            await _pause_event.wait()
             await asyncio.sleep(0.05)
         # Then wait until resume helper has been invoked
         await resume_called_gate.wait()
         # Do a short bit of post-resume work
         for _ in range(10):
-            await pause_event.wait()
+            await _pause_event.wait()
             await asyncio.sleep(0.05)
         return "yo"
 
@@ -628,10 +628,10 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
 
     done_event = asyncio.Event()
 
-    async def pausable_fn(*, pause_event: asyncio.Event) -> str:
+    async def pausable_fn(*, _pause_event: asyncio.Event) -> str:
         # Run until the test explicitly signals completion.
         while not done_event.is_set():
-            await pause_event.wait()
+            await _pause_event.wait()
             await asyncio.sleep(0)
         return "done"
 

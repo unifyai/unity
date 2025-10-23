@@ -1107,8 +1107,8 @@ async def test_inner_task_clarification_bubbles_up_to_outer(monkeypatch):
     # Execute by id, ensuring queues are wired through
     h = await ts.execute(
         text=str(task_id),
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
 
     # Expect the inner task to ask a clarification question immediately
@@ -1153,8 +1153,8 @@ async def test_active_queue_requests_clarification_at_queue_level(monkeypatch):
     # Start execution at first task with queues supplied
     h = await ts.execute(
         text=str(a_id),
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
 
     # Wait until a task is active to avoid races

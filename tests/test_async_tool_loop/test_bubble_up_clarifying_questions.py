@@ -43,18 +43,18 @@ async def send_email(
     address: str,
     description: str,
     *,
-    clarification_up_q: asyncio.Queue[str] | None = None,
-    clarification_down_q: asyncio.Queue[str] | None = None,
+    _clarification_up_q: asyncio.Queue[str] | None = None,
+    _clarification_down_q: asyncio.Queue[str] | None = None,
 ) -> str:
     """Send an email, based on the general description provided."""
-    if clarification_up_q is None or clarification_down_q is None:
+    if _clarification_up_q is None or _clarification_down_q is None:
         raise RuntimeError("clarification queues missing")
 
     # Dummy code
-    await clarification_up_q.put(
+    await _clarification_up_q.put(
         "It's best that we also inform him what we're bringing. Will you be bringing anything with you (food/drink)?",
     )
-    await clarification_down_q.get()
+    await _clarification_down_q.get()
     return f"Email sent!"
 
 
@@ -63,11 +63,11 @@ async def send_text(
     number: str,
     description: str,
     *,
-    clarification_up_q: asyncio.Queue[str] | None = None,
-    clarification_down_q: asyncio.Queue[str] | None = None,
+    _clarification_up_q: asyncio.Queue[str] | None = None,
+    _clarification_down_q: asyncio.Queue[str] | None = None,
 ) -> str:
     """Send a text message, based on the general description provided."""
-    if clarification_up_q is None or clarification_down_q is None:
+    if _clarification_up_q is None or _clarification_down_q is None:
         raise RuntimeError("clarification queues missing")
 
 
@@ -215,14 +215,14 @@ async def test_clarification_bubbles_up_two_tiers() -> None:
 # ---------------------------------------------------------------------------
 async def inner_tool(
     *,
-    clarification_up_q: asyncio.Queue[str] | None = None,
-    clarification_down_q: asyncio.Queue[str] | None = None,
+    _clarification_up_q: asyncio.Queue[str] | None = None,
+    _clarification_down_q: asyncio.Queue[str] | None = None,
 ) -> str:
-    if clarification_up_q is None or clarification_down_q is None:
+    if _clarification_up_q is None or _clarification_down_q is None:
         raise RuntimeError("queues missing")
 
-    await clarification_up_q.put("Inner loop: what colour should the widget be?")
-    color = await clarification_down_q.get()
+    await _clarification_up_q.put("Inner loop: what colour should the widget be?")
+    color = await _clarification_down_q.get()
     return f"✅ inner finished, color: {color}"
 
 
@@ -231,8 +231,8 @@ async def inner_tool(
 # ---------------------------------------------------------------------------
 async def delegating_tool(
     *,
-    clarification_up_q: asyncio.Queue[str] | None = None,
-    clarification_down_q: asyncio.Queue[str] | None = None,
+    _clarification_up_q: asyncio.Queue[str] | None = None,
+    _clarification_down_q: asyncio.Queue[str] | None = None,
 ) -> str:  # return type misleading on purpose
     inner_llm = make_llm(
         "You are coordinating internal tools in a nested loop.\n"
@@ -246,8 +246,8 @@ async def delegating_tool(
     )
 
     async def request_clarification(question: str) -> str:
-        await clarification_up_q.put(question)
-        return await clarification_down_q.get()
+        await _clarification_up_q.put(question)
+        return await _clarification_down_q.get()
 
     handle = start_async_tool_loop(  # <-- returns AsyncToolLoopHandle
         inner_llm,

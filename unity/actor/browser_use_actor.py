@@ -51,20 +51,20 @@ class BrowserUsePlan(BaseActiveTask):
         self,
         task_description: str,
         tools: Dict[str, Callable[..., Awaitable[str]]],
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
         self._initial_task_description = task_description
         self._tools = tools
-        self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
+        self._parent_chat_context_on_pause: Optional[List[dict]] = _parent_chat_context
 
         self._clar_up_q_internal: asyncio.Queue[str] = (
-            clarification_up_q or asyncio.Queue()
+            _clarification_up_q or asyncio.Queue()
         )
         self._clar_down_q_internal: asyncio.Queue[str] = (
-            clarification_down_q or asyncio.Queue()
+            _clarification_down_q or asyncio.Queue()
         )
 
         self._state: _BrowserActorState = _BrowserActorState.IDLE
@@ -666,9 +666,9 @@ class BrowserUseActor(BaseActor):
         self,
         description: str,
         *,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         **kwargs,
     ) -> BrowserUsePlan:
         """
@@ -690,9 +690,9 @@ class BrowserUseActor(BaseActor):
             plan = BrowserUsePlan(
                 task_description=description,
                 tools=self._get_tools(),
-                parent_chat_context=parent_chat_context,
-                clarification_up_q=clarification_up_q,
-                clarification_down_q=clarification_down_q,
+                _parent_chat_context=_parent_chat_context,
+                _clarification_up_q=_clarification_up_q,
+                _clarification_down_q=_clarification_down_q,
                 main_event_loop=self._main_event_loop,
             )
         except Exception as e:

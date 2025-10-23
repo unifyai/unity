@@ -27,7 +27,7 @@ def _contains(text: str, *needles: str) -> bool:
 async def test_update_uses_parent_context():
     """
     A prior conversation instructs the assistant to call 'Carlos' by the
-    codename 'Alpha'.  We pass that *parent_chat_context* to .store() and
+    codename 'Alpha'.  We pass that *_parent_chat_context* to .store() and
     verify that the resulting row contains **Alpha** and not **Carlos**.
     """
     km = KnowledgeManager()
@@ -42,7 +42,7 @@ async def test_update_uses_parent_context():
 
     handle = await km.update(
         "Project Nova was initiated in 1990.",
-        parent_chat_context=parent_ctx,  # ← will be threaded into the loop
+        _parent_chat_context=parent_ctx,  # ← will be threaded into the loop
     )
     await handle.result()
 
@@ -81,8 +81,8 @@ async def test_update_requests_clarification():
 
     handle = await km.update(
         "Please store Project Nova's initiation year (1990) using its *registry code* as the key.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
 
     # ➊ the very first thing should be a clarification question
@@ -136,7 +136,7 @@ async def test_ask_uses_parent_context():
     # ➌ ask about Alpha – model must translate via context
     handle = await km.ask(
         "When was Alpha initiated?",
-        parent_chat_context=parent_ctx,
+        _parent_chat_context=parent_ctx,
         _return_reasoning_steps=True,
     )
     answer, reasoning = await handle.result()
@@ -178,8 +178,8 @@ async def test_ask_requests_clarification():
     # ➌ run retrieve in background
     handle = await km.ask(
         "What colour is the car in the garage? I'm looking for one colour, request clarification if you're not sure.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
     task = asyncio.create_task(handle.result())
 

@@ -341,7 +341,7 @@ async def test_ask_respects_parent_context(
     handle = await tm.ask(
         "What date was the conversation referenced in the parent context?",
         _return_reasoning_steps=True,
-        parent_chat_context=parent_ctx,
+        _parent_chat_context=parent_ctx,
     )
     answer, steps = await handle.result()
 
@@ -473,8 +473,8 @@ async def test_ask_requests_clarification_when_context_missing(
     handle = await tm.ask(
         original_user_query,
         _return_reasoning_steps=True,
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
 
     # Ensure at least one clarification was requested

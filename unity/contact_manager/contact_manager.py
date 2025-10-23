@@ -171,9 +171,9 @@ class ContactManager(BaseContactManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
         images: Optional[Dict[str, Any]] = None,
@@ -183,11 +183,11 @@ class ContactManager(BaseContactManager):
         # Build a *live* tools-dict so the prompt never hard-codes
         # either the number of tools or their names/argspecs.
         tools = dict(self.get_tools("ask"))
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
             add_clarification_tool_with_events(
                 tools,
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 manager="ContactManager",
                 method="ask",
                 call_id=_call_id,
@@ -224,7 +224,7 @@ class ContactManager(BaseContactManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
             preprocess_msgs=inject_broader_context,
             semantic_cache=use_semantic_cache,
@@ -253,9 +253,9 @@ class ContactManager(BaseContactManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
         images: Optional[Dict[str, Any]] = None,
@@ -263,11 +263,11 @@ class ContactManager(BaseContactManager):
         client = new_llm_client()
 
         tools = dict(self.get_tools("update"))
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
             add_clarification_tool_with_events(
                 tools,
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 manager="ContactManager",
                 method="update",
                 call_id=_call_id,
@@ -292,7 +292,7 @@ class ContactManager(BaseContactManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             preprocess_msgs=inject_broader_context,
             images=images,

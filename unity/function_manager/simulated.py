@@ -142,7 +142,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         *,
         implementations: str | List[str],
         preconditions: Optional[Dict[str, Dict]] = None,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
         # No persistence – acknowledge each function name with a simulated status
         if isinstance(implementations, str):
@@ -166,7 +166,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self,
         *,
         include_implementations: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Dict[str, Any]]:
         # Ask the stateful LLM to produce a catalogue snapshot aligned to guidance
         guidance = self._guidance_hint()
@@ -195,7 +195,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self,
         *,
         function_name: str,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
         # Simulate that no explicit preconditions are stored
         return None
@@ -206,7 +206,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         *,
         function_id: int,
         delete_dependents: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
         # Acknowledge deletion without side effects
         return {f"id={function_id}": "deleted (simulated)"}
@@ -218,7 +218,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         guidance = self._guidance_hint()
         prompt = (
@@ -247,7 +247,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         *,
         query: str,
         n: int = 5,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         guidance = self._guidance_hint()
         prompt = (

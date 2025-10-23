@@ -76,11 +76,11 @@ def sanitize_custom_columns(custom_columns: Dict[str, Any]) -> Dict[str, Any]:
     import json
 
     internal_keys = {
-        "parent_chat_context",
-        "interject_queue",
-        "pause_event",
-        "clarification_up_q",
-        "clarification_down_q",
+        "_parent_chat_context",
+        "_interject_queue",
+        "_pause_event",
+        "_clarification_up_q",
+        "_clarification_down_q",
         "kwargs",
         "_log_id",
     }
