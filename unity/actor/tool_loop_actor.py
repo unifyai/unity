@@ -194,9 +194,9 @@ class ToolLoopPlan(BaseActiveTask):
         self,
         task_description: str,
         tools: Dict[str, Callable[..., Awaitable[Any]]],
-        _parent_chat_context: list[dict] | None = None,
-        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        parent_chat_context: list[dict] | None = None,
+        clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        clarification_down_q: Optional[asyncio.Queue[str]] = None,
         main_event_loop: Optional[asyncio.AbstractEventLoop] = None,
         timeout: Optional[float] = 1000,
         persist: bool = False,
@@ -207,16 +207,16 @@ class ToolLoopPlan(BaseActiveTask):
     ):
         self._initial_task_description = task_description
         self._tools = tools
-        self._parent_chat_context_on_pause: Optional[List[dict]] = _parent_chat_context
+        self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
         self._chat_history: List[Dict[str, Any]] = []
         self._custom_system_prompt = custom_system_prompt
         self._images = images
 
         self._clar_up_q_internal: asyncio.Queue[str] = (
-            _clarification_up_q or asyncio.Queue()
+            clarification_up_q or asyncio.Queue()
         )
         self._clar_down_q_internal: asyncio.Queue[str] = (
-            _clarification_down_q or asyncio.Queue()
+            clarification_down_q or asyncio.Queue()
         )
 
         self._state: _PlanState = _PlanState.IDLE
@@ -847,9 +847,9 @@ class ToolLoopActor(BaseActor):
         self,
         description: str,
         *,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         **kwargs,
     ) -> ToolLoopPlan:
         logger.info(f"ToolLoopActor: Starting work on: '{description}'")
@@ -868,9 +868,9 @@ class ToolLoopActor(BaseActor):
         plan = ToolLoopPlan(
             task_description=description,
             tools=self._get_tools(),
-            _parent_chat_context=parent_chat_context,
-            _clarification_up_q=clarification_up_q,
-            _clarification_down_q=clarification_down_q,
+            parent_chat_context=_parent_chat_context,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
             main_event_loop=self._main_event_loop,
             persist=kwargs.get("persist", False),
             tool_policy=kwargs.get("tool_policy"),

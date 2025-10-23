@@ -4144,9 +4144,9 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_id: int,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
     ) -> SteerableToolHandle:
         """
         Public entrypoint to start execution at a specific task id using queue semantics.
@@ -4174,9 +4174,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         return await self._execute_queue_internal(
             task_id=task_id,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            parent_chat_context=_parent_chat_context,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
     # Search Across Tasks

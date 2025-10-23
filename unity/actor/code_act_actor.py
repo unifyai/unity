@@ -280,9 +280,9 @@ class CodeActActor(BaseActor):
         plan = ToolLoopPlan(
             task_description=description or initial_prompt,
             tools=self._tools,
-            _parent_chat_context=_parent_chat_context,
-            _clarification_up_q=_clarification_up_q,
-            _clarification_down_q=_clarification_down_q,
+            parent_chat_context=_parent_chat_context,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
             main_event_loop=self._main_event_loop,
             timeout=self._timeout,
             persist=is_interactive_session,
