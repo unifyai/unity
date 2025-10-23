@@ -39,16 +39,28 @@ event_broker = get_event_broker()
 chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
 
-# Pre-load STT, LLM and VAD so that we don't initialize inside entrypoint
-try:
-    print("Pre-loading STT, LLM and VAD...")
-    STT = deepgram.STT(model="nova-3", language="en-GB")
-    LLM = openai.LLM(model="gpt-4o")
-    VAD = silero.VAD.load(min_speech_duration=0.15)
-    print("Pre-loading complete")
-except:
-    print("Pre-loading failed")
-    STT, LLM, VAD = None, None, None
+# Globals initialized lazily or via prewarm to avoid duplicate heavy init
+STT = None
+LLM = None
+VAD = None
+TURN_DETECTOR = None
+
+def prewarm(ctx: agents.JobContext):
+    global STT, LLM, VAD, TURN_DETECTOR
+    try:
+        print("Prewarm: initializing STT, LLM, VAD and turn detector...")
+        STT = deepgram.STT(model="nova-3", language="en-GB")
+        LLM = openai.LLM(model="gpt-4o")
+        VAD = silero.VAD.load(min_speech_duration=0.15)
+        TURN_DETECTOR = EnglishModel()
+        print("Prewarm complete")
+    except Exception as e:
+        print(f"Prewarm failed: {e}")
+        # Ensure fallback path runs by resetting all globals
+        STT = None
+        LLM = None
+        VAD = None
+        TURN_DETECTOR = None
 
 
 class Assistant(Agent):
@@ -132,6 +144,7 @@ async def entrypoint(ctx: agents.JobContext):
         STT = deepgram.STT(model="nova-3", language="en-GB")
         LLM = openai.LLM(model="gpt-4o")
         VAD = silero.VAD.load(min_speech_duration=0.15)
+        TURN_DETECTOR = EnglishModel()
 
     session = AgentSession(
         stt=STT,
@@ -147,7 +160,7 @@ async def entrypoint(ctx: agents.JobContext):
             )
         ),
         vad=VAD,
-        turn_detection=EnglishModel(),
+        turn_detection=TURN_DETECTOR,
     )
 
     async def end_call():
@@ -374,5 +387,7 @@ if __name__ == "__main__":
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
             agent_name=agent_name,
+            prewarm_fnc=prewarm,
+            initialize_process_timeout=60,
         ),
     )
