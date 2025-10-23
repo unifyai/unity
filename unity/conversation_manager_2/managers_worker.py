@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import perf_counter
 from dotenv import load_dotenv
 import threading
 from datetime import datetime
@@ -11,6 +12,7 @@ import redis.asyncio as redis
 load_dotenv()
 
 import unity
+from unity.conversation_manager_2.handle import ConversationManagerHandle
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.events.event_bus import EVENT_BUS
@@ -71,6 +73,7 @@ class ManagersWorker:
         print("[ManagersWorker] Processing startup")
 
         async with self._init_lock:
+            start_time = perf_counter()
             if self._initialized:
                 print("[ManagersWorker] Already initialized, skipping")
                 return
@@ -139,7 +142,7 @@ class ManagersWorker:
                 self._contact_manager = ContactManager()
 
                 # clear rolling summary
-                # contacts = self._contact_manager._filter_contacts()
+                # contacts = self._contact_manager._filter_contacts().get("contacts", [])
                 # print("got contacts", contacts)
                 # for c in contacts:
                 #     self._contact_manager._update_contact(contact_id=c.contact_id, rolling_summary="")
@@ -170,12 +173,23 @@ class ManagersWorker:
                 )
                 print("[ManagersWorker] MemoryManager initialized")
 
-                # 5. Initialize Conductor with existing managers
+                # 5. Initialize ConversationManager
+                print("[ManagersWorker] Initializing ConversationManagerHandle...")
+                self._conversation_manager_handle = ConversationManagerHandle(
+                    event_broker=self._event_broker,
+                    conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
+                    contact_id="1",
+                    transcript_manager=self._transcript_manager,
+                )
+                print("[ManagersWorker] ConversationManagerHandle initialized")
+
+                # 6. Initialize Conductor with existing managers
                 print("[ManagersWorker] Initializing Conductor...")
                 try:
                     self._conductor = Conductor(
                         contact_manager=self._contact_manager,
                         transcript_manager=self._transcript_manager,
+                        conversation_manager=self._conversation_manager_handle,
                     )
                     print("[ManagersWorker] Conductor initialized")
                 except Exception as e:
@@ -190,6 +204,10 @@ class ManagersWorker:
             await self._event_broker.publish(
                 self._publish_channel,
                 ManagersStartupResponse(initialized=self._initialized).to_json(),
+            )
+            print(
+                "[ManagersWorker] Initialization complete in "
+                f"{perf_counter() - start_time:.2f} seconds"
             )
 
     async def _get_bus_events(self) -> None:
@@ -208,10 +226,11 @@ class ManagersWorker:
             await asyncio.sleep(1)
             print("[ManagersWorker] Not initialized yet, cannot publish bus event")
         event_dict = event.to_dict()["payload"]["event"]
+        event_name = event_dict["event_name"]
         bus_event = Event.from_dict(event_dict).to_bus_event()
         bus_event.payload.pop("api_key", None)
         bus_event.payload.pop("message_id", None)
-        print("Publishing bus event", bus_event)
+        print("Publishing bus event", event_name)
         await EVENT_BUS.publish(bus_event)
 
     async def _log_message(self, event: LogMessageRequest) -> None:
@@ -282,7 +301,7 @@ class ManagersWorker:
 
         try:
             # Get all contacts from ContactManager and convert to dict
-            rows = self._contact_manager._filter_contacts()
+            rows = self._contact_manager._filter_contacts().get("contacts", [])
             contacts = [c.model_dump() for c in rows]
 
             # Publish reply as Event envelope
@@ -370,19 +389,27 @@ class ManagersWorker:
             self._memory_manager.update_contact_rolling_summary(t, contact_id=cid)
             for cid, t in zip(contacts_ids, transcripts)
         ]
-        await asyncio.gather(*tasks)
+        try:
+            await asyncio.gather(*tasks)
+            print("[ManagersWorker] Contact rolling summary updated")
+        except Exception as e:
+            print(f"[ManagersWorker] Error updating contact rolling summary: {e}")
 
     async def _conductor_watch_result(
         self, handle_id: int, handle: SteerableToolHandle
     ) -> None:
         """Await final result and publish completion (or failure), then cleanup."""
         # await result
-        result = await handle.result()
+        try:
+            result = await handle.result()
+        except Exception as e:
+            result = f"Error getting conductor result: {e}"
+            print(f"[ManagersWorker] {result}")
         await self._event_broker.publish(
             self._publish_channel,
             ConductorResult(
                 handle_id=handle_id,
-                success=True,
+                success=False if "Error" in result else True,
                 result=result,
             ).to_json(),
         )
@@ -482,6 +509,34 @@ class ManagersWorker:
         asyncio.create_task(self._conductor_watch_notifications(handle_id, handle))
         asyncio.create_task(self._conductor_watch_clarifications(handle_id, handle))
 
+    async def _handle_conductor_clarification_response(
+        self, event: ConductorClarificationResponse
+    ) -> None:
+        """Handle a Conductor clarification response."""
+        # get handle
+        handle_data = self._handle_registry.get(event.handle_id)
+        if not handle_data:
+            print(
+                f"[ManagersWorker] Unknown handle_id={event.handle_id} for clarification response"
+            )
+            return
+
+        # record intervention
+        handle_data["handle_actions"].append(
+            {
+                "action_name": event.action_name,
+                "query": event.query,
+            }
+        )
+        handle: SteerableToolHandle = handle_data["handle"]
+
+        # perform intervention
+        try:
+            handle.answer_clarification(event.call_id, event.response)
+        except Exception as e:
+            print(f"[ManagersWorker] Error answering clarification: {e}")
+            return
+
     async def _handle_conductor_handle_request(
         self, event: ConductorHandleRequest
     ) -> None:
@@ -503,32 +558,41 @@ class ManagersWorker:
         handle: SteerableToolHandle = handle_data["handle"]
 
         # perform intervention
-        match event.action_name:
-            case "ask":
-                handle.ask(
-                    event.query,
-                    parent_chat_context_cont=event.parent_chat_context,
-                )
-            case "interject":
-                handle.interject(
-                    event.query,
-                    parent_chat_context_cont=event.parent_chat_context,
-                )
-            case "stop":
-                handle.stop(reason=event.query)
-            case "pause":
-                handle.pause()
-            case "resume":
-                handle.resume()
-            case "done":
-                handle.done()
-            case "answer_clarification":
-                handle.answer_clarification(event.call_id, event.query)
-            case _:
-                print(
-                    f"[ManagersWorker] Unknown action_name={event.action_name} for intervention"
-                )
-                return
+        result = ""
+        try:
+            match event.action_name:
+                case "ask":
+                    ask_handle = await handle.ask(
+                        event.query,
+                        parent_chat_context_cont=event.parent_chat_context,
+                    )
+                    result = await ask_handle.result()
+                case "interject":
+                    interject_handle = await handle.interject(
+                        event.query,
+                        parent_chat_context_cont=event.parent_chat_context,
+                    )
+                    result = await interject_handle.result()
+                case "stop":
+                    handle.stop(reason=event.query)
+                    result = "Handle Stopped"
+                case "pause":
+                    handle.pause()
+                    result = "Handle Paused"
+                case "resume":
+                    handle.resume()
+                    result = "Handle Resumed"
+                case "done":
+                    done_result = handle.done()
+                    result = "Handle Done" if done_result else "Handle Not Done"
+                case _:
+                    print(
+                        f"[ManagersWorker] Unknown action_name={event.action_name} for intervention"
+                    )
+                    return
+        except Exception as e:
+            result = f"Error in conductor handle request: {e}"
+            print(f"[ManagersWorker] {result}")
 
         # publish response
         await self._event_broker.publish(
@@ -537,7 +601,7 @@ class ManagersWorker:
                 handle_id=event.handle_id,
                 action_name=event.action_name,
                 query=event.query,
-                response=f"Intervened: {event.action_name} {event.query}",
+                response=f"Intervened: {event.action_name} {result}",
             ).to_json(),
         )
 
@@ -577,6 +641,10 @@ class ManagersWorker:
                 asyncio.create_task(self._handle_conductor_request(event))
             case ConductorHandleRequest():
                 asyncio.create_task(self._handle_conductor_handle_request(event))
+            case ConductorClarificationResponse():
+                asyncio.create_task(
+                    self._handle_conductor_clarification_response(event)
+                )
             case _:
                 print(
                     f"[ManagersWorker] Unknown event: {event.to_dict()['event_name']}"

@@ -185,7 +185,10 @@ async def test_get_messages():
     assert all(isinstance(msg, Message) for msg in messages)
 
     # timestamp
-    messages = tm._filter_messages(filter=f"timestamp < '{start_time}'")["messages"]
+    messages = tm._filter_messages(filter=f"timestamp < '{start_time}'").get(
+        "messages",
+        [],
+    )
     assert len(messages) == 0
     messages = tm._filter_messages(filter=f"timestamp > '{start_time}'")["messages"]
     assert len(messages) == 10
@@ -267,7 +270,10 @@ async def test_filter_messages_contacts_table_output():
     messages = result["messages"]
 
     # Validate uniqueness and coverage of contacts
-    contact_ids_from_table = {c.get("contact_id") for c in contacts}
+    contact_ids_from_table = {
+        (c.get("contact_id") if isinstance(c, dict) else getattr(c, "contact_id", None))
+        for c in contacts
+    }
     assert len(contact_ids_from_table) == len(contacts)
 
     referenced_ids = set()
@@ -366,5 +372,5 @@ def test_transcript_manager_clear():
     assert "exchange_id" in fields_exchanges
 
     # Prior messages should be gone
-    post = tm._filter_messages()["messages"]
+    post = tm._filter_messages().get("messages", [])
     assert len(post) == 0

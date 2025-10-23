@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import functools
 import threading
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
@@ -349,14 +348,11 @@ class SimulatedContactManager(BaseContactManager):
         self._simulation_guidance = simulation_guidance
 
         # Shared, *stateful* **asynchronous** LLM
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        from ..common.llm_client import (
+            new_llm_client as _new_llm_client,
+        )  # local import to avoid cycles
+
+        self._llm = _new_llm_client(stateful=True)
         # Mirror the real manager's tool exposure programmatically
         # and build the *exact* same prompts via the shared builders.
         ask_tools = mirror_contact_manager_tools("ask")

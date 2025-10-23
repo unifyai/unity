@@ -76,6 +76,45 @@ def ensure_vector_for_source(context: str, source_expr: str) -> str:
     return embed_column_name
 
 
+def extract_placeholders(expr: str) -> list[str]:
+    """Return placeholder field names inside a source expression.
+
+    Example: "str({content}).lower()" -> ["content"].
+    """
+    import re as _re
+
+    return _re.findall(r"\{\s*([a-zA-Z_][\w]*)\s*\}", expr or "")
+
+
+def ensure_join_context(
+    *,
+    left_ctx: str,
+    right_ctx: str,
+    join_expr: str,
+    new_context: str,
+    columns: Dict[str, str],
+    mode: str = "inner",
+    copy: bool = True,
+) -> str:
+    """Materialize a joined context with aliased columns and return its name.
+
+    This small wrapper standardizes aliasing/copy semantics so downstream code can
+    reference bare column names in the joined context without fully qualified paths.
+    """
+    unify.join_logs(
+        pair_of_args=(
+            {"context": left_ctx},
+            {"context": right_ctx},
+        ),
+        join_expr=join_expr,
+        mode=mode,
+        new_context=new_context,
+        columns=columns,
+        copy=copy,
+    )
+    return new_context
+
+
 def ensure_mean_cosine_column(
     context: str,
     terms: List[Tuple[str, str]],

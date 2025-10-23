@@ -45,7 +45,7 @@ with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
     SYS = f.read()
 
 
-MAX_CONV_MANAGER_MSGS = 30
+MAX_CONV_MANAGER_MSGS = 50
 
 # so basically, whenever the total count of a contact message > 10
 # we are going to ask the contact manager/transcript manager to provide an update rolling summary
@@ -121,7 +121,6 @@ class ConversationManager:
             user_whatsapp_number=user_whatsapp_number,
         )
 
-        self.chat_history = self.state.chat_history
         self.call_proc = None
         # self.summarizing = False
 
@@ -147,7 +146,7 @@ class ConversationManager:
             # Compute filler text first; avoid blocking after start
             filler_text = ""
             try:
-                filler_text = self.user_turn_end_callback(self.chat_history) or ""
+                filler_text = self.user_turn_end_callback(self.state.chat_history) or ""
             except Exception:
                 filler_text = ""
 
@@ -259,7 +258,7 @@ class ConversationManager:
             )
             parsed_out = json.loads(out)
 
-        print(parsed_out)
+        print(f"parsed_out {parsed_out}")
         if parsed_out["actions"] is not None:
             for action in parsed_out["actions"]:
                 if action["action_name"].startswith("conductor_"):
@@ -270,16 +269,28 @@ class ConversationManager:
                             action_name=action["action_name"].replace(
                                 "conductor_handle_", ""
                             ),
-                            query=action["query"],
+                            query=parsed_out["thoughts"],
                             parent_chat_context=self.state.chat_history,
+                        )
+                    elif action["action_name"] == "conductor_answer_clarification":
+                        event = ConductorClarificationResponse(
+                            handle_id=action["handle_id"],
+                            response=parsed_out["thoughts"],
+                            call_id=action["call_id"],
                         )
                     else:
                         # Create a new Conductor task via ManagersWorker
                         event = ConductorRequest(
                             action_name=action["action_name"].replace("conductor_", ""),
-                            query=action["query"],
+                            query=parsed_out["thoughts"],
                             parent_chat_context=self.state.chat_history,
                         )
+                    asyncio.create_task(
+                        self.event_broker.publish(
+                            "app:conductor:input_events",
+                            event.to_json(),
+                        )
+                    )
                     asyncio.create_task(
                         self.event_broker.publish(
                             "app:managers:input",
@@ -400,7 +411,7 @@ class ConversationManager:
             and not self.state.summarizing
         ):
             print("CLEARING CHAT HISTORY, REACHED MAX NUM")
-            # self.chat_history = []
+            self.state.chat_history = []
             # DUMMY_EVENT_BUS.append(ClearContext())
             try:
                 event = UpdateContactRollingSummaryRequest(
@@ -756,7 +767,13 @@ class ConversationManager:
             )
 
         elif isinstance(
-            event, (ConductorResponse, ConductorHandleResponse, ConductorResult)
+            event,
+            (
+                ConductorResponse,
+                ConductorHandleResponse,
+                ConductorResult,
+                ConductorClarificationRequest,
+            ),
         ):
             await self.schedule_llm_run(0, cancel_running=True)
 

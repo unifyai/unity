@@ -21,8 +21,9 @@ def test_search_contacts_single_reference_basic():
 
     query = "short messages"
     results = cm._search_contacts(references={"bio": query}, k=3)
+    contacts = results["contacts"]
 
-    assert results[0].first_name == "Bob"
+    assert contacts[0].first_name == "Bob"
 
     cols = cm._list_columns()
     assert "_bio_emb" in cols
@@ -43,10 +44,11 @@ def test_search_contacts_multi_columns_json_and_vec_created():
     # Provide separate references; ranking should still pick Grace
     refs = {"bio": query, "first_name": "irrelevant"}
     results = cm._search_contacts(references=refs, k=2)
+    contacts = results["contacts"]
 
-    assert len(results) == 2
+    assert len(contacts) == 2
     # Grace mentions texting and quick pings – should be the top hit
-    assert results[0].first_name == "Grace"
+    assert contacts[0].first_name == "Grace"
 
     # Ensure vector columns were created for each referenced source
     cols = cm._list_columns()
@@ -89,9 +91,10 @@ def test_search_contacts_all_columns_default_derivation():
     expr = "str({first_name}) + ' ' + str({bio}) + ' ' + str({email_address}) + ' ' + str({phone_number}) + ' ' + str({whatsapp_number}) + ' ' + str({occupation})"
     query = "best to emails"
     results = cm._search_contacts(references={expr: query}, k=2)
+    contacts = results["contacts"]
 
-    assert len(results) == 2
-    assert results[0].first_name == "Ian"
+    assert len(contacts) == 2
+    assert contacts[0].first_name == "Ian"
 
     # Ensure a derived embedding column exists for the composite expression
     cols = cm._list_columns()
@@ -134,8 +137,9 @@ def test_search_contacts_mean_of_cosine_ranking():
         "rolling_summary": "phone call last week",
     }
     results = cm._search_contacts(references=refs, k=3)
-    assert len(results) == 3
-    names = [c.first_name for c in results]
+    contacts = results["contacts"]
+    assert len(contacts) == 3
+    names = [c.first_name for c in contacts]
 
     # Ensure Alex (matches both) is ranked above the others
     assert names[0] == "Alex"
@@ -166,9 +170,10 @@ def test_search_contacts_backfills_when_insufficient_similarity_results():
 
     k = 4
     results = cm._search_contacts(references={"bio": "needle"}, k=k)
+    contacts = results["contacts"]
 
-    assert len(results) == k
-    names = [c.first_name for c in results]
+    assert len(contacts) == k
+    names = [c.first_name for c in contacts]
     # Carla should be the top semantic match
     assert names[0] == "Carla"
     # Remaining should be backfilled from latest creation order without duplicates
@@ -176,8 +181,16 @@ def test_search_contacts_backfills_when_insufficient_similarity_results():
 
     # When references is None, skip semantic search and return most recent contacts
     recent_only = cm._search_contacts(references=None, k=3)
-    assert [c.first_name for c in recent_only] == ["Frank", "Evelyn", "Darren"]
+    assert [c.first_name for c in recent_only["contacts"]] == [
+        "Frank",
+        "Evelyn",
+        "Darren",
+    ]
 
     # Also verify empty dict behaves the same as None
     recent_only_empty = cm._search_contacts(references={}, k=3)
-    assert [c.first_name for c in recent_only_empty] == ["Frank", "Evelyn", "Darren"]
+    assert [c.first_name for c in recent_only_empty["contacts"]] == [
+        "Frank",
+        "Evelyn",
+        "Darren",
+    ]

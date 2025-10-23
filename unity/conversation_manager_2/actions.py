@@ -7,31 +7,20 @@ from pydantic import BaseModel, Field, create_model
 
 # conductor
 class ConductorAction(BaseModel):
-    """
-    Ask or request the Conductor to perform a task.
-        "conductor_ask": read-only request
-        "conductor_request": read-write request
-    """
+    """Ask or request the Conductor to perform a task."""
 
-    action_name: Literal["conductor_ask", "conductor_request"]
-    query: str
+    action_name: Literal["conductor_ask", "conductor_request"] = Field(
+        ...,
+        description=(
+            "The action to perform on the Conductor. Options are:\n"
+            "'conductor_ask': read-only request\n"
+            "'conductor_request': read-write request\n"
+        ),
+    )
 
 
 class ConductorHandleAction(BaseModel):
-    """
-    Intervene on an existing Conductor handle.
-    You can't intervene on a handle that already has a result.
-        handle_id: the id of the handle
-        action_name: the action to perform on the handle
-            "conductor_handle_ask": read-only request on the status of the handle
-            "conductor_handle_interject": interject a message to the handle
-            "conductor_handle_stop": stop the handle
-            "conductor_handle_pause": pause the handle
-            "conductor_handle_resume": resume the handle
-            "conductor_handle_done": check if the handle is done
-            "conductor_handle_answer_clarification": answer a clarification question
-        query: the text to send to the handle
-    """
+    """Intervene on an existing Conductor handle."""
 
     handle_id: int
     action_name: Literal[
@@ -42,8 +31,27 @@ class ConductorHandleAction(BaseModel):
         "conductor_handle_resume",
         "conductor_handle_done",
         "conductor_handle_answer_clarification",
-    ]
-    query: str
+    ] = Field(
+        ...,
+        description=(
+            "The action to perform on the handle. Options are:\n"
+            "'conductor_handle_ask': ask about the conductor status to the handle\n"
+            "'conductor_handle_interject': interject the handle with more information\n"
+            "'conductor_handle_stop': stop the handle\n"
+            "'conductor_handle_pause': pause the handle\n"
+            "'conductor_handle_resume': resume the handle\n"
+            "'conductor_handle_done': check if the handle is done\n"
+            "'conductor_handle_answer_clarification': answer a clarification question\n"
+        ),
+    )
+
+
+class ConductorAnswerClarificationAction(BaseModel):
+    """Answer a clarification question."""
+
+    action_name: Literal["conductor_answer_clarification"]
+    handle_id: int
+    call_id: str
 
 
 # wait

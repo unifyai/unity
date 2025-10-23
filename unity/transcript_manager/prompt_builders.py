@@ -23,6 +23,7 @@ from ..common.prompt_helpers import (
     now_utc_str,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
+    parallelism_guidance,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -221,26 +222,9 @@ def build_ask_prompt(
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
-    # Conditional guidance about asking questions in final responses
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
-    )
+    # Keep clarification guidance single-sourced via clarification_guidance(tools)
 
-    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
-    parallelism_block = textwrap.dedent(
-        """
-        Parallelism and single‑call preference
-        -------------------------------------
-        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
-        • When you need multiple independent reads, plan them together and run them in parallel rather than a serial drip of micro‑calls.
-        • Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.
-        • When visual context is required across multiple steps, attach the needed images once at the start (ideally in a single call if available) and proceed with analysis using the persistent visual context, instead of repeating isolated per‑image queries.
-        """,
-    ).strip()
+    # High-level execution guidance provided by common helper
 
     # Early exit policy for mutation-intent requests reaching ask()
     mutation_exit_block = read_only_ask_mutation_exit_block()
@@ -255,7 +239,6 @@ def build_ask_prompt(
             "You are an assistant specialised in **querying and analysing communication transcripts**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
-            clar_sentence,
             "",
             mutation_exit_block,
             "",
@@ -278,7 +261,7 @@ def build_ask_prompt(
             "",
             usage_examples,
             "",
-            parallelism_block,
+            parallelism_guidance(),
             "",
             "Schemas",
             "-------",
