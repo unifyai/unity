@@ -14,28 +14,33 @@ from tests.helpers import _handle_project
 @_handle_project
 async def test_search_messages_simple_similarity():
     tm = TranscriptManager()
+    cm = ContactManager()
+
+    # Create two real contacts and use their assigned ids
+    a_id = cm._create_contact(first_name="Ann")["details"]["contact_id"]
+    b_id = cm._create_contact(first_name="Ben")["details"]["contact_id"]
 
     msgs = [
         Message(
             medium=random.choice(VALID_MEDIA),
-            sender_id=1,
-            receiver_ids=[2],
+            sender_id=a_id,
+            receiver_ids=[b_id],
             timestamp="2025-05-19 12:00:00",
             content="I have some banking questions and budgeting needs",
             exchange_id=1,
         ),
         Message(
             medium=random.choice(VALID_MEDIA),
-            sender_id=2,
-            receiver_ids=[1],
+            sender_id=b_id,
+            receiver_ids=[a_id],
             timestamp="2025-05-19 12:00:01",
             content="Let's discuss banking plans tomorrow",
             exchange_id=1,
         ),
         Message(
             medium=random.choice(VALID_MEDIA),
-            sender_id=1,
-            receiver_ids=[2],
+            sender_id=a_id,
+            receiver_ids=[b_id],
             timestamp="2025-05-19 12:00:02",
             content="Totally unrelated: machine learning and Python",
             exchange_id=1,
