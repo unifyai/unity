@@ -179,6 +179,12 @@ tests/.project_cleanup.sh -y
 # use a custom prefix
 tests/.project_cleanup.sh --prefix UnityTests_
 
+# also include the base UnityTests project in deletion
+tests/.project_cleanup.sh --include_main
+
+# combine with other flags (e.g., skip confirmations)
+tests/.project_cleanup.sh --include_main -y
+
 # force environment without prompt
 tests/.project_cleanup.sh -s   # staging
 tests/.project_cleanup.sh -p   # production
@@ -191,3 +197,7 @@ Requirements:
 - To skip the environment prompt, either pass `-s/--staging` or `-p/--production`,
   or set `UNIFY_BASE_URL` (e.g., `https://api.unify.ai/v0` for production or
   `https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0` for staging).
+
+Notes:
+
+- `--include_main` is optional and will additionally delete the plain `UnityTests` project (useful when a non-suffixed main project exists alongside temporary `UnityTests_...` ones).

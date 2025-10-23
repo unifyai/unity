@@ -18,15 +18,17 @@ PREFIX="UnityTests_"
 ASSUME_YES=0
 DRY_RUN=0
 EXPLICIT_ENV=""
+INCLUDE_MAIN=0
 
 usage() {
   cat <<'USAGE'
-Usage: .project_cleanup.sh [--dry-run] [-y|--yes] [--prefix PREFIX] [--staging|-s|--production|-p]
+Usage: .project_cleanup.sh [--dry-run] [-y|--yes] [--prefix PREFIX] [--include_main] [--staging|-s|--production|-p]
 
 Options:
   --dry-run           Show matching projects without deleting
   -y, --yes           Do not prompt for confirmation
   --prefix PREFIX     Name prefix to match (default: UnityTests_)
+  --include_main      Also delete the base UnityTests project
   -s, --staging       Use staging environment (skips prompt)
   -p, --production    Use production environment (skips prompt)
   -h, --help          Show this help
@@ -52,6 +54,9 @@ while (( "$#" )); do
         exit 2
       fi
       PREFIX="$1"
+      ;;
+    --include_main)
+      INCLUDE_MAIN=1
       ;;
     -s|--staging)
       EXPLICIT_ENV="staging"
@@ -133,6 +138,22 @@ jq -r --arg pfx "$PREFIX" '
   | select(.id != null and (.id | tostring) != "")
   | [.id, .name] | @tsv
 ' <<<"$resp" > "$tmp_matches" || true
+
+# Optionally include the main UnityTests project (exact name match)
+if (( INCLUDE_MAIN )); then
+  jq -r '
+    (if type=="array" then . else (.projects // []) end)
+    | map(
+        if type=="string" then {id: ., name: .}
+        else {id: (.id // .project_id // .projectId // .projectID // .uuid // .name // empty), name: (.name // .id // empty)}
+        end
+      )
+    | .[]
+    | select(.name? and (.name | type=="string") and (.name == "UnityTests"))
+    | select(.id != null and (.id | tostring) != "")
+    | [.id, .name] | @tsv
+  ' <<<"$resp" >> "$tmp_matches" || true
+fi
 
 while IFS= read -r line; do
   [[ -n "$line" ]] || continue
