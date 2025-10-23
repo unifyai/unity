@@ -536,11 +536,11 @@ class ManagersWorker:
                     )
                     result = await ask_handle.result()
                 case "interject":
-                    interject_handle = await handle.interject(
+                    await handle.interject(
                         event.query,
                         parent_chat_context_cont=event.parent_chat_context,
                     )
-                    result = await interject_handle.result()
+                    result = "Handle Interjected"
                 case "stop":
                     handle.stop(reason=event.query)
                     result = "Handle Stopped"
