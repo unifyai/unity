@@ -295,28 +295,6 @@ def tm_scenario(request: pytest.FixtureRequest):
                 mode="asyncio",
             )
 
-    # If reusing but we don't yet have a baseline commit, clear any stale
-    # contexts that have no commit history to avoid duplicate seeding.
-    if reuse_scenario and not SCENARIO_COMMIT_HASHES and existing_context_names:
-
-        def _has_commits(name: str) -> bool:
-            try:
-                history = unify.get_context_commits(name)
-                return bool(history)
-            except Exception:
-                return False
-
-        stale = [name for name in existing_context_names if not _has_commits(name)]
-        if stale:
-
-            def _delete_ctx(name: str):
-                unify.delete_context(name)
-
-            unify.map(_delete_ctx, stale, mode="asyncio")
-            # Refresh after deletion
-            existing_contexts = unify.get_contexts(prefix=ctx)
-            existing_context_names = list(existing_contexts.keys())
-
     if reuse_scenario and not SCENARIO_COMMIT_HASHES:
 
         def get_and_rollback_context(ctx):
