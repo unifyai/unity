@@ -4,12 +4,12 @@ import pytest
 from datetime import datetime, UTC
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import Message, VALID_MEDIA
+from unity.transcript_manager.types.message import VALID_MEDIA
 from tests.helpers import _handle_project
 from unity.contact_manager.types.contact import Contact
 
 
-def _base_message(seed: int) -> Message:
+def _base_message(seed: int) -> dict:
     # Use Contact objects to auto-create contacts instead of hard-coded ids
     names = [
         ("Alice", "Bob"),
@@ -17,14 +17,14 @@ def _base_message(seed: int) -> Message:
         ("Eve", "Frank"),
     ]
     snd, rcv = names[seed % len(names)]
-    return Message(
-        medium=VALID_MEDIA[seed % len(VALID_MEDIA)],
-        sender_id=Contact(first_name=snd),
-        receiver_ids=[Contact(first_name=rcv)],
-        timestamp=datetime.now(UTC),
-        content=f"msg-{seed}",
+    return {
+        "medium": VALID_MEDIA[seed % len(VALID_MEDIA)],
+        "sender_id": Contact(first_name=snd),
+        "receiver_ids": [Contact(first_name=rcv)],
+        "timestamp": datetime.now(UTC),
+        "content": f"msg-{seed}",
         # Note: exchange_id is intentionally omitted so it is auto-created
-    )
+    }
 
 
 @pytest.mark.unit
