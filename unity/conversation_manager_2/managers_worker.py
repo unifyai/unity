@@ -488,7 +488,7 @@ class ManagersWorker:
         asyncio.create_task(self._conductor_watch_notifications(handle_id, handle))
         asyncio.create_task(self._conductor_watch_clarifications(handle_id, handle))
 
-    async def _register_handle_action(
+    def _register_handle_action(
         self, handle_id: int, action_name: str, query: str
     ) -> None:
         """Register a handle action."""
