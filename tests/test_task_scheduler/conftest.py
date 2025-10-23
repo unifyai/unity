@@ -45,14 +45,13 @@ class ScenarioBuilderTasks:
 
         def search_task_by_name(task_data):
             """Helper function to search for a task by name and return its ID."""
-            out = self.ts._filter_tasks(
+            existing_tasks = self.ts._filter_tasks(
                 filter=f"name == '{task_data['name']}'",
             )
-            rows = out["tasks"] if isinstance(out, dict) else out
-            if rows:
-                if rows[0]["status"] == "primed":
-                    self.ts._primed_task = rows[0]
-                return rows[0]["task_id"]
+            if existing_tasks:
+                if existing_tasks[0]["status"] == "primed":
+                    self.ts._primed_task = existing_tasks[0]
+                return existing_tasks[0]["task_id"]
             return None
 
         # Wrap each task_data dict in a tuple to avoid unify.map treating dict keys as kwargs
@@ -80,10 +79,9 @@ class ScenarioBuilderTasks:
 
         for i, task_data in enumerate(_TASKS_DATA):
             # Check if task already exists
-            out = self.ts._filter_tasks(
+            existing_tasks = self.ts._filter_tasks(
                 filter=f"name == '{task_data['name']}'",
             )
-            existing_tasks = out["tasks"] if isinstance(out, dict) else out
             if existing_tasks:
                 # Update _TASK_IDS if we don't have this ID yet
                 task_id = existing_tasks[0]["task_id"]

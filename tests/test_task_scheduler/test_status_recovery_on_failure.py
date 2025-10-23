@@ -32,12 +32,9 @@ async def test_defer_reinstate_failure_fallback_downgrades_status(monkeypatch):
     assert "stopped" in result.lower()
 
     # After fallback, the task should no longer be active; expect queued (prior was queued)
-    out = ts._filter_tasks(filter=f"task_id == {tid}")
-    rows = out["tasks"] if isinstance(out, dict) else out
-    assert any(str(getattr(r, "status", "")) != "active" for r in rows)
-    assert any(
-        str(getattr(r, "status", "")) in ("queued", "scheduled", "primed") for r in rows
-    )
+    rows = ts._filter_tasks(filter=f"task_id == {tid}")
+    assert any(r.get("status") != "active" for r in rows)
+    assert any(r.get("status") in ("queued", "scheduled", "primed") for r in rows)
 
 
 @pytest.mark.asyncio

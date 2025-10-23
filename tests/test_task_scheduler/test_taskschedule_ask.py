@@ -45,12 +45,7 @@ class ScenarioBuilder:
     ) -> None:
         """Idempotent create: only add when a task with the same name is absent."""
         try:
-            existing_out = self.ts._filter_tasks(filter=f"name == {name!r}", limit=1)
-            existing = (
-                existing_out["tasks"]
-                if isinstance(existing_out, dict)
-                else existing_out
-            )
+            existing = self.ts._filter_tasks(filter=f"name == {name!r}", limit=1)
         except Exception:
             existing = []
         if existing:
@@ -108,17 +103,17 @@ class ScenarioBuilder:
 
 def _answer_semantic(ts: TaskScheduler, question: str) -> str:
     q = question.lower()
-    tasks = ts._filter_tasks()["tasks"]
+    tasks = ts._filter_tasks()
 
     if "currently primed" in q:
-        return next(t for t in tasks if str(t.status) == "primed").name
+        return next(t for t in tasks if t["status"] == "primed")["name"]
 
     if "tasks are queued" in q:
-        return str(sum(1 for t in tasks if str(t.status) == "queued"))
+        return str(sum(1 for t in tasks if t["status"] == "queued"))
 
     if "client meeting" in q and "scheduled" in q:
-        mtg = next(t for t in tasks if "client meeting" in t.name.lower())
-        return mtg.schedule.start_at.split("T")[0]
+        mtg = next(t for t in tasks if "client meeting" in t["name"].lower())
+        return mtg["schedule"]["start_at"].split("T")[0]
 
     if "priority" in q and "hotfix" in q:
         hotfix = next(t for t in tasks if "hotfix" in t["name"].lower())

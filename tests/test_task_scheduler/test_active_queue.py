@@ -129,12 +129,9 @@ async def test_execute_queue_by_numeric_id_forwards_and_runs_followers(monkeypat
     h = await ts.execute(text=str(a))
     await h.result()
 
-    out_a = ts._filter_tasks(filter=f"task_id == {a}")
-    out_b = ts._filter_tasks(filter=f"task_id == {b}")
-    out_c = ts._filter_tasks(filter=f"task_id == {c}")
-    rows_a = out_a["tasks"] if isinstance(out_a, dict) else out_a
-    rows_b = out_b["tasks"] if isinstance(out_b, dict) else out_b
-    rows_c = out_c["tasks"] if isinstance(out_c, dict) else out_c
+    rows_a = ts._filter_tasks(filter=f"task_id == {a}")
+    rows_b = ts._filter_tasks(filter=f"task_id == {b}")
+    rows_c = ts._filter_tasks(filter=f"task_id == {c}")
     # After full queue, we expect all instances to be completed or terminal
     assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_a)
     assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_b)
@@ -174,8 +171,7 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
 
     # Snapshot original schedules and queue_ids
     def _row(tid: int) -> Dict:
-        out = ts._filter_tasks(filter=f"task_id == {tid}")
-        return (out["tasks"] if isinstance(out, dict) else out)[0]
+        return ts._filter_tasks(filter=f"task_id == {tid}")[0]
 
     ra0 = _row(a)
     rb0 = _row(b)
@@ -279,13 +275,11 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
     assert "stopped" in (res or "").lower()
 
     # B should be reinstated as head with original start_at; C queued after
-    out_b = ts._filter_tasks(filter=f"task_id == {b}")
-    row_b = (out_b["tasks"] if isinstance(out_b, dict) else out_b)[0]
+    row_b = ts._filter_tasks(filter=f"task_id == {b}")[0]
     sched_b = row_b.get("schedule") or {}
     assert sched_b.get("prev_task") is None
     assert row_b["status"] in ("scheduled", "queued", "primed")
-    out_c = ts._filter_tasks(filter=f"task_id == {c}")
-    row_c = (out_c["tasks"] if isinstance(out_c, dict) else out_c)[0]
+    row_c = ts._filter_tasks(filter=f"task_id == {c}")[0]
     sched_c = row_c.get("schedule") or {}
     assert sched_c.get("prev_task") == b
 
@@ -316,10 +310,8 @@ async def test_execute_queue_by_numeric_id_completes_all(monkeypatch):
     h = await ts.execute(text=str(x))
     await h.result()
 
-    out_x = ts._filter_tasks(filter=f"task_id == {x}")
-    out_y = ts._filter_tasks(filter=f"task_id == {y}")
-    rows_x = out_x["tasks"] if isinstance(out_x, dict) else out_x
-    rows_y = out_y["tasks"] if isinstance(out_y, dict) else out_y
+    rows_x = ts._filter_tasks(filter=f"task_id == {x}")
+    rows_y = ts._filter_tasks(filter=f"task_id == {y}")
     assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_x)
     assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_y)
 
@@ -397,8 +389,7 @@ async def test_queue_pause_resume_and_completion(monkeypatch):
     async def _wait_until_active(max_iters: int = 500):
         for _ in range(max_iters):
             try:
-                out = ts._filter_tasks(filter="status == 'active'", limit=1)
-                rows = out["tasks"] if isinstance(out, dict) else out
+                rows = ts._filter_tasks(filter="status == 'active'", limit=1)
             except Exception:
                 rows = []
             if rows:
@@ -533,12 +524,9 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
     await h.result()
 
     # Resolve descriptions for assertion readability
-    out_a = ts._filter_tasks(filter=f"task_id == {a_id}")
-    out_b = ts._filter_tasks(filter=f"task_id == {b_id}")
-    out_c = ts._filter_tasks(filter=f"task_id == {c_id}")
-    rows_a = out_a["tasks"] if isinstance(out_a, dict) else out_a
-    rows_b = out_b["tasks"] if isinstance(out_b, dict) else out_b
-    rows_c = out_c["tasks"] if isinstance(out_c, dict) else out_c
+    rows_a = ts._filter_tasks(filter=f"task_id == {a_id}")
+    rows_b = ts._filter_tasks(filter=f"task_id == {b_id}")
+    rows_c = ts._filter_tasks(filter=f"task_id == {c_id}")
     a_desc = rows_a[0]["description"]
     b_desc = rows_b[0]["description"]
     c_desc = rows_c[0]["description"]
@@ -619,8 +607,7 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     async def _wait_until_active(max_iters: int = 500):
         for _ in range(max_iters):
             try:
-                out = ts._filter_tasks(filter="status == 'active'", limit=1)
-                rows = out["tasks"] if isinstance(out, dict) else out
+                rows = ts._filter_tasks(filter="status == 'active'", limit=1)
             except Exception:
                 rows = []
             if rows:
@@ -796,14 +783,10 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     assert isinstance(res, str)
 
     # A, B, D should be terminal; C should remain non-terminal
-    out_a = ts._filter_tasks(filter=f"task_id == {a_id}")
-    out_b = ts._filter_tasks(filter=f"task_id == {b_id}")
-    out_c = ts._filter_tasks(filter=f"task_id == {c_id}")
-    out_d = ts._filter_tasks(filter=f"task_id == {d_id}")
-    rows_a = out_a["tasks"] if isinstance(out_a, dict) else out_a
-    rows_b = out_b["tasks"] if isinstance(out_b, dict) else out_b
-    rows_c = out_c["tasks"] if isinstance(out_c, dict) else out_c
-    rows_d = out_d["tasks"] if isinstance(out_d, dict) else out_d
+    rows_a = ts._filter_tasks(filter=f"task_id == {a_id}")
+    rows_b = ts._filter_tasks(filter=f"task_id == {b_id}")
+    rows_c = ts._filter_tasks(filter=f"task_id == {c_id}")
+    rows_d = ts._filter_tasks(filter=f"task_id == {d_id}")
 
     def _is_terminal(row):
         return row.get("status") in ("completed", "cancelled", "failed")
