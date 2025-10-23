@@ -184,6 +184,7 @@ def _llm_assert_correct(
             "A good one-sentence summary will often synthesize information from multiple utterances into a coherent statement, potentially reflecting the implied outcome or joint understanding if reasonably inferred from the dialogue. "
             "For example, if the dialogue discusses 'planning to do X' or 'working on X', the summary can state that the conversation was about 'planning X' or 'addressing X'. "
             "Minor stylistic or tense differences, re-ordering, shortened wording, or inclusion of obviously correct contextual details are also acceptable. "
+            "Ignore benign parenthetical metadata such as internal ids (e.g., exchange_id/message_id) or obvious conversation labels if they do not contradict the dialogue. "
             "The crucial factors are that the summary does not omit key topics discussed and does not introduce information that contradicts or is unsupported by the dialogue's intent. "
             'Respond ONLY with valid JSON of the form {"correct": true} or {"correct": false}. If false, explain why. '
         )
