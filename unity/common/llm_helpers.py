@@ -452,12 +452,12 @@ def method_to_schema(
         is_hidden = (
             name.startswith("_") and param.default is not inspect._empty
         ) or name in (
-            "parent_chat_context",
-            "clarification_up_q",
-            "clarification_down_q",
-            "notification_up_q",
-            "pause_event",
-            "interject_queue",
+            "_parent_chat_context",
+            "_clarification_up_q",
+            "_clarification_down_q",
+            "_notification_up_q",
+            "_pause_event",
+            "_interject_queue",
         )
 
         if is_hidden:
