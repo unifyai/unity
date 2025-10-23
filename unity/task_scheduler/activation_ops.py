@@ -54,16 +54,11 @@ def detach_from_queue_for_activation(
     These rules make reinstatement deterministic and easy to reason about.
     """
 
-    candidate_out = scheduler._filter_tasks(
+    candidate_rows = scheduler._filter_tasks(
         filter=(
             f"task_id == {task_id} and status not in "
             "('completed','cancelled','failed','active')"
         ),
-    )
-    candidate_rows = (
-        candidate_out.get("tasks", [])
-        if isinstance(candidate_out, dict)
-        else candidate_out
     )
     if not candidate_rows:
         raise ValueError(f"No runnable task found with id={task_id}")
@@ -77,8 +72,7 @@ def detach_from_queue_for_activation(
     # Derive the current head's start_at so downstream tasks can be reinstated as
     # head-scheduled later if their original predecessor becomes terminal.
     def _get_row(tid: int) -> Optional[dict]:
-        rows_out = scheduler._filter_tasks(filter=f"task_id == {tid}", limit=1)
-        rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+        rows = scheduler._filter_tasks(filter=f"task_id == {tid}", limit=1)
         return rows[0] if rows else None
 
     # Compute head_start_at with at most one backend read.

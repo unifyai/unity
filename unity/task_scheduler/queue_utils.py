@@ -70,11 +70,7 @@ def sync_adjacent_links(
             row_obj = prefetched_rows.get(int(neighbour_id))
 
         if row_obj is None:
-            rows_out = scheduler._filter_tasks(
-                filter=f"task_id == {neighbour_id}",
-                limit=1,
-            )
-            rows = rows_out.get("tasks", []) if isinstance(rows_out, dict) else rows_out
+            rows = scheduler._filter_tasks(filter=f"task_id == {neighbour_id}", limit=1)
             if not rows:
                 # Neighbour went missing – skip symmetric update instead of failing
                 continue
