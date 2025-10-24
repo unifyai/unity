@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from typing import Dict, Callable
 
-from ..task_scheduler.types.task import Task
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
@@ -159,9 +158,6 @@ def build_ask_prompt(
             "",
             "Tools (name → argspec):",
             sig_json,
-            "",
-            "Task schema (reference):",
-            json.dumps(Task.model_json_schema(), indent=4),
             "",
             usage_examples,
             "",
@@ -342,9 +338,6 @@ def build_request_prompt(
             "",
             "Tools (name → argspec):",
             sig_json,
-            "",
-            "Task schema:",
-            json.dumps(Task.model_json_schema(), indent=4),
             "",
             usage_examples,
             "",
