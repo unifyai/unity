@@ -34,7 +34,7 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
     • `update`   — create, amend, delete or merge knowledge via
       natural‑language instructions
     • `refactor` — restructure the schema across knowledge tables (and related
-      contact tables) to improve clarity, normalisation and efficiency
+      tables where applicable) to improve clarity, normalisation and efficiency
 
     Implementations may talk to a real vector store, an HTTP API, Unity logs,
     an in‑memory mock or a simulated LLM – but they **all** expose exactly the
@@ -176,9 +176,9 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        **Restructure the schema** of *all* knowledge tables **and** the
-        contacts table so that data are de‑duplicated, normalised and stored as
-        clearly and efficiently as possible.
+        **Restructure the schema** of all knowledge tables (and any directly
+        related tables within the same store) so that data are de‑duplicated,
+        normalised and stored as clearly and efficiently as possible.
 
         Do *not* request *how* to perform the refactor; state the high‑level
         intent in natural language and allow the `refactor` method to determine
