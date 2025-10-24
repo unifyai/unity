@@ -5088,24 +5088,18 @@ class HierarchicalActor(BaseActor):
 
             prompt = prompt_builders.build_dynamic_implement_prompt(
                 goal=plan.goal,
-                scoped_context=scoped_context_str,
-                call_stack=plan.call_stack,
+                scoped_context=scoped_context_str_for_prompt,
+                call_stack=call_stack_list_for_prompt,
                 function_name=function_name,
                 function_sig=func_sig,
                 function_docstring=docstring,
-                parent_code=parent_code,
-                has_browser_screenshot=browser_screenshot is not None,
+                clarification_question=kwargs.get("clarification_question"),
+                clarification_answer=kwargs.get("clarification_answer"),
                 replan_context=replan_reason,
                 tools=self.tools,
                 existing_functions=existing_functions,
-                existing_code_for_modification=kwargs.get(
-                    "existing_code_for_modification",
-                ),
-                clarification_question=kwargs.get("clarification_question"),
-                clarification_answer=kwargs.get("clarification_answer"),
                 recent_transcript=recent_transcript,
                 parent_chat_context=plan.parent_chat_context,
-                failed_interactions_trace=failed_interactions_trace,
                 images=plan.images,
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
