@@ -4583,8 +4583,8 @@ class HierarchicalActor(BaseActor):
                     plan.runtime.cache_miss_counter.append(0)
 
                     # TODO: remove this if preconditions are no longer needed in favor of the new sub-agent course correction
-                    if not plan.runtime.execution_mode.startswith("replay_"):
-                        await self._ensure_precondition(plan, func_name)
+                    # if not plan.runtime.execution_mode.startswith("replay_"):
+                    #     await self._ensure_precondition(plan, func_name)
 
                     pre_state = {
                         "url": await self.action_provider.browser.get_current_url(),
