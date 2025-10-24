@@ -907,11 +907,13 @@ class MagnitudeBrowserBackend(BrowserBackend):
             return response_format.model_validate(data)
         return data
 
-    def clear_commands_from_failed_function(self, function_name: str):
+    async def clear_pending_commands(self, run_id: int):
         """
-        Removes all queued and active commands that were issued by a specific function.
+        Removes all queued and active commands that were issued by a specific run_id.
+        This is used to prevent stale commands from an old execution run from executing
+        after the run has been cancelled and a new one has started.
         """
-        # Drain existing queue items and requeue only those not from the failed function.
+        # Drain existing queue items and requeue only those not from the cancelled run.
         kept_items = []
         removed_count = 0
         original_size = self._command_queue.qsize()
@@ -920,11 +922,11 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 self._command_queue.get_nowait()
             )
             context = self._active_commands.get(command_id, [None, {}])[1]
-            if context.get("function_name") != function_name:
+            if context.get("run_id") != run_id:
                 kept_items.append((seq, command_id, func, args, kwargs, future))
             else:
                 logger.info(
-                    f"Cancelling queued command from failed function '{function_name}': {self._active_commands.get(command_id, ['unknown'])[0]}",
+                    f"Cancelling queued command from cancelled run_id={run_id}: {self._active_commands.get(command_id, ['unknown'])[0]}",
                 )
                 if future:
                     future.cancel()
@@ -936,7 +938,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._command_queue.put_nowait(item)
 
         logger.info(
-            f"🧹 Cleared {removed_count}/{original_size} queued commands for function '{function_name}'.",
+            f"🧹 Cleared {removed_count}/{original_size} queued commands for run_id={run_id}.",
         )
 
     async def query(self, query: str, response_format: Any = str) -> Any:
