@@ -45,8 +45,18 @@ async def test_conductor_corrects_conversation_flow():
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
     # 1. Verify the Conductor's reasoning process:
-    requested_tools = assistant_requested_tool_names(messages)
-    executed_tools = tool_names_from_messages(messages)
+    # Collect requested/executed tools across relevant managers
+    requested_tools = [
+        *assistant_requested_tool_names(
+            messages,
+            "ConversationManagerHandle",
+        ),
+        *assistant_requested_tool_names(messages, "TaskScheduler"),
+    ]
+    executed_tools = [
+        *tool_names_from_messages(messages, "ConversationManagerHandle"),
+        *tool_names_from_messages(messages, "TaskScheduler"),
+    ]
 
     assert "ConversationManagerHandle_get_full_transcript" in requested_tools
     assert "TaskScheduler_ask" in requested_tools
@@ -129,7 +139,10 @@ async def test_conductor_steers_with_ask():
     # 6. Verify the final outcome and tool call sequence.
     assert "flight booking" in answer.lower()
 
-    requested_tools = assistant_requested_tool_names(messages)
+    requested_tools = assistant_requested_tool_names(
+        messages,
+        "ConversationManagerHandle",
+    )
     assert all(
         tool in requested_tools
         for tool in [
