@@ -500,8 +500,6 @@ class Conductor(BaseConductor):
             log_steps=_log_tool_steps,
             # Hide Actor.act and TaskScheduler.execute while a session is active
             tool_policy=self._mask_act_execute_policy(),
-            # Ensure at most one base tool is scheduled per assistant turn
-            max_parallel_tool_calls=1,
         )
 
         if should_log and call_id is not None:
