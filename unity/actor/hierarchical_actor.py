@@ -4755,14 +4755,9 @@ class HierarchicalActor(BaseActor):
                                     f"Received user guidance: {user_answer}",
                                 )
 
-                                existing_code = plan.clean_function_source_map.get(
-                                    func_name,
-                                )
                                 await plan._handle_dynamic_implementation(
                                     func_name,
                                     replan_reason=f"Function failed all retries. User provided new guidance: {user_answer}",
-                                    failed_interactions=local_interactions,
-                                    existing_code_for_modification=existing_code,
                                     clarification_question=clarification_question,
                                     clarification_answer=user_answer,
                                     call_stack_snapshot=list(
