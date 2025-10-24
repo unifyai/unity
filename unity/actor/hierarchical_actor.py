@@ -1989,6 +1989,8 @@ class HierarchicalPlan(BaseActiveTask):
                 - replan_reason: The string explaining why this is happening.
                 - clarification_question: The question that was asked to the user.
                 - clarification_answer: The answer received from the user.
+                - call_stack_snapshot: Snapshot of the call stack at time of failure.
+                - scoped_context_snapshot: Snapshot of the scoped context at time of failure.
                 - ...and other existing kwargs.
         """
         reason = kwargs.get(
@@ -2009,6 +2011,10 @@ class HierarchicalPlan(BaseActiveTask):
             self.action_log.append(
                 f"Decision: Implementing function '{function_name}'. Reason: {decision.reason}",
             )
+            if not decision.code:
+                raise ValueError(
+                    "Action 'implement_function' requires the 'code' field but it was missing.",
+                )
             self._update_plan_with_new_code(function_name, decision.code)
 
         elif decision.action == "skip_function":
@@ -2026,11 +2032,15 @@ class HierarchicalPlan(BaseActiveTask):
                 self.action_log.append(
                     "Clarification requested but no clarification channel available. Attempting to implement with best guess.",
                 )
-                existing_code = self.clean_function_source_map.get(function_name)
                 await self._handle_dynamic_implementation(
                     function_name,
                     replan_reason="Clarification channel not available. Please proceed with your best guess.",
-                    existing_code_for_modification=existing_code,
+                    call_stack_snapshot=kwargs.get(
+                        "call_stack_snapshot",
+                    ),
+                    scoped_context_snapshot=kwargs.get(
+                        "scoped_context_snapshot",
+                    ),
                 )
             else:
                 question = (
@@ -2043,39 +2053,30 @@ class HierarchicalPlan(BaseActiveTask):
                 answer = await self.clarification_down_q.get()
                 self.action_log.append(f"User answered: {answer}")
 
-                existing_code = self.clean_function_source_map.get(function_name)
                 await self._handle_dynamic_implementation(
                     function_name,
                     clarification_question=question,
                     clarification_answer=answer,
-                    existing_code_for_modification=existing_code,
+                    call_stack_snapshot=kwargs.get(
+                        "call_stack_snapshot",
+                    ),
+                    scoped_context_snapshot=kwargs.get(
+                        "scoped_context_snapshot",
+                    ),
                 )
 
         elif decision.action == "replan_parent":
             self.action_log.append(
                 f"Decision: Escalating to replan parent of '{function_name}'. Reason: {decision.reason}",
             )
-
-            try:
-                current_index = self.call_stack.index(function_name)
-                if current_index > 0:
-                    parent_function_name = self.call_stack[current_index - 1]
-                    self.action_log.append(
-                        f"Now attempting to replan '{parent_function_name}'...",
-                    )
-                    parent_existing_code = self.clean_function_source_map.get(
-                        parent_function_name,
-                    )
-                    await self._handle_dynamic_implementation(
-                        parent_function_name,
-                        is_strategic_replan=True,
-                        replan_reason=decision.reason,
-                        existing_code_for_modification=parent_existing_code,
-                    )
-                else:
-                    self.action_log.append(
-                        f"Preparing a trace summary for full strategic replan of '{function_name}'...",
-                    )
+            raise ReplanFromParentException(
+                f"Child function '{function_name}' requested parent replan.",
+                reason=decision.reason,
+            )
+        else:
+            raise ValueError(
+                f"Unknown ImplementationDecision action: {decision.action}",
+            )
 
                     full_trace = "\n".join(self.action_log)
                     summary_prompt = prompt_builders.build_trace_summary_prompt(
@@ -4585,9 +4586,7 @@ class HierarchicalActor(BaseActor):
 
                                 await plan._handle_dynamic_implementation(
                                     func_name,
-                                    is_strategic_replan=True,
                                     replan_reason=last_error_reason,
-                                    failed_interactions=e.failed_interactions,
                                     existing_code_for_modification=existing_code,
                                     call_stack_snapshot=current_call_stack_snapshot,
                                     scoped_context_snapshot=current_scoped_context_snapshot,
