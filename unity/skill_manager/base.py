@@ -13,15 +13,15 @@ class BaseSkillManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Public contract for a high-level catalogue of assistant "skills".
 
-    A "skill" is a reusable capability exposed through stored functions managed
-    by the FunctionManager. SkillManager provides a natural-language interface
-    for discovering and understanding what the assistant can do.
+    A "skill" is a reusable capability backed by an underlying function
+    catalogue. The SkillManager provides a natural-language interface for
+    discovering and understanding what the assistant can do.
 
-    Implementations must expose one public method `ask` which answers questions
-    about available skills and how they relate to the underlying reusable
-    functions. Implementations may connect to a real backing store via
-    FunctionManager, or use a simulated catalogue – but the public contract is
-    the same.
+    Implementations must expose one public method `ask`, which answers
+    questions about available skills and how they relate to the underlying
+    stored functions. Implementations may connect to a real function
+    catalogue, a remote service, or a simulated catalogue – but the public
+    contract is the same.
     """
 
     # ------------------------------------------------------------------ #
