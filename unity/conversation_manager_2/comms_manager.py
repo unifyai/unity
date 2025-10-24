@@ -264,7 +264,7 @@ class CommsManager:
                         asyncio.run_coroutine_threadsafe(
                             self.message_queue.publish(
                                 f"app:comms:contacts",
-                                GetContactsOutput(contacts=contacts).to_json(),
+                                GetContactsResponse(contacts=contacts).to_json(),
                             ),
                             self.loop,
                         )
