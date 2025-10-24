@@ -25,6 +25,14 @@ def normalize_tool_name(name: str, manager_prefix: str) -> str:
     if s.startswith(f"continue_{manager_prefix}_execute"):
         return f"{manager_prefix}_execute"
 
+    # Dynamic helper wrappers generated for in-flight handles (e.g. ask_Manager_ask_<id>)
+    if s.startswith(f"ask_{manager_prefix}_ask"):
+        return f"{manager_prefix}_ask"
+    if s.startswith(f"ask_{manager_prefix}_update"):
+        return f"{manager_prefix}_update"
+    if s.startswith(f"ask_{manager_prefix}_execute"):
+        return f"{manager_prefix}_execute"
+
     # Verbose completion labels – tool results that echo the call signature
     if s.startswith(f"{manager_prefix}_ask("):
         return f"{manager_prefix}_ask"
