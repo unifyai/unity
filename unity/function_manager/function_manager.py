@@ -508,13 +508,16 @@ class FunctionManager(BaseFunctionManager):
         # Second pass: Validate dependencies and Persist successfully parsed functions
         for name, tree, node, source in parsed:
             try:
+                # Collect verified dependencies (user-defined functions) for tracking
                 dependencies = self._collect_verified_dependencies(
                     node,
                     all_known_function_names,
                 )
                 dependencies_list = sorted(list(dependencies))
 
-                self._validate_function_calls(name, dependencies, temp_names)
+                # Validate against ALL function calls (includes built-ins) for dangerous built-ins check
+                all_calls = self._collect_function_calls(node)
+                self._validate_function_calls(name, all_calls, temp_names)
                 namespace = create_sandbox_globals()
                 exec(source, namespace)
                 fn_obj = namespace[name]
