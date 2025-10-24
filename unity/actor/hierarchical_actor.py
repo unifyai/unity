@@ -4839,9 +4839,11 @@ class HierarchicalActor(BaseActor):
                         item = VerificationWorkItem(
                             ordinal=plan.verif_seq,
                             function_name=func_name,
-                            parent_stack=plan.runtime.get_current_stack_tuple(
-                                plan.run_id,
-                            )[:-1],
+                            parent_stack=(
+                                captured_full_stack_tuple[:-1]
+                                if captured_full_stack_tuple
+                                else ()
+                            ),
                             func_source=plan.function_source_map.get(func_name, ""),
                             docstring=captured_docstring,
                             func_sig_str=captured_sig_str,
@@ -4851,6 +4853,8 @@ class HierarchicalActor(BaseActor):
                             return_value_repr=repr(result),
                             cache_miss_counter=step_cache_miss_counter,
                             exit_seq=exit_seq,
+                            full_call_stack_tuple=captured_full_stack_tuple,
+                            scoped_context_snapshot=captured_scoped_context_snapshot,
                         )
 
                         plan._spawn_async_verification(item)
