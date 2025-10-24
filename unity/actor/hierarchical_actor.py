@@ -2743,36 +2743,108 @@ class HierarchicalPlan(BaseActiveTask):
 
     def _invalidate_cache_from_function(self, function_name: str, parent_stack: tuple):
         """
-        Reuses the selective cache invalidation logic from interjections.
-        Purges cache entries for the failed function and everything called after it.
+        Invalidates cache entries for the target function and all subsequent calls
+        within the same call chain, based on the provided stack context.
         """
         try:
             full_stack_list = list(parent_stack) + [function_name]
+            stack_depth = len(full_stack_list)
 
-            start_index = full_stack_list.index(function_name)
+            if not stack_depth:
+                logger.warning(
+                    "Attempted cache invalidation with an empty stack. Skipping.",
+                )
+                return
 
-            functions_to_invalidate = set(full_stack_list[start_index:])
             self.action_log.append(
-                f"CACHE INVALIDATION: Verification failure invalidating cache for: {', '.join(functions_to_invalidate)}",
+                f"CACHE INVALIDATION: Recovery initiating invalidation from function "
+                f"'{function_name}' at stack depth {stack_depth} (Stack: {' -> '.join(full_stack_list)}).",
+            )
+            logger.info(
+                f"Invalidating cache from function '{function_name}' (stack: {' -> '.join(full_stack_list)}) onwards.",
             )
 
-            keys_to_delete = [
-                key
-                for key in self.idempotency_cache
-                if any(func_name in functions_to_invalidate for func_name in key[0])
-            ]
+            keys_to_delete = set()
+            invalidated_functions_logged = set()
+
+            for key, value in self.idempotency_cache.items():
+                key_call_stack = (
+                    key[0]
+                    if isinstance(key, tuple)
+                    and len(key) > 0
+                    and isinstance(key[0], tuple)
+                    else None
+                )
+
+                if not key_call_stack or len(key_call_stack) < stack_depth:
+                    continue
+
+                is_match = True
+                for i in range(stack_depth):
+                    if key_call_stack[i] != full_stack_list[i]:
+                        is_match = False
+                        break
+
+                if is_match:
+                    keys_to_delete.add(key)
+                    if (
+                        value.get("meta")
+                        and value["meta"].get("function")
+                        not in invalidated_functions_logged
+                    ):
+                        invalidated_functions_logged.add(value["meta"]["function"])
 
             if keys_to_delete:
                 logger.info(
-                    f"Invalidating {len(keys_to_delete)} cache entries due to verification failure.",
+                    f"Invalidating {len(keys_to_delete)} cache entries related to call stack starting from '{function_name}'. "
+                    f"Affected functions in log: {', '.join(sorted(list(invalidated_functions_logged)))}",
                 )
+                self.action_log.append(
+                    f"CACHE INVALIDATION: Identified {len(keys_to_delete)} entries to remove.",
+                )
+
+                invalidated_handles = set()
+
                 for key in keys_to_delete:
-                    del self.idempotency_cache[key]
+                    entry = self.idempotency_cache.pop(key, None)
+                    if entry:
+                        result_is_handle_id = (
+                            isinstance(entry.get("result"), dict)
+                            and "handle_id" in entry["result"]
+                        )
+                        interaction_mentions_handle = (
+                            "Returned handle"
+                            in entry.get("interaction_log", [None, None, ""])[2]
+                        )
+
+                        if result_is_handle_id or interaction_mentions_handle:
+                            handle_id = (
+                                entry.get("result", {}).get("handle_id")
+                                if result_is_handle_id
+                                else None
+                            )
+                            if handle_id and isinstance(handle_id, str):
+                                invalidated_handles.add(handle_id)
+                                self.live_handles.pop(handle_id, None)
+            else:
+                logger.info(
+                    f"No cache entries found matching the stack prefix for recovery targeting '{function_name}'.",
+                )
+                self.action_log.append(
+                    f"CACHE INVALIDATION: No matching entries found for '{function_name}'.",
+                )
+
         except Exception as e:
             logger.warning(
-                f"Selective cache invalidation failed: {e}. Clearing entire cache as a fallback.",
+                f"Selective cache invalidation during recovery failed unexpectedly: {e}. "
+                f"Clearing entire cache as a fallback to ensure safety.",
+                exc_info=True,
+            )
+            self.action_log.append(
+                f"CACHE INVALIDATION: Error during selective invalidation: {e}. Clearing entire cache!",
             )
             self.idempotency_cache.clear()
+            self.live_handles.clear()
 
     def _resolve_invalidation_keys(
         self,
