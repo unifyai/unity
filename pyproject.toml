@@ -64,6 +64,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",
+    "pytest-xdist>=3.6.1",
     "pytest-html>=4.1.1",
     "autoflake>=2.3.1",
     "black>=25.9.0",

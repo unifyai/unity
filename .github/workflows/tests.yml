@@ -139,9 +139,6 @@ jobs:
         # Install project and dev dependencies from pyproject.toml
         uv sync --all-groups
 
-        # Ensure xdist is available for parallel pytest
-        uv pip install pytest-xdist
-
     - name: Install Playwright browsers
       run: |
         uv run playwright install --with-deps
