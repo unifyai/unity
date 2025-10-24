@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
+import json
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -112,6 +113,10 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         question in natural language and allow this `ask` method to determine
         the best method to answer it.
 
+        Task schema (reference)
+        -----------------------
+        {task_schema}
+
         Examples
         --------
         • Good: "Which task covers the onboarding plan?" → identify the
@@ -167,6 +172,10 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         Do *not* request *how* the change should be implemented; just
         describe the desired end-state in natural language and allow the
         `update` method to determine the best method to apply it.
+
+        Task schema (reference)
+        -----------------------
+        {task_schema}
 
         Important execution boundary
         ----------------------------
@@ -300,3 +309,20 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
 
 # Attach centralised docstring
 BaseTaskScheduler.clear.__doc__ = CLEAR_METHOD_DOCSTRING
+
+# Inject live Task schema into docstrings at import time
+try:
+    from .types.task import Task as _DocTask
+
+    _TASK_SCHEMA_JSON = json.dumps(_DocTask.model_json_schema(), indent=4)
+    BaseTaskScheduler.ask.__doc__ = (BaseTaskScheduler.ask.__doc__ or "").replace(
+        "{task_schema}",
+        _TASK_SCHEMA_JSON,
+    )
+    BaseTaskScheduler.update.__doc__ = (BaseTaskScheduler.update.__doc__ or "").replace(
+        "{task_schema}",
+        _TASK_SCHEMA_JSON,
+    )
+except Exception:
+    # Best-effort doc enrichment only; leave docstrings unchanged on failure
+    pass
