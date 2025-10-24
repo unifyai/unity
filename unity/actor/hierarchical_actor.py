@@ -176,6 +176,51 @@ class PlanRuntime:
             func_name for frame_id, func_name in self.call_stacks.get(run_id, [])
         )
 
+    def start_loop_context(self, loop_id: str):
+        """Called by sanitized code BEFORE a loop starts."""
+        logger.debug(f"LOOP_CONTEXT: Starting loop '{loop_id}'.")
+        self._loop_context_stack.append((loop_id, -1))
+
+    def increment_loop_iteration(self, loop_id: str):
+        """Called by sanitized code at the START of each loop iteration."""
+        if not self._loop_context_stack:
+            logger.warning(
+                f"LOOP_CONTEXT: Tried to increment iteration for '{loop_id}' but stack is empty.",
+            )
+            return
+        current_loop_id, current_iteration = self._loop_context_stack[-1]
+        if current_loop_id != loop_id:
+            logger.warning(
+                f"LOOP_CONTEXT: Mismatch! Expected loop '{current_loop_id}', got '{loop_id}'.",
+            )
+        new_iteration = current_iteration + 1
+        self._loop_context_stack[-1] = (loop_id, new_iteration)
+        logger.debug(
+            f"LOOP_CONTEXT: Incrementing loop '{loop_id}' to iteration {new_iteration}.",
+        )
+
+    def end_loop_context(self, loop_id: str):
+        """Called by sanitized code AFTER a loop finishes."""
+        logger.debug(f"LOOP_CONTEXT: Ending loop '{loop_id}'.")
+        if not self._loop_context_stack:
+            logger.warning(
+                f"LOOP_CONTEXT: Tried to end loop '{loop_id}' but stack is empty.",
+            )
+            return
+        ended_loop_id, ended_iteration = self._loop_context_stack.pop()
+        if ended_loop_id != loop_id:
+            logger.warning(
+                f"LOOP_CONTEXT: Mismatch! Popped loop '{ended_loop_id}' when ending '{loop_id}'.",
+            )
+
+    def get_current_loop_context_tuple(self) -> Tuple[Tuple[str, int], ...]:
+        """Gets the current loop nesting state as a tuple for the cache key."""
+        return tuple(self._loop_context_stack)
+
+    def reset_loop_ids(self):
+        """Resets counters used for generating unique loop IDs."""
+        self._loop_id_counters.clear()
+
 
 def format_pydantic_model(
     model: BaseModel,
@@ -736,7 +781,68 @@ class PlanSanitizer(ast.NodeTransformer):
 
         return node
 
-    def _inject_loop_probes(self, node: typing.Union[ast.For, ast.While, ast.AsyncFor]):
+    def _get_loop_id(self, loop_node: ast.AST) -> str:
+        """Generates a unique ID for a loop within the current function."""
+        loop_type = type(loop_node).__name__.lower()
+        current_func = self._current_function_name
+
+        if current_func not in self._counters:
+            self._counters[current_func] = {}
+        if loop_type not in self._counters[current_func]:
+            self._counters[current_func][loop_type] = 0
+
+        self._counters[current_func][loop_type] += 1
+        count = self._counters[current_func][loop_type]
+
+        return f"{loop_type}_{count}"
+
+    def _wrap_loop_with_context(
+        self,
+        node: typing.Union[ast.While, ast.For, ast.AsyncFor],
+    ) -> ast.Try:
+        """Injects start, increment, and end context calls around a loop."""
+        loop_id = self._get_loop_id(node)
+
+        # 1. Create call nodes for runtime methods
+        start_call = ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Name(id="runtime", ctx=ast.Load()),
+                    attr="start_loop_context",
+                    ctx=ast.Load(),
+                ),
+                args=[ast.Constant(value=loop_id)],
+                keywords=[],
+            ),
+        )
+
+        increment_call = ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Name(id="runtime", ctx=ast.Load()),
+                    attr="increment_loop_iteration",
+                    ctx=ast.Load(),
+                ),
+                args=[ast.Constant(value=loop_id)],
+                keywords=[],
+            ),
+        )
+
+        end_call = ast.Expr(
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=ast.Name(id="runtime", ctx=ast.Load()),
+                    attr="end_loop_context",
+                    ctx=ast.Load(),
+                ),
+                args=[ast.Constant(value=loop_id)],
+                keywords=[],
+            ),
+        )
+
+        self.generic_visit(node)
+
+        probes = []
         if self._is_in_async_context:
             probes = [
                 self._make_cp_node(
@@ -744,19 +850,28 @@ class PlanSanitizer(ast.NodeTransformer):
                 ),
                 self._make_int_node(self._current_function_name),
             ]
-            node.body[0:0] = probes
 
-        self.generic_visit(node)
-        return node
+        new_body = [increment_call] + probes + node.body
+        node.body = new_body
 
-    def visit_For(self, node: ast.For) -> ast.For:
-        return self._inject_loop_probes(node)
+        wrapped_loop = ast.Try(
+            body=[start_call, node],
+            handlers=[],
+            orelse=[],
+            finalbody=[end_call],
+        )
+        ast.fix_missing_locations(wrapped_loop)
 
-    def visit_While(self, node: ast.While) -> ast.While:
-        return self._inject_loop_probes(node)
+        return wrapped_loop
 
-    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
-        return self._inject_loop_probes(node)
+    def visit_For(self, node: ast.For) -> ast.Try:
+        return self._wrap_loop_with_context(node)
+
+    def visit_While(self, node: ast.While) -> ast.Try:
+        return self._wrap_loop_with_context(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.Try:
+        return self._wrap_loop_with_context(node)
 
     def visit_Expr(self, node: ast.Expr) -> list[ast.AST] | ast.Expr:
         """Handles top-level 'await' expressions."""
@@ -3746,19 +3861,37 @@ class HierarchicalActor(BaseActor):
         args: tuple,
         kwargs: dict,
     ) -> tuple:
-        """Generates the composite cache key for a tool call."""
+        """
+        Generates the composite cache key for a tool call, including loop context.
+
+        Key Structure: (call_stack, loop_context, branch_context, step_in_func, tool, args)
+        This explicitly separates loop state from branch state for robust caching across iterations.
+        """
 
         run_id = current_run_id_var.get()
         call_stack_tuple = plan.runtime.get_current_stack_tuple(run_id)
 
-        execution_path_tuple = (
-            *plan.runtime.path_context,
-            f"step_{plan.runtime.action_counter}",
-        )
+        loop_context_tuple = plan.runtime.get_current_loop_context_tuple()
+
+        branch_path_tuple = tuple(plan.runtime.path_context)
+
+        step_counter = plan.runtime.action_counter
 
         serialized_args = self._serialize_args(args, kwargs)
 
-        return (call_stack_tuple, execution_path_tuple, tool_name, serialized_args)
+        cache_key = (
+            call_stack_tuple,
+            loop_context_tuple,
+            branch_path_tuple,
+            step_counter,
+            tool_name,
+            serialized_args,
+        )
+
+        logger.debug(
+            f"Generated Cache Key: call_stack={call_stack_tuple}, loop_context={loop_context_tuple}, branch_path={branch_path_tuple}, step={step_counter}, tool={tool_name}",
+        )
+        return cache_key
 
     async def act(
         self,
