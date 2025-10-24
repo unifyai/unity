@@ -151,10 +151,21 @@ def build_ask_prompt(
         ],
     )
 
+    # Decomposition and concurrency guidance for read-only questions
+    decomposition_concurrency_ask_lines = [
+        "",
+        "Decompose and parallelize independent questions",
+        "-----------------------------------------------",
+        "• Break multi-part questions into minimal, domain-focused sub-questions.",
+        "• Execute independent sub-questions concurrently when runtime allows; otherwise, call them as separate tool invocations in the same turn.",
+        "• When sub-questions are dependent (you need information X to answer Y), resolve them serially in the correct order.",
+    ]
+
     return "\n".join(
         [
             activity_block,
             *guidance,
+            *decomposition_concurrency_ask_lines,
             "",
             "Tools (name → argspec):",
             sig_json,
@@ -287,6 +298,24 @@ def build_request_prompt(
             ],
         )
 
+    # General decomposition and concurrency guidance (cross-domain, not task-specific)
+    read_only_tools_line = (
+        f"`{contact_ask_fname}`, `{transcript_ask_fname}`, `{knowledge_ask_fname}`, `{guidance_ask_fname}`, `{task_ask_fname}"
+        + (f"`, `{web_ask_fname}`" if web_ask_fname else "")
+        + "`"
+    )
+    decomposition_concurrency_request_lines = [
+        "",
+        "Decompose and parallelize independent sub-requests",
+        "--------------------------------------------------",
+        "• Split the user's input into minimal sub-requests by intent and data dependency.",
+        "• Execute independent sub-requests concurrently when runtime allows; otherwise, run them as separate tool calls in the same turn.",
+        "• Serialize dependent sub-requests: resolve the required read(s) first, then apply the write(s).",
+        "• Never satisfy a read-only sub-request using the narrative result of a write; always call the appropriate `ask` tool.",
+        f"• Read-only tools include: {read_only_tools_line}.",
+        f"• Write tools include: `{contact_update_fname}`, `{knowledge_update_fname}`, `{guidance_update_fname}`, `{task_update_fname}`.",
+    ]
+
     # Core philosophy for update tools: they are cautious, state-aware, and avoid duplication.
     update_philosophy_lines = [
         "",
@@ -302,7 +331,7 @@ def build_request_prompt(
         "  - Example (Tasks):",
         f'    Prefer `{task_update_fname}(text="Create or update: Follow up with Contoso tomorrow at 09:00; if it exists, adjust start time")`.',
         "• Do not route update-related verification through `ask`; `update` handles conditional checks safely.",
-        "• If there is an unrelated read-only question, you may run `ask` in parallel with an `update` to save time.",
+        "• If there is an unrelated read-only sub-request, you should run the relevant `ask` concurrently with the `update` when runtime allows (or immediately before/after as a separate tool call). Do not rely on an `update` narrative to answer a read.",
     ]
 
     web_example = (
@@ -334,6 +363,7 @@ def build_request_prompt(
         [
             activity_block,
             *guidance_lines,
+            *decomposition_concurrency_request_lines,
             *update_philosophy_lines,
             "",
             "Tools (name → argspec):",
