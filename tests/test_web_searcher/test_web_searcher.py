@@ -89,13 +89,16 @@ async def test_ask_tool_selection_real_loop(monkeypatch):
         calls["map"] += 1
         return {"base_url": None, "results": []}
 
-    # Override the tools exposed to the tool loop to our dummies.
-    ws._ask_tools = {
-        "search": dummy_search,
-        "extract": dummy_extract,
-        "crawl": dummy_crawl,
-        "map": dummy_map,
-    }
+    # Override the tools exposed to the tool loop to our dummies by replacing the 'ask' tool mapping.
+    ws.add_tools(
+        "ask",
+        {
+            "search": dummy_search,
+            "extract": dummy_extract,
+            "crawl": dummy_crawl,
+            "map": dummy_map,
+        },
+    )
 
     handle = await ws.ask("begin")
     final = await asyncio.wait_for(handle.result(), timeout=180)
