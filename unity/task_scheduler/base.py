@@ -117,6 +117,10 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         -----------------------
         {task_schema}
 
+        Task fields – quick reference
+        -----------------------------
+        {task_fields_quickref}
+
         Examples
         --------
         • Good: "Which task covers the onboarding plan?" → identify the
@@ -176,6 +180,10 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         Task schema (reference)
         -----------------------
         {task_schema}
+
+        Task fields – quick reference
+        -----------------------------
+        {task_fields_quickref}
 
         Important execution boundary
         ----------------------------
@@ -299,13 +307,33 @@ try:
     from .types.task import Task as _DocTask
 
     _TASK_SCHEMA_JSON = json.dumps(_DocTask.model_json_schema(), indent=4)
-    BaseTaskScheduler.ask.__doc__ = (BaseTaskScheduler.ask.__doc__ or "").replace(
-        "{task_schema}",
-        _TASK_SCHEMA_JSON,
+    try:
+        _schema = _DocTask.model_json_schema()
+        _props = dict(_schema.get("properties", {}))
+        _required = set(_schema.get("required", []))
+        _lines: list[str] = []
+        for _name, _meta in _props.items():
+            _desc = _meta.get("description") or ""
+            _opt = "" if _name in _required else " (optional)"
+            _lines.append(f"• {_name}{_opt}: {_desc}")
+        _TASK_FIELDS_QUICKREF = "\n".join(_lines)
+    except Exception:
+        _TASK_FIELDS_QUICKREF = ""
+    BaseTaskScheduler.ask.__doc__ = (
+        (BaseTaskScheduler.ask.__doc__ or "")
+        .replace(
+            "{task_schema}",
+            _TASK_SCHEMA_JSON,
+        )
+        .replace("{task_fields_quickref}", _TASK_FIELDS_QUICKREF)
     )
-    BaseTaskScheduler.update.__doc__ = (BaseTaskScheduler.update.__doc__ or "").replace(
-        "{task_schema}",
-        _TASK_SCHEMA_JSON,
+    BaseTaskScheduler.update.__doc__ = (
+        (BaseTaskScheduler.update.__doc__ or "")
+        .replace(
+            "{task_schema}",
+            _TASK_SCHEMA_JSON,
+        )
+        .replace("{task_fields_quickref}", _TASK_FIELDS_QUICKREF)
     )
 except Exception:
     # Best-effort doc enrichment only; leave docstrings unchanged on failure
