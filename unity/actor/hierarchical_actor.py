@@ -2078,30 +2078,7 @@ class HierarchicalPlan(BaseActiveTask):
                 f"Unknown ImplementationDecision action: {decision.action}",
             )
 
-                    full_trace = "\n".join(self.action_log)
-                    summary_prompt = prompt_builders.build_trace_summary_prompt(
-                        goal=self.goal,
-                        action_log=full_trace,
-                    )
-                    trace_summary = await llm_call(
-                        self.summarization_client,
-                        summary_prompt,
-                    )
-                    logger.info(f"TRACE SUMMARY:\n{trace_summary}")
-                    self.action_log.append(f"TRACE SUMMARY:\n{trace_summary}")
-
-                    existing_code = self.clean_function_source_map.get(function_name)
-                    await self._handle_dynamic_implementation(
-                        function_name,
-                        is_strategic_replan=True,
-                        replan_reason=trace_summary,
-                        existing_code_for_modification=existing_code,
-                    )
-            except ValueError:
-                raise FatalVerificationError(
-                    f"Could not find function '{function_name}' in the current call stack: {self.call_stack}",
-                )
-
+    # TODO: DEPRECATED
     def _get_unimplemented_function_name(self) -> str:
         """
         Inspects the traceback to find the name of the unimplemented function.
@@ -2626,49 +2603,47 @@ class HierarchicalPlan(BaseActiveTask):
         self,
         item: VerificationWorkItem,
         assessment: VerificationAssessment,
+        target_function_name_override: str,
     ):
-        """Orchestrates the full rollback, fix, rewind, and restart process."""
+        """
+        Orchestrates the full rollback, fix, rewind, and restart process,
+        targeting the specified function for the fix.
+
+        Args:
+            item: The verification work item containing original failure context & snapshots.
+            assessment: The verification assessment with status and reason.
+            target_function_name_override: The function to target for reimplementation
+                (may be the parent when handling replan_parent).
+        """
         try:
+            run_id_being_cancelled = self.run_id
+            await self._cancel_and_wait_for_task(
+                self._execution_task,
+                f"verification failure targeting '{target_function_name_override}'",
+            )
+            await self._clear_browser_queue_for_run(run_id_being_cancelled)
             if hasattr(
                 self.actor.action_provider.browser.backend,
                 "interrupt_current_action",
             ):
                 await self.actor.action_provider.browser.backend.interrupt_current_action()
-            if isinstance(
-                self.actor.action_provider.browser.backend,
-                MagnitudeBrowserBackend,
-            ):
-                self.action_log.append(
-                    f"RECOVERY: Verification failed in '{item.function_name}'. "
-                    f"Clearing any queued commands from this function.",
-                )
-                self.actor.action_provider.browser.backend.clear_commands_from_failed_function(
-                    item.function_name,
-                )
 
             await self._handle_dynamic_implementation(
-                function_name=item.function_name,
+                function_name=target_function_name_override,
                 replan_reason=assessment.reason,
                 status=assessment.status,
-                failed_interactions=item.interactions,
-                existing_code_for_modification=self.clean_function_source_map.get(
-                    item.function_name,
-                ),
                 failed_item=item,
+                call_stack_snapshot=list(item.full_call_stack_tuple),
+                scoped_context_snapshot=item.scoped_context_snapshot,
             )
-
             self.action_log.append(
-                f"COURSE CORRECTION: Launching recovery agent to restore state for '{item.function_name}'.",
+                f"COURSE CORRECTION: Launching recovery agent to restore state before '{target_function_name_override}' was executed.",
             )
             logger.info(
-                f"Launching course correction agent for verification recovery of '{item.function_name}'.",
+                f"Launching course correction agent for verification recovery targeting '{target_function_name_override}'.",
             )
             try:
                 target_screenshot = item.pre_state.get("screenshot")
-                current_screenshot = (
-                    await self.actor.action_provider.browser.get_screenshot()
-                )
-
                 trajectory = []
                 for interaction in item.interactions:
                     if len(interaction) > 1:
@@ -2703,22 +2678,40 @@ class HierarchicalPlan(BaseActiveTask):
                 self.action_log.append(
                     f"WARNING: Course correction failed: {e}. Proceeding with replay from current state.",
                 )
+            try:
+                target_index = item.full_call_stack_tuple.index(
+                    target_function_name_override,
+                )
+                parent_stack_for_invalidation = item.full_call_stack_tuple[
+                    :target_index
+                ]
+            except ValueError:
+                logger.warning(
+                    f"Could not find target function '{target_function_name_override}' in stack snapshot "
+                    f"{item.full_call_stack_tuple} during cache invalidation derivation. "
+                    f"Falling back to original item's parent_stack.",
+                    exc_info=True,
+                )
+                parent_stack_for_invalidation = item.parent_stack
 
-            self._invalidate_cache_from_function(item.function_name, item.parent_stack)
-
-            self._restart_execution_loop("replay_after_verification_recovery")
+            self._invalidate_cache_from_function(
+                function_name=target_function_name_override,
+                parent_stack=parent_stack_for_invalidation,
+            )
+            self._restart_execution_loop(
+                f"replay_after_recovery_targeting_{target_function_name_override}",
+            )
 
         except Exception as e:
             logger.error(
-                f"Critical error during verification recovery for '{item.function_name}': {e}",
+                f"Critical error during verification recovery targeting '{target_function_name_override}': {e}",
                 exc_info=True,
             )
             self._set_state(_HierarchicalPlanState.ERROR)
             self._set_final_result(
-                f"ERROR: Unrecoverable error during verification recovery: {e}",
+                f"ERROR: Unrecoverable error during verification recovery targeting '{target_function_name_override}': {e}",
             )
         finally:
-
             self._recovery_task = None
             self._recovery_target_ordinal = None
             self._recovery_in_progress = False
