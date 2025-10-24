@@ -93,10 +93,8 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
             Optional live images aligned to the initial user message. Keys are span
             strings of the form "[start:end]" referring to character indices within
             the user message. Values are image handle objects (e.g. `ImageHandle`) or
-            numeric ids resolvable to handles. When provided, dynamic helper tools
-            such as `live_images_overview`, `ask_image`, `attach_image_raw`, and the
-            utility `align_images_for` will be exposed to the model for working with
-            vision inputs.
+            numeric ids resolvable to handles. When provided, image‑related helper
+            tools may be exposed by the runtime for working with vision inputs.
 
         Returns
         -------
@@ -153,10 +151,8 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
             Optional live images aligned to the initial user message. Keys are span
             strings of the form "[start:end]" referring to character indices within
             the user message. Values are image handle objects (e.g. `ImageHandle`) or
-            numeric ids resolvable to handles. When provided, dynamic helper tools
-            such as `live_images_overview`, `ask_image`, `attach_image_raw`, and the
-            utility `align_images_for` will be exposed to the model for working with
-            vision inputs.
+            numeric ids resolvable to handles. When provided, image‑related helper
+            tools may be exposed by the runtime for working with vision inputs.
 
         Returns
         -------
@@ -181,10 +177,9 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         Retrieve contact records that satisfy *filter*.
 
         This private method is intentionally *part* of the public-facing contract
-        because other managers (e.g. :class:`~unity.transcript_manager.TranscriptManager`)
-        rely on its existence for tool-chaining.  Concrete subclasses **must**
-        implement it – even simulated ones – so that the LLM can access a
-        deterministic search primitive.
+        because other components may rely on its existence for tool‑chaining.
+        Concrete subclasses **must** implement it – even simulated ones – so that
+        the LLM can access a deterministic search primitive.
 
         Parameters
         ----------
@@ -221,9 +216,8 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         Modify **one** existing contact identified by *contact_id*.
 
         Although private, this helper is *part* of the public-facing
-        contract just like :pyfunc:`_search_contacts`.  Other managers –
-        notably :class:`~unity.memory_manager.MemoryManager` – rely on its
-        presence for fast, deterministic updates without a full natural-
+        contract (alongside the filtering helper). Downstream components may rely
+        on its presence for fast, deterministic updates without a full natural-
         language round-trip through :pyfunc:`update`.
 
         Concrete subclasses **must** supply a *synchronous* implementation so
