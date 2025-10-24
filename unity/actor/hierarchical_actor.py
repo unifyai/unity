@@ -4554,24 +4554,43 @@ class HierarchicalActor(BaseActor):
                                 await plan._handle_dynamic_implementation(
                                     func_name,
                                     replan_reason=f"Implement from stub: {last_error_reason}",
+                                    call_stack_snapshot=list(
+                                        plan.runtime.get_current_stack_tuple(
+                                            plan.run_id,
+                                        ),
+                                    ),
+                                    scoped_context_snapshot=self._get_scoped_context_from_plan_state(
+                                        plan,
+                                    ),
                                 )
                                 local_interactions.clear()
                                 continue
 
                             except ReplanFromParentException as e:
                                 plan.action_log.append(
-                                    f"Child of '{func_name}' requested strategic replan.",
+                                    f"Child of '{func_name}' requested strategic replan. Reason: {e.reason}",
                                 )
                                 last_error_reason = e.reason
+
                                 existing_code = plan.clean_function_source_map.get(
                                     func_name,
                                 )
+
+                                current_call_stack_snapshot = list(
+                                    plan.runtime.get_current_stack_tuple(plan.run_id),
+                                )
+                                current_scoped_context_snapshot = (
+                                    self._get_scoped_context_from_plan_state(plan)
+                                )
+
                                 await plan._handle_dynamic_implementation(
                                     func_name,
                                     is_strategic_replan=True,
                                     replan_reason=last_error_reason,
                                     failed_interactions=e.failed_interactions,
                                     existing_code_for_modification=existing_code,
+                                    call_stack_snapshot=current_call_stack_snapshot,
+                                    scoped_context_snapshot=current_scoped_context_snapshot,
                                 )
                                 local_interactions.clear()
                                 continue
@@ -4592,6 +4611,14 @@ class HierarchicalActor(BaseActor):
                                     func_name,
                                     replan_reason=f"Function crashed. Fix bug:\n{last_error_reason}",
                                     existing_code_for_modification=existing_code,
+                                    call_stack_snapshot=list(
+                                        plan.runtime.get_current_stack_tuple(
+                                            plan.run_id,
+                                        ),
+                                    ),
+                                    scoped_context_snapshot=self._get_scoped_context_from_plan_state(
+                                        plan,
+                                    ),
                                 )
                                 local_interactions.clear()
                                 continue
@@ -4621,6 +4648,14 @@ class HierarchicalActor(BaseActor):
                                     existing_code_for_modification=existing_code,
                                     clarification_question=clarification_question,
                                     clarification_answer=user_answer,
+                                    call_stack_snapshot=list(
+                                        plan.runtime.get_current_stack_tuple(
+                                            plan.run_id,
+                                        ),
+                                    ),
+                                    scoped_context_snapshot=self._get_scoped_context_from_plan_state(
+                                        plan,
+                                    ),
                                 )
                                 plan.action_log.append(
                                     f"Restarting execution of '{func_name}' after user guidance.",
@@ -4675,6 +4710,13 @@ class HierarchicalActor(BaseActor):
                         except Exception:
                             captured_docstring = ""
                             captured_sig_str = "()"
+
+                        captured_full_stack_tuple = (
+                            plan.runtime.get_current_stack_tuple(plan.run_id)
+                        )
+                        captured_scoped_context_snapshot = (
+                            self._get_scoped_context_from_plan_state(plan)
+                        )
 
                         plan.verif_seq += 1
                         item = VerificationWorkItem(
