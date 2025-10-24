@@ -3058,6 +3058,13 @@ class HierarchicalPlan(BaseActiveTask):
         if decision.action == "modify_task" and decision.patches:
             self.action_log.append("Executing stateful decision: modify_task.")
 
+            run_id_being_cancelled = self.run_id
+            await self._cancel_and_wait_for_task(
+                self._execution_task,
+                "modify_task interjection",
+            )
+            await self._clear_browser_queue_for_run(run_id_being_cancelled)
+
             original_call_stack = list(self.call_stack)
             first_modified_function_index = -1
             first_modified_function_name = None
@@ -3217,12 +3224,13 @@ class HierarchicalPlan(BaseActiveTask):
             logger.debug(
                 f"Replace task triggered. New goal: '{decision.new_goal}'. Proceeding to re-initialize plan.",
             )
-            if self._execution_task and not self._execution_task.done():
-                self._execution_task.cancel()
-                try:
-                    await self._execution_task
-                except asyncio.CancelledError:
-                    pass
+
+            run_id_being_cancelled = self.run_id
+            await self._cancel_and_wait_for_task(
+                self._execution_task,
+                "replace_task interjection",
+            )
+            await self._clear_browser_queue_for_run(run_id_being_cancelled)
 
             self.goal = decision.new_goal
             self.plan_source_code = None
@@ -3249,6 +3257,13 @@ class HierarchicalPlan(BaseActiveTask):
             logger.debug(
                 "Refactor and generalize triggered. Proceeding to Phase 2 implementation.",
             )
+
+            run_id_being_cancelled = self.run_id
+            await self._cancel_and_wait_for_task(
+                self._execution_task,
+                "refactor_and_generalize interjection",
+            )
+            await self._clear_browser_queue_for_run(run_id_being_cancelled)
 
             monolithic_code = (
                 "\n\n".join(
