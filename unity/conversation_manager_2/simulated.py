@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 from typing import Literal, Optional, Type, Any
 from pydantic import BaseModel
 import unify
@@ -34,7 +35,9 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
 
         # A shared, stateful LLM for maintaining conversation context
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
@@ -105,25 +108,35 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
         *,
         level: Literal["info", "warning", "urgent"] = "info",
         source: str = "system",
+        interjection_id: Optional[str] = None,
+        pinned: bool = False,
     ) -> dict:
         """Simulates sending a notification to the conversation."""
         if self._stopped:
             return {"status": "error", "message": "Handle is stopped."}
 
+        # Generate ID if not provided
+        if interjection_id is None:
+            interjection_id = str(uuid.uuid4().hex[:12])
+
         prompt = f"""A notification has been sent to the conversation. Acknowledge it by updating your internal state and returning a JSON confirmation.
 - **Content:** {content}
 - **Level:** {level}
 - **Source:** {source}
+- **Pinned:** {pinned}
+- **Interjection ID:** {interjection_id}
 """
         response = await self._llm.generate(prompt)
 
         try:
-            return json.loads(response)
+            result = json.loads(response)
+            result["interjection_id"] = interjection_id
+            return result
         except json.JSONDecodeError:
             # Fallback for non-JSON LLM responses
             return {
                 "status": "ok",
-                "notification_id": f"sim_notif_{hash(content)}",
+                "interjection_id": interjection_id,
                 "timestamp": "2024-01-01T00:00:00Z",
                 "acknowledged": True,
             }
@@ -146,7 +159,11 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
         if self._stopped:
             raise RuntimeError("Cannot ask a stopped conversation.")
 
-        ask_client = unify.AsyncUnify("gpt-4o@openai")
+        ask_client = unify.AsyncUnify(
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
+        )
         ask_client.set_system_message(self._llm.system_message)
 
         prompt = f"""The external process is asking the user a question. Based on your persona and the conversation history, provide a direct and plausible answer.
@@ -221,9 +238,47 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
 
         return _AnswerHandle(ask_client, self._llm, prompt, response_format)
 
-    async def interject(self, message: str) -> None:
-        """A simplified interjection that sends a notification."""
-        await self.send_notification(message, source="external_interjection")
+    async def interject(
+        self,
+        message: str,
+        *,
+        pinned: bool = False,
+        interjection_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Send an interjection to the conversation.
+
+        Args:
+            message: The message content to inject
+            pinned: If True, the interjection persists for the entire session
+            interjection_id: Optional explicit ID (auto-generated if not provided)
+
+        Returns:
+            Dict with status and the interjection_id
+        """
+        return await self.send_notification(
+            message,
+            source="external_interjection",
+            interjection_id=interjection_id,
+            pinned=pinned,
+        )
+
+    async def unpin_interjection(self, interjection_id: str) -> dict:
+        """
+        Unpin a previously pinned interjection.
+
+        Args:
+            interjection_id: The ID of the interjection to unpin
+
+        Returns:
+            Dict with status indicating success
+        """
+        # Simulated implementation - just acknowledge the unpin request
+        return {
+            "status": "ok",
+            "message": f"Unpin simulated for interjection {interjection_id}",
+            "interjection_id": interjection_id,
+        }
 
     def pause(self) -> str:
         """Pauses the simulated conversation."""

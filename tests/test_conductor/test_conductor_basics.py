@@ -199,8 +199,8 @@ async def test_cond_supports_optional_clarification_channels():
             "Outline a follow-up sequence for registrants of the 'AI for Finance' webinar; "
             "include channels and timing. Ask for any necessary details before proceeding."
         ),
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
 
     # If the model chooses to ask for clarification, answer it with an LLM-generated reply.
@@ -210,6 +210,8 @@ async def test_cond_supports_optional_clarification_channels():
             assert isinstance(q, str) and q.strip()
             client = unify.AsyncUnify(
                 "o4-mini@openai",
+                reasoning_effort="high",
+                service_tier="priority",
                 cache=True,
                 traced=False,
             )

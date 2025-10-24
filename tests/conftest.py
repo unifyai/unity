@@ -156,11 +156,6 @@ def stub_controller_deps(monkeypatch):
         raising=False,
     )
     monkeypatch.setattr(
-        "unity.screen_share_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
         "unity.image_manager.prompt_builders._now",
         _static_now,
         raising=False,

@@ -98,6 +98,8 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 def client():
     return unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -192,13 +194,22 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     * We measure wall-clock time: because the loop is paused for ~2 s in the
       middle, total duration must be ≥ 2 s + the tool's own 1-second workload.
     """
+    # Explicit gates to avoid timing races: tool cannot complete until
+    # the pause helper has been invoked (gate A) and then the resume helper (gate B).
+    pause_called_gate = asyncio.Event()
+    resume_called_gate = asyncio.Event()
 
-    async def pausable_fn(*, pause_event: asyncio.Event) -> str:
-        # Work loop honouring pause_event; total of ~2 seconds when unpaused
-        ticks = 20
-        for _ in range(ticks):
-            await pause_event.wait()
-            await asyncio.sleep(0.1)
+    async def pausable_fn(*, _pause_event: asyncio.Event) -> str:
+        # Run until the PAUSE helper has been observed.
+        while not pause_called_gate.is_set():
+            await _pause_event.wait()
+            await asyncio.sleep(0.05)
+        # Do not finish until RESUME helper has been observed.
+        await resume_called_gate.wait()
+        # Perform a small amount of additional work after resume to ensure ordering.
+        for _ in range(10):
+            await _pause_event.wait()
+            await asyncio.sleep(0.05)
         return "ok"
 
     pausable_fn.__name__ = "pausable_fn"
@@ -232,6 +243,9 @@ async def test_functional_tool_pause_extends_wall_clock(client):
     # the moment the tool's pause_event has been cleared.
     await _wait_for_tool_message_prefix(client, "pause ")
 
+    # Release the tool's first gate now that pause helper has been invoked
+    pause_called_gate.set()
+
     # While paused, the final assistant reply must NOT appear. Check deterministically
     # right after the pause has been acknowledged (no fixed sleep).
     msgs_during_pause = client.messages or []
@@ -242,8 +256,13 @@ async def test_functional_tool_pause_extends_wall_clock(client):
         for m in msgs_during_pause
     ), "assistant produced final reply while tool was paused"
 
-    # Resume and finish
+    # Resume and finish – ensure the assistant calls the resume helper first
     await outer.interject("go")
+    await _wait_for_assistant_call_prefix(client, "resume")
+    await _wait_for_tool_message_prefix(client, "resume ")
+
+    # Release the tool's second gate now that resume helper has been invoked
+    resume_called_gate.set()
     final = await outer.result()
 
     # ── assertions ───────────────────────────────────────────────────────
@@ -260,10 +279,21 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
     • Exactly one `pause_…` and one `resume_…` tool-call must appear.
     """
 
-    async def pausable_fn(*, pause_event: asyncio.Event) -> str:
-        for _ in range(8):
-            await pause_event.wait()
-            await asyncio.sleep(1)
+    # Gates to ensure deterministic ordering: the tool must see pause then resume
+    pause_called_gate = asyncio.Event()
+    resume_called_gate = asyncio.Event()
+
+    async def pausable_fn(*, _pause_event: asyncio.Event) -> str:
+        # Wait until pause helper has been invoked
+        while not pause_called_gate.is_set():
+            await _pause_event.wait()
+            await asyncio.sleep(0.05)
+        # Then wait until resume helper has been invoked
+        await resume_called_gate.wait()
+        # Do a short bit of post-resume work
+        for _ in range(10):
+            await _pause_event.wait()
+            await asyncio.sleep(0.05)
         return "yo"
 
     pausable_fn.__name__ = "pausable_fn"
@@ -293,7 +323,15 @@ async def test_functional_tool_pause_resume_helpers_called_once(client):
     # before sending the *unfreeze* command so we are sure the helper sequence
     # is pause → resume (in that order).
     await _wait_for_assistant_call_prefix(client, "pause")
+    await _wait_for_tool_message_prefix(client, "pause ")
+    # Unblock the tool after pause helper observed
+    pause_called_gate.set()
+
     await h.interject("unfreeze")
+    # Ensure resume helper is actually invoked before allowing tool to finish
+    await _wait_for_assistant_call_prefix(client, "resume")
+    await _wait_for_tool_message_prefix(client, "resume ")
+    resume_called_gate.set()
 
     final = await h.result()
     msgs = client.messages
@@ -590,10 +628,10 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
 
     done_event = asyncio.Event()
 
-    async def pausable_fn(*, pause_event: asyncio.Event) -> str:
+    async def pausable_fn(*, _pause_event: asyncio.Event) -> str:
         # Run until the test explicitly signals completion.
         while not done_event.is_set():
-            await pause_event.wait()
+            await _pause_event.wait()
             await asyncio.sleep(0)
         return "done"
 

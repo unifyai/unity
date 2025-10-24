@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseImageManager(ABC):
+class BaseImageManager(BaseStateManager):
     """
     Public contract that every concrete image-manager must satisfy.
 
@@ -27,6 +28,16 @@ class BaseImageManager(ABC):
         """
         Return images that satisfy a Python expression filter.
 
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python boolean expression evaluated with column names in scope.
+            When None, returns all images.
+        offset : int, default 0
+            Zero-based index of the first result to include.
+        limit : int, default 100
+            Maximum number of records to return. Must be <= 1000.
+
         Examples
         --------
         - "image_id == 42"
@@ -43,7 +54,18 @@ class BaseImageManager(ABC):
     ) -> List["Image"]:
         """
         Semantic search over image captions using the provided free‑form text.
-        Returns up to ``k`` images ranked by similarity.
+
+        Parameters
+        ----------
+        reference_text : str
+            Free-form text to search for in image captions.
+        k : int, default 10
+            Maximum number of results to return. Must be <= 1000.
+
+        Returns
+        -------
+        List[Image]
+            Up to k images ranked by similarity.
         """
 
     @abstractmethod

@@ -5,7 +5,10 @@ import os
 import json
 import functools
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+import asyncio
+import concurrent.futures
+import threading
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 import unify
@@ -14,11 +17,6 @@ from google.oauth2 import service_account
 from google.cloud.exceptions import NotFound
 
 
-from ..common.async_tool_loop import (
-    start_async_tool_loop,
-    SteerableToolHandle,
-    TOOL_LOOP_LINEAGE,
-)
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from ..common.semantic_search import backfill_rows, fetch_top_k_by_references
@@ -26,18 +24,99 @@ from .base import BaseImageManager
 from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
 from ..common.filter_utils import normalize_filter_expr
+from ..common.data_store import DataStore
+import itertools
 
 
 class ImageHandle:
     """A lightweight handle around a single stored image."""
 
-    def __init__(self, *, manager: "ImageManager", image: Image) -> None:
+    def __init__(
+        self,
+        *,
+        manager: "ImageManager",
+        image: Image,
+        annotation: Optional[str] = None,
+        auto_caption: bool = True,
+    ) -> None:
         self._manager = manager
         self._image = image
+        # Handle-local, non-persistent annotation. This is NOT written to the
+        # backend Images table or the local DataStore; it is specific to this
+        # handle instance only.
+        self._annotation: Optional[str] = None
+        self._annotation_event = threading.Event()
+        # Caption-ready event, set if caption already exists
+        self._caption_event = threading.Event()
+        try:
+            if self._image.caption is not None:
+                self._caption_event.set()
+        except Exception:
+            pass
+        # If an initial annotation is provided, set it now (and trigger the event)
+        try:
+            if annotation is not None:
+                self.annotation = annotation
+        except Exception:
+            # Best-effort; keep initialization robust even if setter fails
+            try:
+                self._annotation = annotation
+                self._annotation_event.set()
+            except Exception:
+                pass
+        # Deferred persistence state for updates made while pending
+        self._deferred_lock = threading.Lock()
+        self._deferred_updates: Dict[str, Any] = {}
+        self._deferred_task: Any = (
+            None  # asyncio.Task | concurrent.futures.Future | None
+        )
+        # Track any background task launched for auto-captioning
+        self._auto_caption_task: Any = (
+            None  # asyncio.Task | concurrent.futures.Future | None
+        )
+
+        # Optionally auto-generate a caption if requested and none exists yet
+        if auto_caption:
+            try:
+                if self._image.caption is None:
+
+                    async def _auto_caption_worker() -> None:
+                        try:
+                            answer = await self.ask(
+                                "Please describe the contents of the image",
+                            )
+                            if isinstance(answer, str):
+                                answer_str = answer.strip()
+                                if answer_str:
+                                    # Only apply if caption still missing to avoid overriding later edits
+                                    if self.caption is None:
+                                        # Update locally (and persist immediately or defer if pending)
+                                        self.update_metadata(caption=answer_str)
+                        except Exception:
+                            # Best-effort; ignore failures
+                            pass
+
+                    try:
+                        loop = asyncio.get_running_loop()
+                        self._auto_caption_task = loop.create_task(
+                            _auto_caption_worker(),
+                        )
+                    except RuntimeError:
+                        # No running loop; execute in a background thread with its own loop
+                        self._auto_caption_task = self._manager._executor.submit(
+                            lambda: asyncio.run(_auto_caption_worker()),
+                        )
+            except Exception:
+                # Defensive coding: auto-captioning is optional and must not break construction
+                pass
 
     @property
     def image_id(self) -> int:
         return int(self._image.image_id)
+
+    @property
+    def is_pending(self) -> bool:
+        return self._manager.is_pending_id(self.image_id)
 
     @property
     def caption(self) -> Optional[str]:
@@ -47,6 +126,118 @@ class ImageHandle:
     def timestamp(self) -> datetime:
         return self._image.timestamp
 
+    # ------------------------------ Local-only fields ----------------------
+    @property
+    def annotation(self) -> Optional[str]:
+        """Return/assign a handle-local annotation (never persisted)."""
+        return getattr(self, "_annotation", None)
+
+    @annotation.setter
+    def annotation(self, value: Optional[str]) -> None:
+        self._annotation = value
+        if value is not None:
+            try:
+                self._annotation_event.set()
+            except Exception:
+                pass
+
+    def resolve(self, real_image_id: int) -> None:
+        """
+        Rebind this handle to a resolved backend image id.
+
+        Assumes the caller has already flushed the pending row and ensured the
+        DataStore now contains a row under the resolved id.
+        """
+        try:
+            self._image.image_id = int(real_image_id)
+        except Exception:
+            # Best-effort; if mutation fails, leave as-is
+            pass
+
+    def update_metadata(
+        self,
+        *,
+        caption: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
+        data: Optional[Union[bytes, bytearray, str]] = None,
+    ) -> None:
+        """
+        Update metadata for this image in-place.
+
+        - Always updates the local DataStore so pending handles remain consistent
+          and the background upload (or subsequent resolution) includes the changes.
+        - If the image is resolved (not pending), also persists to the backend
+          via ImageManager.update_images.
+        """
+        updates: Dict[str, Any] = {}
+        if caption is not None:
+            updates["caption"] = caption
+            try:
+                self._image.caption = caption
+            except Exception:
+                pass
+            try:
+                if caption is not None:
+                    self._caption_event.set()
+            except Exception:
+                pass
+        if timestamp is not None:
+            updates["timestamp"] = timestamp
+            try:
+                self._image.timestamp = timestamp
+            except Exception:
+                pass
+        if data is not None:
+            if isinstance(data, (bytes, bytearray)):
+                data_b64 = base64.b64encode(data).decode("utf-8")
+            else:
+                data_b64 = data
+            updates["data"] = data_b64
+            try:
+                self._image.data = data_b64
+            except Exception:
+                pass
+
+        if not updates:
+            return
+
+        # Update local DataStore (create row if missing)
+        try:
+            try:
+                self._manager._data_store.update(self.image_id, updates)
+            except KeyError:
+                row = {"image_id": self.image_id, **updates}
+                self._manager._data_store.put(row)
+        except Exception:
+            pass
+
+        # Persist to backend
+        if not self.is_pending:
+            payload: Dict[str, Any] = {"image_id": self.image_id}
+            for k in ("caption", "timestamp", "data"):
+                if k in updates:
+                    payload[k] = updates[k]
+            try:
+                self._manager.update_images([payload])
+            except Exception:
+                pass
+            return
+
+        # If pending, coalesce updates and schedule deferred persistence after resolution
+        try:
+            with self._deferred_lock:
+                for k in ("caption", "timestamp", "data"):
+                    if k in updates:
+                        self._deferred_updates[k] = updates[k]
+                if (
+                    self._deferred_task is None
+                    or getattr(self._deferred_task, "done", lambda: True)()
+                ):
+                    self._deferred_task = self._schedule_deferred_persist()
+        except Exception:
+            # Best-effort; if scheduling fails we still have local cache updated
+            pass
+
     def raw(self) -> bytes:
         """
         Return the decoded image bytes.
@@ -54,7 +245,12 @@ class ImageHandle:
         If the data is a GCS URL, it downloads the content. Otherwise, it assumes
         the data is a base64 string and decodes it.
         """
-        data_str = self._image.data
+        # Prefer locally cached base64 data from the DataStore to avoid re-downloading
+        try:
+            cached = self._manager._data_store.get(self.image_id)
+            data_str = cached.get("data") if cached is not None else self._image.data
+        except Exception:
+            data_str = self._image.data
         is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
             "https://storage.googleapis.com/",
         )
@@ -85,7 +281,27 @@ class ImageHandle:
                 if not blob.exists():
                     raise FileNotFoundError(f"Image not found at GCS URL: {data_str}")
 
-                return blob.download_as_bytes()
+                content = blob.download_as_bytes()
+                # Cache the downloaded bytes as base64 in the DataStore to prevent future downloads
+                try:
+                    import base64 as _b64
+
+                    try:
+                        self._manager._data_store.update(
+                            self.image_id,
+                            {"data": _b64.b64encode(content).decode("utf-8")},
+                        )
+                    except KeyError:
+                        # If the row isn't present yet, insert a minimal row
+                        self._manager._data_store.put(
+                            {
+                                "image_id": self.image_id,
+                                "data": _b64.b64encode(content).decode("utf-8"),
+                            },
+                        )
+                except Exception:
+                    pass
+                return content
             except Exception as exc:
                 raise RuntimeError(
                     f"Failed to download image from GCS: {data_str}",
@@ -100,22 +316,23 @@ class ImageHandle:
     async def ask(
         self,
         question: str,
-        *,
-        _return_reasoning_steps: bool = False,
-    ) -> SteerableToolHandle:
+    ) -> str:
         """
-        Ask a high-level question about this image using a small tool loop.
+        Ask a high-level question about this image with a single LLM call.
 
-        The loop sends the underlying image to the model as an image block.
-        If the image is stored as a GCS URL, it generates a temporary signed URL
+        Sends the underlying image to the model as an image block alongside the
+        `question`, and returns the model's textual answer directly (no nested
+        tool-use loop).
+        If the image is stored as a GCS URL, a temporary signed URL is generated
         to make it accessible to the vision model.
         """
-
-        # Use a vision-capable default
+        # Single-call client
         client = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
+            reasoning_effort="high",
+            service_tier="priority",
         )
 
         # Build a succinct system message tailored to image Q&A
@@ -127,17 +344,22 @@ class ImageHandle:
         )
 
         # Provide the image as a user content block (vision input).
-        data_str = self._image.data
+        # Prefer cached base64 from the DataStore when available to avoid signing/downloading again
+        try:
+            cached = self._manager._data_store.get(self.image_id)
+            data_str = cached.get("data") if cached is not None else self._image.data
+        except Exception:
+            data_str = self._image.data
         content_block: dict
 
         # Check if the data string is a GCS URL
-        is_gcs_url = data_str.startswith("gs://") or data_str.startswith(
-            "https://storage.googleapis.com/",
+        is_gcs_url = isinstance(data_str, str) and (
+            data_str.startswith("gs://")
+            or data_str.startswith("https://storage.googleapis.com/")
         )
 
         if is_gcs_url:
             try:
-
                 parsed_url = urlparse(data_str)
                 bucket_name = ""
                 object_path = ""
@@ -175,7 +397,6 @@ class ImageHandle:
                 }
 
             except Exception as e:
-                # If signing fails, raise an error as the image is inaccessible
                 raise RuntimeError(
                     f"Failed to generate signed URL for GCS image: {e}",
                 ) from e
@@ -224,26 +445,124 @@ class ImageHandle:
             ],
         )
 
-        handle = start_async_tool_loop(
-            client=client,
-            message=question,
-            tools={},
-            loop_id=f"ImageHandle.ask({self.image_id})",
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            max_consecutive_failures=1,
-            timeout=90,
-        )
+        # Single shot – no nested tool loop
+        answer = await client.generate(user_message=question)
+        return answer
 
-        if _return_reasoning_steps:
-            original_result = handle.result
+    async def wait_until_resolved(self, timeout: Optional[float] = None) -> int:
+        """
+        Await until this handle's pending id is resolved to a real backend id.
 
-            async def wrapped_result():
-                answer = await original_result()
-                return answer, client.messages
+        Returns the resolved image id. If already resolved, returns immediately.
+        """
+        if not self.is_pending:
+            return self.image_id
+        # Defer to manager's await_pending so we share the same scheduling/cache
+        if timeout is None:
+            mapping = await self._manager.await_pending([self.image_id])
+        else:
+            mapping = await asyncio.wait_for(
+                self._manager.await_pending([self.image_id]),
+                timeout=timeout,
+            )
+        rid = mapping.get(self.image_id)
+        if isinstance(rid, int):
+            self.resolve(int(rid))
+            return int(rid)
+        return self.image_id
 
-            handle.result = wrapped_result  # type: ignore[assignment]
+    def __await__(self):  # convenience alias
+        return self.wait_until_resolved().__await__()
 
-        return handle
+    async def wait_for_annotation(
+        self,
+        timeout: Optional[float] = None,
+    ) -> Optional[str]:
+        """
+        Await until a non-None annotation is set on this handle, then return it.
+
+        If already set, returns immediately.
+        """
+        if self.annotation is not None:
+            return self.annotation
+        if timeout is None:
+            await asyncio.to_thread(self._annotation_event.wait)
+        else:
+            await asyncio.wait_for(
+                asyncio.to_thread(self._annotation_event.wait),
+                timeout=timeout,
+            )
+        return self.annotation
+
+    async def wait_for_caption(
+        self,
+        timeout: Optional[float] = None,
+    ) -> Optional[str]:
+        """
+        Await until a non-None caption (label) is set for this image, then return it.
+
+        Returns immediately if already present.
+        """
+        if self.caption is not None:
+            return self.caption
+        if timeout is None:
+            await asyncio.to_thread(self._caption_event.wait)
+        else:
+            await asyncio.wait_for(
+                asyncio.to_thread(self._caption_event.wait),
+                timeout=timeout,
+            )
+        return self.caption
+
+    # ------------------------------ Deferred persistence ------------------
+    def _schedule_deferred_persist(self):
+        async def _async_worker() -> None:
+            # Await resolution; if already resolved this returns immediately
+            try:
+                rid = await self.wait_until_resolved()
+            except Exception:
+                return
+
+            # Drain any accumulated updates and persist; loop to catch races
+            while True:
+                try:
+                    with self._deferred_lock:
+                        pending_updates = dict(self._deferred_updates)
+                        self._deferred_updates.clear()
+                except Exception:
+                    pending_updates = {}
+
+                # Filter to supported keys
+                payload_body: Dict[str, Any] = {}
+                for k in ("caption", "timestamp", "data"):
+                    if k in pending_updates:
+                        payload_body[k] = pending_updates[k]
+
+                if not payload_body:
+                    break
+
+                payload: Dict[str, Any] = {"image_id": int(rid), **payload_body}
+                try:
+                    self._manager.update_images([payload])
+                except Exception:
+                    # Tolerate backend failure; local cache already updated
+                    pass
+
+                # If more updates arrived during the write, loop again
+                try:
+                    with self._deferred_lock:
+                        has_more = bool(self._deferred_updates)
+                except Exception:
+                    has_more = False
+                if not has_more:
+                    break
+
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(_async_worker())
+        except RuntimeError:
+            # No running loop: execute in background thread with its own loop
+            return self._manager._executor.submit(lambda: asyncio.run(_async_worker()))
 
 
 class ImageManager(BaseImageManager):
@@ -268,6 +587,9 @@ class ImageManager(BaseImageManager):
 
         self._ctx = f"{read_ctx}/Images" if read_ctx else "Images"
 
+        # Local DataStore mirror for Images (write-through on reads/writes)
+        self._data_store = DataStore.for_context(self._ctx, key_fields=("image_id",))
+
         # Initialize the storage client
         try:
             # Assumes the credentials file is at the root of the project
@@ -289,6 +611,54 @@ class ImageManager(BaseImageManager):
         # Ensure context/fields exist deterministically
         self._provision_storage()
 
+        # Pending id generation (process-local)
+        self._PENDING_BASE: int = 10**12
+        # Single counter per manager instance; uniqueness is sufficient per-process
+        self._pending_counter = itertools.count(self._PENDING_BASE)
+
+        # Cache of known resolutions for fast, race-tolerant lookups
+        self._resolved_pid_map: Dict[int, int] = {}
+
+        # Executor for background uploads when no event loop is running
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        # Map of pending_id -> concurrent future that resolves to real_id
+        self._pending_uploads: Dict[int, concurrent.futures.Future[int]] = {}
+
+        # Internal helper ensures we preserve any local-only columns such as
+        # temp_image_id when writing backend-fetched rows into the DataStore.
+        def _put_preserve_temp(row: Dict[str, Any]) -> None:
+            try:
+                iid = int(row.get("image_id"))
+            except Exception:
+                # Fallback to raw put if image_id missing/unparseable
+                try:
+                    self._data_store.put(row)
+                except Exception:
+                    pass
+                return
+
+            try:
+                existing = self._data_store.get(iid)
+            except Exception:
+                existing = None
+            merged: Dict[str, Any] = {}
+            if isinstance(existing, dict):
+                merged.update(existing)
+            merged.update(row)
+            if (
+                isinstance(existing, dict)
+                and ("temp_image_id" in existing)
+                and ("temp_image_id" not in merged)
+            ):
+                merged["temp_image_id"] = existing["temp_image_id"]
+            try:
+                self._data_store.put(merged)
+            except Exception:
+                pass
+
+        # Bind helper for reuse
+        self._put_preserve_temp = _put_preserve_temp  # type: ignore[attr-defined]
+
     # ------------------------------ Reads ---------------------------------
     def filter_images(
         self,
@@ -305,6 +675,12 @@ class ImageManager(BaseImageManager):
             limit=limit,
             from_fields=list(self._BUILTIN_FIELDS),
         )
+        # Write-through to local DataStore mirror (preserve local-only columns)
+        try:
+            for lg in logs:
+                self._put_preserve_temp(getattr(lg, "entries", {}) or {})
+        except Exception:
+            pass
         return [Image(**lg.entries) for lg in logs]
 
     def search_images(
@@ -327,26 +703,49 @@ class ImageManager(BaseImageManager):
             unique_id_field="image_id",
             allowed_fields=list(self._BUILTIN_FIELDS),
         )
+        # Write-through to local DataStore mirror (preserve local-only columns)
+        try:
+            for r in filled:
+                self._put_preserve_temp(r)
+        except Exception:
+            pass
         return [Image(**r) for r in filled]
 
     def get_images(self, image_ids: List[int]) -> List[ImageHandle]:
         """Return handles for the given image ids (missing ids are skipped)."""
         if not image_ids:
             return []
-        id_list = ", ".join(str(int(i)) for i in image_ids)
-        logs = unify.get_logs(
-            context=self._ctx,
-            filter=f"image_id in [{id_list}]",
-            limit=len(image_ids),
-            from_fields=list(self._BUILTIN_FIELDS),
-        )
+        # 1) Try local DataStore first
         by_id: Dict[int, Image] = {}
-        for lg in logs:
+        misses: List[int] = []
+        for iid in image_ids:
             try:
-                img = Image(**lg.entries)
-                by_id[int(img.image_id)] = img
+                row = self._data_store.get(int(iid))
+                if row is not None:
+                    by_id[int(iid)] = Image(**row)
+                else:
+                    misses.append(int(iid))
             except Exception:
-                continue
+                misses.append(int(iid))
+
+        # 2) Fetch any misses from backend and write-through to DataStore
+        if misses:
+            id_list = ", ".join(str(int(i)) for i in misses)
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter=f"image_id in [{id_list}]",
+                limit=len(misses),
+                from_fields=list(self._BUILTIN_FIELDS),
+            )
+            for lg in logs:
+                try:
+                    self._put_preserve_temp(getattr(lg, "entries", {}) or {})
+                    img = Image(**lg.entries)
+                    by_id[int(img.image_id)] = img
+                except Exception:
+                    continue
+
+        # Preserve requested order
         handles: List[ImageHandle] = []
         for req_id in image_ids:
             img = by_id.get(int(req_id))
@@ -355,41 +754,445 @@ class ImageManager(BaseImageManager):
         return handles
 
     # ------------------------------ Writes --------------------------------
-    def add_images(self, items: List[Dict[str, Any]]) -> List[int]:
+    def is_pending_id(self, image_id: Union[int, str]) -> bool:
+        try:
+            iid = int(image_id) if not isinstance(image_id, int) else image_id
+        except Exception:
+            return False
+        return iid >= self._PENDING_BASE
+
+    # Non-blocking create functionality merged into add_images
+
+    async def await_pending(self, pending_ids: List[int]) -> Dict[int, int]:
+        """
+        Await resolution for the given pending ids.
+
+        - Does not trigger duplicate uploads – each pending id is uploaded at most once,
+          scheduled when add_images(..., synchronous=False) is called (or lazily here if missing).
+        - Returns a mapping {pending_id -> real_id} for all requested ids that can be
+          resolved in this session (either already resolved or after the awaited upload).
+        """
+        if not pending_ids:
+            return {}
+
+        # 0) First, resolve any pids that were already uploaded earlier in
+        # this session by scanning the local DataStore snapshot (using the
+        # persisted temp_image_id) or using the cached _resolved_pid_map.
+        mapping: Dict[int, int] = {}
+        snapshot: Dict[str, Dict[str, Any]]
+        try:
+            snapshot = self._data_store.snapshot()
+        except Exception:
+            snapshot = {}
+        for pid in list(pending_ids):
+            # Known from cache?
+            rid_cached = self._resolved_pid_map.get(int(pid))
+            if isinstance(rid_cached, int):
+                mapping[int(pid)] = int(rid_cached)
+                continue
+            # Scan snapshot for a row with matching temp_image_id and a
+            # different (resolved) image_id
+            try:
+                for _k, row in snapshot.items():
+                    try:
+                        if int(row.get("temp_image_id", -1)) != int(pid):
+                            continue
+                        rid = int(row.get("image_id", -1))
+                        if rid != int(pid) and rid >= 0:
+                            mapping[int(pid)] = rid
+                            self._resolved_pid_map[int(pid)] = rid
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        # 1) For any pids not yet resolved, ensure an upload is scheduled
+        pending_unresolved: List[int] = [
+            int(pid) for pid in pending_ids if int(pid) not in mapping
+        ]
+        for pid in pending_unresolved:
+            self._ensure_upload_started(pid)
+
+        # 2) Await completion for any still-unresolved pids
+        to_await: List[asyncio.Future] = []
+        pid_for_future: List[int] = []
+        for pid in pending_unresolved:
+            if int(pid) in mapping:
+                continue
+            fut = self._pending_uploads.get(int(pid))
+            if fut is None:
+                continue
+            try:
+                # Wrap a concurrent future so we can await it in asyncio
+                wrapped = asyncio.wrap_future(fut)
+            except Exception:
+                # Fallback – await in a thread
+                async def _wait_in_thread(cf: concurrent.futures.Future[int]) -> int:
+                    return await asyncio.to_thread(cf.result)
+
+                wrapped = asyncio.ensure_future(_wait_in_thread(fut))
+            to_await.append(wrapped)
+            pid_for_future.append(int(pid))
+
+        if to_await:
+            results = await asyncio.gather(*to_await, return_exceptions=True)
+            for i, res in enumerate(results):
+                pid = pid_for_future[i]
+                if isinstance(res, Exception):
+                    continue
+                try:
+                    rid = int(res)
+                except Exception:
+                    continue
+                if rid < 0:
+                    # Missing/failed upload – do not include in mapping
+                    continue
+                mapping[int(pid)] = rid
+                self._resolved_pid_map[int(pid)] = rid
+
+        return mapping
+
+    # ------------------------------ Upload scheduling ---------------------
+    def _ensure_upload_started(self, pending_id: int) -> None:
+        if int(pending_id) in self._pending_uploads:
+            return
+        # Submit a background upload job that returns the real_id
+        try:
+            fut = self._executor.submit(self._upload_one_sync, int(pending_id))
+            self._pending_uploads[int(pending_id)] = fut
+        except Exception:
+            pass
+
+    def _upload_one_sync(self, pending_id: int) -> int:
+        """Blocking upload of a single pending image; returns real_id."""
+        try:
+            row = self._data_store.get(int(pending_id))
+        except Exception:
+            row = None
+        if not isinstance(row, dict):
+            # Nothing to upload; try to find resolved id via snapshot
+            try:
+                snap = self._data_store.snapshot()
+                for _k, r in snap.items():
+                    try:
+                        if int(r.get("temp_image_id", -1)) == int(pending_id):
+                            rid = int(r.get("image_id", -1))
+                            if rid >= 0 and rid != int(pending_id):
+                                self._resolved_pid_map[int(pending_id)] = rid
+                                return rid
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            return -1
+
+        payload = {
+            "timestamp": row.get("timestamp") or datetime.utcnow(),
+            "caption": row.get("caption"),
+            "data": row.get("data"),
+        }
+        [real_id] = self.add_images([payload])  # reuse existing robust path
+        try:
+            rid = int(real_id)
+        except Exception:
+            return -1
+
+        # Re-key local DataStore to the resolved id and preserve temp_image_id
+        try:
+            src = self._data_store.get(int(pending_id))
+        except Exception:
+            src = None
+        if isinstance(src, dict):
+            new_row = dict(src)
+            new_row["image_id"] = rid
+            if "temp_image_id" not in new_row:
+                new_row["temp_image_id"] = int(pending_id)
+            try:
+                self._data_store.put(new_row)
+                try:
+                    self._data_store.delete(int(pending_id))
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        self._resolved_pid_map[int(pending_id)] = rid
+        return rid
+
+    def add_images(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        synchronous: bool = True,
+        return_handles: bool = False,
+    ) -> Union[List[int], List[Optional[ImageHandle]]]:
         """
         Add new images. Each item may include ``timestamp``, ``caption``, ``data``.
-        Returns the allocated ``image_id`` values in insertion order.
+
+        Extended support
+        ----------------
+        - ``annotation`` (str, optional) may also be provided per item. It is applied
+          to returned ``ImageHandle`` instances only (when ``return_handles=True``) and
+          is never persisted to the backend or the local ``DataStore``.
+
+        Modes
+        -----
+        - synchronous=True,  return_handles=False (default): return list[int] ids.
+        - synchronous=True,  return_handles=True:  return List[ImageHandle] for created rows.
+        - synchronous=False, return_handles=True:  enqueue local pending rows, schedule uploads, return pending List[ImageHandle].
+        - synchronous=False, return_handles=False: INVALID → raises ValueError explaining why.
         """
-        out_ids: List[int] = []
+        if (not synchronous) and (not return_handles):
+            # Invalid pairing per spec: non-blocking enqueue requires handles for tracking
+            raise ValueError(
+                "Invalid argument combination: synchronous=False with return_handles=False. "
+                "Non-blocking mode must return ImageHandle instances so callers can await resolution.",
+            )
+        if not items:
+            return []
+
+        # If asynchronous enqueue is requested, create pending rows locally and schedule uploads
+        if not synchronous:
+            handles: List[Optional[ImageHandle]] = []
+            pending_ids: List[int] = []
+            for raw in items or []:
+                payload = dict(raw or {})
+                ts = payload.get("timestamp") or datetime.utcnow()
+                d = payload.get("data")
+                ann = payload.get("annotation")
+                ac_flag = bool(payload.get("auto_caption", True))
+                if d is None:
+                    handles.append(None)
+                    continue
+                if isinstance(d, (bytes, bytearray)):
+                    d_b64 = base64.b64encode(d).decode("utf-8")
+                else:
+                    d_b64 = d
+
+                temp_id = next(self._pending_counter)
+                row_local: Dict[str, Any] = {
+                    "image_id": int(temp_id),
+                    "temp_image_id": int(temp_id),
+                    "timestamp": ts,
+                    "caption": payload.get("caption"),
+                    "data": d_b64,
+                }
+                try:
+                    self._data_store.put(row_local)
+                except Exception:
+                    pass
+                handles.append(
+                    ImageHandle(
+                        manager=self,
+                        image=Image(**row_local),
+                        annotation=ann,
+                        auto_caption=ac_flag,
+                    ),
+                )
+                pending_ids.append(int(temp_id))
+
+            for pid in pending_ids:
+                try:
+                    self._ensure_upload_started(int(pid))
+                except Exception:
+                    pass
+
+            # In async mode, only return handles (ids are unknown yet)
+            return handles
+
+        # Prepare payloads (convert bytes → base64) – sync path only
+        prepared: List[Dict[str, Any]] = []
+        annotations: List[Optional[str]] = []
+        auto_caption_flags: List[bool] = []
         for raw in items or []:
             payload = dict(raw or {})
+            # Extract handle-local annotation (not part of the backend payload)
+            ann = payload.pop("annotation", None)
+            ac_flag = bool(payload.pop("auto_caption", True))
             data_val = payload.get("data")
             if data_val is None:
                 raise ValueError("'data' is required for add_images")
             if isinstance(data_val, (bytes, bytearray)):
                 payload["data"] = base64.b64encode(data_val).decode("utf-8")
             img = Image(**payload)
-            # Preserve explicit_types from the model (marks data as type=image)
-            log = unify.log(
-                context=self._ctx,
-                **img.to_post_json(),
-                new=True,
-                mutable=None,
-            )
-            try:
-                out_ids.append(int(log.entries["image_id"]))
-            except Exception:
+            prepared.append(img.to_post_json())
+            annotations.append(ann)
+            auto_caption_flags.append(ac_flag)
+
+        # Synchronous create path: Result list aligned to input order; None when a per-item create fails
+        out_ids: List[Optional[int]] = [None] * len(prepared)
+
+        # Fast path: batch create to avoid O(N) round trips and allow parallelism upstream
+        try:
+            resp = unify.create_logs(context=self._ctx, entries=prepared, batched=True)
+
+            # Helper: write-through to DataStore with a given row payload
+            def _put_row(row: Dict[str, Any]) -> None:
                 try:
-                    last = unify.get_logs(
-                        context=self._ctx,
-                        sorting={"image_id": "descending"},
-                        limit=1,
-                    )
-                    if last:
-                        out_ids.append(int(last[0].entries.get("image_id")))
+                    self._put_preserve_temp(row)
                 except Exception:
-                    out_ids.append(-1)
-        return out_ids
+                    pass
+
+            handled = False
+
+            # Case 1: list of Log objects
+            if isinstance(resp, list):
+                for i, lg in enumerate(resp):
+                    try:
+                        entries = getattr(lg, "entries", {}) or {}
+                        iid = entries.get("image_id")
+                        if iid is not None:
+                            out_ids[i] = int(iid)
+                            _put_row(entries)
+                    except Exception:
+                        continue
+                handled = True
+
+            # Case 2: dict response – handle common shapes
+            elif isinstance(resp, dict):
+                # 2a) logs field present → treat as list-of-logs
+                logs_list = resp.get("logs")
+                if isinstance(logs_list, list):
+                    for i, lg in enumerate(logs_list):
+                        try:
+                            entries = getattr(lg, "entries", {}) or {}
+                            iid = entries.get("image_id")
+                            if iid is not None:
+                                out_ids[i] = int(iid)
+                                _put_row(entries)
+                        except Exception:
+                            continue
+                    handled = True
+
+                # 2b) row_ids present (commonly {"image_id": [..]} or a plain list)
+                if not handled and ("row_ids" in resp):
+                    row_ids_obj = resp.get("row_ids")
+                    ids_list: Optional[List[Any]] = None
+                    if isinstance(row_ids_obj, list):
+                        ids_list = row_ids_obj
+                    elif isinstance(row_ids_obj, dict):
+                        ids_list = row_ids_obj.get("image_id")
+                        if ids_list is None and row_ids_obj:
+                            try:
+                                ids_list = next(iter(row_ids_obj.values()))
+                            except Exception:
+                                ids_list = None
+                    if isinstance(ids_list, list):
+                        for i, iid in enumerate(ids_list):
+                            try:
+                                if iid is None:
+                                    continue
+                                iid_int = int(iid)
+                                out_ids[i] = iid_int
+                                # Compose a best-effort row for the local DataStore mirror
+                                row = dict(prepared[i])
+                                row["image_id"] = iid_int
+                                _put_row(row)
+                            except Exception:
+                                continue
+                        handled = True
+
+                # 2c) log_event_ids present → fetch logs to resolve image_id values
+                if not handled:
+                    log_ids = resp.get("log_event_ids") or resp.get("log_ids")
+                    if isinstance(log_ids, list) and log_ids:
+                        fetched = unify.get_logs(
+                            context=self._ctx,
+                            from_ids=log_ids,
+                            return_ids_only=False,
+                        )
+                        try:
+                            logs_list2 = (
+                                fetched.get("logs")
+                                if isinstance(fetched, dict)
+                                else fetched
+                            )
+                        except Exception:
+                            logs_list2 = fetched
+                        if isinstance(logs_list2, list):
+                            for i, lg in enumerate(logs_list2):
+                                try:
+                                    entries = getattr(lg, "entries", {}) or {}
+                                    iid = entries.get("image_id")
+                                    if iid is not None:
+                                        out_ids[i] = int(iid)
+                                        _put_row(entries)
+                                except Exception:
+                                    continue
+                            handled = True
+
+            # If none of the above matched, leave out_ids as None entries (fallback below does not run)
+        except Exception:
+            # Fallback: per-item create; on failure return None for that entry
+            for i, payload in enumerate(prepared):
+                try:
+                    lg = unify.log(context=self._ctx, **payload, new=True, mutable=None)
+                    try:
+                        self._put_preserve_temp(lg.entries)
+                    except Exception:
+                        pass
+                    try:
+                        out_ids[i] = int(lg.entries.get("image_id"))
+                    except Exception:
+                        out_ids[i] = None
+                except Exception:
+                    out_ids[i] = None
+
+        if not return_handles:
+            # Coerce to Python ints where available; keep None where creation failed
+            return [x if isinstance(x, int) else None for x in out_ids]  # type: ignore[return-value]
+
+        # Build handles aligned to input order; None where creation failed
+        handles_out: List[Optional[ImageHandle]] = []
+        for i, maybe_id in enumerate(out_ids):
+            if isinstance(maybe_id, int):
+                try:
+                    # Prefer the row from the local DataStore mirror
+                    row = self._data_store.get(int(maybe_id))
+                except Exception:
+                    row = None
+                if isinstance(row, dict):
+                    try:
+                        handles_out.append(
+                            ImageHandle(
+                                manager=self,
+                                image=Image(**row),
+                                annotation=(
+                                    annotations[i] if i < len(annotations) else None
+                                ),
+                                auto_caption=(
+                                    auto_caption_flags[i]
+                                    if i < len(auto_caption_flags)
+                                    else False
+                                ),
+                            ),
+                        )
+                        continue
+                    except Exception:
+                        pass
+                # Fallback: reconstruct from prepared payload + resolved id
+                try:
+                    row_guess = dict(prepared[i])
+                    row_guess["image_id"] = int(maybe_id)
+                    handles_out.append(
+                        ImageHandle(
+                            manager=self,
+                            image=Image(**row_guess),
+                            annotation=annotations[i] if i < len(annotations) else None,
+                            auto_caption=(
+                                auto_caption_flags[i]
+                                if i < len(auto_caption_flags)
+                                else False
+                            ),
+                        ),
+                    )
+                except Exception:
+                    handles_out.append(None)
+            else:
+                handles_out.append(None)
+
+        return handles_out
 
     def update_images(self, updates: List[Dict[str, Any]]) -> List[int]:
         """
@@ -413,12 +1216,7 @@ class ImageManager(BaseImageManager):
                 if isinstance(d, (bytes, bytearray)):
                     d = base64.b64encode(d).decode("utf-8")
                 entries["data"] = d
-                # Ensure backend keeps the data column typed as an image
-                existing_et = entries.get("explicit_types") or {}
-                et_for_data = dict(existing_et.get("data") or {})
-                et_for_data["type"] = "image"
-                existing_et["data"] = et_for_data
-                entries["explicit_types"] = existing_et
+                # No per-log explicit_types needed; field is strongly typed in schema
             if not entries:
                 continue
             ids = unify.get_logs(
@@ -439,6 +1237,18 @@ class ImageManager(BaseImageManager):
                 entries=entries,
                 overwrite=True,
             )
+            # Refresh from backend and write-through to DataStore (preserve temp id)
+            try:
+                rows = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"image_id == {image_id}",
+                    limit=1,
+                    from_fields=list(self._BUILTIN_FIELDS),
+                )
+                if rows:
+                    self._put_preserve_temp(rows[0].entries)
+            except Exception:
+                pass
             updated.append(image_id)
         return updated
 
@@ -465,6 +1275,12 @@ class ImageManager(BaseImageManager):
             pass
 
         self._provision_storage()
+
+        # Clear local DataStore cache for this context
+        try:
+            self._data_store.clear()
+        except Exception:
+            pass
 
         # Verify the context is visible before attempting reads
         try:

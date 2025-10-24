@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
+from ..common.state_managers import BaseStateManager
 
 
-class BaseFileManager(ABC, metaclass=SingletonABCMeta):
+class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Read-only registry for files received or downloaded during a Unity session.
 
@@ -32,9 +33,9 @@ class BaseFileManager(ABC, metaclass=SingletonABCMeta):
         question: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Start a read-only, steerable tool loop to answer a question about a file.

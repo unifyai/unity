@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import functools
 import threading
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
@@ -349,12 +348,11 @@ class SimulatedContactManager(BaseContactManager):
         self._simulation_guidance = simulation_guidance
 
         # Shared, *stateful* **asynchronous** LLM
-        self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        from ..common.llm_client import (
+            new_llm_client as _new_llm_client,
+        )  # local import to avoid cycles
+
+        self._llm = _new_llm_client(stateful=True)
         # Mirror the real manager's tool exposure programmatically
         # and build the *exact* same prompts via the shared builders.
         ask_tools = mirror_contact_manager_tools("ask")
@@ -394,10 +392,10 @@ class SimulatedContactManager(BaseContactManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -416,15 +414,15 @@ class SimulatedContactManager(BaseContactManager):
         instruction = build_simulated_method_prompt(
             "ask",
             text,
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         handle = _SimulatedContactHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:
@@ -446,10 +444,10 @@ class SimulatedContactManager(BaseContactManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -468,15 +466,15 @@ class SimulatedContactManager(BaseContactManager):
         instruction = build_simulated_method_prompt(
             "update",
             text,
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         handle = _SimulatedContactHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:

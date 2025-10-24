@@ -33,7 +33,7 @@ from ..common.search_utils import table_search_top_k
 from ..common.context_store import TableStore
 from ..events.event_bus import EVENT_BUS, Event
 from ..common.grouping_helpers import maybe_group_rows
-from ..common.tool_spec import read_only
+from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
@@ -68,13 +68,14 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools such as joins and filters can reference it via the special
             table name ``"Contacts"``.
         """
+        super().__init__()
         if file_manager is not None:
             self._file_manager = file_manager
         else:
             self._file_manager = FileManager()
 
         # Allow ingestion/deprecation only within update/refactor flows
-        self._refactor_tools = methods_to_tool_dict(
+        refactor_tools = methods_to_tool_dict(
             # Ask
             self.ask,
             # Tables
@@ -97,17 +98,19 @@ class KnowledgeManager(BaseKnowledgeManager):
             self._ingest_documents,
             include_class_name=False,
         )
+        self.add_tools("refactor", refactor_tools)
 
-        self._multi_table_ask_tools = methods_to_tool_dict(
+        multi_table_ask_tools = methods_to_tool_dict(
             self._filter_join,
             self._search_join,
             self._filter_multi_join,
             self._search_multi_join,
             include_class_name=False,
         )
+        self.add_tools("ask.multi_table", multi_table_ask_tools)
 
         # We decide in `ask` method whether to include the multi-table tools or not
-        self._ask_tools = {
+        ask_tools = {
             **methods_to_tool_dict(
                 self._tables_overview,
                 self._filter,
@@ -115,14 +118,16 @@ class KnowledgeManager(BaseKnowledgeManager):
                 include_class_name=False,
             ),
         }
+        self.add_tools("ask", ask_tools)
 
-        self._update_tools = {
-            **self._refactor_tools,
+        update_tools = {
+            **refactor_tools,
             **methods_to_tool_dict(
                 self._add_rows,
                 include_class_name=False,
             ),
         }
+        self.add_tools("update", update_tools)
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
@@ -261,9 +266,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
@@ -277,9 +282,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         # 1️⃣  Prepare toolset (and optional live clarification helper)
-        tools = dict(self._refactor_tools)
+        tools = dict(self.get_tools("refactor"))
 
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 try:
@@ -316,8 +321,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                     pass
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -344,7 +349,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.refactor.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=self._default_refactor_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
@@ -368,9 +373,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
         case_specific_instructions: str | None = None,
@@ -385,9 +390,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
-        tools = dict(self._update_tools)
+        tools = dict(self.get_tools("update"))
 
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 try:
@@ -424,8 +429,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                     pass
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -454,7 +459,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
@@ -472,15 +477,16 @@ class KnowledgeManager(BaseKnowledgeManager):
         return handle
 
     @functools.wraps(BaseKnowledgeManager.ask, updated=())
+    @manager_tool
     @log_manager_call("KnowledgeManager", "ask", payload_key="question")
     async def ask(
         self,
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         case_specific_instructions: str | None = None,
         response_format: Any | None = None,
@@ -500,11 +506,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         include_join_info = len(tables_overview) > 1
 
         # We decide in `ask` method whether to include the multi-table tools or not
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
         if len(tables_overview) > 1:
-            tools.update(dict(self._multi_table_ask_tools))
+            multi_table_tools = dict(self.get_tools("ask.multi_table"))
+            tools.update(multi_table_tools)
 
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 try:
@@ -541,8 +548,8 @@ class KnowledgeManager(BaseKnowledgeManager):
                     pass
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -566,8 +573,12 @@ class KnowledgeManager(BaseKnowledgeManager):
             ),
         )
 
-        use_semantic_cache = is_semantic_cache_enabled()
-        tool_policy_fn = None if use_semantic_cache else self._default_ask_tool_policy
+        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        tool_policy_fn = (
+            None
+            if use_semantic_cache in ("read", "both")
+            else self._default_ask_tool_policy
+        )
 
         handle = start_async_tool_loop(
             client,
@@ -575,7 +586,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
             preprocess_msgs=inject_broader_context,
             response_format=response_format,
@@ -1035,7 +1046,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         source_table: str,
         column_name: str,
         dest_table: str,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Copy a column's values from one table to another.
 
@@ -1074,7 +1085,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
         return {
             "status": "copied",
-            "rows": str(len(log_ids)),
+            "rows": len(log_ids),
             "from": source_table,
             "to": dest_table,
             "column": column_name,
@@ -1086,7 +1097,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         source_table: str,
         column_name: str,
         dest_table: str,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Move a column from one table to another.
 
@@ -1117,8 +1128,8 @@ class KnowledgeManager(BaseKnowledgeManager):
         del_res = self._delete_column(table=source_table, column_name=column_name)
         return {
             "status": "moved",
-            "copy_result": str(copy_res),
-            "delete_result": str(del_res),
+            "copy_result": copy_res,
+            "delete_result": del_res,
         }
 
     def _transform_column(
@@ -1127,7 +1138,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         table: str,
         column_name: str,
         equation: str,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Transform a column in‑place according to a Python ``equation``.
 
@@ -1167,9 +1178,9 @@ class KnowledgeManager(BaseKnowledgeManager):
         )
         return {
             "status": "transformed",
-            "create_result": str(create_res),
-            "delete_result": str(delete_res),
-            "rename_result": str(rename_res),
+            "create_result": create_res,
+            "delete_result": delete_res,
+            "rename_result": rename_res,
         }
 
     #  Row-level deletion
@@ -1181,7 +1192,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         offset: int = 0,
         limit: int = 100,
         tables: Optional[List[str]] = None,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Delete every log matching ``filter`` across one or more tables.
 
@@ -1227,7 +1238,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         project_name = unify.active_project()
 
-        def _delete_for_table(table_name: str) -> tuple[str, str]:
+        def _delete_for_table(table_name: str) -> tuple[str, Any]:
             ctx = self._ctx_for_table(table_name)
             log_ids = list(
                 unify.get_logs(
@@ -1239,7 +1250,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 ),
             )
             if not log_ids:
-                return table_name, "no-op"
+                return table_name, {"status": "no-op"}
 
             res = unify.delete_logs(
                 logs=log_ids,
@@ -1247,14 +1258,15 @@ class KnowledgeManager(BaseKnowledgeManager):
                 project=project_name,
                 delete_empty_logs=True,
             )
-            return table_name, res.get("message", str(res))
+            # Return the full backend response for structured logging
+            return table_name, res
 
         # Parallelise across tables to minimise wall-clock time when multiple tables are targeted.
         if len(resolved_tables) == 1:
             name, msg = _delete_for_table(resolved_tables[0])
             return {name: msg}
 
-        summaries: Dict[str, str] = {}
+        summaries: Dict[str, Any] = {}
         max_workers = min(8, max(1, len(resolved_tables)))
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {
@@ -1627,7 +1639,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 reference text to compare against. Supports multiple expressions; when more than one
                 is provided the ranking uses a sum of cosine distances over all terms.
         k : int, default 10
-                Maximum number of rows to return.
+                Maximum number of rows to return. Must be <= 1000.
         filter : str | None, default ``None``
                 Row-level predicate (evaluated with column names as variables).
                 *None* returns all rows.
@@ -1701,7 +1713,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             entries are provided, their scores are combined for ranking.
 
         k : int, default 5
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         filter : str | None, default ``None``
                 Row-level predicate (evaluated with column names as variables).
@@ -1786,7 +1798,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             semantic similarity. Multiple entries are combined for ranking.
 
         k : int, default 5
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         Returns
         -------
@@ -2015,7 +2027,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         offset : int, default ``0``
                 Pagination offset (0-based).
         limit : int, default ``100``
-                Maximum rows per table.
+                Maximum rows per table. Must be <= 1000.
         tables :  str | list[str]
                 Subset of tables to scan; ``None`` → all tables.
 
@@ -2144,7 +2156,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             names created by `select`.
 
         result_limit : int, default 100
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         result_offset : int, default 0
             Pagination offset into the result set.
@@ -2248,7 +2260,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             column names created by the final step's `select` mapping.
 
         result_limit : int, default 100
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         result_offset : int, default 0
             Pagination offset into the final result set.

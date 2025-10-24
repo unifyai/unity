@@ -1,8 +1,15 @@
 from enum import StrEnum
-from pydantic import BaseModel, Field, model_validator, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    model_validator,
+    model_serializer,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+)
 from datetime import datetime
-import re
-from typing import Literal
+from ...image_manager.types import AnnotatedImageRefs
+from typing import ClassVar
 
 UNASSIGNED = -1
 
@@ -17,12 +24,6 @@ class Medium(StrEnum):
     WHATSAPP_MSG = "whatsapp_message"
     WHATSAPP_CALL = "whatsapp_call"
     GOOGLE_MEET = "google_meet"
-
-
-class ScreenShareAnnotation(BaseModel):
-    caption: str
-    image: str
-    type: Literal["vision", "speech"]
 
 
 class Message(BaseModel):
@@ -43,57 +44,34 @@ class Message(BaseModel):
         description="ID of the conversation thread this message belongs to",
         ge=-1,
     )
-    images: dict[str, int] = Field(
-        default_factory=dict,
+    images: AnnotatedImageRefs = Field(
+        default_factory=lambda: AnnotatedImageRefs.model_validate([]),
         description=(
-            "Mapping of json.dumps strings like '[x:y]' → image_id (int). "
-            "Supports negative indices and open-ended ranges (e.g., '[6:]', '[:10]')."
+            "List of annotated image references aligned to the text. Each entry must be an AnnotatedImageRef."
         ),
     )
-    call_utterance_timestamp: str = Field(
-        default="",
-        description="Timestamp of the utterance associated with calls",
-    )
-    # call_url: str = Field(
-    #     default="",
-    #     description="URL of the recorded call file associated with the call",
-    # )
-    screen_share: dict[str, ScreenShareAnnotation] = Field(
-        default_factory=dict,
-        description="Mapping of timestamps to screen share annotation objects, capturing key visual events.",
-    )
 
-    @field_validator("images", mode="before")
+    # Central, single source of truth for shorthand aliases (full → shorthand)
+    SHORTHAND_MAP: ClassVar[dict[str, str]] = {
+        "message_id": "mid",
+        "medium": "med",
+        "sender_id": "sid",
+        "receiver_ids": "rids",
+        "timestamp": "ts",
+        "content": "c",
+        "exchange_id": "xid",
+        "images": "imgs",
+    }
+
     @classmethod
-    def _validate_images(cls, v):
-        """Ensure images is a dict[str, int] with keys like "[x:y]".
+    def shorthand_map(cls) -> dict[str, str]:
+        """Return a copy of the full→shorthand mapping for Message fields."""
+        return dict(cls.SHORTHAND_MAP)
 
-        Rules:
-        - Key must strictly match "[x:y]" with optional negative or open ends.
-          Regex: ^\[\s*(-?\d+)?\s*:\s*(-?\d+)?\s*\]$
-        - Value must be coercible to int (image_id).
-        - None → {}.
-        """
-        if v is None:
-            return {}
-        if not isinstance(v, dict):
-            raise TypeError("images must be a dict[str, int]")
-        pattern = re.compile(r"^\[\s*(-?\d+)?\s*:\s*(-?\d+)?\s*\]$")
-        out: dict[str, int] = {}
-        for k, val in v.items():
-            if not isinstance(k, str):
-                raise ValueError("images keys must be strings like '[x:y]'")
-            if not pattern.fullmatch(k):
-                raise ValueError(
-                    f"images key '{k}' must match '[x:y]' with optional negative or open bounds",
-                )
-            try:
-                out[k] = int(val)
-            except Exception as exc:
-                raise ValueError(
-                    f"images value for key '{k}' must be an integer image_id",
-                ) from exc
-        return out
+    @classmethod
+    def shorthand_inverse_map(cls) -> dict[str, str]:
+        """Return shorthand→full mapping for Message fields."""
+        return {v: k for k, v in cls.SHORTHAND_MAP.items()}
 
     @model_validator(mode="before")
     @classmethod
@@ -119,7 +97,79 @@ class Message(BaseModel):
 
         payload = self.model_dump(mode="json", exclude=exclude)
 
+        # Ensure structural defaults are present for persistence even when the
+        # JSON serializer prunes empty fields. This avoids later reconstruction
+        # paths treating missing keys as None (which fails validation).
+        payload.setdefault("images", [])
+
         return payload
+
+    # Only affect JSON-mode serialisation: prune empty fields so tool-loop
+    # presentations omit noise like images: [] while the
+    # in-memory model remains unchanged and fully populated.
+    @model_serializer(mode="wrap")
+    def _prune_empty_on_serialize(
+        self,
+        handler: SerializerFunctionWrapHandler,
+        info: SerializationInfo,
+    ) -> dict:  # type: ignore[no-redef]
+        data = handler(self)
+
+        # Default behaviour: do NOT prune empties; only when explicitly requested via context
+        prune = False
+        shorthand = False
+        try:
+            ctx = info.context or {}
+            if "prune_empty" in ctx:
+                prune = bool(ctx["prune_empty"])  # explicit override
+            if "shorthand" in ctx:
+                shorthand = bool(ctx["shorthand"])  # explicit aliasing
+        except Exception:
+            pass
+
+        out = data
+        if prune:
+
+            def _is_empty(value):
+                try:
+                    if value is None:
+                        return True
+                    # Treat empty strings as empty; keep False/0 as meaningful
+                    if isinstance(value, str):
+                        return value.strip() == ""
+                    if isinstance(value, (list, tuple, set, dict)):
+                        return len(value) == 0
+                    return False
+                except Exception:
+                    return False
+
+            def _prune(obj):
+                try:
+                    if isinstance(obj, dict):
+                        pruned = {k: _prune(v) for k, v in obj.items()}
+                        return {k: v for k, v in pruned.items() if not _is_empty(v)}
+                    if isinstance(obj, list):
+                        pruned_list = [_prune(v) for v in obj]
+                        return [v for v in pruned_list if not _is_empty(v)]
+                    return obj
+                except Exception:
+                    return obj
+
+            try:
+                out = _prune(out)
+            except Exception:
+                out = data
+
+        if shorthand and isinstance(out, dict):
+            # Minimal, stable aliases for top-level fields
+            alias_map = type(self).SHORTHAND_MAP
+            try:
+                out = {alias_map.get(k, k): v for k, v in out.items()}
+            except Exception:
+                # best-effort: if mapping fails, keep original keys
+                out = out
+
+        return out
 
 
 VALID_MEDIA: tuple[str, ...] = tuple(m.value for m in Medium)

@@ -65,6 +65,7 @@ class FileManager(BaseFileManager):
         parser: Optional[BaseParser] = None,
         rolling_summary_in_prompts: bool = True,
     ) -> None:
+        super().__init__()
         self._tmp_dir = Path(tempfile.mkdtemp(prefix="unity_files_"))
         self._display_to_path: Dict[str, Path] = {}
         # Track display names that are registered as protected (read-only from the FileManager's perspective)
@@ -127,7 +128,7 @@ class FileManager(BaseFileManager):
         #  Tools exposed to LLM                                               #
         # ------------------------------------------------------------------ #
         # ask-side tools are read-only, so they never change
-        self._ask_tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.list,
                 self.exists,
@@ -140,9 +141,7 @@ class FileManager(BaseFileManager):
                 include_class_name=False,
             ),
         }
-
-        # All tools are read-only for FileManager
-        self._tools = dict(**self._ask_tools)
+        self.add_tools("ask", ask_tools)
 
         atexit.register(self._cleanup)
 
@@ -467,7 +466,7 @@ class FileManager(BaseFileManager):
             - reference_text is free-form text which will be embedded.
             When None or empty dict, returns the most recent files.
         k : int, default 10
-            Maximum number of files to return.
+            Maximum number of files to return. Must be <= 1000.
 
         Returns
         -------
@@ -514,7 +513,7 @@ class FileManager(BaseFileManager):
         offset : int, default 0
             Zero-based index of the first result to include.
         limit : int, default 100
-            Maximum number of records to return.
+            Maximum number of records to return. Must be <= 1000.
 
         Returns
         -------
@@ -818,9 +817,9 @@ class FileManager(BaseFileManager):
         question: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:  # type: ignore[override]
@@ -830,10 +829,10 @@ class FileManager(BaseFileManager):
         client = self._new_llm_client("gpt-5@openai")
 
         # Tools available inside the loop
-        tools = dict(self._ask_tools)
+        tools = dict(self.get_tools("ask"))
 
         # Optional live clarification helper with event publishing
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 try:
@@ -874,8 +873,8 @@ class FileManager(BaseFileManager):
                     )
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -905,7 +904,7 @@ class FileManager(BaseFileManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=lambda i, t: ("required", t) if i < 1 else ("auto", t),
             preprocess_msgs=inject_broader_context,
             handle_cls=(

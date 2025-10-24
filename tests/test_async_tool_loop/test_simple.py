@@ -84,6 +84,8 @@ def new_client() -> unify.AsyncUnify:
     """
     return unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     ).set_system_message(
@@ -401,8 +403,13 @@ async def test_no_tools_without_system_message() -> None:
 
         user → assistant
     """
-    client = unify.AsyncUnify(MODEL_NAME)
-    client.set_traced(True)
+    client = unify.AsyncUnify(
+        MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
 
     answer = await start_async_tool_loop(
         client,

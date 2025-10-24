@@ -1,5 +1,7 @@
+from datetime import timedelta
 import os
 import asyncio
+import logging
 
 # import threading
 from jinja2 import Template
@@ -25,11 +27,25 @@ import redis.asyncio as redis
 from openai import AsyncOpenAI
 
 
+logger = logging.getLogger(__name__)
+
+# Set logging level and add handler if not already configured
+log_level = os.getenv("CONVERSATION_MANAGER_LOG_LEVEL", "INFO").upper()
+logger.setLevel(getattr(logging, log_level, logging.INFO))
+
+# Ensure we have a console handler to actually display logs
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(levelname)s: %(message)s")
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
 with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
     SYS = f.read()
 
 
-MAX_CONV_MANAGER_MSGS = 30
+MAX_CONV_MANAGER_MSGS = 50
 
 # so basically, whenever the total count of a contact message > 10
 # we are going to ask the contact manager/transcript manager to provide an update rolling summary
@@ -105,7 +121,6 @@ class ConversationManager:
             user_whatsapp_number=user_whatsapp_number,
         )
 
-        self.chat_history = self.state.chat_history
         self.call_proc = None
         # self.summarizing = False
 
@@ -131,7 +146,7 @@ class ConversationManager:
             # Compute filler text first; avoid blocking after start
             filler_text = ""
             try:
-                filler_text = self.user_turn_end_callback(self.chat_history) or ""
+                filler_text = self.user_turn_end_callback(self.state.chat_history) or ""
             except Exception:
                 filler_text = ""
 
@@ -264,10 +279,46 @@ class ConversationManager:
             )
             parsed_out = json.loads(out)
 
-        print(parsed_out)
+        print(f"parsed_out {parsed_out}")
         if parsed_out["actions"] is not None:
             for action in parsed_out["actions"]:
-                if action["action_name"] == "send_sms":
+                if action["action_name"].startswith("conductor_"):
+                    if action["action_name"].startswith("conductor_handle_"):
+                        # Forward an intervention to ManagersWorker for an existing handle
+                        event = ConductorHandleRequest(
+                            handle_id=action["handle_id"],
+                            action_name=action["action_name"].replace(
+                                "conductor_handle_", ""
+                            ),
+                            query=parsed_out["thoughts"],
+                            parent_chat_context=self.state.chat_history,
+                        )
+                    elif action["action_name"] == "conductor_answer_clarification":
+                        event = ConductorClarificationResponse(
+                            handle_id=action["handle_id"],
+                            response=parsed_out["thoughts"],
+                            call_id=action["call_id"],
+                        )
+                    else:
+                        # Create a new Conductor task via ManagersWorker
+                        event = ConductorRequest(
+                            action_name=action["action_name"].replace("conductor_", ""),
+                            query=parsed_out["thoughts"],
+                            parent_chat_context=self.state.chat_history,
+                        )
+                    asyncio.create_task(
+                        self.event_broker.publish(
+                            "app:conductor:input_events",
+                            event.to_json(),
+                        )
+                    )
+                    asyncio.create_task(
+                        self.event_broker.publish(
+                            "app:managers:input",
+                            event.to_json(),
+                        )
+                    )
+                elif action["action_name"] == "send_sms":
                     contact = self.state.update_or_create_new_contact(
                         action["contact_id"],
                         action["first_name"],
@@ -357,8 +408,7 @@ class ConversationManager:
                 elif action["action_name"] == "send_unify_message":
                     # Boss-only chat; contact id is always 1
                     content = action["message"]
-                    event = UnifyMessageSent(contact=1, content=content)
-                    self.publish_transcript
+                    event = UnifyMessageSent(contact="1", content=content)
                     await self.event_broker.publish(
                         "app:comms:unify_message_sent",
                         event.to_json(),
@@ -381,7 +431,7 @@ class ConversationManager:
             and not self.state.summarizing
         ):
             print("CLEARING CHAT HISTORY, REACHED MAX NUM")
-            # self.chat_history = []
+            self.state.chat_history = []
             # DUMMY_EVENT_BUS.append(ClearContext())
             try:
                 event = UpdateContactRollingSummaryRequest(
@@ -450,7 +500,6 @@ class ConversationManager:
                 )
 
                 if msg is not None:
-                    print(msg)
                     self.last_activity_time = self.loop.time()
 
                 # there are still pending messages and no scheduled responses or currently running responses
@@ -472,7 +521,7 @@ class ConversationManager:
         print("publishing startup")
         await self.event_broker.publish(
             "app:managers:input",
-            ManagersStartupInput(
+            ManagersStartupRequest(
                 agent_id=self.state.assistant_id,
                 first_name=self.state.assistant_name,
                 age=self.state.assistant_age,
@@ -489,7 +538,7 @@ class ConversationManager:
     async def publish_bus_events(self, event: Event):
         await self.event_broker.publish(
             "app:managers:input",
-            PublishBusEvent(event=event.to_dict()).to_json(),
+            PublishBusEventRequest(event=event.to_dict()).to_json(),
         )
 
     async def publish_transcript(self, event: Event):
@@ -555,7 +604,7 @@ class ConversationManager:
         call_utterance_timestamp = ""
         call_url = ""
         # compute utterance timestamp based on active call type
-        ts = (
+        timestamp = (
             self.state.call_start_timestamp
             if medium == "phone_call"
             else (
@@ -564,8 +613,10 @@ class ConversationManager:
                 else None
             )
         )
-        if ts:
-            delta = datetime.now() - ts
+        if timestamp:
+            delta = datetime.now() - timestamp
+            if role == "Assistant":
+                delta += timedelta(seconds=2)
             minutes, seconds = divmod(int(delta.total_seconds()), 60)
             call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
         if "default-assistant" not in self.state.assistant_id:
@@ -576,7 +627,7 @@ class ConversationManager:
 
         await self.event_broker.publish(
             "app:managers:input",
-            LogMessageInput(
+            LogMessageRequest(
                 medium=medium,
                 sender_id=sender_id,
                 receiver_ids=receiver_ids,
@@ -591,7 +642,7 @@ class ConversationManager:
     async def publish_contact_update(self, contact: dict):
         await self.event_broker.publish(
             "app:managers:input",
-            UpdateContactEvent(
+            UpdateContactRequest(
                 contact_id=contact["contact_id"],
                 first_name=contact["first_name"],
                 surname=contact["surname"],
@@ -600,7 +651,44 @@ class ConversationManager:
             ).to_json(),
         )
 
+    async def publish_contact_info_request(self, event: Event) -> None:
+        """
+        For events with a contact field, publish a request for fresh contact
+        info from ContactManager. The response will be handled by the normal event loop.
+        """
+        # Skip if not initialized yet
+        if not self.state.initialized:
+            return
+
+        # Skip if no contact field
+        if not hasattr(event, "contact"):
+            return
+
+        # Get contact - pass to all params and let get_contact find the match
+        if event.contact.isnumeric():
+            contact = self.state.get_contact(contact_id=int(event.contact))
+        elif event.contact:
+            contact = self.state.get_contact(
+                phone_number=event.contact,
+                email_address=event.contact,
+            )
+        else:
+            contact = None
+
+        if not contact:
+            return
+
+        # Request fresh contact info from ManagersWorker (fire-and-forget)
+        print(f"Requesting fresh contact info for contact_id={contact.contact_id}")
+        await self.event_broker.publish(
+            "app:managers:input",
+            ContactInfoRequest(contact_id=int(contact.contact_id)).to_json(),
+        )
+
     async def handle_event(self, event: Event):
+        # For events with a contact string field, request fresh contact info (fire-and-forget)
+        asyncio.create_task(self.publish_contact_info_request(event))
+
         # update state
         self.state.update_state(event)
 
@@ -608,14 +696,20 @@ class ConversationManager:
         if isinstance(event, NotificationInjectedEvent):
             # Check if this notification is intended for this CM instance
             if event.target_conversation_id == self.state.assistant_id:
-                print(f"INFO: Received steering notification: '{event.content}'")
+                logger.info(f"INFO: Received steering notification: '{event.content}'")
                 await self.schedule_llm_run(delay=0.1, cancel_running=True)
+            return
+
+        if isinstance(event, NotificationUnpinnedEvent):
+            if event.target_conversation_id == self.state.assistant_id:
+                logger.info(f"Unpinning interjection: {event.interjection_id}")
+                # State update is handled by state.update_state(event)
             return
 
         # every interaction with the managers worker happens through the conversation
         # manager instead of the state, which is why we need to publish the events here
-        # if event.__class__.loggable:
-        #     asyncio.create_task(self.publish_bus_events(event))
+        if event.__class__.loggable:
+            asyncio.create_task(self.publish_bus_events(event))
 
         if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
             # start phone call process and wait untils its done, we should probably make sure
@@ -773,6 +867,20 @@ class ConversationManager:
             await self.publish_contact_update(
                 self.state.inverted_contacts_map[0].model_dump(),
             )
+            await self.publish_contact_update(
+                self.state.inverted_contacts_map[1].model_dump()
+            )
+
+        elif isinstance(
+            event,
+            (
+                ConductorResponse,
+                ConductorHandleResponse,
+                ConductorResult,
+                ConductorClarificationRequest,
+            ),
+        ):
+            await self.schedule_llm_run(0, cancel_running=True)
 
         elif isinstance(event, Error):
             await self.schedule_llm_run(0, cancel_running=True)
@@ -808,6 +916,7 @@ class ConversationManager:
                     f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown...",
                 )
                 self.stop.set()
+                await self.event_broker.aclose()
 
     def cleanup_call_proc(self):
         if hasattr(self, "call_proc") and self.call_proc:

@@ -35,11 +35,12 @@ class SkillManager(BaseSkillManager):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         # Ensure the FunctionManager context exists to allow column/schema access
         self._function_manager = FunctionManager()
 
         # Expose read-only FunctionManager methods directly (no wrappers)
-        self._tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._function_manager.list_functions,
                 self._function_manager.search_functions,
@@ -48,6 +49,7 @@ class SkillManager(BaseSkillManager):
                 include_class_name=False,
             ),
         }
+        self.add_tools("ask", ask_tools)
 
         # Cache function columns for prompt readability
         try:
@@ -91,16 +93,16 @@ class SkillManager(BaseSkillManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         import asyncio  # local to avoid widening import surface at module import time
 
-        tools = dict(self._tools)
+        tools = dict(self.get_tools("ask"))
 
-        if clarification_up_q is not None and clarification_down_q is not None:
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 try:
@@ -141,8 +143,8 @@ class SkillManager(BaseSkillManager):
                     pass
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -163,7 +165,7 @@ class SkillManager(BaseSkillManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             preprocess_msgs=inject_broader_context,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None

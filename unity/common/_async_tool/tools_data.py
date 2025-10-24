@@ -22,9 +22,9 @@ from .messages import (
 )
 from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
-from ..llm_helpers import method_to_schema, _collect_images, _strip_image_keys, _dumps
+from ..llm_helpers import method_to_schema
+from .formatting import serialize_tool_content, sanitize_tool_msg_for_logging
 from contextlib import suppress
-from .images import normalize_arg_scoped_images
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -48,12 +48,12 @@ class ToolsData:
     # Local helper: pretty-print tool payloads consistently
     @staticmethod
     def _pretty_tool_payload(tool_name: str, payload: Any) -> str:
-        with suppress(Exception):
-            content_payload = (
-                payload if isinstance(payload, dict) else {"message": str(payload)}
-            )
-            return _dumps({"tool": tool_name, **content_payload}, indent=4)
-        return _dumps({"tool": tool_name, "message": str(payload)}, indent=4)
+        # Centralized serialization for progress/notification placeholders
+        return serialize_tool_content(
+            tool_name=tool_name,
+            payload=payload,
+            is_final=False,
+        )
 
     def _quota_count(self, task_name: str) -> int:
         return self.call_counts.get(task_name, 0)
@@ -206,7 +206,7 @@ class ToolsData:
         if propagate_chat_context:
             cur_msgs = [m for m in self._client.messages if not m.get("_ctx_header")]
             ctx_repr = chat_context_repr(parent_chat_context, cur_msgs)
-            extra_kwargs["parent_chat_context"] = ctx_repr
+            extra_kwargs["_parent_chat_context"] = ctx_repr
 
         sig = inspect.signature(fn)
         params = sig.parameters
@@ -214,36 +214,36 @@ class ToolsData:
             p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
         )
 
-        sig_accepts_interject_q = "interject_queue" in params or has_varkw
-        sig_accepts_pause_event = "pause_event" in params or has_varkw
+        sig_accepts_interject_q = "_interject_queue" in params or has_varkw
+        sig_accepts_pause_event = "_pause_event" in params or has_varkw
         sig_accepts_clar_qs = (
-            "clarification_up_q" in params and "clarification_down_q" in params
+            "_clarification_up_q" in params and "_clarification_down_q" in params
         ) or has_varkw
-        sig_accepts_progress = "notification_up_q" in params or has_varkw
+        sig_accepts_progress = "_notification_up_q" in params or has_varkw
 
         pause_ev: Optional[asyncio.Event] = None
         if sig_accepts_pause_event:
             pause_ev = asyncio.Event()
             pause_ev.set()  # start running
-            extra_kwargs["pause_event"] = pause_ev
+            extra_kwargs["_pause_event"] = pause_ev
 
         clar_up_q: Optional[asyncio.Queue[str]] = None
         clar_down_q: Optional[asyncio.Queue[str]] = None
         if sig_accepts_clar_qs:
             clar_up_q = asyncio.Queue()
             clar_down_q = asyncio.Queue()
-            extra_kwargs["clarification_up_q"] = clar_up_q
-            extra_kwargs["clarification_down_q"] = clar_down_q
+            extra_kwargs["_clarification_up_q"] = clar_up_q
+            extra_kwargs["_clarification_down_q"] = clar_down_q
 
         progress_q: Optional[asyncio.Queue[dict]] = None
         if sig_accepts_progress:
             progress_q = asyncio.Queue()
-            extra_kwargs["notification_up_q"] = progress_q
+            extra_kwargs["_notification_up_q"] = progress_q
 
         sub_q: Optional[asyncio.Queue[str]] = None
         if sig_accepts_interject_q:
             sub_q = asyncio.Queue()
-            extra_kwargs["interject_queue"] = sub_q
+            extra_kwargs["_interject_queue"] = sub_q
 
         # Parse args
         with suppress(Exception):
@@ -262,16 +262,9 @@ class ToolsData:
         allowed_call_args = _normalise_kwargs_for_bound_method(fn, call_args)
         merged_kwargs = {**allowed_call_args, **filtered_extras}
 
-        # ── Normalise arg-scoped image mapping for inner tool calls via images module
-        if "images" in params and isinstance(merged_kwargs.get("images"), dict):
-            try:
-                merged_kwargs = normalize_arg_scoped_images(
-                    merged_kwargs,
-                    tool_name=name,
-                    param_names=set(params.keys()),
-                )
-            except Exception:
-                pass
+        # Legacy arg-scoped image normalization removed; inner tools should accept ImageRefs explicitly.
+
+        # (Argument pretty-printing now handled in assistant message logs only)
 
         # Build coroutine
         if asyncio.iscoroutinefunction(fn):
@@ -294,7 +287,7 @@ class ToolsData:
             call_idx=call_idx,
             is_interjectable=sig_accepts_interject_q,
             interject_queue=sub_q,
-            chat_context=extra_kwargs.get("parent_chat_context"),
+            chat_context=extra_kwargs.get("_parent_chat_context"),
             clar_up_queue=clar_up_q,
             clar_down_queue=clar_down_q,
             notification_queue=progress_q,
@@ -546,25 +539,8 @@ class ToolsData:
             #  Normal (non-handle) result – unchanged path
             # ───────────────────────────────────────────────────────────────
             # ── finished successfully – promote any embedded images ─────────
-            images: list[str] = []
-            _collect_images(raw, images)
-
-            text_repr = _dumps(_strip_image_keys(raw), indent=4)
-
-            if images:
-                content_blocks: list = []
-                if text_repr and text_repr != "{}":
-                    content_blocks.append({"type": "text", "text": text_repr})
-                content_blocks.extend(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"},
-                    }
-                    for b64 in images
-                )
-                result = content_blocks
-            else:
-                result = text_repr
+            # Centralized serialization for final tool results
+            result = serialize_tool_content(tool_name=name, payload=raw, is_final=True)
 
             consecutive_failures.reset_failures()
         except Exception:
@@ -650,19 +626,15 @@ class ToolsData:
         # ── optional console logging for every finished tool call ────────────
         #     (mirrors the assistant-message logging above)
         if self._logger.log_steps:
-            # Create a clean version of tool_msg for logging (strip image data)
-            tool_msg_for_logging = tool_msg.copy()
-            if isinstance(tool_msg_for_logging.get("content"), list):
-                # Filter out image_url items and keep only text content
-                tool_msg_for_logging["content"] = [
-                    item
-                    for item in tool_msg_for_logging["content"]
-                    if item.get("type") != "image_url"
-                ]
-            self._logger.info(
-                f"{json.dumps(tool_msg_for_logging, indent=4)}\n",
-                prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
-            )
+            # Log EXACLY what was inserted, but redact base64 data URLs for readability
+            try:
+                safe_for_logs = sanitize_tool_msg_for_logging(tool_msg)
+                self._logger.info(
+                    f"{json.dumps(safe_for_logs, indent=4)}",
+                    prefix=f"✅  ToolCall Completed [{time.perf_counter() - info.scheduled_time:.2f}s]",
+                )
+            except Exception:
+                pass
 
         # 6️⃣  failure guard -------------------------------------------------
         if consecutive_failures.has_exceeded_failures():

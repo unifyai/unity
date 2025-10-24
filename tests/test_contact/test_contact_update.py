@@ -21,7 +21,7 @@ def _programmatic_contact_check(
     else:
         filter_str = f"{identifier_key} == '{identifier_value}'"
 
-    retrieved_contacts = contact_manager._filter_contacts(filter=filter_str)
+    retrieved_contacts = contact_manager._filter_contacts(filter=filter_str)["contacts"]
 
     assert (
         len(retrieved_contacts) >= 1
@@ -50,7 +50,7 @@ async def test_update_create_new_contact(
     cm, _ = contact_manager_scenario
     command = (
         "Add a new contact: Eve Adams, email eve@paradise.com, "
-        "phone 777-000-1111, bio 'Digital nomad and writer'."
+        "phone 7770001111, bio 'Digital nomad and writer'."
     )
 
     handle = await cm.update(command)
@@ -85,7 +85,7 @@ async def test_update_existing_contact_details(
     if alice_smith_id is None:
         results = cm._filter_contacts(
             filter="email_address == 'alice.smith@example.com'",
-        )
+        )["contacts"]
         assert results, "Alice Smith not found for test setup"
         alice_smith_id = results[0].contact_id
 
@@ -120,7 +120,9 @@ async def test_update_with_parent_context_identification(
     )
     charlie_id = id_map.get(charlie_email_key)
     if charlie_id is None:
-        results = cm._filter_contacts(filter="email_address == 'goodgrief@example.org'")
+        results = cm._filter_contacts(
+            filter="email_address == 'goodgrief@example.org'",
+        )["contacts"]
         assert results, "Charlie Brown not found for test setup"
         charlie_id = results[0].contact_id
 
@@ -135,7 +137,7 @@ async def test_update_with_parent_context_identification(
 
     handle = await cm.update(
         command,
-        parent_chat_context=parent_ctx,
+        _parent_chat_context=parent_ctx,
     )
     await handle.result()
 
@@ -170,8 +172,8 @@ async def test_update_with_clarification_needed(
 
     handle = await cm.update(
         command,
-        clarification_up_q=clar_up_q,
-        clarification_down_q=clar_down_q,
+        _clarification_up_q=clar_up_q,
+        _clarification_down_q=clar_down_q,
     )
 
     target_name = "Alice Wonder"
@@ -230,7 +232,7 @@ async def test_update_with_clarification_needed(
     # Check that Alice Smith's surname wasn't changed
     alice_smith_contacts = cm._filter_contacts(
         filter="email_address == 'alice.smith@example.com'",
-    )
+    )["contacts"]
     assert alice_smith_contacts, "Alice Smith not found post-test"
     assert alice_smith_contacts[0].surname == "Smith"
 
@@ -276,7 +278,9 @@ async def test_update_stop_operation(
     assert handle.done()
 
     await asyncio.sleep(0.2)
-    prof_x_search = cm._filter_contacts(filter="email_address == 'prox@xmen.com'")
+    prof_x_search = cm._filter_contacts(filter="email_address == 'prox@xmen.com'")[
+        "contacts"
+    ]
     assert (
         len(prof_x_search) == 0
     ), "Contact should ideally not be created if stopped early."
@@ -293,7 +297,9 @@ async def test_update_add_bio(
     cm, _ = contact_manager_scenario
 
     # Pick Bob Johnson
-    bob = cm._filter_contacts(filter="first_name == 'Bob' and surname == 'Johnson'")
+    bob = cm._filter_contacts(filter="first_name == 'Bob' and surname == 'Johnson'")[
+        "contacts"
+    ]
     assert bob, "Bob Johnson must exist for this test"
     bob_id = bob[0].contact_id
 

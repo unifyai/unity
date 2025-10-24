@@ -46,8 +46,8 @@ async def test_ask_with_clarification(secret_manager_context):
 
     h = await sm.ask(
         "Show the placeholder for the staging database password. If ambiguous, request clarification.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
 
     q = await asyncio.wait_for(up_q.get(), timeout=120)

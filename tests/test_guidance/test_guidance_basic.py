@@ -4,6 +4,8 @@ import pytest
 
 from unity.guidance_manager.guidance_manager import GuidanceManager
 from tests.helpers import _handle_project
+from unity.image_manager.types import AnnotatedImageRef
+from pydantic import ValidationError
 
 
 @pytest.mark.unit
@@ -20,7 +22,10 @@ def test_create_guidance():
     assert rows and rows[0].guidance_id == gid
     assert rows[0].title == "Setup demo"
     assert rows[0].content.startswith("Steps to set up")
-    assert isinstance(rows[0].images, dict) and rows[0].images == {}
+    # images now stored as AnnotatedImageRefs
+    refs = rows[0].images
+    items = getattr(refs, "root", refs)
+    assert isinstance(items, list) and len(items) == 0
 
 
 @pytest.mark.unit
@@ -35,13 +40,20 @@ def test_update_guidance():
     gm._update_guidance(
         guidance_id=gid,
         content="Updated walkthrough of onboarding steps for new users.",
-        images={"[0:8]": 12},
+        images=[
+            {"raw_image_ref": {"image_id": 12}, "annotation": "onboarding screenshot"},
+        ],
     )
 
     rows = gm._filter(filter=f"guidance_id == {gid}")
     assert rows and rows[0].guidance_id == gid
     assert "Updated walkthrough" in rows[0].content
-    assert rows[0].images == {"[0:8]": 12}
+    refs = rows[0].images
+    items = getattr(refs, "root", refs)
+    assert isinstance(items, list) and len(items) == 1
+    first = items[0]
+    assert isinstance(first, AnnotatedImageRef)
+    assert int(first.raw_image_ref.image_id) == 12
 
 
 @pytest.mark.unit
@@ -85,7 +97,8 @@ def test_update_guidance_images_validation():
         content="Documentation structure and guidelines.",
     )["details"]["guidance_id"]
 
-    with pytest.raises(ValueError):
+    # Invalid images payload (not a list of annotated refs) should raise
+    with pytest.raises(ValidationError):
         gm._update_guidance(guidance_id=gid, images={"bad": 1})
 
 

@@ -1,5 +1,4 @@
 import time
-import json
 import random
 import pytest
 from datetime import datetime, UTC
@@ -8,6 +7,7 @@ import unify
 from unity.transcript_manager.types.message import Message, VALID_MEDIA
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from tests.helpers import _handle_project
+from unity.contact_manager.contact_manager import ContactManager
 
 CONTACTS = [
     {
@@ -156,38 +156,42 @@ async def test_get_messages():
 
     ## get all
 
-    messages = tm._filter_messages()
+    result = tm._filter_messages()
+    messages = result["messages"]
     assert len(messages) == 10
     assert all(isinstance(msg, Message) for msg in messages)
 
     ## search
 
     # sender
-    messages = tm._filter_messages(filter="sender_id == 0")
+    messages = tm._filter_messages(filter="sender_id == 0")["messages"]
     assert len(messages) == 5
     assert all(isinstance(msg, Message) for msg in messages)
 
     # contains
-    messages = tm._filter_messages(filter="'Hell' in content")
+    messages = tm._filter_messages(filter="'Hell' in content")["messages"]
     assert len(messages) == 5
     assert all(isinstance(msg, Message) for msg in messages)
 
     # does not contain
-    messages = tm._filter_messages(filter="',' not in content")
+    messages = tm._filter_messages(filter="',' not in content")["messages"]
     assert len(messages) == 3
     assert all(isinstance(msg, Message) for msg in messages)
 
     # medium
     messages = tm._filter_messages(
         filter="medium in ('email', 'whatsapp_message')",
-    )
+    )["messages"]
     assert len(messages) == 7
     assert all(isinstance(msg, Message) for msg in messages)
 
     # timestamp
-    messages = tm._filter_messages(filter=f"timestamp < '{start_time}'")
+    messages = tm._filter_messages(filter=f"timestamp < '{start_time}'").get(
+        "messages",
+        [],
+    )
     assert len(messages) == 0
-    messages = tm._filter_messages(filter=f"timestamp > '{start_time}'")
+    messages = tm._filter_messages(filter=f"timestamp > '{start_time}'")["messages"]
     assert len(messages) == 10
 
 
@@ -203,6 +207,10 @@ async def test_multiple_receivers():
     """Ensure a single message can target multiple distinct receiver IDs."""
     tm = TranscriptManager()
 
+    # Ensure contact id 2 exists so participant contacts are resolvable
+    cm = ContactManager()
+    cm._create_contact(first_name="TempUser")
+
     msg = Message(
         medium="email",
         sender_id=0,
@@ -217,7 +225,7 @@ async def test_multiple_receivers():
     tm.join_published()
 
     # Retrieve the message back – simplest: list everything for this exchange
-    found = tm._filter_messages(filter="exchange_id == 4242")
+    found = tm._filter_messages(filter="exchange_id == 4242")["messages"]
     assert (
         len(found) == 1
     ), "Exactly one message should have been logged for exchange 4242"
@@ -255,33 +263,29 @@ async def test_filter_messages_contacts_table_output():
     [tm.log_messages(m) for m in msgs]
     tm.join_published()
 
-    # Call with contacts table rendering enabled
+    # Default now includes contacts and messages
     result = tm._filter_messages(
         filter="exchange_id == 111",
-        return_with_contacts_table=True,
     )
 
-    assert (
-        isinstance(result, str)
-        and "Contacts (once):" in result
-        and "\n\nMessages:\n" in result
-    )
+    assert isinstance(result, dict)
+    assert set(result.keys()) >= {"contacts", "messages"}
 
-    # Parse the two JSON blobs
-    head, tail = result.split("\n\nMessages:\n", 1)
-    contacts_json = head.split("Contacts (once):\n", 1)[1]
-    contacts = json.loads(contacts_json)
-    messages = json.loads(tail)
+    contacts = result["contacts"]
+    messages = result["messages"]
 
     # Validate uniqueness and coverage of contacts
-    contact_ids_from_table = {c.get("contact_id") for c in contacts}
+    contact_ids_from_table = {
+        (c.get("contact_id") if isinstance(c, dict) else getattr(c, "contact_id", None))
+        for c in contacts
+    }
     assert len(contact_ids_from_table) == len(contacts)
 
     referenced_ids = set()
     for m in messages:
-        if m.get("sender_id") is not None:
-            referenced_ids.add(m["sender_id"])
-        for rid in m.get("receiver_ids", []) or []:
+        if getattr(m, "sender_id", None) is not None:
+            referenced_ids.add(m.sender_id)
+        for rid in getattr(m, "receiver_ids", []) or []:
             referenced_ids.add(rid)
 
     assert referenced_ids.issubset(
@@ -325,7 +329,7 @@ def test_metadata_private_column_roundtrip():
     assert raw.get("_metadata") == meta
 
     # 3) Manager retrieval excludes private fields → _metadata should not appear
-    msgs = tm._filter_messages(filter=f"exchange_id == {unique_exchange}")
+    msgs = tm._filter_messages(filter=f"exchange_id == {unique_exchange}")["messages"]
     assert len(msgs) == 1
     assert getattr(msgs[0], "_metadata", None) is None
 
@@ -359,7 +363,7 @@ def test_transcript_manager_clear():
     tm.join_published()
 
     # Sanity: messages exist before clear
-    pre = tm._filter_messages()
+    pre = tm._filter_messages()["messages"]
     assert len(pre) >= 2
 
     # Execute clear
@@ -373,5 +377,5 @@ def test_transcript_manager_clear():
     assert "exchange_id" in fields_exchanges
 
     # Prior messages should be gone
-    post = tm._filter_messages()
+    post = tm._filter_messages().get("messages", [])
     assert len(post) == 0

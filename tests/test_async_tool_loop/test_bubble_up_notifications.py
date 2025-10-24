@@ -26,6 +26,8 @@ def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
     return unify.AsyncUnify(
         endpoint="gpt-5@openai",
         system_message=system_message,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -39,15 +41,15 @@ async def send_email(
     address: str,
     description: str,
     *,
-    notification_up_q: asyncio.Queue | None = None,
+    _notification_up_q: asyncio.Queue | None = None,
 ) -> str:
     """Send an email, emitting notifications along the way."""
-    if notification_up_q is None:
+    if _notification_up_q is None:
         raise RuntimeError("notification queue missing")
 
     # Emit notifications; loop will surface them and allow the assistant to react
-    await notification_up_q.put({"message": "Composing email…"})
-    await notification_up_q.put({"message": "Sending email…"})
+    await _notification_up_q.put({"message": "Composing email…"})
+    await _notification_up_q.put({"message": "Sending email…"})
     return "Email sent!"
 
 
@@ -56,7 +58,7 @@ async def send_text(
     number: str,
     description: str,
     *,
-    notification_up_q: asyncio.Queue | None = None,
+    _notification_up_q: asyncio.Queue | None = None,
 ) -> str:
     """Send a text message (unused in this test)."""
     # Silently do nothing; this tool is present only to mirror the clarifying test shape
@@ -68,11 +70,11 @@ async def send_text(
 async def notify_parent(
     message: str,
     *,
-    notification_up_q: asyncio.Queue | None = None,
+    _notification_up_q: asyncio.Queue | None = None,
 ) -> str:
-    if notification_up_q is None:
+    if _notification_up_q is None:
         raise RuntimeError("notification queue missing")
-    await notification_up_q.put({"message": message})
+    await _notification_up_q.put({"message": message})
     return "ack"
 
 
@@ -95,17 +97,17 @@ async def test_notification_bubbles_up_two_tiers() -> None:
         address: str,
         description: str,
         *,
-        notification_up_q: asyncio.Queue | None = None,
+        _notification_up_q: asyncio.Queue | None = None,
     ) -> str:
         """Send an email, emitting notifications along the way (deterministic flow)."""
-        if notification_up_q is None:
+        if _notification_up_q is None:
             raise RuntimeError("notification queue missing")
 
         # Emit an early progress update, then block until notify_parent has been requested
-        await notification_up_q.put({"message": "Composing email…"})
+        await _notification_up_q.put({"message": "Composing email…"})
         await notify_called_gate.wait()
         await asyncio.sleep(0)  # yield to allow notify_parent to run
-        await notification_up_q.put({"message": "Sending email…"})
+        await _notification_up_q.put({"message": "Sending email…"})
         return "Email sent!"
 
     @unify.traced
@@ -113,7 +115,7 @@ async def test_notification_bubbles_up_two_tiers() -> None:
         number: str,
         description: str,
         *,
-        notification_up_q: asyncio.Queue | None = None,
+        _notification_up_q: asyncio.Queue | None = None,
     ) -> str:
         return "Text queued!"
 
@@ -122,11 +124,11 @@ async def test_notification_bubbles_up_two_tiers() -> None:
     async def notify_parent(
         message: str,
         *,
-        notification_up_q: asyncio.Queue | None = None,
+        _notification_up_q: asyncio.Queue | None = None,
     ) -> str:
-        if notification_up_q is None:
+        if _notification_up_q is None:
             raise RuntimeError("notification queue missing")
-        await notification_up_q.put({"message": message})
+        await _notification_up_q.put({"message": message})
         return "ack"
 
     outer_client = make_llm(
@@ -233,13 +235,13 @@ async def test_notification_bubbles_up_two_tiers() -> None:
 # ---------------------------------------------------------------------------
 async def inner_tool(
     *,
-    notification_up_q: asyncio.Queue | None = None,
+    _notification_up_q: asyncio.Queue | None = None,
 ) -> str:
-    if notification_up_q is None:
+    if _notification_up_q is None:
         raise RuntimeError("notification queue missing")
 
-    await notification_up_q.put({"message": "Inner loop: preparing widget"})
-    await notification_up_q.put({"message": "Inner loop: halfway"})
+    await _notification_up_q.put({"message": "Inner loop: preparing widget"})
+    await _notification_up_q.put({"message": "Inner loop: halfway"})
     return "✅ inner finished"
 
 
@@ -249,7 +251,7 @@ async def inner_tool(
 # ---------------------------------------------------------------------------
 async def delegating_tool(
     *,
-    notification_up_q: asyncio.Queue | None = None,
+    _notification_up_q: asyncio.Queue | None = None,
 ) -> str:  # return type misleading on purpose
     inner_llm = make_llm(
         "Surface any internal notifications as they occur; continue to completion.\n"
@@ -258,7 +260,7 @@ async def delegating_tool(
 
     # Bridge notifications by closing over the parent notification queue
     async def inner_tool_bridge() -> str:
-        return await inner_tool(notification_up_q=notification_up_q)
+        return await inner_tool(_notification_up_q=_notification_up_q)
 
     handle = start_async_tool_loop(  # <-- returns AsyncToolLoopHandle
         inner_llm,

@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 import functools
 from uuid import uuid4
+import json
 
 from ..events.event_bus import EVENT_BUS, Event
 from ..common.async_tool_loop import SteerableToolHandle
@@ -48,6 +49,35 @@ async def publish_manager_method_event(  # noqa: D401 – imperative name
             },
         ),
     )
+
+
+# Ensure values logged to EventBus use stable, schema-friendly text types.
+def _coerce_text_value(value: Any) -> str:
+    """Return a *string* suitable for logging.
+
+    Behaviour:
+    - If *value* is a list/tuple (e.g. [answer, steps]), return the first item.
+    - If bytes, decode as UTF-8 (ignore errors).
+    - If already str, return as-is.
+    - Otherwise try JSON serialisation; fallback to str().
+    """
+    # Reasoning-steps pattern: [answer_str, messages]
+    if isinstance(value, (list, tuple)):
+        value = value[0] if len(value) > 0 else ""
+
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8", "ignore")
+        except Exception:
+            return str(value)
+
+    if isinstance(value, str):
+        return value
+
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +234,9 @@ def wrap_handle_with_logging(
 
         async def result(self):
             answer = await self._inner.result()
-            await self._publish(phase="outgoing", answer=answer)
+            # Preserve original return value to callers, but ensure logged payload is a string.
+            safe_answer = _coerce_text_value(answer)
+            await self._publish(phase="outgoing", answer=safe_answer)
             return answer
 
         async def ask(self, question: str, *a, **kw):

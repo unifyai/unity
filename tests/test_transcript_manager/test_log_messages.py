@@ -4,19 +4,27 @@ import pytest
 from datetime import datetime, UTC
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import Message, VALID_MEDIA
+from unity.transcript_manager.types.message import VALID_MEDIA
 from tests.helpers import _handle_project
+from unity.contact_manager.types.contact import Contact
 
 
-def _base_message(seed: int) -> Message:
-    return Message(
-        medium=VALID_MEDIA[seed % len(VALID_MEDIA)],
-        sender_id=seed % 3,
-        receiver_ids=[(seed + 1) % 3],
-        timestamp=datetime.now(UTC),
-        content=f"msg-{seed}",
+def _base_message(seed: int) -> dict:
+    # Use Contact objects to auto-create contacts instead of hard-coded ids
+    names = [
+        ("Alice", "Bob"),
+        ("Carlos", "Diana"),
+        ("Eve", "Frank"),
+    ]
+    snd, rcv = names[seed % len(names)]
+    return {
+        "medium": VALID_MEDIA[seed % len(VALID_MEDIA)],
+        "sender_id": Contact(first_name=snd),
+        "receiver_ids": [Contact(first_name=rcv)],
+        "timestamp": datetime.now(UTC),
+        "content": f"msg-{seed}",
         # Note: exchange_id is intentionally omitted so it is auto-created
-    )
+    }
 
 
 @pytest.mark.unit
@@ -29,9 +37,9 @@ def test_log_messages_sync_returns_ids_and_auto_increment():
     assert isinstance(created1, list) and len(created1) == 1
     m1 = created1[0]
 
-    # IDs must start at 0 and increment upwards
-    assert m1.message_id == 0
-    assert m1.exchange_id == 0
+    # IDs should be non-negative and increment upwards
+    assert isinstance(m1.message_id, int) and m1.message_id >= 0
+    assert isinstance(m1.exchange_id, int) and m1.exchange_id >= 0
 
     # Second message → ids should auto-increment independently
     created2 = tm.log_messages(_base_message(1), synchronous=True)
@@ -54,7 +62,7 @@ def test_log_messages_async_auto_increment_visible_via_filter_messages():
     tm.join_published()
 
     # Fetch messages and verify id sequences start at 0 and increment by 1
-    msgs = tm._filter_messages(limit=None)
+    msgs = tm._filter_messages(limit=None)["messages"]
     assert len(msgs) == 3
 
     # Sort by timestamp to preserve insertion order

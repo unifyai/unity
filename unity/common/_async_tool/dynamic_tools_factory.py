@@ -10,9 +10,10 @@ from .tools_data import ToolsData
 from .messages import forward_handle_call
 from .tools_utils import ToolCallMetadata
 from .images import (
-    append_source_scoped_images_with_text,
+    append_image_refs_with_source,
 )
 from .utils import maybe_await
+from unity.image_manager.types.image_refs import ImageRefs
 
 
 class DynamicToolFactory:
@@ -154,11 +155,8 @@ class DynamicToolFactory:
             "----------\n"
             "reason : str | None\n"
             "    Optional human‑readable reason for stopping the running tool call.\n"
-            "images : dict | None\n"
-            "    Optional source‑scoped images mapping to append at the time of this command.\n"
-            "    Keys use `<source>[start:end]`. Supported sources include: `this`, `user_message`, `interjectionN`,\n"
-            "    `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`. Use `this[:]` to associate images\n"
-            "    with the stop command itself. Values are image ids or live image handle objects.\n\n"
+            "images : ImageRefs | None\n"
+            "    Optional image references to append at the time of this command (same `ImageRefs` model as `start_async_tool_loop`).\n\n"
             "Returns\n"
             "-------\n"
             "Dict[str, str]\n"
@@ -180,11 +178,7 @@ class DynamicToolFactory:
                 )
             # Append any provided images into the live registry/log
             try:
-                append_source_scoped_images_with_text(
-                    _kw.get("images"),
-                    "stop",
-                    _kw.get("reason") or "",
-                )
+                append_image_refs_with_source(_kw.get("images"))
             except Exception:
                 pass
             if not task.done():
@@ -206,7 +200,7 @@ class DynamicToolFactory:
             if handle is not None and hasattr(handle, "stop"):
                 self._adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
         # Ensure images kw-only param
-        self._ensure_kwonly_param(_stop, "images", Optional[dict], default=None)
+        self._ensure_kwonly_param(_stop, "images", Optional[ImageRefs], default=None)
 
     def _create_interject_tool(
         self,
@@ -222,11 +216,8 @@ class DynamicToolFactory:
             "    Interjection text. When omitted, `message` may be used as a synonym.\n"
             "message : str | None\n"
             "    Synonym for `content`. If both are provided, `content` takes precedence.\n"
-            "images : dict | None\n"
-            "    Optional source‑scoped images mapping to append at the time of this interjection.\n"
-            "    Keys use `<source>[start:end]`. Supported sources include: `this`, `user_message`, `interjectionN`,\n"
-            "    `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`. Use `this[:]` to associate images with\n"
-            "    the interjection text itself. Values are image ids or live image handle objects.\n\n"
+            "images : ImageRefs | None\n"
+            "    Optional image references to append at the time of this interjection (same `ImageRefs` model as `start_async_tool_loop`).\n\n"
             "Returns\n"
             "-------\n"
             "Dict[str, str]\n"
@@ -246,11 +237,7 @@ class DynamicToolFactory:
                     )
                 # Append any provided images into the live registry/log
                 try:
-                    append_source_scoped_images_with_text(
-                        _kw.get("images"),
-                        "interjection",
-                        _kw.get("content") or _kw.get("message") or "",
-                    )
+                    append_image_refs_with_source(_kw.get("images"))
                 except Exception:
                     pass
                 return {
@@ -276,7 +263,7 @@ class DynamicToolFactory:
             self._ensure_kwonly_param(
                 _interject,
                 "images",
-                Optional[dict],
+                Optional[ImageRefs],
                 default=None,
             )
 
@@ -286,18 +273,14 @@ class DynamicToolFactory:
                 *,
                 content: Optional[str] = None,
                 message: Optional[str] = None,
-                images: dict | None = None,
+                images: ImageRefs | None = None,
             ) -> Dict[str, str]:
                 # regular tool: push onto its private queue
                 actual = content if content is not None else (message or "")
                 await task_info.interject_queue.put(actual)
                 # Append any provided images into the live registry/log
                 try:
-                    append_source_scoped_images_with_text(
-                        images,
-                        "interjection",
-                        actual,
-                    )
+                    append_image_refs_with_source(images)
                 except Exception:
                     pass
                 return {
@@ -317,7 +300,7 @@ class DynamicToolFactory:
             _interject.__annotations__ = {
                 "content": Optional[str],
                 "message": Optional[str],
-                "images": Optional[dict],
+                "images": Optional[ImageRefs],
                 "return": Dict[str, str],
             }
             _interject.__signature__ = _inspect.Signature(
@@ -338,7 +321,7 @@ class DynamicToolFactory:
                         "images",
                         kind=_inspect.Parameter.KEYWORD_ONLY,
                         default=None,
-                        annotation=Optional[dict],
+                        annotation=Optional[ImageRefs],
                     ),
                 ],
                 return_annotation=Dict[str, str],
@@ -355,24 +338,17 @@ class DynamicToolFactory:
             "----------\n"
             "answer : str\n"
             "    The answer text.\n"
-            "images : dict | None\n"
-            "    Optional source‑scoped images mapping to append alongside this answer.\n"
-            "    Keys use `<source>[start:end]`. Supported sources include: `this`, `user_message`, `interjectionN`,\n"
-            "    `askN`, `clar_requestN`, `clar_answerN`, `notificationN`, `stopN`. Use `this[:]` to associate images\n"
-            "    with the answer text itself. Values are image ids or live image handle objects.\n\n"
+            "images : ImageRefs | None\n"
+            "    Optional image references to append alongside this answer (same `ImageRefs` model as `start_async_tool_loop`).\n\n"
             "Returns\n"
             "-------\n"
             "Dict[str, str]\n"
             "    Status acknowledgement including the underlying call id.\n"
         )
 
-        async def _clarify(answer: str, images: dict | None = None) -> Dict[str, str]:  # type: ignore[valid-type]
+        async def _clarify(answer: str, images: ImageRefs | None = None) -> Dict[str, str]:  # type: ignore[valid-type]
             try:
-                append_source_scoped_images_with_text(
-                    images,
-                    "clar_answer",
-                    answer,
-                )
+                append_image_refs_with_source(images)
             except Exception:
                 pass
             return {

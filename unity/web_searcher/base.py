@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import asyncio
 from typing import Dict, List, Optional, Any
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
+class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Public contract that every concrete web-search manager must satisfy.
 
@@ -25,9 +26,9 @@ class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Answer a web research question and return a live SteerableToolHandle.
@@ -51,6 +52,7 @@ class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
         ----------------------------
         - Avoid redundant serial re-queries. If you need citations/links, ask for
           them in the initial question.
+        - Include any required citations/links and, when relevant, the desired time window and scope in the initial question; avoid provider- or engine-specific hints.
         - Only issue a second `ask` when the first response clearly indicates
           missing coverage or ambiguity that cannot be resolved without another
           targeted fetch.
@@ -74,9 +76,9 @@ class BaseWebSearcher(ABC, metaclass=SingletonABCMeta):
         _return_reasoning_steps : bool, default False
             When True, SteerableToolHandle.result returns (answer, messages)
             where messages are the internal tool-loop messages.
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Read-only conversation context to prepend to the tool loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Optional duplex channels for interactive clarification.
 
         Returns

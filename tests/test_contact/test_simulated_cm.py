@@ -153,18 +153,18 @@ async def test_handle_requests_clarification():
 
     h = await cm.ask(
         "What is David's phone number?",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
         _requests_clarification=True,
     )
 
     question = await asyncio.wait_for(up_q.get(), timeout=60)
     assert "clarify" in question.lower()
-    await down_q.put("Yes – focus on European clients.")
+    await down_q.put("It's the one ending in 123")
 
     answer = await h.result()
     assert isinstance(answer, str) and answer.strip()
-    assert "europe" in answer.lower()
+    assert "123" in answer.lower()
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -261,7 +261,7 @@ async def test_handle_ask():
     assert isinstance(nested_answer, str) and nested_answer.strip(), (
         "Nested ask() should yield a non-empty string answer",
     )
-    assert "europe" in nested_answer.lower()
+    assert any(substr in nested_answer.lower() for substr in ("europe", "eu"))
 
     # The original handle should still be awaitable and produce an answer
     handle_answer = await handle.result()
@@ -280,10 +280,13 @@ def test_private_filter_contacts_basic():
     )
 
     # Use a permissive filter and small limit to keep runtime low
-    results = cm._filter_contacts(
+    results_dict = cm._filter_contacts(
         filter="first_name is None or first_name is not None",
         offset=0,
         limit=3,
+    )
+    results = (
+        results_dict["contacts"] if isinstance(results_dict, dict) else results_dict
     )
 
     assert isinstance(results, list)

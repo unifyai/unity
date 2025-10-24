@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import threading
 import functools
 from typing import List, Optional, Dict, Any
@@ -23,6 +21,7 @@ from ..events.manager_event_logging import (
 )
 from ..common.simulated import mirror_transcript_manager_tools
 from .types.message import Message
+from ..common.llm_client import new_llm_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -193,13 +192,8 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
-        # Shared, *stateful* **asynchronous** LLM
-        self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        # Shared, *stateful* **asynchronous** LLM (reusing common client)
+        self._llm = new_llm_client(stateful=True)
         # Use shared helper to mirror the real TranscriptManager's tools
         tools_for_prompt = mirror_transcript_manager_tools()
         # Provide placeholder counts/columns for the simulated environment
@@ -237,10 +231,10 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -259,15 +253,15 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         instruction = build_simulated_method_prompt(
             "ask",
             text,
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         handle = _SimulatedTranscriptHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:
@@ -277,7 +271,6 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
                 "TranscriptManager",
                 "ask",
             )
-
         return handle
 
     @functools.wraps(BaseTranscriptManager.clear, updated=())

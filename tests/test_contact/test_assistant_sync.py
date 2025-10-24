@@ -58,12 +58,16 @@ def _clear_cached_assistant(monkeypatch):
 def test_dummy_assistant_created(monkeypatch):
     """When the account has no assistants, a dummy assistant with ID 0 should be created."""
 
-    # Force _fetch_assistant_info to return an empty list
-    monkeypatch.setattr(ContactManager, "_fetch_assistant_info", lambda self: [])
+    # Force assistant discovery helper to return an empty list (new location)
+    monkeypatch.setattr(
+        "unity.contact_manager.system_contacts.fetch_assistant_info",
+        lambda self: [],
+        raising=True,
+    )
 
     cm = ContactManager()
 
-    assistants = cm._filter_contacts(filter="contact_id == 0")
+    assistants = cm._filter_contacts(filter="contact_id == 0")["contacts"]
     assert len(assistants) == 1, "Exactly one assistant contact (ID 0) should exist"
 
     a = assistants[0]
@@ -91,14 +95,14 @@ def test_real_assistant_synced(monkeypatch):
     ]
 
     monkeypatch.setattr(
-        ContactManager,
-        "_fetch_assistant_info",
+        "unity.contact_manager.system_contacts.fetch_assistant_info",
         lambda self: sample_info,
+        raising=True,
     )
 
     cm = ContactManager()
 
-    assistants = cm._filter_contacts(filter="contact_id == 0")
+    assistants = cm._filter_contacts(filter="contact_id == 0")["contacts"]
     assert len(assistants) == 1
 
     a = assistants[0]

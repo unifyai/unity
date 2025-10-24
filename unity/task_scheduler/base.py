@@ -14,10 +14,12 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
+import json
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
 class BaseActiveTask(SteerableToolHandle, ABC):
@@ -47,7 +49,7 @@ class BaseActiveTask(SteerableToolHandle, ABC):
         """
 
 
-class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
+class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Public contract for a task‑list manager.
 
@@ -83,9 +85,9 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing task list** (read‑only) and obtain a live
@@ -111,6 +113,14 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         question in natural language and allow this `ask` method to determine
         the best method to answer it.
 
+        Task schema (reference)
+        -----------------------
+        {task_schema}
+
+        Task fields – quick reference
+        -----------------------------
+        {task_fields_quickref}
+
         Examples
         --------
         • Good: "Which task covers the onboarding plan?" → identify the
@@ -131,14 +141,14 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         _log_tool_steps : bool, default ``True``
             If *True* the task‑scheduler logs every tool invocation to the
             server‑side logger.
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Optional read‑only conversation context to prepend to the internal
             tool‑use loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Duplex channels enabling interactive clarification questions. If
             supplied the LLM may push a follow‑up question onto
-            *clarification_up_q* and must read the human's answer from
-            *clarification_down_q*.
+            *_clarification_up_q* and must read the human's answer from
+            *_clarification_down_q*.
 
         Returns
         -------
@@ -155,9 +165,9 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Apply a **mutation** request – create, edit, delete or reorder tasks –
@@ -166,6 +176,14 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         Do *not* request *how* the change should be implemented; just
         describe the desired end-state in natural language and allow the
         `update` method to determine the best method to apply it.
+
+        Task schema (reference)
+        -----------------------
+        {task_schema}
+
+        Task fields – quick reference
+        -----------------------------
+        {task_fields_quickref}
 
         Important execution boundary
         ----------------------------
@@ -207,9 +225,9 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         isolated: Optional[bool] = None,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Start a **task** given a *free-form* textual instruction (*text*).
@@ -233,37 +251,21 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
         conversational sessions that happen inside the current chat.
 
         The assistant should interpret *text* to figure out which task the user
-        wants to run.  Typical workflow:
+        wants to run. A typical approach is:
 
-        1. Call :py:meth:`TaskScheduler.ask` to identify the `task_id` (if the
-           id is not explicitly mentioned in *text*).
-        2. Internally execute the task – the implementation SHOULD expose a
-           private ``_execute_by_id`` helper that returns a
-           :class:`SteerableToolHandle` **and marks it
-           for pass-through** so that the outer handle is upgraded transparently
-           once the real execution begins.
+        1. Identify the intended task (by id or unambiguous name) using read‑only
+           inspection when needed (e.g., via this manager's `ask` surface).
+        2. Inspect current queue membership and order; explicitly reorder to place
+           the intended scope at the head (e.g., "just X", "first two now", or
+           "all") without changing scheduling fields.
+        3. Start the task at the head and return a live steerable handle.
 
-        Execution scope via explicit reordering
-        --------------------------------------
-        The execute flow uses explicit queue inspection and reordering:
-        - Use `_get_queue(queue_id=...)` or `_get_queue_for_task(task_id=...)` to
-          read the current order.
-        - Use `_reorder_queue(queue_id=..., new_order=[...])` when membership is
-          unchanged, or `_set_queue(queue_id=..., order=[...])` when membership
-          changes, to place the desired subset/order at the head (e.g., "just X",
-          "first two now", or "all").
-        - Then call `execute_by_id(task_id=<head>)` to start.
-
-        Never rewrite a task's `start_at` purely to begin execution, and do not
-        write lifecycle `status` fields directly.
-        - `ask` – to discover the relevant task and queue context
-        - `_get_queue` / `_get_queue_for_task` – to inspect queue membership/order
-        - `_reorder_queue` / `_set_queue` – to explicitly shape the queue
-        - `execute_by_id(task_id)` – to start the head after any necessary reordering
+        Do not rewrite a task's `start_at` purely to begin execution, and do not
+        write lifecycle `status` fields directly during orchestration.
 
         Implementations MUST return a *live* steerable handle whose public
         methods (pause, resume, interject, stop, result, …) continue to work
-        after the adoption.
+        throughout execution.
 
         Parameters
         ----------
@@ -275,7 +277,7 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
             is left to the implementation (e.g., LLM decides for free‑form text;
             numeric fast‑path may default to chained semantics).
 
-        parent_chat_context, clarification_up_q, clarification_down_q
+        _parent_chat_context, _clarification_up_q, _clarification_down_q
             Same purpose and semantics as in :pymeth:`ask`.
 
         Returns
@@ -299,3 +301,40 @@ class BaseTaskScheduler(ABC, metaclass=SingletonABCMeta):
 
 # Attach centralised docstring
 BaseTaskScheduler.clear.__doc__ = CLEAR_METHOD_DOCSTRING
+
+# Inject live Task schema into docstrings at import time
+try:
+    from .types.task import Task as _DocTask
+
+    _TASK_SCHEMA_JSON = json.dumps(_DocTask.model_json_schema(), indent=4)
+    try:
+        _schema = _DocTask.model_json_schema()
+        _props = dict(_schema.get("properties", {}))
+        _required = set(_schema.get("required", []))
+        _lines: list[str] = []
+        for _name, _meta in _props.items():
+            _desc = _meta.get("description") or ""
+            _opt = "" if _name in _required else " (optional)"
+            _lines.append(f"• {_name}{_opt}: {_desc}")
+        _TASK_FIELDS_QUICKREF = "\n".join(_lines)
+    except Exception:
+        _TASK_FIELDS_QUICKREF = ""
+    BaseTaskScheduler.ask.__doc__ = (
+        (BaseTaskScheduler.ask.__doc__ or "")
+        .replace(
+            "{task_schema}",
+            _TASK_SCHEMA_JSON,
+        )
+        .replace("{task_fields_quickref}", _TASK_FIELDS_QUICKREF)
+    )
+    BaseTaskScheduler.update.__doc__ = (
+        (BaseTaskScheduler.update.__doc__ or "")
+        .replace(
+            "{task_schema}",
+            _TASK_SCHEMA_JSON,
+        )
+        .replace("{task_fields_quickref}", _TASK_FIELDS_QUICKREF)
+    )
+except Exception:
+    # Best-effort doc enrichment only; leave docstrings unchanged on failure
+    pass

@@ -2,6 +2,7 @@ import ast
 import inspect
 import functools
 import os
+import logging
 from pathlib import Path
 from typing import Dict, List, Set, Union, Tuple, Any, Optional
 import unify
@@ -16,6 +17,74 @@ from ..file_manager.file_manager import FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
 
+
+logger = logging.getLogger(__name__)
+
+
+class _DependencyVisitor(ast.NodeVisitor):
+    """
+    Statefully analyzes function AST to find direct calls and indirect calls
+    via variables assigned function names, specifically looking for names
+    known to the FunctionManager.
+    """
+
+    def __init__(self, known_function_names: Set[str]):
+        self.known_function_names = known_function_names
+        self.dependencies: Set[str] = set()
+        self._assignment_map: Dict[str, str] = {}
+
+    def visit_Assign(self, node: ast.Assign):
+        # Only track simple assignments: target_var = potential_func_name
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            target_var = node.targets[0].id
+            if isinstance(node.value, ast.Name):
+                assigned_name = node.value.id
+                # Check if the assigned name is one of the functions we manage
+                if assigned_name in self.known_function_names:
+                    # Record the mapping for the current scope
+                    self._assignment_map[target_var] = assigned_name
+                # If variable is assigned something else, remove mapping
+                elif target_var in self._assignment_map:
+                    del self._assignment_map[target_var]
+            # If variable is assigned non-Name, remove mapping
+            elif target_var in self._assignment_map:
+                del self._assignment_map[target_var]
+
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call):
+        func_node = node.func
+        called_name: Optional[str] = None
+
+        # Case 1: Direct call -> func_name()
+        if isinstance(func_node, ast.Name):
+            func_name = func_node.id
+            # Check if it's a direct call to a known library function
+            if func_name in self.known_function_names:
+                called_name = func_name
+            # Check if it's an indirect call via a mapped variable -> var()
+            elif func_name in self._assignment_map:
+                called_name = self._assignment_map[func_name]
+
+        # Case 2: Method call -> obj.method() - generally ignore for dependency injection
+        # (We assume obj like action_provider is globally available)
+
+        if called_name:
+            self.dependencies.add(called_name)
+
+        self.generic_visit(node)  # Continue traversal
+
+    def visit_Return(self, node: ast.Return):
+        # Case 3: Return statement -> return func_name or return var
+        if isinstance(node.value, ast.Name):
+            returned_name = node.value.id
+            # Check if returning a known function name directly
+            if returned_name in self.known_function_names:
+                self.dependencies.add(returned_name)
+            # Also check if returning a variable that was assigned a function
+            elif returned_name in self._assignment_map:
+                self.dependencies.add(self._assignment_map[returned_name])
+        self.generic_visit(node)
 
 class FunctionManager(BaseFunctionManager):
     """
@@ -152,6 +221,22 @@ class FunctionManager(BaseFunctionManager):
 
         return fn_node.name, tree, fn_node, source
 
+    def _collect_verified_dependencies(
+        self,
+        fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+        all_known_function_names: Set[str],
+    ) -> Set[str]:
+        """
+        Uses the stateful _DependencyVisitor to find verified direct calls,
+        indirect calls via variables, and returned function name references
+        to other known library functions.
+        """
+        visitor = _DependencyVisitor(all_known_function_names)
+        visitor.visit(fn_node)
+        # Remove potential self-references if the visitor logic includes them
+        visitor.dependencies.discard(fn_node.name)
+        return visitor.dependencies
+
     def _collect_function_calls(
         self,
         fn_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
@@ -164,7 +249,8 @@ class FunctionManager(BaseFunctionManager):
                     calls.add(name)
         return calls
 
-    def _format_callable_name(self, callable_node: ast.AST) -> Optional[str]:
+    @staticmethod
+    def _format_callable_name(callable_node: ast.AST) -> Optional[str]:
         """Return a best-effort fully qualified name for a callable.
 
         Handles both simple names (e.g., ``foo()``) and nested attributes
@@ -205,15 +291,15 @@ class FunctionManager(BaseFunctionManager):
         provided_names: Set[str],
     ) -> None:
         """
-        Validates function calls to prevent functions from calling other user-defined functions.
+        Validates function calls to prevent dangerous operations.
 
         Allows:
-        - Built-in functions from the allowed list
+        - Built-in functions (except dangerous ones)
         - Any method calls on objects (e.g., action_provider.*, call_handle.*, call.*)
+        - User-defined functions (tracked as dependencies)
 
         Disallows:
-        - Direct calls to any user-defined functions
-        - Disallowed built-in functions
+        - Dangerous built-in functions (eval, exec, etc.)
         """
         dangerous = self._dangerous_builtins
 
@@ -229,16 +315,6 @@ class FunctionManager(BaseFunctionManager):
                     f"Dangerous built-in '{called}' is not permitted in {fn_name}(). "
                     f"Functions cannot use: {', '.join(sorted(dangerous))}",
                 )
-
-            # Block direct calls to other user-defined functions
-            # (but not built-ins or exception classes)
-            if called in provided_names:
-                raise ValueError(
-                    f"{fn_name}() cannot call user-defined function '{called}'. "
-                    "Functions must not call other user-defined functions.",
-                )
-
-            # Everything else is allowed - including all built-ins, exception classes, etc.
 
     # ------------------------------------------------------------------ #
     #  Private helpers for persistence                                    #
@@ -396,53 +472,86 @@ class FunctionManager(BaseFunctionManager):
             implementations = [implementations]
 
         parsed: List[Tuple[str, ast.Module, ast.FunctionDef, str]] = []
-        for source in implementations:
-            parsed.append(self._parse_implementation(source))
+        parse_errors: Dict[str, str] = {}
+        temp_names: Set[str] = set()  # Track names parsed successfully in this batch
 
-        provided_names = {name for name, *_ in parsed}
+        # First pass: Parse all implementations
+        for i, source in enumerate(implementations):
+            try:
+                # _parse_implementation validates basic structure (one func at col 0)
+                name, tree, node, src = self._parse_implementation(source)
+                parsed.append((name, tree, node, src))
+                temp_names.add(name)
+            except ValueError as e:
+                # Associate error with name or index
+                potential_name = f"implementation_{i+1}"
+                try:
+                    name_in_error = ast.parse(source).body[0].name
+                except:
+                    name_in_error = None
+                key = name_in_error or potential_name
+                parse_errors[key] = f"error: {e}"
 
-        # Deep validation
-        for name, tree, node, _ in parsed:
-            calls = self._collect_function_calls(node)
-            self._validate_function_calls(name, calls, provided_names)
+        results: Dict[str, str] = parse_errors  # Start results with parsing errors
 
-        # Compile & persist
-        results: Dict[str, str] = {}
-
-        for name, _, node, source in parsed:
-            namespace = create_sandbox_globals()
-            exec(source, namespace)
-            fn_obj = namespace[name]
-
-            signature = str(inspect.signature(fn_obj))
-            docstring = inspect.getdoc(fn_obj) or ""
-            calls = list(self._collect_function_calls(node))
-
-            # Create a combined string for embedding
-            embedding_text = (
-                f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
+        # Get *all* function names currently in manager + this batch for accurate dependency check
+        try:
+            # Assumes list_functions is efficient enough or cache locally if needed
+            existing_names = set(self.list_functions().keys())
+            all_known_function_names = existing_names.union(temp_names)
+        except Exception as e:
+            logger.warning(
+                f"Failed to list existing functions for dependency check: {e}",
             )
-            precondition = preconditions.get(name)
+            all_known_function_names = temp_names
 
-            unify.log(
-                context=self._ctx,
-                name=name,
-                argspec=signature,
-                docstring=docstring,
-                implementation=source,
-                calls=calls,
-                embedding_text=embedding_text,
-                precondition=precondition,
-                guidance_ids=[],
-                new=True,
-            )
+        # Second pass: Validate dependencies and Persist successfully parsed functions
+        for name, tree, node, source in parsed:
+            try:
+                # Collect verified dependencies (user-defined functions) for tracking
+                dependencies = self._collect_verified_dependencies(
+                    node,
+                    all_known_function_names,
+                )
+                dependencies_list = sorted(list(dependencies))
 
-            results[name] = "added"
+                # Validate against ALL function calls (includes built-ins) for dangerous built-ins check
+                all_calls = self._collect_function_calls(node)
+                self._validate_function_calls(name, all_calls, temp_names)
+                namespace = create_sandbox_globals()
+                exec(source, namespace)
+                fn_obj = namespace[name]
+                signature = str(inspect.signature(fn_obj))
+                docstring = inspect.getdoc(fn_obj) or ""
+                embedding_text = f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
+                precondition = preconditions.get(name)
 
-            # Mirror to filesystem and register with FileManager (protected)
-            p = self._write_function_file(name, source)
-            if p is not None:
-                self._register_function_file(name, p)
+                unify.log(
+                    context=self._ctx,
+                    name=name,
+                    argspec=signature,
+                    docstring=docstring,
+                    implementation=source,
+                    calls=dependencies_list,
+                    embedding_text=embedding_text,
+                    precondition=precondition,
+                    guidance_ids=[],
+                    new=True,
+                )
+                results[name] = "added"
+
+                p = self._write_function_file(name, source)
+                if p is not None:
+                    self._register_function_file(name, p)
+            except ValueError as e:
+                results[name] = f"error: {e}"
+            except Exception as e:
+                results[name] = f"error: Unexpected error - {e}"
+                logger.error(
+                    f"Unexpected error processing function {name}: {e}",
+                    exc_info=True,
+                )
+
         return results
 
     # 2. Listing -------------------------------------------------------- #
@@ -723,7 +832,7 @@ class FunctionManager(BaseFunctionManager):
                 "content": ent.get("content"),
             }
             if include_images:
-                rec["images"] = ent.get("images") or {}
+                rec["images"] = ent.get("images") or []
             out.append(rec)
         return out
 
@@ -740,9 +849,33 @@ class FunctionManager(BaseFunctionManager):
         )
         image_ids: List[int] = []
         for g in guids:
-            for _, img_id in (g.get("images") or {}).items():
+            imgs = g.get("images") or []
+            # Support either raw list (ImageRefs) or a dict with root
+            if isinstance(imgs, dict) and "root" in imgs:
+                imgs = imgs.get("root") or []
+            if not isinstance(imgs, list):
+                continue
+            for ref in imgs:
                 try:
-                    image_ids.append(int(img_id))
+                    if isinstance(ref, dict):
+                        # AnnotatedImageRef shape: {"raw_image_ref": {"image_id": X}, "annotation": ...}
+                        if "raw_image_ref" in ref and isinstance(
+                            ref["raw_image_ref"],
+                            dict,
+                        ):
+                            iid = int(ref["raw_image_ref"].get("image_id"))
+                            image_ids.append(iid)
+                        elif "image_id" in ref:
+                            image_ids.append(int(ref.get("image_id")))
+                    else:
+                        # If objects leaked through, try attribute access
+                        iid = getattr(
+                            getattr(ref, "raw_image_ref", ref),
+                            "image_id",
+                            None,
+                        )
+                        if iid is not None:
+                            image_ids.append(int(iid))
                 except Exception:
                     continue
         # Preserve order while de-duplicating

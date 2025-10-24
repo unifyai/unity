@@ -184,7 +184,9 @@ class SimulatedSecretManager(BaseSecretManager):
 
         # Shared, stateful async LLM
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=True,
             traced=True,
             stateful=True,
@@ -232,10 +234,10 @@ class SimulatedSecretManager(BaseSecretManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -257,8 +259,8 @@ class SimulatedSecretManager(BaseSecretManager):
             "Never reveal any raw secret values; always refer to placeholders like ${name}.\n\n"
             f"User message: {text}\n\n"
             + (
-                f"Parent context: {json.dumps(parent_chat_context)}\n\n"
-                if parent_chat_context
+                f"Parent context: {json.dumps(_parent_chat_context)}\n\n"
+                if _parent_chat_context
                 else ""
             )
         )
@@ -267,8 +269,8 @@ class SimulatedSecretManager(BaseSecretManager):
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:
@@ -358,10 +360,10 @@ class SimulatedSecretManager(BaseSecretManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -382,8 +384,8 @@ class SimulatedSecretManager(BaseSecretManager):
             "Never reveal raw secret values; reference secrets via ${name}.\n\n"
             f"User request: {text}\n\n"
             + (
-                f"Parent context: {json.dumps(parent_chat_context)}\n\n"
-                if parent_chat_context
+                f"Parent context: {json.dumps(_parent_chat_context)}\n\n"
+                if _parent_chat_context
                 else ""
             )
         )
@@ -392,8 +394,8 @@ class SimulatedSecretManager(BaseSecretManager):
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:

@@ -13,7 +13,7 @@ from typing import Any, Mapping, TypedDict, Callable, List
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from unity.common.tool_spec import ToolSpec
+from unity.common.tool_spec import ToolSpec, normalise_tools
 
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
@@ -107,7 +107,13 @@ class _SemanticCacheSaver:
         logger.info("Shutting down SemanticCacheSaver...")
         self._executor.shutdown(wait=True)
 
-    def _save_to_cache(self, store_context, namespace, user_message, tool_trajectory):
+    def _save_to_cache(
+        self,
+        store_context,
+        namespace,
+        user_message,
+        tool_trajectory,
+    ):
         # store_context is captured at call-time to avoid thread-local context loss
         # Ensure context exists
         context_exist = store_context in unify.get_contexts(prefix=store_context)
@@ -118,7 +124,7 @@ class _SemanticCacheSaver:
             context=store_context,
             user_message=user_message,
             namespace=namespace,
-            tool_trajectory=json.dumps(tool_trajectory),
+            tool_trajectory=tool_trajectory,
         )
 
         embed_expr = f"embed({{logs:user_message}}, model='{_CONFIG.embedding_model}')"
@@ -222,17 +228,43 @@ class _SemanticCacheSaver:
             )
         return result
 
+    def _prune_tool_trajectory(
+        self,
+        user_message,
+        tool_trajectory,
+    ) -> List[CleanToolCall]:
+        class PruneToolsResponseFormat(BaseModel):
+            call_indices: List[int]
+
+        global _CONFIG
+        client = _CONFIG.get_client()
+        client.set_system_message(
+            """
+            You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
+            you should return indices of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
+            """,
+        )
+        res = client.generate(
+            user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(tool_trajectory, indent=2)}",
+            response_format=PruneToolsResponseFormat,
+        )
+
+        res = PruneToolsResponseFormat.model_validate_json(res)
+
+        cleaned_trajectory = [
+            tool_call
+            for tool_call in tool_trajectory
+            if tool_call["index"] not in res.call_indices
+        ]
+
+        return cleaned_trajectory
+
     def _clean_tool_trajectory(
         self,
         user_message,
         msgs,
         previous_tool_trajectory=None,
     ) -> List[CleanToolCall]:
-
-        class PruneToolsResponseFormat(BaseModel):
-            call_indices: List[int]
-
-        global _CONFIG
 
         cleaned_trajectory = []
         _flatten_tools = {}
@@ -275,25 +307,10 @@ class _SemanticCacheSaver:
         for idx, tool_call in enumerate(cleaned_trajectory):
             tool_call["index"] = idx
 
-        client = _CONFIG.get_client()
-        client.set_system_message(
-            """
-            You are a helpful assistant that cleans redundant tool calls, given a user query and a list of tool calls,
-            you should return indices of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
-            """,
+        cleaned_trajectory = self._prune_tool_trajectory(
+            user_message,
+            cleaned_trajectory,
         )
-        res = client.generate(
-            user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(cleaned_trajectory, indent=2)}",
-            response_format=PruneToolsResponseFormat,
-        )
-
-        res = PruneToolsResponseFormat.model_validate_json(res)
-
-        cleaned_trajectory = [
-            tool_call
-            for tool_call in cleaned_trajectory
-            if tool_call["index"] not in res.call_indices
-        ]
 
         # re-index the tool calls
         for idx, tool_call in enumerate(cleaned_trajectory):
@@ -322,7 +339,12 @@ class _SemanticCacheSaver:
             previous_tool_trajectory=previous_tool_trajectory,
         )
 
-        self._save_to_cache(store_context, namespace, new_user_message, tool_trajectory)
+        self._save_to_cache(
+            store_context,
+            namespace,
+            new_user_message,
+            tool_trajectory,
+        )
 
     def save(
         self,
@@ -399,7 +421,7 @@ def search_semantic_cache(
         return SemanticCacheResult(
             original_user_message=user_message,
             closest_user_message=entries["user_message"],
-            tool_trajectory=json.loads(entries["tool_trajectory"]),
+            tool_trajectory=entries["tool_trajectory"],
         )
 
     return None
@@ -448,11 +470,29 @@ def get_system_msg_hint() -> str:
     """
 
 
-async def get_dummy_tool(
-    semantic_cache_result: SemanticCacheResult,
-    tools: Mapping[str, ToolSpec],
-):
-    history = copy.deepcopy(semantic_cache_result.tool_trajectory)
+def _is_manager_tool(tool: ToolSpec) -> bool:
+    return tool.manager_tool
+
+
+async def _handle_manager_tool(tool: ToolSpec, args):
+    base = tool.fn.__self__.__class__
+    # Best-effort to get the namespace from the tool
+    namespace = f"{base.__name__}.{tool.fn.__name__}"
+    usermessage = args["text"]
+    result = search_semantic_cache(usermessage, namespace)
+    if not result:
+        raise Exception("No result found in semantic cache")
+    tools = {}
+
+    manager = base()
+    tools = manager.get_tools(tool.fn.__name__, include_sub_tools=True)
+    tools = normalise_tools(tools)
+    history = await _rexecute_tools(result.tool_trajectory, tools)
+    return history
+
+
+async def _rexecute_tools(tool_trajectory, tools):
+    history = copy.deepcopy(tool_trajectory)
     loop = asyncio.get_running_loop()
     with ThreadPoolExecutor(thread_name_prefix="semantic_cache") as executor:
         awaitables_map = {}
@@ -460,6 +500,14 @@ async def get_dummy_tool(
             history[idx]["result_status"] = "cached"  # type: ignore
 
             if (tool_name := tool_call.get("name")) in tools:
+                if _is_manager_tool(tools[tool_name]):
+                    args = json.loads(tool_call.get("arguments")) or {}
+                    task = loop.create_task(
+                        _handle_manager_tool(tools[tool_name], args),
+                    )
+                    awaitables_map[idx] = task
+                    continue
+
                 # Only re-call tools that are read-only
                 if not tools[tool_name].read_only:
                     continue
@@ -488,6 +536,14 @@ async def get_dummy_tool(
             history[idx]["result_status"] = "new"
             history[idx]["result"] = result
 
+    return history
+
+
+async def get_dummy_tool(
+    semantic_cache_result: SemanticCacheResult,
+    tools: Mapping[str, ToolSpec],
+):
+    history = await _rexecute_tools(semantic_cache_result.tool_trajectory, tools)
     call_id = f"call_SemanticSearchCallIdPlaceholder"
     request = {
         "content": None,

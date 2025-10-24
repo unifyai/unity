@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional, Union
 
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseFunctionManager(ABC, metaclass=SingletonABCMeta):
+class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Public contract for a function catalogue that stores and retrieves
     user‑supplied Python functions and their metadata.
@@ -196,7 +197,7 @@ class BaseFunctionManager(ABC, metaclass=SingletonABCMeta):
         offset : int, default ``0``
             Zero‑based index of the first result to return.
         limit : int, default ``100``
-            Maximum number of results to return.
+            Maximum number of results to return. Must be <= 1000.
 
         Returns
         -------

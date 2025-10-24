@@ -6,9 +6,52 @@ from pydantic import BaseModel, Field, create_model
 
 
 # conductor
-class AskConductor(BaseModel):
-    action_name: Literal["ask_conductor"]
-    query: str
+class ConductorAction(BaseModel):
+    """Ask or request the Conductor to perform a task."""
+
+    action_name: Literal["conductor_ask", "conductor_request"] = Field(
+        ...,
+        description=(
+            "The action to perform on the Conductor. Options are:\n"
+            "'conductor_ask': read-only request\n"
+            "'conductor_request': read-write request\n"
+        ),
+    )
+
+
+class ConductorHandleAction(BaseModel):
+    """Intervene on an existing Conductor handle."""
+
+    handle_id: int
+    action_name: Literal[
+        "conductor_handle_ask",
+        "conductor_handle_interject",
+        "conductor_handle_stop",
+        "conductor_handle_pause",
+        "conductor_handle_resume",
+        "conductor_handle_done",
+        "conductor_handle_answer_clarification",
+    ] = Field(
+        ...,
+        description=(
+            "The action to perform on the handle. Options are:\n"
+            "'conductor_handle_ask': ask about the conductor status to the handle\n"
+            "'conductor_handle_interject': interject the handle with more information\n"
+            "'conductor_handle_stop': stop the handle\n"
+            "'conductor_handle_pause': pause the handle\n"
+            "'conductor_handle_resume': resume the handle\n"
+            "'conductor_handle_done': check if the handle is done\n"
+            "'conductor_handle_answer_clarification': answer a clarification question\n"
+        ),
+    )
+
+
+class ConductorAnswerClarificationAction(BaseModel):
+    """Answer a clarification question."""
+
+    action_name: Literal["conductor_answer_clarification"]
+    handle_id: int
+    call_id: str
 
 
 # wait
@@ -88,8 +131,13 @@ def build_dynamic_response_models(
     Returns:
         dict: Response models for different modes (call, gmeet, text)
     """
-    # Build list of available action types
-    available_actions = [AskConductor, WaitForNextEvent]  # Always available
+    # Build list of always available action types
+    available_actions = [
+        ConductorAction,
+        ConductorHandleAction,
+        WaitForNextEvent,
+        SendUnifyMessage,
+    ]
 
     if include_email:
         available_actions.append(SendEmail)
@@ -97,8 +145,6 @@ def build_dynamic_response_models(
         available_actions.append(SendSMS)
     if include_call:
         available_actions.append(MakeCall)
-    # Unify message is always available for text mode
-    available_actions.append(SendUnifyMessage)
 
     # Create dynamic Union of available actions
     ActionsUnion = Union[tuple(available_actions)]

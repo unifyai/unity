@@ -3,7 +3,7 @@
 
 The top-level manager unifies four sub-domains
 
-• tasks (TaskScheduler)  • contacts  • transcripts  • knowledge-base
+• tasks  • contacts  • transcripts  • knowledge
 
 and it exposes exactly **three** conversational entry-points:
 
@@ -15,16 +15,17 @@ and it exposes exactly **three** conversational entry-points:
 from __future__ import annotations
 
 import asyncio
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 from .types import StateManager
 
 
-class BaseConductor(ABC, metaclass=SingletonABCMeta):
+class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
     # ------------------------------------------------------------------ #
     #  ask – read-only                                                   #
     # ------------------------------------------------------------------ #
@@ -35,9 +36,9 @@ class BaseConductor(ABC, metaclass=SingletonABCMeta):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Answer a **read-only question** that may reference tasks, contacts,
@@ -56,10 +57,10 @@ class BaseConductor(ABC, metaclass=SingletonABCMeta):
             ``(assistant_answer, hidden_messages)`` instead of just the answer.
         _log_tool_steps : bool, default ``True``
             Emit server-side logs for each internal tool call (debugging aid).
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Optional **read-only** context inherited from a parent conversation
             and made visible to the inner tool loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Two-way channels enabling interactive clarification questions:
             the LLM places a question on *up* and blocks waiting for the human
             answer on *down*.
@@ -82,9 +83,9 @@ class BaseConductor(ABC, metaclass=SingletonABCMeta):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Execute a **mutation request** – create / edit / delete tasks, contacts

@@ -18,6 +18,9 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
     SteerableToolHandle,
 )
+from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.raw_image_ref import RawImageRef
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 from ..task_scheduler.base import BaseActiveTask
 from .base import BaseActor
 from unity.controller.controller import Controller, ActionFailedError
@@ -200,12 +203,14 @@ class ToolLoopPlan(BaseActiveTask):
         custom_system_prompt: str | None = None,
         tool_policy: Optional[Callable] = None,
         action_provider: Optional["ActionProvider"] = None,  # type: ignore
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ):
         self._initial_task_description = task_description
         self._tools = tools
         self._parent_chat_context_on_pause: Optional[List[dict]] = parent_chat_context
         self._chat_history: List[Dict[str, Any]] = []
         self._custom_system_prompt = custom_system_prompt
+        self._images = images
 
         self._clar_up_q_internal: asyncio.Queue[str] = (
             clarification_up_q or asyncio.Queue()
@@ -230,13 +235,13 @@ class ToolLoopPlan(BaseActiveTask):
         self._action_provider = action_provider
 
         self._plan_client = AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
+            "claude-4.5-sonnet@anthropic",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         self._ask_client = unify.AsyncUnify(
-            "gemini-2.5-pro@vertex-ai",
+            "claude-4.5-sonnet@anthropic",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
@@ -336,6 +341,7 @@ class ToolLoopPlan(BaseActiveTask):
                     max_steps=self.MAX_STEPS,
                     timeout=self._timeout,
                     tool_policy=self._tool_policy,
+                    images=self._images,
                 )
 
                 try:
@@ -437,6 +443,24 @@ class ToolLoopPlan(BaseActiveTask):
     def done(self) -> bool:
         return self._overall_plan_completion_event.is_set()
 
+    async def next_clarification(self) -> dict:
+        """Await the next clarification question from the running internal loop."""
+        question = await self._clar_up_q_internal.get()
+        return {"question": question}
+
+    async def next_notification(self) -> dict:
+        """Await the next notification (not supported for ToolLoopPlan; waits indefinitely)."""
+        await asyncio.Event().wait()
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        """Provide an answer to the pending clarification (call_id is ignored)."""
+        await self._clar_down_q_internal.put(answer)
+
+    def get_history(self) -> list[dict]:
+        """Return the user-visible conversation history of the inner loop."""
+        return list(self.chat_history)
+
     @property
     def clarification_up_q(self) -> asyncio.Queue[str]:
         """Queue for this plan to send clarification questions upwards."""
@@ -468,7 +492,12 @@ class ToolLoopPlan(BaseActiveTask):
         return False
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    async def stop(self, reason: Optional[str] = None) -> str:
+    async def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> str:
         if not self._is_valid_method("stop"):
             if self.done():
                 return await self.result()
@@ -491,7 +520,13 @@ class ToolLoopPlan(BaseActiveTask):
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
-            self._loop_handle.stop(reason)
+            try:
+                self._loop_handle.stop(
+                    reason,
+                    parent_chat_context_cont=parent_chat_context_cont,
+                )
+            except Exception:
+                self._loop_handle.stop(reason)
         elif (
             previous_state == _PlanState.IDLE
             and not self._overall_plan_completion_event.is_set()
@@ -553,7 +588,13 @@ class ToolLoopPlan(BaseActiveTask):
         return f"Plan {self._task_id} is resuming."
 
     @functools.wraps(BaseActiveTask.interject, updated=())
-    async def interject(self, message: str) -> str:
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        image_refs: list | None = None,
+    ) -> str:
         if not self._is_valid_method("interject"):
             if self.done():
                 return f"Error: Plan {self._task_id} is already done, cannot interject."
@@ -574,7 +615,14 @@ class ToolLoopPlan(BaseActiveTask):
         logger.info(
             f"ToolLoopPlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
         )
-        await self._loop_handle.interject(message)
+        try:
+            await self._loop_handle.interject(
+                message=message,
+                parent_chat_context_cont=parent_chat_context_cont,
+                image_refs=image_refs,
+            )
+        except TypeError:
+            await self._loop_handle.interject(message)
         return f"Interjection '{message}' sent to plan {self._task_id}."
 
     @functools.wraps(BaseActiveTask.ask, updated=())
@@ -799,9 +847,9 @@ class ToolLoopActor(BaseActor):
         self,
         description: str,
         *,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         **kwargs,
     ) -> ToolLoopPlan:
         logger.info(f"ToolLoopActor: Starting work on: '{description}'")
@@ -820,9 +868,9 @@ class ToolLoopActor(BaseActor):
         plan = ToolLoopPlan(
             task_description=description,
             tools=self._get_tools(),
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            parent_chat_context=_parent_chat_context,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
             main_event_loop=self._main_event_loop,
             persist=kwargs.get("persist", False),
             tool_policy=kwargs.get("tool_policy"),

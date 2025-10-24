@@ -21,6 +21,8 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
 def new_client() -> unify.AsyncUnify:
     return unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -34,8 +36,8 @@ async def test_chat_context_propagation() -> None:
     root_ctx = [{"role": "user", "content": "root-level message"}]
     captured_ctx: List[list[dict]] = []
 
-    async def record_context(*, parent_chat_context: list[dict] | None = None) -> str:
-        captured_ctx.append(parent_chat_context or [])
+    async def record_context(*, _parent_chat_context: list[dict] | None = None) -> str:
+        captured_ctx.append(_parent_chat_context or [])
         return "context-recorded"
 
     record_context.__name__ = "record_context"

@@ -22,6 +22,8 @@ async def test_preprocess_msgs_dynamic_placeholder(monkeypatch):
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

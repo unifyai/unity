@@ -6,6 +6,7 @@ __all__ = [
     "now_utc_str",
     "tool_name",
     "require_tools",
+    "parallelism_guidance",
 ]
 
 
@@ -77,4 +78,15 @@ def require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> N
     raise ValueError(
         f"Missing required tools: expected to find tool names containing: {expected}. "
         f"Available tools: {available}.",
+    )
+
+
+def parallelism_guidance() -> str:
+    """Return a shared block encouraging batching/parallel tool use."""
+    return (
+        "Parallelism and single\u2011call preference\n"
+        "-------------------------------------\n"
+        "\u2022 Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.\n"
+        "\u2022 When several reads or writes are independent, plan them together and run them in parallel rather than a serial drip of micro\u2011calls.\n"
+        "\u2022 Batch arguments where possible and avoid confirmatory re\u2011queries unless new ambiguity arises."
     )

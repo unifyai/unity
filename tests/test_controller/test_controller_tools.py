@@ -22,6 +22,8 @@ async def test_controller_act_tool_loop():
     """
     client = unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -61,6 +63,8 @@ async def test_controller_observe_tool_loop():
     # Create a fresh AsyncUnify client
     client = unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -93,6 +97,8 @@ async def test_controller_complex_tool_loop():
     # Create a fresh AsyncUnify client
     client = unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

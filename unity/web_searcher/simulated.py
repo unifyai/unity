@@ -168,7 +168,9 @@ class SimulatedWebSearcher(BaseWebSearcher):
 
         # Stateful async LLM
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
@@ -189,10 +191,10 @@ class SimulatedWebSearcher(BaseWebSearcher):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -211,7 +213,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         instruction = build_simulated_method_prompt(
             "ask",
             text,
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
 
         handle = _SimulatedWebSearcherHandle(
@@ -219,8 +221,8 @@ class SimulatedWebSearcher(BaseWebSearcher):
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:

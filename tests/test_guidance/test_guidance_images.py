@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from unity.image_manager.utils import make_solid_png_base64
 
 import pytest
+import unify
 
 from unity.image_manager.image_manager import ImageManager
 from unity.guidance_manager.guidance_manager import GuidanceManager
@@ -32,7 +33,12 @@ def test_get_images_for_guidance_returns_metadata_only():
     gid = gm._add_guidance(
         title="Layout Review",
         content="We need to review the image layout.",
-        images={"[0:10]": int(img_id)},
+        images=[
+            {
+                "raw_image_ref": {"image_id": int(img_id)},
+                "annotation": "layout screenshot",
+            },
+        ],
     )["details"]["guidance_id"]
 
     items = gm._get_images_for_guidance(guidance_id=gid)
@@ -41,8 +47,9 @@ def test_get_images_for_guidance_returns_metadata_only():
     assert entry.get("image_id") == int(img_id)
     assert entry.get("caption") == "diagram of layout"
     assert isinstance(entry.get("timestamp"), str)
-    # Ensure no raw image/base64 field is present
+    # Ensure metadata includes annotation and no raw image/base64 field is present
     assert "image" not in entry
+    assert entry.get("annotation") in (None, "layout screenshot")
 
 
 @pytest.mark.unit
@@ -70,7 +77,7 @@ def test_attach_image_to_context_promotes_image_block():
 
 @pytest.mark.unit
 @_handle_project
-def test_get_images_for_guidance_includes_substring():
+def test_get_images_for_guidance_includes_annotation():
     im = ImageManager()
     [img_id] = im.add_images(
         [
@@ -85,11 +92,57 @@ def test_get_images_for_guidance_includes_substring():
     gm = GuidanceManager()
     content = "click this button to open the modal"
     gid = gm._add_guidance(
-        title="Substring Demo",
+        title="Annotation Demo",
         content=content,
-        images={"[6:18]": int(img_id)},
+        images=[
+            {"raw_image_ref": {"image_id": int(img_id)}, "annotation": "button area"},
+        ],
     )["details"]["guidance_id"]
 
     items = gm._get_images_for_guidance(guidance_id=gid)
-    assert items and isinstance(items[0].get("substring"), str)
-    assert items[0]["substring"].strip() == "this button"
+    assert items and (items[0].get("annotation") in (None, "button area"))
+
+
+@pytest.mark.unit
+@_handle_project
+def test_guidance_images_field_schema_is_nested_and_enforced_gm():
+    gm = GuidanceManager()
+
+    # 1) The Guidance context should expose a nested JSON schema for the images field
+    fields = unify.get_fields(context=gm._ctx)
+    assert "images" in fields
+    dtype = str(fields["images"].get("data_type"))
+    # Expect array/list with object items including raw_image_ref + annotation and nested image_id
+    assert "raw_image_ref" in dtype and "annotation" in dtype and "image_id" in dtype
+
+    # 2) Valid nested payload – should succeed
+    valid_payload = {
+        "title": "SchemaCheck",
+        "content": "Testing images schema enforcement",
+        "images": [
+            {"raw_image_ref": {"image_id": 101}, "annotation": "overview"},
+        ],
+    }
+    _ = unify.log(context=gm._ctx, **valid_payload, new=True, mutable=True)
+
+    # 3) Invalid nested payload – wrong key name for image id → must be rejected
+    invalid_payload_bad_key = {
+        "title": "BadKey",
+        "content": "Invalid key for image id",
+        "images": [
+            {"raw_image_ref": {"image_idx": 999}, "annotation": "oops"},
+        ],
+    }
+    with pytest.raises(Exception):
+        unify.log(context=gm._ctx, **invalid_payload_bad_key, new=True, mutable=True)
+
+    # 4) Invalid nested payload – wrong type for annotation → must be rejected
+    invalid_payload_bad_type = {
+        "title": "BadType",
+        "content": "Invalid type for annotation",
+        "images": [
+            {"raw_image_ref": {"image_id": 202}, "annotation": 123},
+        ],
+    }
+    with pytest.raises(Exception):
+        unify.log(context=gm._ctx, **invalid_payload_bad_type, new=True, mutable=True)

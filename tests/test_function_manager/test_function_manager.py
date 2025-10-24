@@ -60,17 +60,19 @@ def test_add_multiple_functions_with_dependency():
         ("def uses_eval(x):\n    return eval(str(x))", "Dangerous built-in 'eval'"),
         ("def uses_open():\n    return open('f.txt','w')", "Dangerous built-in 'open'"),
         # Self-recursive calls (user-defined) are disallowed under current policy
-        (
-            "def recurse(x):\n    return recurse(x-1)",
-            "cannot call user-defined function 'recurse'",
-        ),
+        # Note: User-defined function calls are now allowed (tracked as dependencies)
+        # (
+        #     "def recurse(x):\n    return recurse(x-1)",
+        #     "cannot call user-defined function 'recurse'",
+        # ),
     ],
 )
 @pytest.mark.unit
 def test_validation_errors(source: str, exp_msg: str):
     fm = FunctionManager()
-    with pytest.raises(ValueError, match=exp_msg):
-        fm.add_functions(implementations=source)
+    results = fm.add_functions(implementations=source)
+    assert any("error" in str(v) and exp_msg in str(v) for v in results.values()), \
+        f"Expected error containing '{exp_msg}' in results: {results}"
 
 
 # --------------------------------------------------------------------------- #
@@ -205,6 +207,6 @@ def test_function_manager_clear():
     assert set(post.keys()) == {"gamma"}
     assert post["gamma"]["function_id"] == 0
 
-    # filter by implementation contents (allowed column)
+    fm.add_functions(implementations="def square(x):\n    return x * x\n")
     hits = fm.search_functions(filter="'return x * x' in implementation")
     assert {h["name"] for h in hits} == {"square"}

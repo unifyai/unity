@@ -34,6 +34,8 @@ async def test_nested_logging_hierarchy_labels():
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -59,6 +61,8 @@ async def test_nested_logging_hierarchy_labels():
     # ── top-level loop: uses the outer tool ────────────────────────────────
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -129,6 +133,8 @@ async def test_single_loop_logging_hierarchy_label():
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

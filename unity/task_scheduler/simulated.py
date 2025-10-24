@@ -225,7 +225,9 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         # One shared, *stateful* LLM for *everything*
         self._llm = unify.AsyncUnify(
-            "gpt-4o@openai",
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
@@ -311,10 +313,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,  # Ignored – we do not expose tools
-        parent_chat_context: list[dict] | None = None,  # Unused – synthetic
+        _parent_chat_context: list[dict] | None = None,  # Unused – synthetic
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -333,7 +335,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         instruction = build_simulated_method_prompt(
             "ask",
             text,
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         instruction += (
             "\n\nPlease *always* mention the relevant task id(s) in your response. "
@@ -345,8 +347,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             mode="ask",
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:
@@ -369,10 +371,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,  # Ignored – no tools here
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -391,7 +393,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         instruction = build_simulated_method_prompt(
             "update",
             text,
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         instruction += "\n\nIf any tasks were created or updated during the imagined process, include their id(s) in your reply."
         handle = _SimulatedTaskScheduleHandle(
@@ -400,8 +402,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             mode="update",
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:
@@ -423,10 +425,10 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         text: str,
         *,
         isolated: Optional[bool] = None,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         """
@@ -471,9 +473,9 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             actor = SimulatedActor(**actor_kwargs)
         handle = await actor.act(
             task_description,
-            parent_chat_context=parent_chat_context,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            _parent_chat_context=_parent_chat_context,
+            _clarification_up_q=_clarification_up_q,
+            _clarification_down_q=_clarification_down_q,
         )
 
         if should_log and call_id is not None:

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
+class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     *Public* contract that every concrete **transcript-manager** must satisfy.
 
@@ -27,9 +28,9 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing transcripts** (read‑only) and obtain a live
@@ -73,14 +74,14 @@ class BaseTranscriptManager(ABC, metaclass=SingletonABCMeta):
             When ``True`` the handle's :pyfunc:`~SteerableToolHandle.result`
             yields ``(answer, messages)`` – the first element is the assistant's
             reply, the second the hidden chain‑of‑thought (useful for debugging).
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Optional read‑only chat history that will be provided to all nested
             tool calls.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Duplex channels enabling interactive clarification questions. If
             supplied the LLM may push a follow‑up question onto
-            *clarification_up_q* and must read the human's answer from
-            *clarification_down_q*.
+            *_clarification_up_q* and must read the human's answer from
+            *_clarification_down_q*.
 
         Returns
         -------

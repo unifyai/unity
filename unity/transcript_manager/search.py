@@ -1,0 +1,476 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional, Tuple
+
+import unify
+
+from ..common.filter_utils import normalize_filter_expr
+from ..common.search_utils import (
+    is_plain_identifier,
+    ensure_vector_for_source,
+    fetch_top_k_by_terms,
+    fetch_top_k_by_terms_with_score,
+    fetch_scores_for_ids,
+)
+from ..common.semantic_search import extract_placeholders, ensure_join_context
+from .types.message import Message
+from ..contact_manager.types.contact import Contact
+from ..common.embed_utils import ensure_vector_column
+
+
+# Module-level tuning knobs for ranking/backfill behaviour
+OVERSAMPLE_FACTOR = 5
+BASE_OVERSAMPLE_MIN = 50
+RECEIVER_OVERSAMPLE_MIN = 100
+TOP_CONTACTS_FACTOR = 10
+TOP_CONTACTS_MIN = 200
+BATCH_OR_SIZE = 50
+
+
+def _classify_terms(
+    self,
+    references: Dict[str, str],
+) -> Tuple[list[tuple[str, str]], list[tuple[str, str]], list[tuple[str, str]], str]:
+    """Return (msg_terms, sender_terms, receiver_terms, query_hash).
+
+    Each term is a pair of (embed_column_name, ref_text).
+    """
+    msg_fields = set(Message.model_fields.keys())
+    contact_fields = set(Contact.model_fields.keys())
+
+    msg_embed_columns: list[tuple[str, str]] = []
+    sender_contact_embed_columns: list[tuple[str, str]] = []
+    receiver_contact_embed_columns: list[tuple[str, str]] = []
+
+    canonical = "|".join(f"{k}=>{references[k]}" for k in sorted(references.keys()))
+    import hashlib as _hashlib
+
+    query_hash = _hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+
+    # 1) message-side terms
+    for source_expr, ref_text in references.items():
+        placeholders = (
+            extract_placeholders(source_expr)
+            if not is_plain_identifier(source_expr)
+            else []
+        )
+        is_message_side = False
+        if is_plain_identifier(source_expr):
+            is_message_side = (
+                source_expr in msg_fields
+                and not source_expr.startswith("sender_")
+                and not source_expr.startswith("receiver_")
+            )
+        else:
+            is_message_side = any(ph in msg_fields for ph in placeholders)
+        if is_message_side:
+            embed_column_name = ensure_vector_for_source(
+                self._transcripts_ctx,
+                source_expr,
+            )
+            msg_embed_columns.append((embed_column_name, ref_text))
+
+    # 2) contact-side terms (sender/receiver role)
+    for source_expr, ref_text in references.items():
+        placeholders = (
+            extract_placeholders(source_expr)
+            if not is_plain_identifier(source_expr)
+            else []
+        )
+        role: Optional[str] = None
+        base_expr = source_expr
+        if is_plain_identifier(source_expr):
+            if source_expr.startswith("sender_"):
+                role = "sender"
+                base_expr = source_expr[len("sender_") :]
+            elif source_expr.startswith("receiver_"):
+                role = "receiver"
+                base_expr = source_expr[len("receiver_") :]
+            elif (source_expr in contact_fields) and (source_expr not in msg_fields):
+                role = "sender"
+                base_expr = source_expr
+        else:
+            if (
+                (len(placeholders) > 0)
+                and all(ph in contact_fields for ph in placeholders)
+                and not any(ph in msg_fields for ph in placeholders)
+            ):
+                if base_expr.startswith("sender_"):
+                    role = "sender"
+                    base_expr = base_expr[len("sender_") :]
+                elif base_expr.startswith("receiver_"):
+                    role = "receiver"
+                    base_expr = base_expr[len("receiver_") :]
+                else:
+                    role = "sender"
+        if role is not None:
+            embed_column_name = ensure_vector_for_source(
+                self._contact_manager._ctx,
+                base_expr,
+            )
+            if role == "sender":
+                sender_contact_embed_columns.append((embed_column_name, ref_text))
+            else:
+                receiver_contact_embed_columns.append((embed_column_name, ref_text))
+
+    return (
+        msg_embed_columns,
+        sender_contact_embed_columns,
+        receiver_contact_embed_columns,
+        query_hash,
+    )
+
+
+def _build_sender_join_ctx(
+    *,
+    left_ctx: str,
+    right_ctx: str,
+    msg_embed_columns: list[tuple[str, str]],
+    sender_contact_embed_columns: list[tuple[str, str]],
+    query_hash: str,
+) -> str:
+    join_ctx = f"{left_ctx}__sender_join__{query_hash}"
+    select: Dict[str, str] = {}
+    # include all Message fields so we can reconstruct rows without a second fetch
+    for mf in Message.model_fields.keys():
+        select[f"{left_ctx}.{mf}"] = mf
+    for embed_col, _ in msg_embed_columns:
+        select[f"{left_ctx}.{embed_col}"] = embed_col
+    for embed_col, _ in sender_contact_embed_columns:
+        select[f"{right_ctx}.{embed_col}"] = embed_col
+    return ensure_join_context(
+        left_ctx=left_ctx,
+        right_ctx=right_ctx,
+        join_expr=f"{left_ctx}.sender_id == {right_ctx}.contact_id",
+        new_context=join_ctx,
+        columns=select,
+        mode="inner",
+        copy=True,
+    )
+
+
+def _aggregate_receiver_min(
+    candidate_rows: list[dict],
+    receiver_scores_map: Dict[int, float],
+    *,
+    base_score_key: str = "",
+) -> list[tuple[int, float]]:
+    combined: list[tuple[int, float]] = []
+    for row in candidate_rows:
+        mid = row.get("message_id")
+        if mid is None:
+            continue
+        base_score = 0.0
+        if base_score_key and (base_score_key in row):
+            try:
+                base_score = float(row.get(base_score_key, 0))
+            except Exception:
+                base_score = 0.0
+        min_recv = 2.0
+        rids = row.get("receiver_ids", [])
+        if isinstance(rids, list) and rids:
+            for rid in rids:
+                try:
+                    rv = receiver_scores_map.get(int(rid))
+                    if rv is not None and rv < min_recv:
+                        min_recv = rv
+                except Exception:
+                    continue
+        combined.append((int(mid), base_score + min_recv))
+    return combined
+
+
+def format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
+    """Return a combined payload for contacts and messages (stable shape)."""
+    if not messages:
+        return {}
+
+    unique_ids: set[int] = set()
+    for m in messages:
+        try:
+            unique_ids.add(int(m.sender_id))
+        except Exception:
+            pass
+        if isinstance(m.receiver_ids, list):
+            for rid in m.receiver_ids:
+                try:
+                    unique_ids.add(int(rid))
+                except Exception:
+                    pass
+
+    contacts_payload: Dict[str, Any] = {}
+    if unique_ids:
+        ids_expr = ", ".join(str(i) for i in sorted(unique_ids))
+        flt = f"contact_id in [{ids_expr}]"
+        try:
+            contacts_payload = self._contact_manager._filter_contacts(
+                filter=flt,
+                limit=len(unique_ids),
+            )
+        except Exception:
+            contacts_payload = {}
+
+    message_keys_to_shorthand: dict[str, str] = Message.shorthand_map()
+    shorthand_to_message_keys: dict[str, str] = Message.shorthand_inverse_map()
+
+    return {
+        **contacts_payload,
+        "message_keys_to_shorthand": message_keys_to_shorthand,
+        "messages": messages,
+        "shorthand_to_message_keys": shorthand_to_message_keys,
+    }
+
+
+def filter_messages(
+    self,
+    *,
+    filter: Optional[str] = None,
+    offset: int = 0,
+    limit: int | None = 100,
+) -> Dict[str, Any]:
+    """
+    Filter transcript messages using an exact column-wise boolean expression.
+
+    Parameters
+    ----------
+    filter : str | None, default None
+        A Python boolean expression evaluated with column names in scope.
+        When None, returns all messages.
+    offset : int, default 0
+        Zero-based index of the first result to include.
+    limit : int | None, default 100
+        Maximum number of records to return. Must be <= 1000.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Filtered messages with contact information.
+    """
+    normalized = normalize_filter_expr(filter)
+    logs = unify.get_logs(
+        context=self._transcripts_ctx,
+        filter=normalized,
+        offset=offset,
+        limit=limit,
+        sorting={"timestamp": "descending"},
+        from_fields=list(Message.model_fields.keys()),
+    )
+    results = [Message(**lg.entries) for lg in logs]
+    return format_contacts_and_messages(self, results)
+
+
+def search_messages(
+    self,
+    *,
+    references: Optional[Dict[str, str]] = None,
+    k: int = 10,
+) -> Dict[str, Any]:
+    """
+    Semantic search across transcript messages (two-table aware).
+
+    Parameters
+    ----------
+    references : Dict[str, str] | None, default None
+        Mapping of source expressions to reference text for semantic search.
+    k : int, default 10
+        Maximum number of results to return. Must be <= 1000.
+
+    Returns
+    -------
+    Dict[str, Any]
+        Search results with contact information.
+    """
+    # Default behaviour: when references is None/empty, return most recent
+    if not references:
+        logs = unify.get_logs(
+            context=self._transcripts_ctx,
+            limit=k,
+            from_fields=list(Message.model_fields.keys()),
+            sorting={"timestamp": "descending"},
+        )
+        results = [Message(**lg.entries) for lg in logs]
+        return format_contacts_and_messages(self, results)
+
+    (
+        msg_embed_columns,
+        sender_contact_embed_columns,
+        receiver_contact_embed_columns,
+        query_hash,
+    ) = _classify_terms(self, references)
+
+    # 3) No contact-side terms → single-table ranking
+    if not sender_contact_embed_columns and not receiver_contact_embed_columns:
+        if not msg_embed_columns:
+            ensure_vector_column(self._transcripts_ctx, "_content_emb", "content")
+            msg_embed_columns = [("_content_emb", next(iter(references.values())))]
+        rows = fetch_top_k_by_terms(self._transcripts_ctx, msg_embed_columns, k=k)
+        results = [Message(**lg) for lg in rows]
+        return format_contacts_and_messages(self, results)
+
+    # 4) Build sender-join context and compute base scores (message + sender)
+    left_ctx = self._transcripts_ctx
+    right_ctx = self._contact_manager._ctx
+    sender_join_ctx = _build_sender_join_ctx(
+        left_ctx=left_ctx,
+        right_ctx=right_ctx,
+        msg_embed_columns=msg_embed_columns,
+        sender_contact_embed_columns=sender_contact_embed_columns,
+        query_hash=query_hash,
+    )
+
+    base_terms = list(msg_embed_columns) + list(sender_contact_embed_columns)
+
+    candidate_rows: list[dict]
+    candidate_score_key = ""
+    if base_terms:
+        oversample = max(k * OVERSAMPLE_FACTOR, BASE_OVERSAMPLE_MIN)
+        candidate_rows, candidate_score_key = fetch_top_k_by_terms_with_score(
+            sender_join_ctx,
+            base_terms,
+            k=oversample,
+        )
+    else:
+        # Receiver-only: rank contacts then pull messages containing them
+        top_contacts_limit = max(k * TOP_CONTACTS_FACTOR, TOP_CONTACTS_MIN)
+        top_contact_rows, recv_score_key = fetch_top_k_by_terms_with_score(
+            right_ctx,
+            receiver_contact_embed_columns,
+            k=top_contacts_limit,
+        )
+        contact_scores: dict[int, float] = {}
+        for contact_row in top_contact_rows:
+            cid = contact_row.get("contact_id")
+            if cid is None:
+                continue
+            try:
+                cid_int = int(cid)
+            except Exception:
+                continue
+            try:
+                c_score = float(contact_row.get(recv_score_key, 0))
+            except Exception:
+                c_score = 0.0
+            contact_scores[cid_int] = c_score
+
+        msg_to_score: dict[int, float] = {}
+        oversample_target = max(k * OVERSAMPLE_FACTOR, RECEIVER_OVERSAMPLE_MIN)
+        contact_ids: list[int] = list(contact_scores.keys())
+        for i in range(0, len(contact_ids), BATCH_OR_SIZE):
+            batch = contact_ids[i : i + BATCH_OR_SIZE]
+            if not batch:
+                continue
+            or_expr = " or ".join(f"{cid} in receiver_ids" for cid in batch)
+            rows = unify.get_logs(
+                context=left_ctx,
+                filter=or_expr,
+                from_fields=["message_id", "receiver_ids"],
+                limit=oversample_target,
+            )
+            for lg in rows:
+                entries = lg.entries
+                mid = entries.get("message_id")
+                rids = entries.get("receiver_ids", [])
+                if mid is None or not isinstance(rids, list):
+                    continue
+                try:
+                    mid_int = int(mid)
+                except Exception:
+                    continue
+                min_recv = 2.0
+                for rid in rids:
+                    try:
+                        sc = contact_scores.get(int(rid))
+                        if sc is not None and sc < min_recv:
+                            min_recv = sc
+                    except Exception:
+                        continue
+                prev = msg_to_score.get(mid_int)
+                if (prev is None) or (min_recv < prev):
+                    msg_to_score[mid_int] = min_recv
+            if len(msg_to_score) >= oversample_target:
+                break
+
+        candidate_rows = []
+        if msg_to_score:
+            ids_expr = ", ".join(str(i) for i in msg_to_score.keys())
+            rows = unify.get_logs(
+                context=left_ctx,
+                filter=f"message_id in [{ids_expr}]",
+                from_fields=["message_id", "receiver_ids"],
+                limit=len(msg_to_score),
+            )
+            for lg in rows:
+                row = dict(lg.entries)
+                row["_receiver_only_base"] = 0.0
+                candidate_rows.append(row)
+
+    if not receiver_contact_embed_columns:
+        results: List[Message] = []
+        taken = 0
+        msg_field_keys = set(Message.model_fields.keys())
+        for row in candidate_rows:
+            if taken >= k:
+                break
+            msg_payload = {k: row.get(k) for k in msg_field_keys if k in row}
+            try:
+                results.append(Message(**msg_payload))
+                taken += 1
+            except Exception:
+                continue
+        return format_contacts_and_messages(self, results)
+
+    # Receiver terms present: compute receiver scores and combine
+    receiver_id_set: set[int] = set()
+    for row in candidate_rows:
+        rids = row.get("receiver_ids", [])
+        if isinstance(rids, list):
+            for rid in rids:
+                try:
+                    receiver_id_set.add(int(rid))
+                except Exception:
+                    continue
+
+    receiver_scores_map, receiver_score_key = fetch_scores_for_ids(
+        right_ctx,
+        receiver_contact_embed_columns,
+        id_field="contact_id",
+        ids=sorted(receiver_id_set),
+    )
+
+    combined = _aggregate_receiver_min(
+        candidate_rows,
+        receiver_scores_map,
+        base_score_key=candidate_score_key,
+    )
+
+    combined.sort(key=lambda t: t[1])
+    top_ids = [mid for mid, _ in combined[:k]]
+    if not top_ids:
+        return format_contacts_and_messages(self, [])
+
+    ids_expr = ", ".join(str(i) for i in top_ids)
+    full_rows = unify.get_logs(
+        context=left_ctx,
+        filter=f"message_id in [{ids_expr}]",
+        from_fields=list(Message.model_fields.keys()),
+        limit=len(top_ids),
+    )
+    full_by_id: dict[int, dict] = {}
+    for lg in full_rows:
+        try:
+            mid_val = int(lg.entries.get("message_id"))
+        except Exception:
+            continue
+        full_by_id[mid_val] = dict(lg.entries)
+
+    results: List[Message] = []
+    for mid in top_ids:
+        payload = full_by_id.get(mid)
+        if not payload:
+            continue
+        try:
+            results.append(Message(**payload))
+        except Exception:
+            continue
+
+    return format_contacts_and_messages(self, results)

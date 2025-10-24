@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from typing import Dict, Callable
 
-from ..task_scheduler.types.task import Task
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
@@ -57,6 +56,11 @@ def build_ask_prompt(
     task_ask_fname = _tool_name(tools, "taskscheduler_ask")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
     actor_act_fname = _tool_name(tools, "actor_act")
+    cm_ask_fname = _tool_name(tools, "conversationmanagerhandle_ask")
+    cm_transcript_fname = _tool_name(
+        tools,
+        "conversationmanagerhandle_get_full_transcript",
+    )
 
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
@@ -98,11 +102,6 @@ def build_ask_prompt(
         "Use the WebSearcher.ask tool for general knowledge, external information, industry concepts, best practices or anything that would reasonably be found on the web (and not in your internal managers).",
         "For live or time-sensitive facts (e.g., questions containing 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must use WebSearcher.ask – do not rely on internal memory for these.",
         "Use Contact/Transcript/Knowledge/Task managers for internal state about people, messages, stored facts and tasks respectively.",
-        "When choosing WebSearch: send exactly one high-level, natural-language question to WebSearcher.ask. Do NOT fan-out multiple WebSearcher.ask calls, do NOT include engine-specific operators (e.g., 'site:'), and do NOT hard-code provider choices. The WebSearcher internally selects sources, parallelizes searches, extracts, and composes references.",
-        "Include any citation/link needs, time window, and scope in that single call. Do not immediately re-query just to 'confirm' the same thing.",
-        "Issue a second WebSearcher.ask only if the first response clearly indicates missing coverage or ambiguity that requires a new targeted fetch.",
-        "Use multiple WebSearcher.ask calls in parallel only when the user asks genuinely unrelated sub-questions; otherwise keep to one call and let WebSearcher fan-out internally.",
-        "If refinement is needed, prefer a single follow-up via clarification rather than issuing multiple WebSearcher.ask calls in parallel.",
         "\nConversationManagerHandle Tools",
         "-----------------------",
         "The ConversationManagerHandle is always active. You can read from and steer the live conversation.",
@@ -159,9 +158,6 @@ def build_ask_prompt(
             "",
             "Tools (name → argspec):",
             sig_json,
-            "",
-            "Task schema (reference):",
-            json.dumps(Task.model_json_schema(), indent=4),
             "",
             usage_examples,
             "",
@@ -251,10 +247,6 @@ def build_request_prompt(
         "Orchestrate by calling the appropriate managers' `ask` or `update` methods; do not describe or expose HOW the change will be implemented.",
         "Use WebSearcher.ask for external information, market practices, definitions, or anything you would reasonably look up online.",
         "For live or time-sensitive facts (e.g., 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must call WebSearcher.ask rather than relying on internal memory.",
-        "When routing to WebSearch, send a single high-level natural-language question; do NOT issue multiple WebSearcher.ask calls with different sites or providers. The WebSearcher will fan-out, search, and aggregate internally.",
-        "Include citation/link needs, time window, and scope in that single call. Do not immediately re-query just to 'confirm' the same thing.",
-        "Issue a second WebSearcher.ask only if the first response clearly indicates missing coverage or ambiguity that requires a new targeted fetch.",
-        "Use multiple WebSearcher.ask calls in parallel only for genuinely unrelated sub-questions; otherwise keep to one call and let WebSearcher fan-out internally.",
         "When the request involves tasks:",
         f"- Understand intent then check context via `{task_ask_fname}`",
         f"- Apply changes via `{task_update_fname}` if needed",
@@ -346,9 +338,6 @@ def build_request_prompt(
             "",
             "Tools (name → argspec):",
             sig_json,
-            "",
-            "Task schema:",
-            json.dumps(Task.model_json_schema(), indent=4),
             "",
             usage_examples,
             "",

@@ -982,7 +982,7 @@ class CommsAgent:
     async def _send_sms_to_third_party(
         self,
         description: str,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
     ):
         """
         Sends an SMS message from the assistant's number to a third party.
@@ -992,12 +992,12 @@ class CommsAgent:
             description (str): The description of the contact and content of the SMS message.
             parent_chat_context (list[dict]): The parent chat context.
         """
-        return await send_sms_message(description, parent_chat_context)
+        return await send_sms_message(description, _parent_chat_context)
 
     async def _send_email_to_third_party(
         self,
         description: str,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
     ):
         """
         Sends an email from the assistant's email address to a third party.
@@ -1009,12 +1009,12 @@ class CommsAgent:
             Always include the message_id and subject of the email you're responding to.
             parent_chat_context (list[dict]): The parent chat context.
         """
-        return await send_email(description, parent_chat_context)
+        return await send_email(description, _parent_chat_context)
 
     async def _send_whatsapp_to_third_party(
         self,
         description: str,
-        parent_chat_context: list[dict] | None = None,
+        _parent_chat_context: list[dict] | None = None,
     ):
         """
         Sends a WhatsApp message from the assistant's number to a third party.
@@ -1025,7 +1025,7 @@ class CommsAgent:
             description (str): The description of the WhatsApp message.
             parent_chat_context (list[dict]): The parent chat context.
         """
-        return await send_whatsapp_message(description, parent_chat_context)
+        return await send_whatsapp_message(description, _parent_chat_context)
 
     async def _implicit_contact_creation(self, description: str):
         """

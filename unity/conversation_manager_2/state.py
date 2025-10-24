@@ -1,15 +1,19 @@
 from datetime import datetime
 from dataclasses import dataclass
 import os
+import logging
 from typing import Literal, Optional
 from collections import deque
 
 from pydantic import Field
-from unity.conversation_manager_2.actions import build_dynamic_response_models
+
+# from unity.conversation_manager_2.actions import build_dynamic_response_models
 from unity.conversation_manager_2.new_events import *
 from unity.contact_manager.types.contact import Contact as ContactType
 from unity.transcript_manager.types.message import UNASSIGNED
 from unity.conversation_manager_2.event_broker import get_event_broker
+
+logger = logging.getLogger(__name__)
 
 
 class Contact(ContactType):
@@ -50,6 +54,8 @@ class Notification:
     type: str
     content: str
     timestamp: datetime
+    pinned: bool = False
+    interjection_id: Optional[str] = None
 
 
 class ConversationManagerState:
@@ -70,7 +76,10 @@ class ConversationManagerState:
         user_number: str,
         user_email: str,
         user_whatsapp_number: str,
+        realtime: bool = False,
     ):
+
+        self.realtime = realtime
 
         # These should not be harcoded
         self.phone_contacts_map = {
@@ -101,6 +110,8 @@ class ConversationManagerState:
         self.active_conversations: dict[str, Contact] = {}
 
         self.notifs: list[Notification] = []
+        # conductor handles: handle_id -> {query, status}
+        self.conductor_handles: dict[str, dict] = {}
 
         self.mode: Literal["text", "call", "gmeet", "unify_call"] = "text"
         self.events = []
@@ -156,7 +167,7 @@ class ConversationManagerState:
             self.events.append(event)
         match event:
             # startup events
-            case ManagersStartupOutput() as e:
+            case ManagersStartupResponse() as e:
                 if not e.initialized:
                     raise Exception("Managers failed to initialize")
                 self.initialized = bool(e.initialized)
@@ -173,8 +184,15 @@ class ConversationManagerState:
                     email_address=payload["assistant_email"],
                     phone_number=payload["assistant_number"],
                 )
+                self.update_or_create_new_contact(
+                    contact_id=1,
+                    first_name=payload["user_name"],
+                    surname="",
+                    email_address=payload["user_email"],
+                    phone_number=payload["user_number"],
+                )
 
-            case GetBusEventsOutput() as e:
+            case GetBusEventsResponse() as e:
                 # TODO: should also grab the latest messages ~50 messages
                 # and populate their contacts in the active conversations
                 for ev in reversed(e.events):
@@ -199,8 +217,19 @@ class ConversationManagerState:
                             type=e.source,
                             content=e.content,
                             timestamp=e.timestamp,
+                            pinned=e.pinned,
+                            interjection_id=e.interjection_id,
                         ),
                     )
+
+            case NotificationUnpinnedEvent() as e:
+                # Only process if it's for this conversation
+                if e.target_conversation_id == self.assistant_id:
+                    # Find and unpin the notification
+                    for notif in self.notifs:
+                        if notif.interjection_id == e.interjection_id:
+                            notif.pinned = False
+                            break
 
             case PhoneCallRecieved() as e:
                 self.conference_name = e.conference_name
@@ -458,11 +487,15 @@ class ConversationManagerState:
             case Error() as e:
                 self.push_notif(Notification("error", e.message, e.timestamp))
 
-            case GetContactsOutput() as e:
+            case GetContactsResponse() as e:
                 for c in e.contacts:
                     self.create_new_contact(**c)
 
-            case LogMessageOutput() as e:
+            case ContactInfoResponse() as e:
+                # Update contact with fresh data from ContactManager
+                self.update_or_create_new_contact(**e.contact_details)
+
+            case LogMessageResponse() as e:
                 # ToDo: Get this working for email and whatsapp as well
                 # Email: Replying to the same thread
                 # Whatsapp: Managing different kinds of chat such as groups, etc.
@@ -473,6 +506,83 @@ class ConversationManagerState:
                     and self.unify_call_exchange_id == UNASSIGNED
                 ):
                     self.unify_call_exchange_id = e.exchange_id
+
+            # conductor
+            case ConductorResponse() as e:
+                self.register_conductor_handle(
+                    handle_id=e.handle_id,
+                    query=e.query,
+                    response=e.response,
+                )
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="started",
+                    query=e.query,
+                    response=e.response,
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Conductor started: {e.query}",
+                        e.timestamp,
+                    ),
+                )
+            case ConductorHandleRequest() as e:
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name=e.action_name,
+                    query=e.query,
+                    response="",
+                )
+            case ConductorHandleResponse() as e:
+                self.update_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name=e.action_name,
+                    query=None,
+                    response=e.response,
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Conductor handle {e.action_name} response: {e.response}",
+                        e.timestamp,
+                    ),
+                )
+            case ConductorClarificationRequest() as e:
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="clarification",
+                    query=e.query,
+                    response="",
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Conductor clarification request: {e.query}",
+                        e.timestamp,
+                    ),
+                )
+            case ConductorClarificationResponse() as e:
+                self.update_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="clarification",
+                    query=None,
+                    response=e.response,
+                )
+            case ConductorResult() as e:
+                self.add_conductor_handle_action(
+                    handle_id=e.handle_id,
+                    action_name="result",
+                    query="",
+                    response=e.result,
+                )
+                self.push_notif(
+                    Notification(
+                        "comms",
+                        f"Conductor result: {e.result}",
+                        e.timestamp,
+                    ),
+                )
 
     def snapshot(self):
         self._current_snapshot_time = datetime.now()
@@ -486,8 +596,12 @@ class ConversationManagerState:
             self._render_contact(c) for c in self.active_conversations.values()
         )
         notif = self._render_notifs()
-        state = f"<notifications>\n{self._add_spaces(notif)}\n</notifications>\n<active_conversations>\n{self._add_spaces(active_convs)}\n</active_conversations>"
-
+        conductor_handles = self._render_conductor_handles()
+        state = (
+            f"<notifications>\n{self._add_spaces(notif)}\n</notifications>\n"
+            f"<active_conversations>\n{self._add_spaces(active_convs)}\n</active_conversations>\n"
+            f"<conductor_handles>\n{self._add_spaces(conductor_handles)}\n</conductor_handles>"
+        )
         return state
 
     def set_details(self, payload: dict):
@@ -504,17 +618,11 @@ class ConversationManagerState:
         self.user_number = payload["user_number"]
         self.user_whatsapp_number = payload["user_whatsapp_number"]
         self.user_email = payload["user_email"]
-        self.current_user = {
-            "user_name": self.user_name,
-            "user_number": self.user_number,
-            "user_whatsapp_number": self.user_whatsapp_number,
-            "user_email": self.user_email,
-        }
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
         self.build_response_model()
-        if payload.pop("api_key", None):
-            os.environ["UNIFY_KEY"] = payload.pop("api_key")
+        if payload.get("api_key"):
+            os.environ["UNIFY_KEY"] = payload["api_key"]
         os.environ["USER_ID"] = self.user_id
         os.environ["USER_NAME"] = self.user_name
         os.environ["USER_NUMBER"] = self.user_number
@@ -528,6 +636,14 @@ class ConversationManagerState:
 
     def build_response_model(self):
         """Build dynamic response models based on available actions."""
+        if self.realtime:
+            from unity.conversation_manager_2.actions_realtime import (
+                build_dynamic_response_models,
+            )
+        else:
+            from unity.conversation_manager_2.actions import (
+                build_dynamic_response_models,
+            )
         self.dynamic_response_models = build_dynamic_response_models(
             include_email=self.assistant_email not in [None, ""],
             include_sms=self.assistant_number not in [None, ""],
@@ -538,6 +654,42 @@ class ConversationManagerState:
         )
         print("Dynamic response models built.")
         print(f"Available actions: {available_actions}")
+
+    # conductor handle tracking helpers
+    def register_conductor_handle(
+        self, handle_id: str, query: str, response: str
+    ) -> None:
+        self.conductor_handles[handle_id] = {
+            "query": query,
+            "response": response,
+            "handle_actions": [],
+        }
+
+    def add_conductor_handle_action(
+        self, handle_id: str, action_name: str, query: str, response: str
+    ) -> None:
+        if handle_id in self.conductor_handles:
+            self.conductor_handles[handle_id]["handle_actions"].append(
+                {
+                    "action_name": action_name,
+                    "query": query,
+                    "response": response,
+                }
+            )
+
+    def update_conductor_handle_action(
+        self, handle_id: str, action_name: str, query: str | None, response: str
+    ) -> None:
+        if handle_id in self.conductor_handles:
+            if query is None:
+                query = self.conductor_handles[handle_id]["handle_actions"][-1]["query"]
+            self.conductor_handles[handle_id]["handle_actions"][-1].update(
+                {
+                    "action_name": action_name,
+                    "query": query,
+                    "response": response,
+                }
+            )
 
     def get_details(self) -> dict:
         return {
@@ -628,7 +780,7 @@ class ConversationManagerState:
             rolling_summary=rolling_summary,
             respond_to=respond_to,
             response_policy=response_policy,
-            is_boss=str(contact_id) == "1",
+            is_boss=contact_id == 1,
         )
         self.inverted_contacts_map[contact_id] = contact
         if email_address:
@@ -651,7 +803,7 @@ class ConversationManagerState:
         response_policy: Optional[str] = None,
     ):
         contact = None
-        print("curernt contacts", self.inverted_contacts_map)
+        print("current contacts", self.inverted_contacts_map)
         if contact_id != -1:  # update branch
             contact = self.get_contact(
                 contact_id,
@@ -752,13 +904,53 @@ Body:
 </{thread_name}>""".strip()
 
     def _render_notifs(self):
-        return "\n".join(
+        # Count notifications for debugging
+        pinned_notifs = [n for n in self.notifs if n.pinned]
+        regular_notifs = [
+            n
+            for n in self.notifs
+            if not n.pinned and n.timestamp > self.last_snapshot_time
+        ]
+
+        logger.debug(
+            f"📋 Rendering notifications: {len(pinned_notifs)} pinned (always visible), "
+            f"{len(regular_notifs)} regular (new since last commit)",
+        )
+
+        # Render pinned notifications (always visible)
+        pinned = "\n".join(
             [
-                f"""[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
-                for n in self.notifs
-                if n.timestamp > self.last_snapshot_time
+                f"""[PINNED {n.type.title()} @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
+                for n in pinned_notifs
             ],
         )
+
+        # Render regular notifications (only new ones)
+        regular = "\n".join(
+            [
+                f"""[{n.type.title()} Notification @ {n.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}] {n.content}"""
+                for n in regular_notifs
+            ],
+        )
+
+        # Debug log what's being shown to the LLM
+        if pinned:
+            for n in pinned_notifs:
+                logger.debug(
+                    f"  📌 PINNED (ID: {n.interjection_id}): {n.content[:60]}...",
+                )
+        if regular:
+            for n in regular_notifs:
+                logger.debug(
+                    f"  📝 REGULAR (ID: {n.interjection_id}): {n.content[:60]}...",
+                )
+        if not pinned and not regular:
+            logger.debug("  (No notifications to render)")
+
+        # Combine with separator if both exist
+        if pinned and regular:
+            return f"{pinned}\n\n{regular}"
+        return pinned or regular
 
     def _render_contact_threads(self, contact: Contact):
         threads = []
@@ -767,6 +959,25 @@ Body:
                 threads.append(self._render_thread(t_name, t))
         threads = "\n\n".join(threads)
         return threads
+
+    def _render_conductor_handles(self):
+        handles = []
+        # ToDo: get the indentation working for this
+        for handle_id, handle in self.conductor_handles.items():
+            handles.append(f'<conductor_handle handle_id="{handle_id}">')
+            handles.append(f"\t<query>{handle['query']}</query>")
+            handles.append(f"\t<handle_actions>")
+            for action in handle["handle_actions"]:
+                handles.append(f"\t\t<action action_name=\"{action['action_name']}\">")
+                handles.append(f"\t\t\t<query>{action['query']}</query>")
+                if action["response"]:
+                    handles.append(f"\t\t\t<response>{action['response']}</response>")
+                if "call_id" in action:
+                    handles.append(f"\t\t\t<call_id>{action['call_id']}</call_id>")
+                handles.append(f"\t\t</action>")
+            handles.append(f"\t</handle_actions>")
+            handles.append(f"</conductor_handle>")
+        return "\n".join(handles)
 
     def _add_spaces(self, string: str, num_spaces: int = 4):
         ls = string.split("\n")

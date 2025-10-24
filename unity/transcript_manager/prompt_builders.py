@@ -23,6 +23,7 @@ from ..common.prompt_helpers import (
     now_utc_str,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
+    parallelism_guidance,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -142,13 +143,13 @@ def build_ask_prompt(
    `{filter_messages_fname}(filter="medium == 'email' and timestamp >= '2024-01-01T00:00:00' and timestamp < '2024-02-01T00:00:00'", limit=100)`
 
  ─ Images (vision) ─
- • List images referenced by a specific message (metadata only; no base64). Each item also includes the substring of the message text corresponding to the span that linked the image.
+ • List images referenced by a specific message (metadata only; no base64). Each item includes any provided freeform annotation explaining how the image relates to the text.
    `{get_imgs_msg_fname}(message_id=123)`
  • Ask a one‑off question about an image (text answer only; DOES NOT persist visual context)
    `{ask_image_fname}(image_id=45, question="What color is dominant?")`
  • Attach a specific image for persistent visual reasoning in this loop
    `{attach_image_fname}(image_id=45, note="Need to inspect the layout")`
- • Attach multiple images linked from a message (limit to first 2). For each attached image, the meta includes `spans` and `substrings` derived from the message content for alignment.
+ • Attach multiple images linked from a message (limit to first 2). For each attached image, the meta includes any provided `annotation` that aligns the image to the text.
    `{attach_msg_imgs_fname}(message_id=123, limit=2)`
 
  Guidance on when to use which image tool
@@ -221,29 +222,16 @@ def build_ask_prompt(
     activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
-    # Conditional guidance about asking questions in final responses
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
-    )
+    # Keep clarification guidance single-sourced via clarification_guidance(tools)
 
-    # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
-    parallelism_block = textwrap.dedent(
-        """
-        Parallelism and single‑call preference
-        -------------------------------------
-        • Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.
-        • When you need multiple independent reads, plan them together and run them in parallel rather than a serial drip of micro‑calls.
-        • Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.
-        • When visual context is required across multiple steps, attach the needed images once at the start (ideally in a single call if available) and proceed with analysis using the persistent visual context, instead of repeating isolated per‑image queries.
-        """,
-    ).strip()
+    # High-level execution guidance provided by common helper
 
     # Early exit policy for mutation-intent requests reaching ask()
     mutation_exit_block = read_only_ask_mutation_exit_block()
+
+    # Legend for shorthand fields (single source of truth from Message model)
+    shorthand_forward = json.dumps(Message.shorthand_map(), indent=4)
+    shorthand_inverse = json.dumps(Message.shorthand_inverse_map(), indent=4)
 
     return "\n".join(
         [
@@ -251,7 +239,6 @@ def build_ask_prompt(
             "You are an assistant specialised in **querying and analysing communication transcripts**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
-            clar_sentence,
             "",
             mutation_exit_block,
             "",
@@ -274,13 +261,19 @@ def build_ask_prompt(
             "",
             usage_examples,
             "",
-            parallelism_block,
+            parallelism_guidance(),
             "",
             "Schemas",
             "-------",
             f"Contact  = {json.dumps(Contact.model_json_schema(), indent=4)}",
             "",
             f"Message  = {json.dumps(Message.model_json_schema(), indent=4)}",
+            "",
+            "Message field shorthand (full → shorthand):",
+            shorthand_forward,
+            "",
+            "Message field shorthand (shorthand → full):",
+            shorthand_inverse,
             "",
             f"Current UTC time: {_now()}.",
             clar_section,

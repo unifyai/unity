@@ -65,6 +65,8 @@ def new_client() -> unify.AsyncUnify:
     """
     return unify.AsyncUnify(
         MODEL_NAME,
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -406,13 +408,13 @@ async def test_interjectable_tool_roundtrip() -> None:
     async def long_running(
         topic: str,
         *,
-        interject_queue: asyncio.Queue[str],
+        _interject_queue: asyncio.Queue[str],
     ) -> str:
         """
         Wait up to 2 s for a steer; echo whichever topic we end up with.
         """
         try:
-            steer = await asyncio.wait_for(interject_queue.get(), timeout=60.0)
+            steer = await asyncio.wait_for(_interject_queue.get(), timeout=60.0)
             exec_log.append(f"steered→{steer}")
             return f"Topic switched to: {steer}"
         except asyncio.TimeoutError:

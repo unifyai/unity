@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import asyncio
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseGuidanceManager(ABC, metaclass=SingletonABCMeta):
+class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     Public contract that every concrete guidance-manager must satisfy.
 
@@ -25,9 +26,9 @@ class BaseGuidanceManager(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the existing Guidance table (read-only) and obtain a live
@@ -60,9 +61,9 @@ class BaseGuidanceManager(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Apply a mutation request – create, edit, or delete guidance entries –

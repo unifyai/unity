@@ -352,7 +352,12 @@ def tm_scenario(request: pytest.FixtureRequest):
         try:
             # Attempt to read all contacts in the active scenario and populate the map.
             # We prefer the ContactManager tool to keep logic consistent.
-            contacts = sb.cm._filter_contacts(limit=1000)
+            contacts_dict = sb.cm._filter_contacts(limit=1000)
+            contacts = (
+                contacts_dict["contacts"]
+                if isinstance(contacts_dict, dict)
+                else contacts_dict
+            )
             rebuilt: dict[str, int] = {}
             for c in contacts or []:
                 try:

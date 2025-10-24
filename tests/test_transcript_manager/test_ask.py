@@ -42,7 +42,7 @@ def _answer_semantic(
 ) -> str:
     """Compute the *correct* answer directly from stored data."""
     q = question.lower()
-    messages = tm._filter_messages(limit=None)
+    messages = tm._filter_messages(limit=None)["messages"]
 
     def cid(name: str) -> int:
         return _ID_BY_NAME[name]
@@ -184,6 +184,7 @@ def _llm_assert_correct(
             "A good one-sentence summary will often synthesize information from multiple utterances into a coherent statement, potentially reflecting the implied outcome or joint understanding if reasonably inferred from the dialogue. "
             "For example, if the dialogue discusses 'planning to do X' or 'working on X', the summary can state that the conversation was about 'planning X' or 'addressing X'. "
             "Minor stylistic or tense differences, re-ordering, shortened wording, or inclusion of obviously correct contextual details are also acceptable. "
+            "Ignore benign parenthetical metadata such as internal ids (e.g., exchange_id/message_id) or obvious conversation labels if they do not contradict the dialogue. "
             "The crucial factors are that the summary does not omit key topics discussed and does not introduce information that contradicts or is unsupported by the dialogue's intent. "
             'Respond ONLY with valid JSON of the form {"correct": true} or {"correct": false}. If false, explain why. '
         )
@@ -341,7 +342,7 @@ async def test_ask_respects_parent_context(
     handle = await tm.ask(
         "What date was the conversation referenced in the parent context?",
         _return_reasoning_steps=True,
-        parent_chat_context=parent_ctx,
+        _parent_chat_context=parent_ctx,
     )
     answer, steps = await handle.result()
 
@@ -473,8 +474,8 @@ async def test_ask_requests_clarification_when_context_missing(
     handle = await tm.ask(
         original_user_query,
         _return_reasoning_steps=True,
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
     )
 
     # Ensure at least one clarification was requested

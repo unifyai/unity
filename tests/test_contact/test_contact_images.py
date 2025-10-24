@@ -103,7 +103,7 @@ async def test_update_contact_from_image(contact_manager_scenario) -> None:
     )
 
     # Seed the live-images mapping onto the initial user message
-    images = {"[0:5]": ih}
+    images = {"[11:22]": ih}
 
     # Instruct the model to add the person from the image into contacts
     user_msg = "please add this person to the contact list"
@@ -115,7 +115,7 @@ async def test_update_contact_from_image(contact_manager_scenario) -> None:
     matches = cm._filter_contacts(
         filter="email_address == 'david.smith@gmail.com'",
         limit=1,
-    )
+    )["contacts"]
     assert matches, "Expected contact to be created from image details"
     c = matches[0]
     assert (c.first_name or "").lower() == "david"

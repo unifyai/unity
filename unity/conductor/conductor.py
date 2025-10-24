@@ -49,9 +49,10 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
+from ..constants import is_semantic_cache_enabled
 
 
-class Conductor:
+class Conductor(BaseConductor):
     """
     Top-level façade that *can* own a maximum of *one* live plan at a time and exposes two
     different tool surfaces which include the knowledge, task list, contacts, and transcript histories:
@@ -86,6 +87,7 @@ class Conductor:
             description: A detailed description of the hypothetical scenario to simulate.
             log_events: Whether to log ManagerMethod events to the EventBus.
         """
+        super().__init__()
         self._log_events = log_events
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
@@ -162,8 +164,6 @@ class Conductor:
         self._active_task = None  # type: ignore
 
         # These two dicts are rebuilt lazily before every ask/request
-        self._passive_tools: Dict[str, Callable] = {}
-        self._active_tools: Dict[str, Callable] = {}
         """Re-compute passive / active tool maps based on current active task."""
 
         # -------- base passive helpers -------------------------------- #
@@ -192,7 +192,7 @@ class Conductor:
             _plan_ask_proxy.__name__ = "_ask_plan_call_"
             passive[_plan_ask_proxy.__name__] = _plan_ask_proxy
 
-        self._passive_tools = passive
+        self.add_tools("ask", passive)
 
         # -------- build active helpers (passive + writers) ------------ #
 
@@ -282,7 +282,7 @@ class Conductor:
             else:
                 active[exec_key] = _wrap_and_track(_orig)  # type: ignore[arg-type]
 
-        self._active_tools = active
+        self.add_tools("request", active)
 
     # ------------------------------------------------------------------ #
     #  Public API                                                        #
@@ -295,10 +295,10 @@ class Conductor:
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: list[dict] | None = None,  # Unused – synthetic
+        _parent_chat_context: list[dict] | None = None,  # Unused – synthetic
         _requests_clarification: bool = False,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
         rolling_summary_in_prompts: Optional[bool] = None,
     ):
@@ -318,15 +318,15 @@ class Conductor:
                 question=text,
             )
 
-        tools: Dict[str, Callable] = dict(self._passive_tools)
+        tools: Dict[str, Callable] = dict(self.get_tools("ask"))
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if _clarification_up_q is not None or _clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
+                if _clarification_up_q is None or _clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                await _clarification_up_q.put(question)
+                return await _clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
 
@@ -346,15 +346,24 @@ class Conductor:
             build_ask_prompt(tools, include_activity=include_activity),
         )
 
+        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        # When semantic cache is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
+        if use_semantic_cache in ("read", "both"):
+            tool_policy = None
+        else:
+            tool_policy = lambda i, _: ("required", _) if i < 1 else ("auto", _)
+
         handle = start_async_tool_loop(
             client,
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
             # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
-            tool_policy=lambda i, _: ("required", _) if i < 1 else ("auto", _),
+            tool_policy=tool_policy,
+            semantic_cache=use_semantic_cache,
+            semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
@@ -431,9 +440,9 @@ class Conductor:
         *,
         _return_reasoning_steps: bool = False,
         _log_tool_steps: bool = True,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
         rolling_summary_in_prompts: Optional[bool] = None,
     ):
@@ -454,15 +463,15 @@ class Conductor:
                 request=text,
             )
 
-        tools: Dict[str, Callable] = dict(self._active_tools)
+        tools: Dict[str, Callable] = dict(self.get_tools("request"))
 
-        if clarification_up_q is not None or clarification_down_q is not None:
+        if _clarification_up_q is not None or _clarification_down_q is not None:
 
             async def request_clarification(question: str) -> str:
-                if clarification_up_q is None or clarification_down_q is None:
+                if _clarification_up_q is None or _clarification_down_q is None:
                     raise RuntimeError("Clarification queues missing.")
-                await clarification_up_q.put(question)
-                return await clarification_down_q.get()
+                await _clarification_up_q.put(question)
+                return await _clarification_down_q.get()
 
             tools["request_clarification"] = request_clarification
 
@@ -487,7 +496,7 @@ class Conductor:
             text,
             tools,
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
             # Hide Actor.act and TaskScheduler.execute while a session is active
             tool_policy=self._mask_act_execute_policy(),

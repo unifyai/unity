@@ -43,6 +43,7 @@ class SecretManager(BaseSecretManager):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         # Resolve context and construct a single-table store
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
@@ -64,7 +65,7 @@ class SecretManager(BaseSecretManager):
         self._provision_storage()
 
         # Public tools
-        self._ask_tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
                 self._filter_secrets,
@@ -73,7 +74,8 @@ class SecretManager(BaseSecretManager):
                 include_class_name=False,
             ),
         }
-        self._update_tools: Dict[str, Callable] = {
+        self.add_tools("ask", ask_tools)
+        update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.ask,
                 self._create_secret,
@@ -82,6 +84,7 @@ class SecretManager(BaseSecretManager):
                 include_class_name=False,
             ),
         }
+        self.add_tools("update", update_tools)
 
         # .env sync: create file if missing and backfill existing secrets as KEY=VALUE
         try:
@@ -416,9 +419,9 @@ class SecretManager(BaseSecretManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         # First, replace any known raw secret values with placeholders
@@ -430,8 +433,8 @@ class SecretManager(BaseSecretManager):
         client = self._new_llm_client("gpt-5@openai")
 
         # Build tools for read-only inspection
-        tools = dict(self._ask_tools)
-        if clarification_up_q is not None and clarification_down_q is not None:
+        tools = dict(self.get_tools("ask"))
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 await EVENT_BUS.publish(
@@ -462,8 +465,8 @@ class SecretManager(BaseSecretManager):
                 )
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -479,7 +482,7 @@ class SecretManager(BaseSecretManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=self._default_ask_tool_policy,
             preprocess_msgs=inject_broader_context,
             handle_cls=(
@@ -505,9 +508,9 @@ class SecretManager(BaseSecretManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         # First, replace any known raw secret values with placeholders
@@ -518,8 +521,8 @@ class SecretManager(BaseSecretManager):
 
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._update_tools)
-        if clarification_up_q is not None and clarification_down_q is not None:
+        tools = dict(self.get_tools("update"))
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 await EVENT_BUS.publish(
@@ -550,8 +553,8 @@ class SecretManager(BaseSecretManager):
                 )
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -566,7 +569,7 @@ class SecretManager(BaseSecretManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
@@ -682,7 +685,7 @@ class SecretManager(BaseSecretManager):
             use a column name like ``"description"`` to search over secret descriptions.
             When None or empty, returns most-recent rows.
         k : int, default 10
-            Maximum number of results to return.
+            Maximum number of results to return. Must be <= 1000.
 
         Returns
         -------
@@ -726,7 +729,7 @@ class SecretManager(BaseSecretManager):
         offset : int, default 0
             Zero-based index of the first result to include.
         limit : int, default 100
-            Maximum number of rows to return.
+            Maximum number of rows to return. Must be <= 1000.
 
         Returns
         -------

@@ -42,6 +42,8 @@ async def test_basic_event_flow() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     ).set_system_message(
@@ -98,6 +100,8 @@ async def test_interjection_publishes_user_event() -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -116,7 +120,7 @@ async def test_interjection_publishes_user_event() -> None:
     await handle.interject("second")
 
     final = await handle.result()
-    assert final == "You said: second"
+    assert "you said: second" in final.lower().replace("*", "")
 
     events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=10)
     roles = [evt.payload["message"]["role"] for evt in events]

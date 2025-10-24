@@ -15,7 +15,7 @@ from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHan
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.common.tool_spec import ToolSpec
 from .base import BaseConversationManagerHandle
-from .new_events import NotificationInjectedEvent
+from .new_events import NotificationInjectedEvent, NotificationUnpinnedEvent
 import logging
 
 T = TypeVar("T", bound=[BaseModel, Enum])
@@ -86,7 +86,9 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
         # _filter_messages is synchronous, so we run it in a thread to avoid blocking.
         def _fetch_from_transcript():
-            return self._tm._filter_messages(filter=filter_expr, limit=max_messages)
+            return self._tm._filter_messages(filter=filter_expr, limit=max_messages)[
+                "messages"
+            ]
 
         try:
             # Await the thread-based call
@@ -143,6 +145,8 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         content: str,
         *,
         source: str = "system",
+        interjection_id: Optional[str] = None,
+        pinned: bool = False,
     ) -> dict:
         """
         Sends a notification to the live conversation by publishing an event.
@@ -150,11 +154,17 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         if self._stopped:
             return {"status": "error", "message": "Handle is stopped."}
 
+        # Generate ID if not provided
+        if interjection_id is None:
+            interjection_id = str(uuid.uuid4().hex[:12])
+
         # Include target conversation ID so CM knows if the event is for it
         event = NotificationInjectedEvent(
             content=content,
             source=source,
             target_conversation_id=self.conversation_id,
+            interjection_id=interjection_id,
+            pinned=pinned,
         )
         # Publish to unified steering channel (picked up by app:comms:* subscription)
         await self.event_broker.publish(self._steering_channel, event.to_json())
@@ -162,7 +172,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         return {
             "status": "ok",
             "message": "Notification event published.",
-            "notification_id": f"notif_{uuid.uuid4().hex[:8]}",
+            "interjection_id": interjection_id,
         }
 
     # ─────────────────────────────────────────────────────────────
@@ -184,7 +194,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
         ask_start_ts = time.time()
         llm = unify.AsyncUnify(
-            "claude-4-sonnet@anthropic",
+            "claude-4.5-sonnet@anthropic",
             cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
@@ -204,40 +214,98 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         )
 
         system_prompt = f"""
-        You are a sub-agent focused on a single mission: getting the user's answer to a specific question.
+        You are an intelligent sub-agent embedded within a larger conversational system. Your **sole mission** is to determine the user's answer to a *single, specific question* based primarily on the existing conversation history. You must be efficient, accurate, and avoid asking the user if the answer can be reasonably inferred.
 
-        YOUR MISSION: Get the user's answer to: '{question}'
+        ---
+        ### **🎯 YOUR CURRENT MISSION**
+        Determine the user's answer to the question: **'{question}'**
+
         {schema_requirement}
-        YOUR TOOLS:
-        1. `_tool_interject_conversation(text: str)` -> Sends a message to the user. Returns a dictionary with the timestamp of when the message was sent.
-        2. `_tool_get_latest_user_messages(delay: float, since_ts: float)` -> Waits, then checks for new user messages from the transcript.
+        ---
+        ### **🛠️ YOUR TOOLS**
+        1.  `_tool_get_latest_user_messages(delay: float, since_ts: float)` -> Waits `delay` seconds, then fetches recent user messages from the transcript occurring *after* the `since_ts` timestamp. **Always use this first.**
+        2.  `_tool_interject_conversation(text: str)` -> Sends a message *to* the user. Use this **only as a last resort** if the answer cannot be inferred. Returns the timestamp of when the message was sent.
 
-        ### 🏛️ The Golden Rule: Infer, Don't Ask
-        Your primary goal is to create a seamless, human-like conversation by using the information already provided. **DO NOT** ask the user a question if their previous statements already contain a reasonable answer. Your default behavior should be to infer, not to ask for confirmation.
+        ---
+        ### **📜 CORE PRINCIPLES & DECISION PROCESS**
 
-        ### Your Decision-Making Process:
-        1.  **Analyze the Transcript (Mandatory First Step):** Use `_tool_get_latest_user_messages` to review the full conversation history.
-        2.  **Deduce the Answer:** Scrutinize the user's messages. If the transcript contains information that directly or implicitly answers your mission's question, you **MUST** use that information to formulate the final answer.
-        3.  **Provide the Answer:** Once you have deduced the answer, your task is complete. Immediately call `final_answer` with the correct structured response. Do not use any more tools.
-        4.  **Ask Only as a Last Resort:** Only if, after careful analysis, the answer is genuinely missing or the user's intent is truly ambiguous, should you use `_tool_interject_conversation` to ask the user for the necessary information. After asking, use `_tool_get_latest_user_messages` to wait for their reply.
+        **1. 🏛️ The Golden Rule: Analyze History First, Infer Actively.**
+            * **Mandatory First Step:** ALWAYS start by calling `_tool_get_latest_user_messages` to retrieve the relevant conversation history. Analyze the *entire* retrieved transcript carefully.
+            * **Prioritize Recency:** Pay close attention to message timestamps. **More recent user statements generally reflect their current state or intention** and should be weighted more heavily than older, potentially outdated information.
+            * **Identify Corrections:** Actively look for user corrections (phrases like "Actually, I meant...", "Sorry, ignore that...", "No, it should be...", "My mistake, it's..."). **Explicit corrections *override* previous conflicting statements** from the user. They are your strongest signal for the current truth.
+            * **Infer from Implication:** Use common sense and contextual reasoning. If the user's recent statements *clearly imply* the answer to your mission question (even if not stated verbatim), you **MUST** infer the answer. Don't just match keywords; understand the *meaning* in the context of the ongoing conversation.
 
-        ### ✅ Example: Proactive Inference
-        - **Scenario:** The transcript already contains information that answers your question.
-        - **Your Mission:** Extract the answer from the transcript rather than re-asking.
-        - **CORRECT ACTION:** Read the existing messages, identify the answer, and immediately respond with it.
-        - **INCORRECT ACTION:** Asking the user for information they've already provided is redundant and frustrating.
-        - **Key Insight:** Be smart about what's already in the conversation history before polling for new messages.
+        **2. ✅ Provide the Answer Immediately if Found/Inferred.**
+            * If your analysis of the transcript (considering recency and corrections) provides a confident answer to your mission question, your task is **complete**.
+            * Immediately call `final_answer` with the appropriate structured response. **DO NOT use any more tools.**
 
-        **CRITICAL**: As soon as you have a confident answer, either from the initial analysis or from the user's direct reply, you must stop using tools and provide the final answer.
-        - You are in control of the polling loop. Be patient and persistent.
+        **3. ❓ Ask Only When Genuinely Necessary.**
+            * Only if, after thorough analysis of the *latest* relevant messages, the answer is **truly missing** OR there's an **unresolvable ambiguity** (e.g., conflicting statements *of similar recency* with no explicit correction making one clearly dominant), should you proceed to ask the user.
+            * **Formulate a Clear Question:** If you must ask, use `_tool_interject_conversation` to send a concise question that directly addresses the missing information needed for *your specific mission*.
+            * **Wait for Reply:** After asking, use `_tool_get_latest_user_messages` in a loop (with appropriate delays) to wait for the user's response. Analyze their reply using the same principles (recency, corrections).
+            * **Avoid Leading Questions:** Don't ask questions that suggest an answer (e.g., "So you want option B, right?"). Just ask for the specific information needed based on the options available or the nature of the question.
+            * **Do Not Invent Intentions:** Do not infer complex actions or choices (like assuming the user wants to backtrack or cancel) *unless the user explicitly states it* or the context *strongly and unambiguously* implies it. Your primary job is information gathering for *your* question.
+
+        **4. 🛑 Stop When Answer is Acquired.**
+            * As soon as you obtain a confident answer (either through initial inference or after asking and receiving a reply), **immediately stop using tools** and call `final_answer`.
+
+        ---
+        ### **✨ GUIDING EXAMPLES**
+
+        #### **Example 1: Proactive Inference**
+
+        **Scenario:** Your mission is to determine "What is the user's desired product category?" (Options: Electronics, Clothing, Groceries).
+        Expected response format: `{{"category": "Electronics" | "Clothing" | "Groceries"}}`
+
+        **Recent Transcript:**
+        - Agent: "What kind of item are you looking for today?"
+        - User: "I need a new pair of running shoes."
+        - User: "And maybe some athletic socks if you have them."
+
+        **❌ INCORRECT Behavior (Missing Obvious Context):**
+        1.  Call `_tool_interject_conversation("Is that Clothing or something else?")`
+        2.  Wait for response
+            *Problem:* Running shoes and socks clearly fall under "Clothing". Asking explicitly shows a lack of basic reasoning.
+
+        **✅ CORRECT Behavior (Common-Sense Inference):**
+        1.  Call `_tool_get_latest_user_messages` to review transcript.
+        2.  Analyze: "Running shoes" and "athletic socks" are both types of apparel.
+        3.  Apply reasoning: Apparel belongs to the "Clothing" category.
+        4.  Immediately call `final_answer` with `{{"category": "Clothing"}}`.
+            *Result:* Natural conversation flow, demonstrates understanding.
+
+        #### **Example 2: Handling Corrections**
+
+        **Scenario:** Your mission is "What is the user's account type?" (Options: Personal, Business).
+        Expected response format: `{{"account_type": "Personal" | "Business"}}`
+
+        **Recent Transcript:**
+        - User (earlier): "I need help with my business account."
+        - Agent: "Okay, looking at your business account..."
+        - User (latest): "**Actually, wait, no, sorry**, this is for my **personal** account. My mistake."
+
+        **❌ INCORRECT Behavior:**
+        1.  Analyze transcript. See "business account". See "personal account".
+        2.  LLM gets confused by conflicting info.
+        3.  Calls `_tool_interject_conversation("Sorry, is this for your Personal or Business account?")`
+            *Problem:* Fails to recognize the explicit correction ("Actually, wait, no, sorry...") and prioritize the latest statement defining the correct context.
+
+        **✅ CORRECT Behavior:**
+        1.  Analyze transcript using `_tool_get_latest_user_messages`.
+        2.  Identify "Actually, wait, no, sorry..." as an explicit correction signal.
+        3.  Identify "...this is for my **personal** account" as the latest, superseding information.
+        4.  Immediately call `final_answer` with `{{"account_type": "Personal"}}`.
+            *Result:* Correctly handles the user's change of mind without unnecessary questions.
+
+        ---
+        ### **🚨 CRITICAL FINAL STEP**
         {final_requirement}
 
-        ### Additional Considerations:
-        1.  **Timing is crucial.** Do not use tools unless you are absolutely sure the user hasn't already answered your question.
-        2.  **Stay focused.** As soon as you have an answer, provide it and stop using tools.
-        3.  **Be respectful.** If the user is confused, use `_tool_interject_conversation` to ask follow-up questions to help them understand.
-        4.  **Follow the schema.** If a Pydantic model is provided, your final response MUST be a JSON object that strictly conforms to the schema.
-        Do not add any extra keys or commentary.
+        ---
+        ### **⚙️ Operational Notes:**
+        * Use the `since_ts` parameter in `_tool_get_latest_user_messages` effectively, especially after you've sent a message, to only poll for *new* replies. The timestamp is returned by `_tool_interject_conversation`.
+        * Be patient when polling for user replies. Use reasonable delays (e.g., 3-7 seconds).
+        * Adhere strictly to the required `response_format` if one is specified. No extra text or explanations in the final JSON.
         """
         llm.set_system_message(system_prompt)
 
@@ -344,9 +412,55 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         handle.result = _wrapped_result
         return handle
 
-    async def interject(self, message: str) -> None:
-        """A simplified interjection that sends a notification."""
-        await self.send_notification(message, source="interjection")
+    async def interject(
+        self,
+        message: str,
+        *,
+        pinned: bool = False,
+        interjection_id: Optional[str] = None,
+    ) -> dict:
+        """
+        Send an interjection to the conversation.
+
+        Args:
+            message: The message content to inject
+            pinned: If True, the interjection persists for the entire session
+            interjection_id: Optional explicit ID (auto-generated if not provided)
+
+        Returns:
+            Dict with status and the interjection_id
+        """
+        return await self.send_notification(
+            message,
+            source="interjection",
+            interjection_id=interjection_id,
+            pinned=pinned,
+        )
+
+    async def unpin_interjection(self, interjection_id: str) -> dict:
+        """
+        Unpin a previously pinned interjection.
+
+        Args:
+            interjection_id: The ID of the interjection to unpin
+
+        Returns:
+            Dict with status indicating success
+        """
+        if self._stopped:
+            return {"status": "error", "message": "Handle is stopped."}
+
+        event = NotificationUnpinnedEvent(
+            interjection_id=interjection_id,
+            target_conversation_id=self.conversation_id,
+        )
+        await self.event_broker.publish(self._steering_channel, event.to_json())
+
+        return {
+            "status": "ok",
+            "message": f"Unpin request sent for interjection {interjection_id}",
+            "interjection_id": interjection_id,
+        }
 
     def stop(self, reason: Optional[str] = None) -> str:
         """Stops the handle."""

@@ -7,9 +7,10 @@ from unity.image_manager.utils import make_solid_png_base64
 import pytest
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import Message
 from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
+from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, AnnotatedImageRef
+from unity.contact_manager.types.contact import Contact
 
 
 PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
@@ -32,21 +33,30 @@ def test_get_images_for_message_returns_metadata_only_tm():
         ],
     )
 
-    # Log a message that references the image via images mapping
-    msg = Message(
-        medium="whatsapp_call",
-        sender_id=101,
-        receiver_ids=[202],
-        timestamp=datetime.now(timezone.utc),
-        content="Video conference: screen looks one colour",
-        exchange_id=424242,
-        images={"[0:1]": int(img_id)},
+    # Log a message that references the image via AnnotatedImageRefs
+    exchange_id = 424242
+    tm.log_messages(
+        {
+            "medium": "whatsapp_call",
+            "sender_id": Contact(first_name="Zoe"),
+            "receiver_ids": [Contact(first_name="Alex")],
+            "timestamp": datetime.now(timezone.utc),
+            "content": "Video conference: screen looks one colour",
+            "exchange_id": exchange_id,
+            "images": AnnotatedImageRefs.model_validate(
+                [
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(img_id)),
+                        annotation="blue screen",
+                    ),
+                ],
+            ),
+        },
     )
-    tm.log_messages(msg)
     tm.join_published()
 
     # Fetch message_id back then query image metadata via private tool
-    stored = tm._filter_messages(filter=f"exchange_id == {msg.exchange_id}")
+    stored = tm._filter_messages(filter=f"exchange_id == {exchange_id}")["messages"]
     assert stored and len(stored) == 1
     mid = int(stored[0].message_id)
 
@@ -111,19 +121,26 @@ async def test_ask_can_use_images_for_color_question_tm():
         ],
     )
 
-    # Log message linked to the image – note: keep content suggestive of a VC context
+    # Log message linked to the image – provide Contact objects so contacts are auto-created
     tm.log_messages(
-        Message(
-            medium="whatsapp_call",
-            sender_id=301,  # assume 'Zoe' in external context; ID is fine for this test
-            receiver_ids=[302],
-            timestamp=datetime.now(timezone.utc) - timedelta(days=7),
-            content=(
+        {
+            "medium": "whatsapp_call",
+            "sender_id": Contact(first_name="Zoe"),
+            "receiver_ids": [Contact(first_name="Sam")],
+            "timestamp": datetime.now(timezone.utc) - timedelta(days=7),
+            "content": (
                 "Zoe on video conference: my screen is one colour, what is happening?"
             ),
-            exchange_id=777001,
-            images={"[0:1]": int(img_id)},
-        ),
+            "exchange_id": 777001,
+            "images": AnnotatedImageRefs.model_validate(
+                [
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(img_id)),
+                        annotation="blue screen",
+                    ),
+                ],
+            ),
+        },
     )
     tm.join_published()
 
@@ -168,8 +185,9 @@ async def test_ask_boot_option_and_fourth_item_tm():
     import os
 
     here = os.path.dirname(__file__)
-    grub_path = os.path.join(here, "grub_screen.jpg")
-    wizard_path = os.path.join(here, "wizard_screen.jpg")
+    images_dir = os.path.abspath(os.path.join(here, "..", "images"))
+    grub_path = os.path.join(images_dir, "grub_screen.jpg")
+    wizard_path = os.path.join(images_dir, "wizard_screen.jpg")
     with open(grub_path, "rb") as f:
         grub_bytes = f.read()
     with open(wizard_path, "rb") as f:
@@ -197,20 +215,28 @@ async def test_ask_boot_option_and_fourth_item_tm():
         "and click “Install Ubuntu” (or “Try Ubuntu” if you just want to explore)."
     )
 
-    # Log the walkthrough message with images mapped to spans
+    # Log the walkthrough message with annotated image references
     tm.log_messages(
-        Message(
-            medium="unify_message",
-            sender_id=10,
-            receiver_ids=[20],
-            timestamp=datetime.now(timezone.utc),
-            content=user_message,
-            exchange_id=88001,
-            images={
-                "[52:147]": int(grub_id),
-                "[182:314]": int(wizard_id),
-            },
-        ),
+        {
+            "medium": "unify_message",
+            "sender_id": Contact(first_name="Jamie"),
+            "receiver_ids": [Contact(first_name="Taylor")],
+            "timestamp": datetime.now(timezone.utc),
+            "content": user_message,
+            "exchange_id": 88001,
+            "images": AnnotatedImageRefs.model_validate(
+                [
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(grub_id)),
+                        annotation="GRUB boot menu screenshot for boot selection",
+                    ),
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(wizard_id)),
+                        annotation="Ubuntu installer wizard screenshot",
+                    ),
+                ],
+            ),
+        },
     )
     tm.join_published()
 
@@ -250,8 +276,9 @@ async def test_compare_two_screens_requires_raw_context_tm():
     import os
 
     here = os.path.dirname(__file__)
-    grub_path = os.path.join(here, "grub_screen.jpg")
-    wizard_path = os.path.join(here, "wizard_screen.jpg")
+    images_dir = os.path.abspath(os.path.join(here, "..", "images"))
+    grub_path = os.path.join(images_dir, "grub_screen.jpg")
+    wizard_path = os.path.join(images_dir, "wizard_screen.jpg")
     with open(grub_path, "rb") as f:
         grub_bytes = f.read()
     with open(wizard_path, "rb") as f:
@@ -279,20 +306,28 @@ async def test_compare_two_screens_requires_raw_context_tm():
         "and click “Install Ubuntu” (or “Try Ubuntu” if you just want to explore)."
     )
 
-    # Log the walkthrough message with images mapped to spans
+    # Log the walkthrough message with annotated image references
     tm.log_messages(
-        Message(
-            medium="unify_message",
-            sender_id=10,
-            receiver_ids=[20],
-            timestamp=datetime.now(timezone.utc),
-            content=user_message,
-            exchange_id=99001,
-            images={
-                "[52:147]": int(grub_id),
-                "[182:314]": int(wizard_id),
-            },
-        ),
+        {
+            "medium": "unify_message",
+            "sender_id": Contact(first_name="Jamie"),
+            "receiver_ids": [Contact(first_name="Taylor")],
+            "timestamp": datetime.now(timezone.utc),
+            "content": user_message,
+            "exchange_id": 99001,
+            "images": AnnotatedImageRefs.model_validate(
+                [
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(grub_id)),
+                        annotation="GRUB boot menu screenshot",
+                    ),
+                    AnnotatedImageRef(
+                        raw_image_ref=RawImageRef(image_id=int(wizard_id)),
+                        annotation="Ubuntu installer wizard screenshot",
+                    ),
+                ],
+            ),
+        },
     )
     tm.join_published()
 

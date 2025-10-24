@@ -28,6 +28,8 @@ async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
     """Return a nested async-tool loop *handle* that requests pass-through."""
     inner_client = unify.AsyncUnify(
         endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -78,6 +80,8 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
         """Return a nested handle marked for pass-through with patched interject."""
         inner_client = unify.AsyncUnify(
             endpoint="gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -115,6 +119,8 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
     # Real client; strongly instruct the model to call our delegating tool
     client = unify.AsyncUnify(
         endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -169,6 +175,8 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
     async def _make_inner(counter: list[str]) -> AsyncToolLoopHandle:
         client = unify.AsyncUnify(
             endpoint="gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -212,6 +220,8 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
 
     client = unify.AsyncUnify(
         endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -326,6 +336,8 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
 
     client = unify.AsyncUnify(
         endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -433,6 +445,8 @@ async def test_passthrough_clarification_bubbles_and_can_be_answered(monkeypatch
     # Force a single tool call to spawn the passthrough handle (via instruction to real LLM)
     client = unify.AsyncUnify(
         endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -536,6 +550,8 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
 
     client = unify.AsyncUnify(
         endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -605,6 +621,8 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
     # Inner real client; instruct it to call `sleeper` then finish
     inner_client = unify.AsyncUnify(
         endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -635,6 +653,8 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
     # Outer client; spy wrapper records calls while still hitting the real LLM
     outer_client = unify.AsyncUnify(
         endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

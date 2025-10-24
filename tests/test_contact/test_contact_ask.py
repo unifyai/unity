@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import pytest
 import json
+import re
 from typing import List, Dict, Any, Optional
 
 import unify
@@ -45,18 +46,82 @@ def _llm_judge_contact_retrieval(
         "candidate_answer": candidate_answer,
     }
     if all_contacts_for_context:  # Provide more context to the judge if helpful
+        # Hide system contacts (ids 0 and 1) to match the assistant's own filtering
+        filtered_contacts = [
+            c
+            for c in all_contacts_for_context
+            if getattr(c, "contact_id", None) not in (0, 1)
+        ]
         payload_dict["relevant_contacts_data_for_context"] = [
-            c.model_dump_json() for c in all_contacts_for_context
+            c.model_dump_json() for c in filtered_contacts
         ]
 
     payload = json.dumps(payload_dict, indent=2)
-    result_json = judge.generate(payload)
+    result_text = judge.generate(payload)
 
-    try:
-        verdict = json.loads(result_json)
-        is_correct = verdict.get("correct")
-    except json.JSONDecodeError:
-        is_correct = False  # Failed to parse judge's response
+    # Be tolerant to non-JSON wrappers (markdown fences, extra prose) while
+    # preserving the same semantic contract: a boolean "correct" field decides.
+    def _extract_correct_bool(text: str) -> Optional[bool]:
+        s = (text or "").strip()
+
+        # 1) Direct JSON
+        try:
+            obj = json.loads(s)
+            if isinstance(obj, dict) and isinstance(obj.get("correct"), bool):
+                return obj.get("correct")
+        except Exception:
+            pass
+
+        # 2) Code fences (```json ... ``` or ``` ... ```)
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", s, re.IGNORECASE)
+        if m:
+            inner = m.group(1).strip()
+            try:
+                obj = json.loads(inner)
+                if isinstance(obj, dict) and isinstance(obj.get("correct"), bool):
+                    return obj.get("correct")
+            except Exception:
+                pass
+
+        # 3) First balanced JSON object in the string (best-effort)
+        def _balanced_json_candidates(text_: str):
+            start = None
+            depth = 0
+            for i, ch in enumerate(text_):
+                if ch == "{":
+                    if start is None:
+                        start = i
+                    depth += 1
+                elif ch == "}":
+                    if depth > 0:
+                        depth -= 1
+                        if depth == 0 and start is not None:
+                            yield text_[start : i + 1]
+                            start = None
+
+        for cand in _balanced_json_candidates(s):
+            try:
+                obj = json.loads(cand)
+                if isinstance(obj, dict) and isinstance(obj.get("correct"), bool):
+                    return obj.get("correct")
+            except Exception:
+                continue
+
+        # 4) Loose regex on key:value pairs (e.g., correct: true)
+        m2 = re.search(r"\b\"?correct\"?\s*[:=]\s*(true|false)\b", s, re.IGNORECASE)
+        if m2:
+            return m2.group(1).lower() == "true"
+
+        # 5) Bare booleans (rare, but cheap to support)
+        bare = s.lower()
+        if bare == "true":
+            return True
+        if bare == "false":
+            return False
+        return None
+
+    verdict_bool = _extract_correct_bool(result_text)
+    is_correct = bool(verdict_bool) if verdict_bool is not None else False
 
     assert is_correct is True, assertion_failed(
         f"Answer containing '{expected_answer_fragment}'",
@@ -103,7 +168,12 @@ async def test_ask_semantic_queries(
     candidate_answer, reasoning_steps = await handle.result()
 
     # For better judgment context, fetch all contacts to pass to the LLM judge
-    all_contacts = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts_dict = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts = (
+        all_contacts_dict["contacts"]
+        if isinstance(all_contacts_dict, dict)
+        else all_contacts_dict
+    )
 
     _llm_judge_contact_retrieval(
         question,
@@ -133,12 +203,17 @@ async def test_ask_with_parent_context(
 
     handle = await cm.ask(
         question,
-        parent_chat_context=parent_ctx,
+        _parent_chat_context=parent_ctx,
         _return_reasoning_steps=True,
     )
     candidate_answer, reasoning_steps = await handle.result()
 
-    all_contacts = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts_dict = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts = (
+        all_contacts_dict["contacts"]
+        if isinstance(all_contacts_dict, dict)
+        else all_contacts_dict
+    )
     _llm_judge_contact_retrieval(
         question,
         expected_email,
@@ -168,8 +243,8 @@ async def test_ask_with_clarification(
 
     handle = await cm.ask(
         question,
-        clarification_up_q=clar_up_q,
-        clarification_down_q=clar_down_q,
+        _clarification_up_q=clar_up_q,
+        _clarification_down_q=clar_down_q,
         _return_reasoning_steps=True,
     )
 
@@ -180,7 +255,12 @@ async def test_ask_with_clarification(
     await clar_down_q.put("I mean Alice Wonder.")
 
     candidate_answer, reasoning_steps = await handle.result()
-    all_contacts = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts_dict = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts = (
+        all_contacts_dict["contacts"]
+        if isinstance(all_contacts_dict, dict)
+        else all_contacts_dict
+    )
     _llm_judge_contact_retrieval(
         question + " (after clarifying 'Alice Wonder')",
         expected_phone_after_clarification,
@@ -210,7 +290,12 @@ async def test_ask_interjection(
     await handle.interject(interjected_question)
     candidate_answer, reasoning_steps = await handle.result()
 
-    all_contacts = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts_dict = await asyncio.to_thread(cm._filter_contacts)
+    all_contacts = (
+        all_contacts_dict["contacts"]
+        if isinstance(all_contacts_dict, dict)
+        else all_contacts_dict
+    )
     _llm_judge_contact_retrieval(
         f"{initial_question} AND {interjected_question}",
         expected_fragment_charlie,

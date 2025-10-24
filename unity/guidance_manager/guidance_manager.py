@@ -32,7 +32,7 @@ from ..common.search_utils import table_search_top_k
 from .base import BaseGuidanceManager
 from .types.guidance import Guidance
 from ..image_manager.image_manager import ImageManager
-from ..image_manager.utils import substring_from_span
+from ..image_manager.types import AnnotatedImageRefs, AnnotatedImageRef
 from ..common.embed_utils import list_private_fields
 from ..common.filter_utils import normalize_filter_expr
 
@@ -43,6 +43,7 @@ class GuidanceManager(BaseGuidanceManager):
     """
 
     def __init__(self, *, rolling_summary_in_prompts: bool = True) -> None:
+        super().__init__()
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
         if not read_ctx:
@@ -66,7 +67,7 @@ class GuidanceManager(BaseGuidanceManager):
         self._REQUIRED_COLUMNS: set[str] = set(self._BUILTIN_FIELDS)
 
         # Public tools
-        self._ask_tools: Dict[str, Callable] = {
+        ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
                 self._filter,
@@ -82,7 +83,8 @@ class GuidanceManager(BaseGuidanceManager):
                 include_class_name=False,
             ),
         }
-        self._update_tools: Dict[str, Callable] = {
+        self.add_tools("ask", ask_tools)
+        update_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self.ask,
                 self._add_guidance,
@@ -93,7 +95,7 @@ class GuidanceManager(BaseGuidanceManager):
                 include_class_name=False,
             ),
         }
-
+        self.add_tools("update", update_tools)
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Lazy-safe image manager for resolving and attaching images
@@ -113,16 +115,16 @@ class GuidanceManager(BaseGuidanceManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._ask_tools)
-        if clarification_up_q is not None and clarification_down_q is not None:
+        tools = dict(self.get_tools("ask"))
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 await EVENT_BUS.publish(
@@ -153,8 +155,8 @@ class GuidanceManager(BaseGuidanceManager):
                 )
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -179,7 +181,7 @@ class GuidanceManager(BaseGuidanceManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=self._default_ask_tool_policy,
             preprocess_msgs=inject_broader_context,
             handle_cls=(
@@ -205,16 +207,16 @@ class GuidanceManager(BaseGuidanceManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
         client = self._new_llm_client("gpt-5@openai")
 
-        tools = dict(self._update_tools)
-        if clarification_up_q is not None and clarification_down_q is not None:
+        tools = dict(self.get_tools("update"))
+        if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
                 await EVENT_BUS.publish(
@@ -245,8 +247,8 @@ class GuidanceManager(BaseGuidanceManager):
                 )
 
             tools["request_clarification"] = make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
+                _clarification_up_q,
+                _clarification_down_q,
                 on_request=_on_request,
                 on_answer=_on_answer,
             )
@@ -271,7 +273,7 @@ class GuidanceManager(BaseGuidanceManager):
             tools,
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
             preprocess_msgs=inject_broader_context,
         )
@@ -434,11 +436,10 @@ class GuidanceManager(BaseGuidanceManager):
         """Return image metadata (no raw/base64) for images referenced by a guidance row.
 
         Output schema (list of objects):
-        - span: str  → the "[x:y]" span key
         - image_id: int
         - caption: str | None
         - timestamp: str (ISO8601)
-        - substring: str  → text extracted from the guidance content using the span
+        - annotation: str | None  → freeform explanation describing how the image relates to the text
 
         Notes
         -----
@@ -451,29 +452,42 @@ class GuidanceManager(BaseGuidanceManager):
         if not rows:
             return []
         guidance_row = rows[0]
-        img_map = guidance_row.images or {}
-        if not img_map:
+        refs: AnnotatedImageRefs = (
+            guidance_row.images or AnnotatedImageRefs.model_validate([])
+        )
+        items = list(getattr(refs, "root", refs))
+        if not items:
             return []
-        image_ids = [int(v) for v in img_map.values()]
+        # Resolve handles for all referenced ids
+        image_ids: List[int] = []
+        annotations_by_id: Dict[int, List[str]] = {}
+        for r in items:
+            if not isinstance(r, AnnotatedImageRef):
+                continue
+            iid = int(r.raw_image_ref.image_id)
+            image_ids.append(iid)
+            annotations_by_id.setdefault(iid, []).append(str(r.annotation))
+        # Preserve order while de-duplicating
+        image_ids = list(dict.fromkeys(image_ids))
         handles = self._image_manager.get_images(image_ids)
         by_id = {h.image_id: h for h in handles}
         out: List[Dict[str, Any]] = []
-        for span, img_id in img_map.items():
-            h = by_id.get(int(img_id))
+        for iid in image_ids:
+            h = by_id.get(int(iid))
             if h is None:
                 continue
             try:
                 ts_str = h.timestamp.isoformat()
             except Exception:
                 ts_str = ""
-            substr = substring_from_span(str(guidance_row.content), str(span))
+            annotation_list = annotations_by_id.get(int(h.image_id), [])
+            annotation = annotation_list[0] if annotation_list else None
             out.append(
                 {
-                    "span": str(span),
                     "image_id": int(h.image_id),
                     "caption": h.caption,
                     "timestamp": ts_str,
-                    "substring": substr,
+                    "annotation": annotation,
                 },
             )
         return out
@@ -507,8 +521,7 @@ class GuidanceManager(BaseGuidanceManager):
         if not handles:
             raise ValueError(f"No image found with image_id {image_id}")
         handle = handles[0]
-        sub = await handle.ask(question)
-        answer = await sub.result()
+        answer = await handle.ask(question)
         if not isinstance(answer, str):
             answer = str(answer)
         return answer
@@ -566,8 +579,8 @@ class GuidanceManager(BaseGuidanceManager):
 
         Characteristics
         ---------------
-        - Batches attachment of several images linked via the guidance's span→image mapping.
-        - Returns metadata (spans/substrings) alongside the base64 for each image.
+        - Batches attachment of several images linked via the guidance's image references.
+        - Returns metadata (including collected annotations) alongside the base64 for each image.
         - Useful for multi‑image tasks where the loop should retain visual context.
 
         Parameters
@@ -579,22 +592,28 @@ class GuidanceManager(BaseGuidanceManager):
         -------
         dict
             { "attached_count": int, "images": [ { "meta": {...}, "image": base64 }, ... ] }
-            Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, the
-            list of ``spans`` that referenced this image in the guidance text, and
-            derived ``substrings`` from the guidance content for alignment.
+            Each ``meta`` includes ``image_id``, ``caption``, ``timestamp``, and an ``annotations`` list.
         """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return {"attached_count": 0, "images": []}
         guidance_row = rows[0]
-        img_map = guidance_row.images or {}
-        if not img_map:
+        refs: AnnotatedImageRefs = (
+            guidance_row.images or AnnotatedImageRefs.model_validate([])
+        )
+        items = list(getattr(refs, "root", refs))
+        if not items:
             return {"attached_count": 0, "images": []}
-        unique_ids: List[int] = list(dict.fromkeys(int(v) for v in img_map.values()))
-        spans_by_id: Dict[int, List[str]] = {}
-        for span_key, img_id in img_map.items():
-            iid = int(img_id)
-            spans_by_id.setdefault(iid, []).append(str(span_key))
+        unique_ids: List[int] = []
+        annotations_by_id: Dict[int, List[str]] = {}
+        for r in items:
+            if not isinstance(r, AnnotatedImageRef):
+                continue
+            iid = int(r.raw_image_ref.image_id)
+            unique_ids.append(iid)
+            annotations_by_id.setdefault(iid, []).append(str(r.annotation))
+        # Preserve original appearance order while de-duplicating
+        unique_ids = list(dict.fromkeys(unique_ids))
         if limit is not None:
             try:
                 limit = int(limit)
@@ -611,33 +630,26 @@ class GuidanceManager(BaseGuidanceManager):
                 b64 = base64.b64encode(raw_bytes).decode("utf-8")
             except Exception:
                 continue
-            spans_for_img = spans_by_id.get(int(h.image_id), [])
-            substrings = [
-                substring_from_span(str(guidance_row.content), s) for s in spans_for_img
-            ]
+            annotations = annotations_by_id.get(int(h.image_id), [])
             images.append(
                 {
                     "meta": {
                         "image_id": int(h.image_id),
                         "caption": h.caption,
                         "timestamp": getattr(h.timestamp, "isoformat", lambda: "")(),
-                        "spans": spans_for_img,
-                        "substrings": substrings,
+                        "annotations": annotations,
                     },
                     "image": b64,
                 },
             )
         return {"attached_count": len(images), "images": images}
 
-    # -------------------------- Span helper ---------------------------------
-    # substring_from_span now provided by unity.image_manager.utils
-
     def _add_guidance(
         self,
         *,
         title: Optional[str] = None,
         content: Optional[str] = None,
-        images: Optional[Dict[str, int]] = None,
+        images: Optional[Any] = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
         if not title and not content and not images:
@@ -647,12 +659,15 @@ class GuidanceManager(BaseGuidanceManager):
         g = Guidance(
             title=title or "",
             content=content or "",
-            images=images or {},
+            images=(
+                images if images is not None else AnnotatedImageRefs.model_validate([])
+            ),
             function_ids=function_ids or [],
         )
+        payload = g.to_post_json()
         log = unify.log(
             context=self._ctx,
-            **g.to_post_json(),
+            **payload,
             new=True,
             mutable=True,
         )
@@ -667,7 +682,7 @@ class GuidanceManager(BaseGuidanceManager):
         guidance_id: int,
         title: Optional[str] = None,
         content: Optional[str] = None,
-        images: Optional[Dict[str, int]] = None,
+        images: Optional[Any] = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
         updates: Dict[str, Any] = {}
@@ -676,15 +691,22 @@ class GuidanceManager(BaseGuidanceManager):
         if content is not None:
             updates["content"] = content
         if images is not None:
-            # Validate via model field-validator by constructing minimal model
-            _ = Guidance(title=title or "tmp", content=content or "tmp", images=images)
-            updates["images"] = _.images
+            _ = Guidance(
+                title=title or "tmp",
+                content=content or "tmp",
+                images=(
+                    images
+                    if images is not None
+                    else AnnotatedImageRefs.model_validate([])
+                ),
+            )
+            updates["images"] = _.model_dump(mode="json")["images"]
         if function_ids is not None:
             # Validate via model validator
             _g = Guidance(
                 title=title or "tmp",
                 content=content or "tmp",
-                images=images or {},
+                images=updates.get("images") or AnnotatedImageRefs.model_validate([]),
                 function_ids=function_ids,
             )
             updates["function_ids"] = _g.function_ids
@@ -808,9 +830,19 @@ class GuidanceManager(BaseGuidanceManager):
     ) -> List[Guidance]:
         """Semantic search over guidance rows using shared table helper.
 
-        Returns up to k rows ranked by similarity, backfilled to k when
-        similarity yields fewer rows. Payload is restricted to built‑in
-        fields for efficiency.
+        Parameters
+        ----------
+        references : Dict[str, str] | None, default None
+            Mapping of source expressions to reference text for semantic search.
+        k : int, default 10
+            Maximum number of results to return. Must be <= 1000.
+
+        Returns
+        -------
+        List[Guidance]
+            Up to k rows ranked by similarity, backfilled to k when
+            similarity yields fewer rows. Payload is restricted to built‑in
+            fields for efficiency.
         """
         allowed_fields = list(self._BUILTIN_FIELDS)
         rows = table_search_top_k(
@@ -829,6 +861,24 @@ class GuidanceManager(BaseGuidanceManager):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Guidance]:
+        """
+        Filter guidance records using a boolean Python expression evaluated per row.
+
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python boolean expression evaluated with column names in scope.
+            When None, returns all guidance records.
+        offset : int, default 0
+            Zero-based index of the first result to include.
+        limit : int, default 100
+            Maximum number of records to return. Must be <= 1000.
+
+        Returns
+        -------
+        List[Guidance]
+            Matching guidance records as Guidance models.
+        """
         from_fields = list(self._BUILTIN_FIELDS)
         normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(

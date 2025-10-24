@@ -45,6 +45,8 @@ async def outer_tool() -> AsyncToolLoopHandle:
     # brand‑new LLM client dedicated to the nested conversation
     inner_client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -80,6 +82,8 @@ async def test_nested_async_tool_loop():
     # Outer client that drives the *first* loop
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -175,6 +179,8 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     # 2.  Fire up the *outer* conversational loop
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -264,10 +270,10 @@ async def test_interject_nested_handle(monkeypatch):
     # 2.  Inner tool that waits for the steer via `interject_queue`
     async def slow_topic(
         *,
-        interject_queue: asyncio.Queue[str],
+        _interject_queue: asyncio.Queue[str],
     ) -> str:
         try:
-            new = await asyncio.wait_for(interject_queue.get(), timeout=60)
+            new = await asyncio.wait_for(_interject_queue.get(), timeout=60)
             return f"topic={new}"
         except asyncio.TimeoutError:
             return "topic=cats"
@@ -279,6 +285,8 @@ async def test_interject_nested_handle(monkeypatch):
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -299,6 +307,8 @@ async def test_interject_nested_handle(monkeypatch):
     # 4.  Top-level loop – assistant must use `_interject_…`
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -455,11 +465,11 @@ async def test_clarification_nested_handle():
     # ── inner tool that *requires* clarification ─────────────────────────
     async def ask_colour(
         *,
-        clarification_up_q: asyncio.Queue[str],
-        clarification_down_q: asyncio.Queue[str],
+        _clarification_up_q: asyncio.Queue[str],
+        _clarification_down_q: asyncio.Queue[str],
     ) -> str:
-        await clarification_up_q.put("Which colour?")
-        colour = await clarification_down_q.get()
+        await _clarification_up_q.put("Which colour?")
+        colour = await _clarification_down_q.get()
         exec_log.append(colour)
         return f"Chose {colour}"
 
@@ -471,6 +481,8 @@ async def test_clarification_nested_handle():
         up_q, down_q = asyncio.Queue(), asyncio.Queue()
         inner_client = unify.AsyncUnify(
             "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -482,8 +494,8 @@ async def test_clarification_nested_handle():
 
         async def _ask_colour_wrapped() -> str:  # type: ignore[valid-type]
             return await ask_colour(
-                clarification_up_q=up_q,
-                clarification_down_q=down_q,
+                _clarification_up_q=up_q,
+                _clarification_down_q=down_q,
             )
 
         _ask_colour_wrapped.__name__ = "ask_colour"
@@ -510,6 +522,8 @@ async def test_clarification_nested_handle():
     # ── top-level loop – the assistant must answer the clar request ——––
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -547,13 +561,13 @@ async def test_notification_nested_handle():
     # ── inner tool that emits progress updates ───────────────────────────
     async def inner_progress(
         *,
-        notification_up_q: asyncio.Queue | None = None,
+        _notification_up_q: asyncio.Queue | None = None,
     ) -> str:
-        if notification_up_q is None:
+        if _notification_up_q is None:
             raise RuntimeError("notification queue missing")
-        await notification_up_q.put({"message": "Inner loop: preparing widget"})
+        await _notification_up_q.put({"message": "Inner loop: preparing widget"})
         await asyncio.sleep(0)
-        await notification_up_q.put({"message": "Inner loop: halfway"})
+        await _notification_up_q.put({"message": "Inner loop: halfway"})
         return "✅ inner finished"
 
     inner_progress.__name__ = "inner_progress"
@@ -562,10 +576,12 @@ async def test_notification_nested_handle():
     # ── outer tool launches a nested loop and bridges progress via parent's queue ──
     async def outer_tool(
         *,
-        notification_up_q: asyncio.Queue | None = None,
+        _notification_up_q: asyncio.Queue | None = None,
     ) -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -576,7 +592,7 @@ async def test_notification_nested_handle():
         )
 
         async def inner_bridge() -> str:
-            return await inner_progress(notification_up_q=notification_up_q)
+            return await inner_progress(_notification_up_q=_notification_up_q)
 
         return start_async_tool_loop(
             client=inner_client,
@@ -590,6 +606,8 @@ async def test_notification_nested_handle():
     # ── top-level loop – must surface progress then finish ─────────────────
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -655,6 +673,8 @@ async def test_pause_nested_loop_calls_pause():
     # outer conversation --------------------------------------------------
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -749,6 +769,8 @@ async def test_resume_nested_loop_calls_resume():
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -841,6 +863,8 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     # ── 3.  Kick off outer loop ───────────────────────────────────────────
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -897,6 +921,8 @@ async def test_handle_result_blocks_until_resume():
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -979,6 +1005,8 @@ async def test_dynamic_handle_public_method():
     # ── outer conversation that uses `long_compute` ────────────────────
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -1043,6 +1071,8 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -1073,6 +1103,8 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -1124,6 +1156,8 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -1153,6 +1187,8 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -1205,6 +1241,8 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = unify.AsyncUnify(
             "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
             cache=SETTINGS.UNIFY_CACHE,
             traced=SETTINGS.UNIFY_TRACED,
         )
@@ -1240,6 +1278,8 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )

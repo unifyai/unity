@@ -14,6 +14,7 @@ from typing import (
     Union,
     Type,
     TYPE_CHECKING,
+    Literal,
 )
 from ..constants import LOGGER
 from .llm_helpers import short_id
@@ -22,7 +23,7 @@ from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
 
 if TYPE_CHECKING:
-    from ..image_manager.image_manager import ImageHandle
+    from ..image_manager.types.image_refs import ImageRefs
 
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -143,6 +144,21 @@ class SteerableToolHandle(SteerableHandle):
         This looks up the down-queue for the given call and pushes the answer.
         Falls through silently if the mapping is missing (tool may have finished).
         """
+
+    def get_history(self) -> list[dict]:
+        """Returns the conversational history of the loop.
+
+        Default implementation returns empty list. Subclasses with
+        LLM clients should override to return the full conversation
+        history including tool calls and reasoning.
+
+        Returns
+        -------
+        list[dict]
+            List of message dicts in the format used by the LLM client.
+            For handles without an LLM client, returns an empty list.
+        """
+        return []
 
 
 class AsyncToolLoopHandle(SteerableToolHandle):
@@ -508,10 +524,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         message: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
-        images: dict | None = None,
+        image_refs: list | None = None,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
-        LOGGER.info(f"💬 [{_label}] Interject requested: {message}")
+        LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
         # No delegate forwarding – outer loop remains in control.
         # Record user-visible immediately
         self._append_user_visible_user(message, parent_chat_context_cont)
@@ -523,7 +539,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             {
                 "message": message,
                 "parent_chat_context_cont": parent_chat_context_cont,
-                "images": images,
+                "image_refs": image_refs,
             },
             ("content", "message"),
         )
@@ -533,9 +549,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             {
                 "message": message,
                 "parent_chat_context_continuted": parent_chat_context_cont,
-                "images": images,
+                "image_refs": image_refs,
             }
-            if parent_chat_context_cont is not None or images is not None
+            if parent_chat_context_cont is not None or image_refs is not None
             else message
         )
         self._early_interjects.append(payload)
@@ -629,6 +645,24 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             # When callers cancel the OUTER loop without a delegate, return a stable notice.
             return _stopped_notice
 
+    def get_history(self) -> list[dict]:
+        """Returns the full LLM conversation history including tool calls and reasoning.
+
+        This provides access to the rich internal trace of the async tool loop,
+        including assistant reasoning, tool calls, and tool outputs. This is
+        particularly valuable for understanding the
+        decision-making process within the loop.
+
+        Returns
+        -------
+        list[dict]
+            The complete message history from the LLM client, or empty list
+            if no client is available.
+        """
+        if self._client is not None:
+            return self._client.messages
+        return []
+
     # ── bottom-up event APIs ---------------------------------------------------
     @functools.wraps(SteerableToolHandle.next_clarification, updated=())
     async def next_clarification(self) -> dict:
@@ -699,9 +733,9 @@ def start_async_tool_loop(
     response_format: Optional[Any] = None,
     max_parallel_tool_calls: Optional[int] = None,
     handle_cls: Optional[Type[AsyncToolLoopHandle]] = None,
-    semantic_cache: Optional[bool] = False,
+    semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
-    images: Optional[dict[str, "ImageHandle"]] = None,
+    images: Optional["ImageRefs"] = None,
     evented: Optional[bool] = None,
 ) -> AsyncToolLoopHandle:
     """

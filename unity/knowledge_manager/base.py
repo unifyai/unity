@@ -14,15 +14,16 @@ agent) can pause, resume, interject or stop the LLM reasoning loop.
 from __future__ import annotations
 
 import asyncio
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
+class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     *Public* contract that every concrete **knowledge-manager** must satisfy.
 
@@ -33,7 +34,7 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
     • `update`   — create, amend, delete or merge knowledge via
       natural‑language instructions
     • `refactor` — restructure the schema across knowledge tables (and related
-      contact tables) to improve clarity, normalisation and efficiency
+      tables where applicable) to improve clarity, normalisation and efficiency
 
     Implementations may talk to a real vector store, an HTTP API, Unity logs,
     an in‑memory mock or a simulated LLM – but they **all** expose exactly the
@@ -49,9 +50,9 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:  # noqa: D401 – full docstring below
         """
         Apply a **mutation** request – create, edit, delete or merge knowledge –
@@ -81,12 +82,12 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
             When *True*, :pyfunc:`SteerableToolHandle.result` returns a tuple
             ``(answer, messages)`` where *messages* is the invisible
             chain‑of‑thought exchanged with the LLM.
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             **Read‑only** conversation context to prepend to the tool loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Optional duplex channels enabling interactive follow‑ups. If
-            supplied, the LLM may push a question onto *clarification_up_q* and
-            must read the human's answer from *clarification_down_q*.
+            supplied, the LLM may push a question onto *_clarification_up_q* and
+            must read the human's answer from *_clarification_down_q*.
 
         Returns
         -------
@@ -101,9 +102,9 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing knowledge** (read‑only) and obtain a live
@@ -148,14 +149,14 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
             yields ``(answer, messages)`` – the first element is the
             assistant's reply, the second the hidden chain‑of‑thought (useful
             for debugging).
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             Optional read‑only chat history that will be provided to all nested
             tool calls.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Duplex channels enabling interactive clarification questions. If
             supplied the LLM may push a follow‑up question onto
-            *clarification_up_q* and must read the human's answer from
-            *clarification_down_q*.
+            *_clarification_up_q* and must read the human's answer from
+            *_clarification_down_q*.
 
         Returns
         -------
@@ -170,14 +171,14 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        **Restructure the schema** of *all* knowledge tables **and** the
-        contacts table so that data are de‑duplicated, normalised and stored as
-        clearly and efficiently as possible.
+        **Restructure the schema** of all knowledge tables (and any directly
+        related tables within the same store) so that data are de‑duplicated,
+        normalised and stored as clearly and efficiently as possible.
 
         Do *not* request *how* to perform the refactor; state the high‑level
         intent in natural language and allow the `refactor` method to determine
@@ -191,8 +192,8 @@ class BaseKnowledgeManager(ABC, metaclass=SingletonABCMeta):
             names and introduce surrogate primary keys where appropriate."* –
             the low‑level operations are carried out by the LLM via the exposed
             table/column‑manipulation tools.
-        _return_reasoning_steps, parent_chat_context,
-        clarification_up_q, clarification_down_q
+        _return_reasoning_steps, _parent_chat_context,
+        _clarification_up_q, _clarification_down_q
             Behaviour identical to :py:meth:`update`.
 
         Returns

@@ -26,7 +26,11 @@ async def test_all_llm_kwargs_are_forwarded_verbatim(monkeypatch):
     accept_any.__name__ = "accept_any"
     accept_any.__qualname__ = "accept_any"
 
-    client = unify.AsyncUnify("gpt-5@openai")
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+    )
     # Instruct the real model to call `accept_any` once with the provided fields
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `accept_any` "

@@ -89,13 +89,16 @@ async def test_ask_tool_selection_real_loop(monkeypatch):
         calls["map"] += 1
         return {"base_url": None, "results": []}
 
-    # Override the tools exposed to the tool loop to our dummies.
-    ws._ask_tools = {
-        "search": dummy_search,
-        "extract": dummy_extract,
-        "crawl": dummy_crawl,
-        "map": dummy_map,
-    }
+    # Override the tools exposed to the tool loop to our dummies by replacing the 'ask' tool mapping.
+    ws.add_tools(
+        "ask",
+        {
+            "search": dummy_search,
+            "extract": dummy_extract,
+            "crawl": dummy_crawl,
+            "map": dummy_map,
+        },
+    )
 
     handle = await ws.ask("begin")
     final = await asyncio.wait_for(handle.result(), timeout=180)
@@ -188,7 +191,7 @@ async def test_ask_forwards_parent_context_and_preprocess(monkeypatch):
         {"role": "user", "content": "Context A."},
         {"role": "assistant", "content": "Context B."},
     ]
-    handle = await ws.ask("hello", parent_chat_context=parent_ctx)
+    handle = await ws.ask("hello", _parent_chat_context=parent_ctx)
     res = await handle.result()
 
     assert res == "ok"
@@ -229,7 +232,9 @@ def test_web_searcher_clear_initialises_and_resets_caches():
     assert hasattr(ws, "_last_maps") and ws._last_maps == {}
 
     # Tools should still be provisioned
-    assert {"search", "extract", "crawl", "map"}.issubset(set(ws._ask_tools.keys()))
+    assert {"search", "extract", "crawl", "map"}.issubset(
+        set(ws.get_tools("ask").keys()),
+    )
 
 
 @pytest.mark.unit

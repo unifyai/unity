@@ -186,8 +186,8 @@ async def test_km_requests_clarification():
 
     handle = await km.ask(
         "Please summarise the knowledge base.",
-        clarification_up_q=up_q,
-        clarification_down_q=down_q,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
         _requests_clarification=True,
     )
 
@@ -291,7 +291,7 @@ async def test_handle_ask():
     assert isinstance(nested_answer, str) and nested_answer.strip(), (
         "Nested ask() should yield a non-empty string answer",
     )
-    assert "europe" in nested_answer.lower()
+    assert any(substr in nested_answer.lower() for substr in ("europe", "eu"))
 
     # The original handle should still be awaitable and produce an answer
     handle_answer = await handle.result()

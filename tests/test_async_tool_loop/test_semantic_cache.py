@@ -8,7 +8,8 @@ from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common._async_tool import semantic_cache as sc
 from tests.helpers import _handle_project
 from unity.common._async_tool.semantic_cache import _Config, SemanticCacheResult
-from unity.common.tool_spec import read_only, normalise_tools
+from unity.common.tool_spec import read_only, normalise_tools, manager_tool
+from unity.common.state_managers import BaseStateManager
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +26,12 @@ def _patch_semantic_cache_config(monkeypatch):
 
 
 def create_client():
-    return unify.AsyncUnify("gpt-5@openai", cache=False)
+    return unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=False,
+    )
 
 
 @pytest.mark.asyncio
@@ -40,7 +46,7 @@ async def test_single_tool_exact_match():
         client,
         "Hello, how are you? call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
 
@@ -64,7 +70,7 @@ async def test_single_tool_exact_match():
         client,
         "Hello, how are you? call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
 
@@ -95,7 +101,7 @@ async def test_single_tool_no_exact_match():
         client,
         "Call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
 
@@ -119,7 +125,7 @@ async def test_single_tool_no_exact_match():
         client,
         "Could you please call the say_hello tool?",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
 
@@ -155,7 +161,7 @@ async def test_tool_with_different_arguments():
         client,
         "Can you search for a contact with the name 'John Doe'?",
         tools={"search_contact": search_contact},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
     assert "John Doe" in res
@@ -166,7 +172,7 @@ async def test_tool_with_different_arguments():
         client,
         "Can you look for a contact with the name 'Jane Doe'?",
         tools={"search_contact": search_contact, "find_contact": find_contact},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
 
@@ -189,12 +195,13 @@ async def test_tool_is_re_called():
         _call_count += 1
         return ret
 
+    query = "How is the weather? Call the current_weather tool and reply with the result only"
     client = create_client()
     handle = start_async_tool_loop(
         client,
-        "How is the weather?",
+        query,
         tools={"current_weather": current_weather},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
     assert "The weather is sunny" in res
@@ -205,9 +212,9 @@ async def test_tool_is_re_called():
     client = create_client()
     handle = start_async_tool_loop(
         client,
-        "How is the weather?",
+        query,
         tools={"current_weather": current_weather},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
     assert "cloudy" in res.lower()
@@ -279,6 +286,7 @@ async def test_prune_tools():
             "say_goodbye": say_goodbye,
             "find_contact": find_contact,
         },
+        semantic_cache="write",
     )
 
     await handle.result()
@@ -305,7 +313,7 @@ async def test_tool_call_signature_updated():
         client,
         "Call the say_hello tool and reply with the result only",
         tools={"say_hello": say_hello},
-        semantic_cache=True,
+        semantic_cache="write",
     )
     res = await handle.result()
     assert "Hello from Unity!" in res
@@ -320,7 +328,7 @@ async def test_tool_call_signature_updated():
         client,
         "Call the say_hello tool with the argument 'Unify' and reply with the result only",
         tools={"say_hello": _say_hello_new},
-        semantic_cache=True,
+        semantic_cache="read",
     )
     res = await handle.result()
     assert "Hello from Unify!" in res
@@ -436,3 +444,126 @@ async def test_get_dummy_tool_parse_arguments_cached():
     assert trajectory[0]["name"] == "echo"
     assert trajectory[0]["result"] == "Hello!"
     assert trajectory[0]["result_status"] == "cached"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_semantic_cache_recursive(monkeypatch):
+    class ManagerC(BaseStateManager):
+        @read_only
+        def _get_answer(self):
+            return "I KNOW!"
+
+        def __init__(self):
+            super().__init__()
+            self.add_tools(
+                "ask",
+                {
+                    "get_answer": self._get_answer,
+                },
+            )
+
+        @manager_tool
+        async def ask(self, text):
+            client = create_client()
+            client.set_system_message(
+                "Whatever the user asks, call the get_answer tool and reply with the result only",
+            )
+            handle = start_async_tool_loop(
+                client,
+                text,
+                tools=self.get_tools("ask"),
+                semantic_cache="write",
+                semantic_cache_namespace="ManagerC.ask",
+            )
+            res = await handle.result()
+            return res
+
+    class ManagerB(BaseStateManager):
+        def __init__(self):
+            super().__init__()
+            self.manager_c = ManagerC()
+            self.add_tools(
+                "ask",
+                {
+                    "ManagerC_ask": self.manager_c.ask,
+                },
+            )
+
+        @manager_tool
+        async def ask(self, text):
+            client = create_client()
+            client.set_system_message(
+                "Whatever the user asks, call the ManagerC.ask tool and reply with the result only",
+            )
+            handle = start_async_tool_loop(
+                client,
+                text,
+                tools=self.get_tools("ask"),
+                semantic_cache="write",
+                semantic_cache_namespace="ManagerB.ask",
+            )
+            res = await handle.result()
+            return res
+
+    class ManagerA(BaseStateManager):
+        def __init__(self):
+            super().__init__()
+            self.manager_b = ManagerB()
+            self.add_tools(
+                "ask",
+                {
+                    "ManagerB_ask": self.manager_b.ask,
+                },
+            )
+
+        @manager_tool
+        async def ask(self, text):
+            client = create_client()
+            client.set_system_message(
+                "You are a simulated manager, "
+                "whatever the user asks, call the ManagerB.ask tool and reply with the result only",
+            )
+            handle = start_async_tool_loop(
+                client,
+                text,
+                tools={"ManagerB_ask": self.manager_b.ask},
+                semantic_cache="write",
+                semantic_cache_namespace="ManagerA.ask",
+            )
+            res = await handle.result()
+            return res
+
+    # Patch _prune_tool_trajectory to return the tool trajectory unchanged
+    def _prune_tool_trajectory(self, user_message, tool_trajectory):
+        return tool_trajectory
+
+    monkeypatch.setattr(
+        sc._SemanticCacheSaver,
+        "_prune_tool_trajectory",
+        _prune_tool_trajectory,
+    )
+
+    query = "What is the answer to the ultimate question of life, the universe, and everything?"
+    manager = ManagerA()
+    await manager.ask(query)
+
+    sc._SEMANTIC_CACHE_SAVER.wait()
+
+    search_result = sc.search_semantic_cache(query, "ManagerA.ask")
+    assert search_result is not None
+    history = await sc._rexecute_tools(
+        search_result.tool_trajectory,
+        normalise_tools(manager.get_tools("ask")),
+    )
+
+    # Walk through the returned tool trajectory, check that the result status is all new
+    def _check_result_status(trajectory):
+        if not isinstance(trajectory, list):
+            return
+        for tool_call in trajectory:
+            if isinstance(tool_call, dict) and "result_status" in tool_call.keys():
+                assert tool_call["result_status"] == "new"
+                _check_result_status(tool_call["result"])
+
+    _check_result_status(history)

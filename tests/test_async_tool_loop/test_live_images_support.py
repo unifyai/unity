@@ -5,6 +5,8 @@ import pytest
 import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
+from unity.common._async_tool.loop_config import LIVE_IMAGES_REGISTRY
+from unity.image_manager.types import RawImageRef, AnnotatedImageRef, ImageRefs
 from tests.helpers import _handle_project, SETTINGS
 
 
@@ -76,20 +78,34 @@ async def test_live_images_helpers_exposed_with_alignment_description(
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message("Reply exactly with the word 'done'.")
 
-    # Message whose first 5 chars are 'Hello' – used to compute substring
+    # Seed registry with a handle for id=42 so helpers can resolve it
+    LIVE_IMAGES_REGISTRY.set(
+        {
+            42: DummyImageHandle(
+                image_id=42,
+                caption="cat on mat",
+                raw_bytes=_solid_png_bytes(),
+            ),
+        },
+    )
+
+    # Provide typed ImageRefs with an annotation
     message_text = "Hello world – please reason over the image if needed."
-    images = {
-        "[0:5]": DummyImageHandle(
-            image_id=42,
-            caption="cat on mat",
-            raw_bytes=_solid_png_bytes(),
-        ),
-    }
+    images = ImageRefs(
+        [
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=42),
+                annotation="greeting span",
+            ),
+        ],
+    )
 
     handle = start_async_tool_loop(
         client=client,
@@ -107,13 +123,12 @@ async def test_live_images_helpers_exposed_with_alignment_description(
         set(names),
     )
 
-    # The overview description should include the span, substring, and caption
+    # The overview description should include the id and caption
     live_tool = next(
         t for t in tools_snapshots[0] if t["function"]["name"] == "live_images_overview"
     )
     desc = live_tool["function"]["description"]
-    assert "span=[0:5]" in desc
-    assert "substring='Hello'" in desc
+    assert "id=42" in desc
     assert "caption='cat on mat'" in desc
 
 
@@ -127,6 +142,8 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -134,13 +151,16 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
         "Call the dynamic helper `ask_image` once for image_id=42 with the question 'What is the dominant color?'. "
         "Then provide a short final answer.",
     )
-    images = {
-        "[0:5]": DummyImageHandle(
-            image_id=42,
-            caption="blue square",
-            raw_bytes=_solid_png_bytes(),
-        ),
-    }
+    LIVE_IMAGES_REGISTRY.set(
+        {
+            42: DummyImageHandle(
+                image_id=42,
+                caption="blue square",
+                raw_bytes=_solid_png_bytes(),
+            ),
+        },
+    )
+    images = ImageRefs([RawImageRef(image_id=42)])
 
     h = start_async_tool_loop(
         client=client,
@@ -171,6 +191,8 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
@@ -178,13 +200,16 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
         "Call the dynamic helper `attach_image_raw` for image_id=99 with note 'please inspect'. "
         "Then reply with exactly 'red'.",
     )
-    images = {
-        "[0:4]": DummyImageHandle(
-            image_id=99,
-            caption="red tile",
-            raw_bytes=_solid_png_bytes(),
-        ),
-    }
+    LIVE_IMAGES_REGISTRY.set(
+        {
+            99: DummyImageHandle(
+                image_id=99,
+                caption="red tile",
+                raw_bytes=_solid_png_bytes(),
+            ),
+        },
+    )
+    images = ImageRefs([RawImageRef(image_id=99)])
 
     handle = start_async_tool_loop(
         client=client,
@@ -245,52 +270,61 @@ async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
 
     client = unify.AsyncUnify(
         "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
 
-    # Message with two "this colour" segments
-    message_text = (
-        "Susan likes this colour but Emily likes this colour, "
-        "which colour does Emily like?"
-    )
-    seg = "this colour"
-    pos1 = message_text.find(seg)
-    assert pos1 >= 0, "first 'this colour' not found"
-    pos2 = message_text.find(seg, pos1 + 1)
-    assert pos2 >= 0, "second 'this colour' not found"
-
     # Two dummy image handles – first for Susan, second for Emily
     susan_id = 201
     emily_id = 202
-    images = {
-        f"[{pos1}:{pos1 + len(seg)}]": DummyImageHandle(
-            image_id=susan_id,
-            caption="red tile",
-            raw_bytes=_solid_png_bytes(),
-        ),
-        f"[{pos2}:{pos2 + len(seg)}]": DummyImageHandle(
-            image_id=emily_id,
-            caption="blue tile",
-            raw_bytes=_solid_png_bytes(),
-        ),
-    }
-    # Instruct model to call ask_image for Emily's span and then answer 'blue'.
+    LIVE_IMAGES_REGISTRY.set(
+        {
+            susan_id: DummyImageHandle(
+                image_id=susan_id,
+                caption="red tile",
+                raw_bytes=_solid_png_bytes(),
+            ),
+            emily_id: DummyImageHandle(
+                image_id=emily_id,
+                caption="blue tile",
+                raw_bytes=_solid_png_bytes(),
+            ),
+        },
+    )
+
+    # Provide typed refs with annotations indicating who is who
+    images = ImageRefs(
+        [
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=susan_id),
+                annotation="Susan this colour",
+            ),
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=emily_id),
+                annotation="Emily this colour",
+            ),
+        ],
+    )
+
+    # Instruct model to call ask_image for Emily's id and then answer 'blue'.
     client.set_system_message(
-        "First, call the dynamic helper `ask_image` on the image aligned to Emily's 'this colour' span. "
-        "Then reply with 'blue'.",
+        "First, call the dynamic helper `ask_image` on image_id=202. Then reply with 'blue'.",
     )
 
     handle = start_async_tool_loop(
         client=client,
-        message=message_text,
+        message=(
+            "Susan likes this colour but Emily likes this colour, which colour does Emily like?"
+        ),
         tools={},
         images=images,
     )
 
     final = await handle.result()
 
-    # Verify the first exposure contains the overview with both spans and substrings
+    # Verify the first exposure contains the overview with both ids and captions
     assert tools_snapshots, "No LLM call captured; expected at least one exposure set."
     first_tools = tools_snapshots[0]
     live_tool = next(
@@ -298,10 +332,11 @@ async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
     )
     desc = live_tool["function"]["description"]
 
-    # Both occurrences should appear with their exact spans and substrings
-    assert f"span=[{pos1}:{pos1 + len(seg)}]" in desc
-    assert f"span=[{pos2}:{pos2 + len(seg)}]" in desc
-    assert "substring='this colour'" in desc
+    # Both occurrences should appear by id and caption
+    assert "id=201" in desc
+    assert "id=202" in desc
+    assert "caption='red tile'" in desc
+    assert "caption='blue tile'" in desc
 
     # Confirm an ask_image tool-result message exists and contains the BLUE payload
     ask_msgs = [

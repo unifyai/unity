@@ -56,7 +56,7 @@ def test_merge_contacts_private():
     assert deleted_id == cid2
 
     # Verify database state
-    remaining = cm._filter_contacts(filter=f"contact_id == {kept_id}")
+    remaining = cm._filter_contacts(filter=f"contact_id == {kept_id}")["contacts"]
     assert len(remaining) == 1, "Merged contact should exist under kept_id"
 
     merged = remaining[0]
@@ -67,7 +67,7 @@ def test_merge_contacts_private():
 
     # Deleted contact must be gone
     assert (
-        len(cm._filter_contacts(filter=f"contact_id == {deleted_id}")) == 0
+        len(cm._filter_contacts(filter=f"contact_id == {deleted_id}")["contacts"]) == 0
     ), "Deleted contact should be removed after merge"
 
 
@@ -109,7 +109,7 @@ def test_merge_contacts_updates_transcripts():
     # Sanity – cid2 should be present as sender before merge
     before = tm._filter_messages(
         filter=f"sender_id == {cid2} and exchange_id == {EX_ID}",
-    )
+    ).get("messages", [])
     assert len(before) == 1, "Precondition failed: expected one message from cid2"
 
     # Merge: keep cid1, delete cid2, but take name from cid2 to simulate override
@@ -126,7 +126,7 @@ def test_merge_contacts_updates_transcripts():
     # After merge, there should be *no* messages referencing cid2
     after_old = tm._filter_messages(
         filter=f"sender_id == {cid2} and exchange_id == {EX_ID}",
-    )
+    ).get("messages", [])
     assert (
         len(after_old) == 0
     ), "sender_id referencing deleted contact should be updated"
@@ -134,7 +134,7 @@ def test_merge_contacts_updates_transcripts():
     # The same message should now reference cid1 instead
     after_new = tm._filter_messages(
         filter=f"sender_id == {cid1} and exchange_id == {EX_ID}",
-    )
+    ).get("messages", [])
     assert len(after_new) == 1, "sender_id should be rewritten to surviving contact id"
 
 
@@ -177,8 +177,8 @@ async def test_merge_contacts_via_update():
     await handle.result()
 
     # Surviving contact must be *cid1* with combined fields
-    remaining_1 = cm._filter_contacts(filter=f"contact_id == {cid1}")
-    remaining_2 = cm._filter_contacts(filter=f"contact_id == {cid2}")
+    remaining_1 = cm._filter_contacts(filter=f"contact_id == {cid1}")["contacts"]
+    remaining_2 = cm._filter_contacts(filter=f"contact_id == {cid2}")["contacts"]
 
     assert len(remaining_1) == 1, "Merged contact should remain under cid1"
     assert len(remaining_2) == 0, "cid2 should be deleted after merge"

@@ -2013,20 +2013,16 @@ def build_dynamic_implement_prompt(
     scoped_context: str,
     call_stack: list[str],
     function_name: str,
-    function_sig: inspect.Signature,
+    function_sig: inspect.Signature | str,
     function_docstring: str,
-    parent_code: str,
     clarification_question: str | None,
     clarification_answer: str | None,
-    has_browser_screenshot: bool,
     replan_context: str,
     *,
     tools: Dict[str, Callable],
     existing_functions: Dict[str, Any],
-    existing_code_for_modification: Optional[str] = None,
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
-    failed_interactions_trace: Optional[list] = None,
     images: Optional[dict[str, Any]] = None,
 ) -> str:
     """Builds the system prompt for dynamically implementing or modifying a function."""
@@ -2046,33 +2042,12 @@ def build_dynamic_implement_prompt(
     )
     modification_instructions = ""
     image_context_str = _format_images_for_prompt(images)
-    if existing_code_for_modification:
+
+    if "implement from stub" in replan_context.lower():
         modification_instructions = textwrap.dedent(
             f"""
             ---
-            ### 📌 CRITICAL INSTRUCTIONS: MODIFY EXISTING FUNCTION
-            You MUST rewrite the entire `{function_name}` function to incorporate a new change. Analyze the user's request and the original code, then produce the complete, final version of the function.
-
-            **Original Function Code:**
-            ```python
-            {existing_code_for_modification}
-            ```
-
-            **Modification Request:**
-            {replan_context}
-
-            **Your Task:**
-            - **Rewrite the Entire Function:** Your output MUST be a single, complete `async def {function_name}` block.
-            - **Integrate Changes:** Seamlessly blend the new logic with the old. If the user is adding a step, append it logically. If they are correcting a mistake, replace the faulty code.
-            - **Update Docstrings:** Ensure the function's docstring accurately reflects the *complete* purpose of the newly modified function. If adding steps, you can use a numbered list.
-            ---
-            """,
-        )
-    else:
-        modification_instructions = textwrap.dedent(
-            f"""
-            ---
-            ### 📌 CRITICAL INSTRUCTIONS: IMPLEMENT STUB FUNCTION
+            ### 📌 CRITICAL INSTRUCTIONS: IMPLEMENT STUB FUNCTION `{function_name}`
             You are implementing this function for the first time. Its purpose was defined in the initial plan, but the implementation was deferred.
 
             **Reason for Implementation:**
@@ -2080,20 +2055,41 @@ def build_dynamic_implement_prompt(
             ---
             """,
         )
-
-    debugging_trace_section = ""
-    if failed_interactions_trace:
-        formatted_trace = "\n".join(f"- {log}" for log in failed_interactions_trace)
-        debugging_trace_section = textwrap.dedent(
+    elif (
+        "modify" in replan_context.lower()
+        or "fix" in replan_context.lower()
+        or "crashed" in replan_context.lower()
+    ):
+        modification_instructions = textwrap.dedent(
             f"""
-        ---
-        ### 🕵️ Debugging Context: Agent Trace from Failed Attempt
-        CRITICAL: The previous attempt to run this function failed. The following is the detailed trace from the browser agent during the failure. Analyze it carefully to understand the exact problem on the page and design a robust solution. This is your primary debugging tool.
+            ---
+            ### 📌 CRITICAL INSTRUCTIONS: MODIFY EXISTING FUNCTION `{function_name}`
+            You MUST rewrite the entire `{function_name}` function based on the provided `replan_context`. Analyze the reason, the suggested fix strategy (if provided in the reason), and the original code within the `Scoped Plan Analysis` section below, then produce the complete, final version of the function.
 
-        {formatted_trace}
-        ---
-        """,
+            **Modification Context & Reason:**
+            {replan_context}
+
+            **Your Task:**
+            - **Focus on 'Current Function Source':** Locate the code for `{function_name}` within the `Scoped Plan Analysis` block below.
+            - **Rewrite the Entire Function:** Your output MUST be a single, complete `async def {function_name}` block containing the corrected code.
+            - **Integrate Changes:** Apply the necessary fixes or modifications based on the `replan_context`.
+            - **Update Docstrings:** Ensure the function's docstring accurately reflects its purpose *after* your modifications.
+            ---
+            """,
         )
+    else:
+        modification_instructions = textwrap.dedent(
+            f"""
+            ---
+            ### 📌 CRITICAL INSTRUCTIONS: ADDRESS FUNCTION `{function_name}`
+            Analyze the situation described in `replan_context` and the code provided in `Scoped Plan Analysis` below. Decide the best course of action (implement, modify, skip, etc.) for function `{function_name}`.
+
+            **Context:**
+            {replan_context}
+            ---
+            """,
+        )
+
     clarification_section = ""
     if clarification_question and clarification_answer:
         clarification_section = textwrap.dedent(
@@ -2132,22 +2128,25 @@ def build_dynamic_implement_prompt(
         """,
         )
 
-    browser_context_section = ""
-    if has_browser_screenshot:
-        browser_context_section = """
-        **Current Browser View (Screenshot):**
-        An image of the current browser page has been provided. Analyze it carefully to inform your new implementation.
+    browser_context_section = textwrap.dedent(
         """
+        **Current Browser View (Screenshot):**
+        An image of the current browser page has been provided. Analyze it carefully to inform your implementation or modification. Use it as the primary source of truth for the visual state.
+        """,
+    )
 
-    call_stack_str = " -> ".join(call_stack)
+    call_stack_str = (
+        " -> ".join(call_stack)
+        if call_stack
+        else "N/A (Snapshot Unavailable or Top Level)"
+    )
     context_section = textwrap.dedent(
         f"""
     ---
-    ### Scoped Plan Analysis & Call Stack
-    You are being provided a scoped view of the plan's source code, centered on the current point of execution.
-    Use the `Parent Source`, `Current Function Source`, and `Children Source` to understand the local context and make your decision.
+    ### Scoped Plan Analysis & Call Stack (Snapshot)
+    This is a snapshot of the plan's source code and call stack captured at the point of failure or when the stub was encountered. Use this historical context to implement or modify `{function_name}` accurately.
 
-    **Current Call Stack:**
+    **Call Stack Snapshot:**
     `{call_stack_str}`
 
     {scoped_context}
@@ -2183,7 +2182,15 @@ def build_dynamic_implement_prompt(
         4.  **`request_clarification`**: Ask the user for help. Choose this if you cannot devise a reliable strategy to fix the function from the available information. For example, if required UI elements are missing or behaving unexpectedly, or if there are multiple possible approaches and you're unsure which the user prefers. **You must provide a clear, specific `clarification_question`.**
 
         {modification_instructions}
-        {debugging_trace_section}
+
+        ---
+        ### 🕵️ Diagnosis & Fix Strategy (Primary Context)
+        CRITICAL: The `replan_context` below contains the expert diagnosis from the verification step, explaining *why* the previous attempt failed or why implementation is needed, along with a **suggested strategy** for the fix or implementation. Use this as your primary guide.
+
+        **Context (`replan_context`):**
+        {replan_context}
+        ---
+
         {clarification_section}
         {transcript_section}
         {chat_context_section}
@@ -2381,6 +2388,11 @@ for understanding the current execution context.
           - The **Agent Trace** shows the agent struggling or making an assumption you cannot verify (e.g., "I clicked the button, but I am not sure if it worked.").
           - Choose **`request_clarification`**. This is your default for ambiguity.
 
+        ### ✨ CRITICAL FOR FAILURES (`reimplement_local`, `replan_parent`) ✨
+        If you determine a failure requires code modification (`reimplement_local`) or replanning (`replan_parent`):
+        1.  **Detailed Root Cause:** Your `reason` field MUST clearly explain *why* the function failed, referencing specific evidence from the Agent Trace, Screenshot, or Return Value. Pinpoint the exact mismatch between intent and outcome.
+        2.  **Actionable Fix Strategy:** Your `reason` field MUST also include a concise but specific strategy for how the function should be fixed (for `reimplement_local`) or how the parent should be replanned (for `replan_parent`). This strategy will directly guide the next implementation step.
+
         ---
         ### 💡 Examples of Verification Decisions
 
@@ -2429,6 +2441,14 @@ for understanding the current execution context.
         **Example 3: A Clear Tactical Failure (`reimplement_local`)**
         - **Goal**: "Sign me up for the newsletter with 'test@example.com'."
         - **Function**: `submit_newsletter_signup(email='test@example.com')`
+        - **Function Source**:
+        ```python
+        async def submit_newsletter_signup(email: str):
+            \"\"\"Submits the newsletter signup form with the provided email address.\"\"\"
+            await action_provider.act(f"Type '{{email}}' into the email input field")
+            await action_provider.act("Click the 'Subscribe' button")
+            return "Signup submitted"
+        ```
         - **Agent Trace**:
         - `◆ [act] Submit the newsletter signup form with the provided email.`
         - `REASONING: I see the email input field and the 'Subscribe' button. I will type the email address and then click the button.`
@@ -2441,7 +2461,7 @@ for understanding the current execution context.
         ```json
         {{
             "status": "reimplement_local",
-            "reason": "A tactical error occurred. The Agent Trace confirms the steps (typing, clicking) were executed as intended. However, the Screenshot provides definitive evidence of failure through the 'Please provide a corporate email address' error message. The function's logic needs to be re-run, likely after obtaining a valid email from the user."
+            "reason": "Tactical error: The Agent Trace confirms the steps (typing, clicking) were executed correctly, but the Screenshot provides definitive evidence of failure through the 'Please provide a corporate email address' error message. Root cause: The function blindly submitted the provided email without validating whether it meets the form's requirements (corporate email domain). The form rejected 'test@example.com' as it requires a corporate domain. Fix strategy: The function `submit_newsletter_signup()` needs to be reimplemented to add validation logic before submission. It should either: (1) Check if the provided email appears to be a corporate domain (not generic domains like gmail.com, example.com, etc.) and request clarification from the user if it's not, or (2) Attempt submission, detect the error message on the page after clicking Subscribe, and if the corporate email error appears, request clarification asking the user to provide a corporate email address. The function's logic can be fixed locally - no changes to the parent plan are needed."
         }}
         ```
 
@@ -2487,6 +2507,47 @@ for understanding the current execution context.
         }}
         ```
         **Explanation**: The Agent Trace reveals an inefficient path: the function first tried to click the red color filter directly, got an "Element not found" error, then clicked "Show More Colors" to expand the options, and finally succeeded. The refinement adds explicit guidance to `try_primary_color_filter()` docstring and implementation to check if the color is in the basic set first, so future executions will skip directly to the expanded options for colors like red.
+
+        ---
+
+        **Example 5: A Strategic Failure - Parent's Mistake (`replan_parent`)**
+        - **Goal**: "Find a laptop under $500 and add it to cart"
+        - **Function Under Review**: `apply_price_filter(max_price: int)`
+        - **Function Source (including parent context from Scoped Plan Analysis)**:
+        ```python
+        # --- Parent Function (caller) ---
+        async def search_and_filter_laptops():
+            \"\"\"Searches for laptops and applies price filtering.\"\"\"
+            await action_provider.act("Search for 'laptops' on the website")
+            # ERROR: Missing navigation step to product catalog page!
+            # Should navigate to the product listing page here before filtering
+            await apply_price_filter(500)
+            return "Filtering applied"
+
+        # --- Current Function (under review) ---
+        async def apply_price_filter(max_price: int):
+            \"\"\"Applies a price filter to the current product listing.\"\"\"
+            result = await action_provider.act(
+                f"Apply a price filter to show only items under ${{max_price}}"
+            )
+            return result
+        ```
+        - **Agent Trace**:
+        - `◆ [act] Apply a price filter to show only items under $500`
+        - `REASONING: I need to find and use the price filter controls on the page. Let me scan the visible elements for filter options or a price range selector.`
+        - `✗ I cannot find any price filter controls on the current page. The page is showing search results with a search bar and category links, but no product listing with filters. It appears the page is still on the main search results view, not the product catalog page where filters would be available.`
+        - `REASONING: This is a strategic error. The function's goal is to apply a price filter, but the necessary UI elements (price filter controls) are not present on the current page. The browser is on a search results page, not the detailed product catalog page that would have filtering options. This indicates the parent function failed to navigate to the correct page before calling this function.`
+        - `✓ done (no action taken - impossible to complete)`
+        - **Return Value**: `{{"success": False, "reason": "Price filter controls not found on current page"}}`
+        - **Screenshot**: Shows a search results page with a search bar at the top, category navigation links, and general website content. No product grid or filter sidebar is visible.
+        - **Correct Assessment**:
+        ```json
+        {{
+            "status": "replan_parent",
+            "reason": "Strategic error: The function's goal is to apply a price filter, but the Agent Trace reveals that the browser is on a search results page, not the product catalog page where filter controls would be available. The Screenshot confirms this - it shows a general search interface with no product listing or filter sidebar. The agent correctly identified that the necessary UI elements are missing through no fault of this function's logic. Root cause: Looking at the Parent Function source code in the Scoped Plan Analysis, `search_and_filter_laptops()` calls `action_provider.act('Search for laptops')` and then *immediately* calls `apply_price_filter(500)` without any navigation step in between. The parent assumes searching will automatically land on a product catalog page with filters, but the trace shows the browser is still on a generic search results page. Fix strategy: The parent function `search_and_filter_laptops()` needs to be replanned to add an explicit navigation step after the search (e.g., `await action_provider.act('Navigate to the laptop products page')` or `await action_provider.act('Click on the laptops category to view the full catalog')`) *before* calling `apply_price_filter()`. The parent must ensure the product grid and filter controls are visible before attempting to apply filters."
+        }}
+        ```
+        **Explanation**: This is a clear case for `replan_parent` vs `reimplement_local`. The Agent Trace shows the agent correctly reasoning about what it was asked to do (apply price filter), correctly scanning for the necessary UI elements (filter controls), and correctly concluding that those elements are absent due to being on the wrong page. The function `apply_price_filter()` itself has no tactical errors - it cannot be "fixed" because the problem lies in the parent's plan. By reviewing the Parent Function source code, we can see the structural flaw: `search_and_filter_laptops()` is missing a navigation step between searching and filtering. The parent failed to establish the correct preconditions (being on the product catalog page with filters) before calling this child function. The enhanced reason clearly identifies the missing line in the parent code and provides a concrete fix strategy (add navigation step).
 
         ---
         Now, provide your assessment based on all the evidence and the decision framework. Respond with ONLY the JSON object.
@@ -2837,6 +2898,7 @@ def build_interjection_prompt(
     ).strip()
 
 
+# TODO: DEPRECATED
 def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
     """Builds a streamlined set of rules for simple, non-decomposed scripts."""
     tool_reference = _build_tool_signatures(tools)
@@ -2876,6 +2938,7 @@ def _build_simple_script_rules(tools: Dict[str, Callable]) -> str:
     return rules
 
 
+# TODO: DEPRECATED
 def build_course_correction_prompt(
     last_verified_function_name: str,
     last_verified_url: str,
@@ -3144,6 +3207,7 @@ def build_precondition_prompt(
     )
 
 
+# TODO: DEPRECATED
 def build_state_verification_prompt(
     precondition: Dict[str, Any],
 ) -> str:
@@ -3176,6 +3240,7 @@ def build_state_verification_prompt(
     )
 
 
+# TODO: DEPRECATED
 def build_proactive_correction_prompt(
     precondition: Dict[str, Any],
     current_url: str,

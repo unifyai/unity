@@ -94,7 +94,7 @@ jobs:
         if [[ -n "${{ inputs.test_path }}" && "${{ inputs.test_path }}" != "." ]]; then
           dirs="${{ inputs.test_path }}"
         else
-          dirs=$(find tests -mindepth 1 -maxdepth 1 -type d -printf '%p\n' | sort)
+          dirs=$(find tests -mindepth 1 -maxdepth 1 -type d -name 'test*' -printf '%p\n' | sort)
         fi
         echo "Found test dirs:" >&2
         echo "$dirs" >&2

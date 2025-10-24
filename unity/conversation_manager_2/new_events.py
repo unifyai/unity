@@ -1,4 +1,5 @@
 import json
+import uuid
 from typing import Optional, Any
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
@@ -108,6 +109,12 @@ class SMSRecieved(Event):
 
 
 @dataclass
+class UnifyMessageRecieved(Event):
+    contact: str
+    content: str
+
+
+@dataclass
 class PhoneCallSent(Event):
     contact: str
 
@@ -123,12 +130,18 @@ class EmailRecieved(Event):
     contact: str
     subject: str
     body: str
-    message_id: Optional[str]
+    message_id: Optional[str] = None
 
 
 # assistant events
 @dataclass
 class SMSSent(Event):
+    contact: str
+    content: str
+
+
+@dataclass
+class UnifyMessageSent(Event):
     contact: str
     content: str
 
@@ -196,7 +209,7 @@ class Error(Event):
 
 # managers worker events
 @dataclass
-class ManagersStartupInput(Event):
+class ManagersStartupRequest(Event):
     agent_id: str
     first_name: str
     age: str
@@ -210,13 +223,13 @@ class ManagersStartupInput(Event):
 
 
 @dataclass
-class ManagersStartupOutput(Event):
+class ManagersStartupResponse(Event):
     loggable: ClassVar[bool] = False
     initialized: bool
 
 
 @dataclass
-class LogMessageInput(Event):
+class LogMessageRequest(Event):
     medium: str
     sender_id: int
     receiver_ids: list[int]
@@ -228,12 +241,33 @@ class LogMessageInput(Event):
 
 
 @dataclass
-class GetContactsInput(Event):
+class LogMessageResponse(Event):
+    medium: str
+    exchange_id: int
+
+
+@dataclass
+class GetContactsRequest(Event):
     pass
 
 
 @dataclass
-class CreateContactEvent(Event):
+class GetContactsResponse(Event):
+    contacts: list[dict[str, Any]]
+
+
+@dataclass
+class ContactInfoRequest(Event):
+    contact_id: int
+
+
+@dataclass
+class ContactInfoResponse(Event):
+    contact_details: dict[str, Any]
+
+
+@dataclass
+class CreateContactRequest(Event):
     first_name: str
     surname: str
     email_address: str
@@ -241,7 +275,7 @@ class CreateContactEvent(Event):
 
 
 @dataclass
-class UpdateContactEvent(Event):
+class UpdateContactRequest(Event):
     contact_id: int
     first_name: str
     surname: str
@@ -250,28 +284,27 @@ class UpdateContactEvent(Event):
 
 
 @dataclass
-class LogMessageOutput(Event):
-    medium: str
-    exchange_id: int
-
-
-@dataclass
-class GetContactsOutput(Event):
-    contacts: list[dict[str, Any]]
-
-
-@dataclass
-class GetBusEventsInput(Event):
+class GetBusEventsRequest(Event):
     pass
 
 
 @dataclass
-class GetBusEventsOutput(Event):
+class GetBusEventsResponse(Event):
+    loggable: ClassVar[bool] = False
     events: list[dict[str, Any]]
+
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        return f"{self.__class__.__name__}(events_len={len(self.events)})"
 
 
 @dataclass
-class PublishBusEvent(Event):
+class PublishBusEventRequest(Event):
     event: dict[str, Any]
 
 
@@ -306,17 +339,43 @@ class NotificationInjectedEvent(Event):
     content: str
     source: str
     target_conversation_id: str
+    interjection_id: str = field(default_factory=lambda: str(uuid.uuid4().hex[:12]))
+    pinned: bool = False
+
+
+@dataclass
+class NotificationUnpinnedEvent(Event):
+    """Event to unpin a previously pinned interjection."""
+
+    interjection_id: str
+    target_conversation_id: str
 
 
 # --------------------------------------------------------------------------- #
-# Unify Message Events (no-phone medium)
+# Conductor Events
 # --------------------------------------------------------------------------- #
 
 
 @dataclass
-class UnifyMessageRecieved(Event):
-    contact: int
-    content: str
+class ConductorRequest(Event):
+    """Event to ask or request the Conductor to perform a task."""
+
+    action_name: str
+    query: str
+    parent_chat_context: list[dict]
+
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        return (
+            f"{self.__class__.__name__}(action_name={self.action_name}, "
+            f"query={self.query}, "
+            f"parent_chat_context_len={len(self.parent_chat_context)})"
+        )
 
 
 @dataclass
@@ -369,3 +428,82 @@ class UnifyCallEnded(Event):
     """The browser-based voice call session has ended."""
 
     contact: int
+
+
+class ConductorResponse(Event):
+    """Event to respond to a Conductor request."""
+
+    handle_id: int
+    action_name: str
+    query: str
+    response: str
+
+
+@dataclass
+class ConductorHandleRequest(Event):
+    """Event to any action on an existing Conductor handle."""
+
+    handle_id: int
+    action_name: str
+    query: str
+    parent_chat_context: list[dict]
+
+    def __str__(self) -> str:
+        return self._repr_truncated()
+
+    def __repr__(self) -> str:
+        return self._repr_truncated()
+
+    def _repr_truncated(self) -> str:
+        return (
+            f"{self.__class__.__name__}(handle_id={self.handle_id}, "
+            f"action_name={self.action_name}, "
+            f"query={self.query}, "
+            f"parent_chat_context_len={len(self.parent_chat_context)})"
+        )
+
+
+@dataclass
+class ConductorHandleResponse(Event):
+    """Event to respond to a Conductor handle request."""
+
+    handle_id: int
+    action_name: str
+    query: str
+    response: str
+
+
+@dataclass
+class ConductorResult(Event):
+    """Event to the result of a Conductor task."""
+
+    handle_id: int
+    success: bool
+    result: dict | str | None = None
+    error: str | None = None
+
+
+@dataclass
+class ConductorClarificationRequest(Event):
+    """Event to request clarification from the Conductor."""
+
+    handle_id: int
+    query: str
+    call_id: str
+
+
+@dataclass
+class ConductorClarificationResponse(Event):
+    """Event to respond to a Conductor clarification request."""
+
+    handle_id: int
+    response: str
+    call_id: str
+
+
+@dataclass
+class ConductorNotification(Event):
+    """Event to forward a notification from a Conductor handle."""
+
+    handle_id: int
+    response: str

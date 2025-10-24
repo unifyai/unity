@@ -64,9 +64,9 @@ class BaseActor(ABC):
         self,
         description: str,
         *,
-        parent_chat_context: list[dict] | None = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: list[dict] | None = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Start performing work from a free‑form natural language description and

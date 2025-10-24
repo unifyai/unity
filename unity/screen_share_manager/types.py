@@ -1,36 +1,42 @@
+from __future__ import annotations
 from typing import List, Optional
 from pydantic import BaseModel, Field
+from dataclasses import dataclass
+
+from unity.image_manager.image_manager import ImageHandle
+
+
+@dataclass
+class DetectedEvent:
+    """
+    Represents a candidate event detected by the ScreenShareManager's first-pass analysis.
+    """
+
+    timestamp: float
+    detection_reason: str
+    image_handle: ImageHandle
+    preliminary_label: Optional[str] = None
 
 
 class KeyEvent(BaseModel):
     """
-    Represents a single, discrete, meaningful event identified within a user's turn.
+    Represents a single, fully annotated event, combining a timestamp with a rich description.
+    This is used internally for creating summaries and providing recent event history.
     """
 
-    timestamp: float = Field(
-        ...,
-        description="The precise timestamp (in seconds, matching the media stream time) of when this specific event occurred. Example: 15.2",
-    )
-    event_description: str = Field(
-        ...,
-        description="A concise, third-person summary of what occurred at this moment (e.g., 'User clicked the submit button').",
+    timestamp: float = Field(..., description="The precise timestamp of the event.")
+    image_annotation: str = Field(
+        ..., description="The rich, contextual description of the event."
     )
     representative_timestamp: float = Field(
-        ...,
-        description="The timestamp of the single 'AFTER' frame that best represents the visual state of this event. This must exactly match one of the timestamps provided in the input.",
-    )
-    triggering_phrase: Optional[str] = Field(
-        None,
-        description="If the event was directly referenced in the user's speech, this is the exact substring from the speech transcript that corresponds to the event.",
+        ..., description="The timestamp of the frame representing this event."
     )
 
 
 class TurnAnalysisResponse(BaseModel):
     """
-    The structured output from the LLM after analyzing a user's turn, containing all identified key events.
+    The structured output from the LLM after analyzing a user's turn.
+    (Used by the original, more complex annotation prompt logic).
     """
 
-    events: List[KeyEvent] = Field(
-        default_factory=list,
-        description="A chronologically ordered list of all meaningful events that occurred during the user's turn.",
-    )
+    events: List[KeyEvent] = Field(default_factory=list)

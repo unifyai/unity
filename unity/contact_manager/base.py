@@ -1,16 +1,17 @@
 # contact_manager/base.py
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import asyncio
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
 
 
-class BaseContactManager(ABC, metaclass=SingletonABCMeta):
+class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     *Public* contract that every concrete **contact-manager** must satisfy.
 
@@ -30,9 +31,9 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
         """
@@ -59,6 +60,13 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         question in natural language and allow this `ask` method to determine
         the best method to answer it.
 
+        Visual inputs policy
+        --------------------
+        • When any relevant visual inputs (images) are available, include them via
+          the ``images`` argument for this call.
+        • Prefer a curated subset of images aligned to the question. If curation is
+          not straightforward, include all available live images rather than none.
+
         Examples
         --------
         • Good: "Who is the contact living in Berlin working as a product designer?"
@@ -75,9 +83,9 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
             When *True*, :pyfunc:`SteerableToolHandle.result` returns a
             tuple ``(answer, messages)`` where *messages* is the invisible
             chain-of-thought exchanged with the LLM.
-        parent_chat_context : list[dict] | None
+        _parent_chat_context : list[dict] | None
             **Read-only** conversation context to prepend to the tool loop.
-        clarification_up_q / clarification_down_q : asyncio.Queue[str] | None
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
             Optional duplex channels.  When supplied the LLM can ask the human
             follow-up questions via *up_q* and must read answers from
             *down_q*.
@@ -85,10 +93,8 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
             Optional live images aligned to the initial user message. Keys are span
             strings of the form "[start:end]" referring to character indices within
             the user message. Values are image handle objects (e.g. `ImageHandle`) or
-            numeric ids resolvable to handles. When provided, dynamic helper tools
-            such as `live_images_overview`, `ask_image`, `attach_image_raw`, and the
-            utility `align_images_for` will be exposed to the model for working with
-            vision inputs.
+            numeric ids resolvable to handles. When provided, image‑related helper
+            tools may be exposed by the runtime for working with vision inputs.
 
         Returns
         -------
@@ -104,9 +110,9 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         images: Optional[Dict[str, Any]] = None,
     ) -> SteerableToolHandle:
         """
@@ -127,21 +133,26 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         • When no clarification tool exists, proceed with sensible defaults or
           best‑guess values and state those assumptions in the final reply.
 
+        Visual inputs policy
+        --------------------
+        • When any relevant visual inputs (images) are available, include them via
+          the ``images`` argument for this call.
+        • Prefer a curated subset of images aligned to the request. If curation is
+          not straightforward, include all available live images rather than none.
+
         Parameters
         ----------
         text : str
             The user's request (e.g. *"Add Sarah Connor's phone number …"*).
-        _return_reasoning_steps, parent_chat_context,
-        clarification_up_q, clarification_down_q
+        _return_reasoning_steps, _parent_chat_context,
+        _clarification_up_q, _clarification_down_q
             Same semantics as in :py:meth:`ask`.
         images : dict[str, Any] | None
             Optional live images aligned to the initial user message. Keys are span
             strings of the form "[start:end]" referring to character indices within
             the user message. Values are image handle objects (e.g. `ImageHandle`) or
-            numeric ids resolvable to handles. When provided, dynamic helper tools
-            such as `live_images_overview`, `ask_image`, `attach_image_raw`, and the
-            utility `align_images_for` will be exposed to the model for working with
-            vision inputs.
+            numeric ids resolvable to handles. When provided, image‑related helper
+            tools may be exposed by the runtime for working with vision inputs.
 
         Returns
         -------
@@ -166,10 +177,9 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         Retrieve contact records that satisfy *filter*.
 
         This private method is intentionally *part* of the public-facing contract
-        because other managers (e.g. :class:`~unity.transcript_manager.TranscriptManager`)
-        rely on its existence for tool-chaining.  Concrete subclasses **must**
-        implement it – even simulated ones – so that the LLM can access a
-        deterministic search primitive.
+        because other components may rely on its existence for tool‑chaining.
+        Concrete subclasses **must** implement it – even simulated ones – so that
+        the LLM can access a deterministic search primitive.
 
         Parameters
         ----------
@@ -206,9 +216,8 @@ class BaseContactManager(ABC, metaclass=SingletonABCMeta):
         Modify **one** existing contact identified by *contact_id*.
 
         Although private, this helper is *part* of the public-facing
-        contract just like :pyfunc:`_search_contacts`.  Other managers –
-        notably :class:`~unity.memory_manager.MemoryManager` – rely on its
-        presence for fast, deterministic updates without a full natural-
+        contract (alongside the filtering helper). Downstream components may rely
+        on its presence for fast, deterministic updates without a full natural-
         language round-trip through :pyfunc:`update`.
 
         Concrete subclasses **must** supply a *synchronous* implementation so
