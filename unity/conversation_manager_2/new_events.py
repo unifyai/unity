@@ -109,6 +109,12 @@ class SMSRecieved(Event):
 
 
 @dataclass
+class UnifyMessageRecieved(Event):
+    contact: str
+    content: str
+
+
+@dataclass
 class PhoneCallSent(Event):
     contact: str
 
@@ -130,6 +136,12 @@ class EmailRecieved(Event):
 # assistant events
 @dataclass
 class SMSSent(Event):
+    contact: str
+    content: str
+
+
+@dataclass
+class UnifyMessageSent(Event):
     contact: str
     content: str
 
@@ -338,22 +350,6 @@ class NotificationUnpinnedEvent(Event):
     interjection_id: str
     target_conversation_id: str
 
-
-# --------------------------------------------------------------------------- #
-# Unify Message Events (no-phone medium)
-# --------------------------------------------------------------------------- #
-
-
-@dataclass
-class UnifyMessageRecieved(Event):
-    contact: str
-    content: str
-
-
-@dataclass
-class UnifyMessageSent(Event):
-    contact: str
-    content: str
 
 
 # --------------------------------------------------------------------------- #
