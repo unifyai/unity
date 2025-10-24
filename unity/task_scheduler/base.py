@@ -243,37 +243,21 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         conversational sessions that happen inside the current chat.
 
         The assistant should interpret *text* to figure out which task the user
-        wants to run.  Typical workflow:
+        wants to run. A typical approach is:
 
-        1. Call :py:meth:`TaskScheduler.ask` to identify the `task_id` (if the
-           id is not explicitly mentioned in *text*).
-        2. Internally execute the task – the implementation SHOULD expose a
-           private ``_execute_by_id`` helper that returns a
-           :class:`SteerableToolHandle` **and marks it
-           for pass-through** so that the outer handle is upgraded transparently
-           once the real execution begins.
+        1. Identify the intended task (by id or unambiguous name) using read‑only
+           inspection when needed (e.g., via this manager's `ask` surface).
+        2. Inspect current queue membership and order; explicitly reorder to place
+           the intended scope at the head (e.g., "just X", "first two now", or
+           "all") without changing scheduling fields.
+        3. Start the task at the head and return a live steerable handle.
 
-        Execution scope via explicit reordering
-        --------------------------------------
-        The execute flow uses explicit queue inspection and reordering:
-        - Use `_get_queue(queue_id=...)` or `_get_queue_for_task(task_id=...)` to
-          read the current order.
-        - Use `_reorder_queue(queue_id=..., new_order=[...])` when membership is
-          unchanged, or `_set_queue(queue_id=..., order=[...])` when membership
-          changes, to place the desired subset/order at the head (e.g., "just X",
-          "first two now", or "all").
-        - Then call `execute_by_id(task_id=<head>)` to start.
-
-        Never rewrite a task's `start_at` purely to begin execution, and do not
-        write lifecycle `status` fields directly.
-        - `ask` – to discover the relevant task and queue context
-        - `_get_queue` / `_get_queue_for_task` – to inspect queue membership/order
-        - `_reorder_queue` / `_set_queue` – to explicitly shape the queue
-        - `execute_by_id(task_id)` – to start the head after any necessary reordering
+        Do not rewrite a task's `start_at` purely to begin execution, and do not
+        write lifecycle `status` fields directly during orchestration.
 
         Implementations MUST return a *live* steerable handle whose public
         methods (pause, resume, interject, stop, result, …) continue to work
-        after the adoption.
+        throughout execution.
 
         Parameters
         ----------
