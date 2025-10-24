@@ -15,8 +15,8 @@ import os
 import textwrap
 import traceback
 from collections import defaultdict, OrderedDict
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Set, Tuple
 import typing
 import types
 import weakref
@@ -76,6 +76,8 @@ class VerificationWorkItem:
     return_value_repr: str
     cache_miss_counter: int
     exit_seq: int
+    full_call_stack_tuple: tuple = field(default_factory=tuple)
+    scoped_context_snapshot: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -101,6 +103,9 @@ class PlanRuntime:
         self.call_stacks = defaultdict(list)
         self.frame_id_counter = 0
         self.execution_mode: str = "fresh_start"
+
+        self._loop_context_stack: List[Tuple[str, int]] = []
+        self._loop_id_counters: Dict[str, int] = {}
 
     async def checkpoint(self, label: str = ""):
         """
