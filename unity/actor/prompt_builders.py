@@ -2013,20 +2013,16 @@ def build_dynamic_implement_prompt(
     scoped_context: str,
     call_stack: list[str],
     function_name: str,
-    function_sig: inspect.Signature,
+    function_sig: inspect.Signature | str,
     function_docstring: str,
-    parent_code: str,
     clarification_question: str | None,
     clarification_answer: str | None,
-    has_browser_screenshot: bool,
     replan_context: str,
     *,
     tools: Dict[str, Callable],
     existing_functions: Dict[str, Any],
-    existing_code_for_modification: Optional[str] = None,
     recent_transcript: Optional[str] = None,
     parent_chat_context: Optional[list] = None,
-    failed_interactions_trace: Optional[list] = None,
     images: Optional[dict[str, Any]] = None,
 ) -> str:
     """Builds the system prompt for dynamically implementing or modifying a function."""
@@ -2046,33 +2042,12 @@ def build_dynamic_implement_prompt(
     )
     modification_instructions = ""
     image_context_str = _format_images_for_prompt(images)
-    if existing_code_for_modification:
+
+    if "implement from stub" in replan_context.lower():
         modification_instructions = textwrap.dedent(
             f"""
             ---
-            ### 📌 CRITICAL INSTRUCTIONS: MODIFY EXISTING FUNCTION
-            You MUST rewrite the entire `{function_name}` function to incorporate a new change. Analyze the user's request and the original code, then produce the complete, final version of the function.
-
-            **Original Function Code:**
-            ```python
-            {existing_code_for_modification}
-            ```
-
-            **Modification Request:**
-            {replan_context}
-
-            **Your Task:**
-            - **Rewrite the Entire Function:** Your output MUST be a single, complete `async def {function_name}` block.
-            - **Integrate Changes:** Seamlessly blend the new logic with the old. If the user is adding a step, append it logically. If they are correcting a mistake, replace the faulty code.
-            - **Update Docstrings:** Ensure the function's docstring accurately reflects the *complete* purpose of the newly modified function. If adding steps, you can use a numbered list.
-            ---
-            """,
-        )
-    else:
-        modification_instructions = textwrap.dedent(
-            f"""
-            ---
-            ### 📌 CRITICAL INSTRUCTIONS: IMPLEMENT STUB FUNCTION
+            ### 📌 CRITICAL INSTRUCTIONS: IMPLEMENT STUB FUNCTION `{function_name}`
             You are implementing this function for the first time. Its purpose was defined in the initial plan, but the implementation was deferred.
 
             **Reason for Implementation:**
@@ -2080,20 +2055,41 @@ def build_dynamic_implement_prompt(
             ---
             """,
         )
-
-    debugging_trace_section = ""
-    if failed_interactions_trace:
-        formatted_trace = "\n".join(f"- {log}" for log in failed_interactions_trace)
-        debugging_trace_section = textwrap.dedent(
+    elif (
+        "modify" in replan_context.lower()
+        or "fix" in replan_context.lower()
+        or "crashed" in replan_context.lower()
+    ):
+        modification_instructions = textwrap.dedent(
             f"""
-        ---
-        ### 🕵️ Debugging Context: Agent Trace from Failed Attempt
-        CRITICAL: The previous attempt to run this function failed. The following is the detailed trace from the browser agent during the failure. Analyze it carefully to understand the exact problem on the page and design a robust solution. This is your primary debugging tool.
+            ---
+            ### 📌 CRITICAL INSTRUCTIONS: MODIFY EXISTING FUNCTION `{function_name}`
+            You MUST rewrite the entire `{function_name}` function based on the provided `replan_context`. Analyze the reason, the suggested fix strategy (if provided in the reason), and the original code within the `Scoped Plan Analysis` section below, then produce the complete, final version of the function.
 
-        {formatted_trace}
-        ---
-        """,
+            **Modification Context & Reason:**
+            {replan_context}
+
+            **Your Task:**
+            - **Focus on 'Current Function Source':** Locate the code for `{function_name}` within the `Scoped Plan Analysis` block below.
+            - **Rewrite the Entire Function:** Your output MUST be a single, complete `async def {function_name}` block containing the corrected code.
+            - **Integrate Changes:** Apply the necessary fixes or modifications based on the `replan_context`.
+            - **Update Docstrings:** Ensure the function's docstring accurately reflects its purpose *after* your modifications.
+            ---
+            """,
         )
+    else:
+        modification_instructions = textwrap.dedent(
+            f"""
+            ---
+            ### 📌 CRITICAL INSTRUCTIONS: ADDRESS FUNCTION `{function_name}`
+            Analyze the situation described in `replan_context` and the code provided in `Scoped Plan Analysis` below. Decide the best course of action (implement, modify, skip, etc.) for function `{function_name}`.
+
+            **Context:**
+            {replan_context}
+            ---
+            """,
+        )
+
     clarification_section = ""
     if clarification_question and clarification_answer:
         clarification_section = textwrap.dedent(
@@ -2132,22 +2128,25 @@ def build_dynamic_implement_prompt(
         """,
         )
 
-    browser_context_section = ""
-    if has_browser_screenshot:
-        browser_context_section = """
-        **Current Browser View (Screenshot):**
-        An image of the current browser page has been provided. Analyze it carefully to inform your new implementation.
+    browser_context_section = textwrap.dedent(
         """
+        **Current Browser View (Screenshot):**
+        An image of the current browser page has been provided. Analyze it carefully to inform your implementation or modification. Use it as the primary source of truth for the visual state.
+        """,
+    )
 
-    call_stack_str = " -> ".join(call_stack)
+    call_stack_str = (
+        " -> ".join(call_stack)
+        if call_stack
+        else "N/A (Snapshot Unavailable or Top Level)"
+    )
     context_section = textwrap.dedent(
         f"""
     ---
-    ### Scoped Plan Analysis & Call Stack
-    You are being provided a scoped view of the plan's source code, centered on the current point of execution.
-    Use the `Parent Source`, `Current Function Source`, and `Children Source` to understand the local context and make your decision.
+    ### Scoped Plan Analysis & Call Stack (Snapshot)
+    This is a snapshot of the plan's source code and call stack captured at the point of failure or when the stub was encountered. Use this historical context to implement or modify `{function_name}` accurately.
 
-    **Current Call Stack:**
+    **Call Stack Snapshot:**
     `{call_stack_str}`
 
     {scoped_context}
@@ -2183,7 +2182,15 @@ def build_dynamic_implement_prompt(
         4.  **`request_clarification`**: Ask the user for help. Choose this if you cannot devise a reliable strategy to fix the function from the available information. For example, if required UI elements are missing or behaving unexpectedly, or if there are multiple possible approaches and you're unsure which the user prefers. **You must provide a clear, specific `clarification_question`.**
 
         {modification_instructions}
-        {debugging_trace_section}
+
+        ---
+        ### 🕵️ Diagnosis & Fix Strategy (Primary Context)
+        CRITICAL: The `replan_context` below contains the expert diagnosis from the verification step, explaining *why* the previous attempt failed or why implementation is needed, along with a **suggested strategy** for the fix or implementation. Use this as your primary guide.
+
+        **Context (`replan_context`):**
+        {replan_context}
+        ---
+
         {clarification_section}
         {transcript_section}
         {chat_context_section}
