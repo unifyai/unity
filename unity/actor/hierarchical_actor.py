@@ -4429,15 +4429,25 @@ class HierarchicalActor(BaseActor):
         trajectory: list[str],
     ) -> None:
         """Spawns a new CodeActActor instance as a sub-agent to perform state recovery."""
+        logger.info(
+            f"[COURSE_CORRECTION] Starting course correction agent. Trajectory has {len(trajectory)} steps.",
+        )
+
         from .code_act_actor import CodeActActor
         from unity.image_manager.image_manager import ImageManager
 
+        logger.info("[COURSE_CORRECTION] Getting current screenshot...")
         current_screenshot = await self.action_provider.browser.get_screenshot()
+        logger.info("[COURSE_CORRECTION] Got current screenshot.")
 
         if isinstance(current_screenshot, str):
             current_screenshot = base64.b64decode(current_screenshot)
         if isinstance(target_screenshot, str):
             target_screenshot = base64.b64decode(target_screenshot)
+
+        logger.info(
+            "[COURSE_CORRECTION] Screenshots decoded. Preparing image manager...",
+        )
 
         image_manager = ImageManager()
         ids = image_manager.add_images(
