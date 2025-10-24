@@ -5006,14 +5006,14 @@ class HierarchicalActor(BaseActor):
         self,
         plan: HierarchicalPlan,
         function_name: str,
+        call_stack_snapshot: Optional[list[str]] = None,
+        scoped_context_snapshot: Optional[dict] = None,
         **kwargs,
     ) -> ImplementationDecision:
         """
         Generates and returns an ImplementationDecision for a stub function.
         Includes a retry loop to handle LLM-generated syntax errors.
         """
-        is_browser_task = "action_provider.browser" in plan.plan_source_code
-
         max_retries = 3
         last_syntax_error = ""
 
@@ -5029,41 +5029,32 @@ class HierarchicalActor(BaseActor):
                 )
 
             browser_screenshot = None
-            if is_browser_task:
-                browser_screenshot = await self.action_provider.browser.get_screenshot()
-
             try:
-                frame = inspect.currentframe()
-                target_fn_obj = None
-                try:
-                    if (
-                        frame
-                        and frame.f_back
-                        and function_name in frame.f_back.f_locals
-                    ):
-                        target_fn_obj = frame.f_back.f_locals[function_name]
-                    elif function_name in plan.execution_namespace:
-                        target_fn_obj = plan.execution_namespace[function_name]
-                finally:
-                    del frame
-            except Exception:
-                target_fn_obj = None
+                browser_screenshot = await self.action_provider.browser.get_screenshot()
+            except Exception as e:
+                logger.warning(f"Could not get browser screenshot: {e}")
 
-            if target_fn_obj:
-                docstring = inspect.getdoc(target_fn_obj) or "No docstring provided."
-                func_sig = inspect.signature(target_fn_obj)
-            else:
-                failed_item: VerificationWorkItem | None = kwargs.get("failed_item")
-                docstring = (
-                    failed_item.docstring if failed_item else "Docstring not available."
-                )
-                func_sig = failed_item.func_sig_str if failed_item else "()"
-
-            parent_code = (
-                plan.clean_function_source_map.get(plan.call_stack[-2], "")
-                if len(plan.call_stack) > 1
-                else "N/A (This is a top-level function call)"
+            call_stack_list_for_prompt = call_stack_snapshot or []
+            scoped_context_str_for_prompt = self._format_scoped_context_for_prompt(
+                scoped_context_snapshot or {},
             )
+
+            failed_item: Optional[VerificationWorkItem] = kwargs.get("failed_item")
+            if failed_item:
+                func_sig = failed_item.func_sig_str
+                docstring = failed_item.docstring or "No docstring available."
+            else:
+                try:
+                    target_fn_obj = plan.execution_namespace.get(function_name)
+                    docstring = (
+                        inspect.getdoc(target_fn_obj) or "No docstring provided."
+                    )
+                    func_sig = (
+                        str(inspect.signature(target_fn_obj)) if target_fn_obj else "()"
+                    )
+                except Exception:
+                    docstring = "Docstring not available."
+                    func_sig = "()"
 
             existing_functions = {}
             if self.function_manager:
@@ -5085,9 +5076,6 @@ class HierarchicalActor(BaseActor):
                         f"Could not retrieve functions from FunctionManager for dynamic_implement: {e}",
                     )
 
-            context_dict = self._get_scoped_context_from_plan_state(plan)
-            scoped_context_str = self._format_scoped_context_for_prompt(context_dict)
-
             recent_transcript = None
             try:
                 # TODO: Add this in case the plan needs the full transcript as context(https://app.clickup.com/t/86c4unzg9)
@@ -5097,17 +5085,6 @@ class HierarchicalActor(BaseActor):
                 pass
             except Exception as e:
                 logger.warning(f"Could not fetch recent transcript: {e}")
-            failed_interactions_trace = None
-            if "failed_interactions" in kwargs and kwargs["failed_interactions"]:
-                failed_interactions_trace = []
-                for interaction in kwargs["failed_interactions"]:
-                    if len(interaction) > 3 and interaction[3]:
-                        action_summary = interaction[1]
-                        magnitude_logs = interaction[3]
-                        for log_line in magnitude_logs:
-                            failed_interactions_trace.append(
-                                f"[{action_summary}] {log_line}",
-                            )
 
             prompt = prompt_builders.build_dynamic_implement_prompt(
                 goal=plan.goal,
