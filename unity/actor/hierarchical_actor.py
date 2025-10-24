@@ -4873,61 +4873,147 @@ class HierarchicalActor(BaseActor):
         return verify
 
     async def _inject_library_functions(self, base_code: str) -> str:
+        """
+        Injects necessary library function implementations using the
+        dependency list stored by FunctionManager.
+        """
         if not self.function_manager:
+            logger.debug("No FunctionManager available, skipping library injection.")
             return base_code
 
-        final_code_parts = [base_code]
-        injected_functions = set()
+        final_code_parts: List[str] = []
+        injected_functions: Set[str] = set()
+        functions_to_inject_queue: List[str] = []
+        queued_functions: Set[str] = set()
 
         try:
             tree = ast.parse(base_code)
-            functions_to_inject = {
-                node.func.id
-                for node in ast.walk(tree)
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            initial_references: Set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    initial_references.add(node.func.id)
+                elif isinstance(node, ast.Assign):
+                    if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                        if isinstance(node.value, ast.Name):
+                            initial_references.add(node.value.id)
+                elif isinstance(node, ast.Return) and isinstance(node.value, ast.Name):
+                    initial_references.add(node.value.id)
+
+            common_non_lib_names = {
+                "action_provider",
+                "asyncio",
+                "print",
+                "verify",
+                "super",
+                "NotImplementedError",
+                "ValueError",
+                "Exception",
+                "RuntimeError",
+                "range",
+                "len",
+                "isinstance",
+                "getattr",
+                "setattr",
+                "hasattr",
+                "BaseModel",
+                "Field",
+                "HttpUrl",
+                "Literal",
+                "str",
+                "int",
+                "float",
+                "bool",
+                "list",
+                "dict",
+                "set",
+                "tuple",
+                "Optional",
+                "List",
+                "Dict",
+                "Any",
+                "Union",
+                "Type",
+                "Callable",
             }
+            initial_references.difference_update(common_non_lib_names)
+            initial_references = {f for f in initial_references if "." not in f}
+
+            for name in initial_references:
+                if name not in queued_functions:
+                    functions_to_inject_queue.append(name)
+                    queued_functions.add(name)
+
         except SyntaxError as e:
             logger.warning(f"Could not parse base plan for function injection: {e}")
             return base_code
+        except Exception as e:
+            logger.error(
+                f"Unexpected error during initial scan for injection: {e}",
+                exc_info=True,
+            )
+            return base_code
 
-        while functions_to_inject:
-            function_name = functions_to_inject.pop()
+        processed_count = 0
+        MAX_INJECTIONS = 200
+
+        while functions_to_inject_queue and processed_count < MAX_INJECTIONS:
+            processed_count += 1
+            function_name = functions_to_inject_queue.pop(0)
 
             if function_name in injected_functions:
                 continue
 
-            search_results = self.function_manager.search_functions(
-                filter=f"name == '{function_name}'",
-                limit=1,
-            )
+            try:
+                search_results = self.function_manager.search_functions(
+                    filter=f"name == '{function_name}'",
+                    limit=1,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error searching FunctionManager for '{function_name}': {e}",
+                    exc_info=True,
+                )
+                continue
+
             if not search_results:
+                logger.debug(
+                    f"'{function_name}' not found in FunctionManager, assuming built-in/method.",
+                )
                 continue
 
             library_func_data = search_results[0]
             func_code = library_func_data.get("implementation")
+            dependencies = library_func_data.get("calls", [])
 
             if not func_code:
+                logger.warning(
+                    f"No implementation found for '{function_name}' in FunctionManager.",
+                )
                 continue
-            if not library_func_data or "implementation" not in library_func_data:
-                continue
-
-            logger.info(f"Injecting skill '{function_name}' from FunctionManager.")
 
             final_code_parts.insert(0, f"\n{func_code}\n")
             injected_functions.add(function_name)
 
-            try:
-                injected_tree = ast.parse(func_code)
-                for node in ast.walk(injected_tree):
-                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                        dependency_name = node.func.id
-                        if dependency_name not in injected_functions:
-                            functions_to_inject.add(dependency_name)
-            except SyntaxError as e:
-                logger.warning(
-                    f"Could not parse injected function '{function_name}' for dependencies: {e}",
-                )
+            if isinstance(dependencies, list):
+                for dep_name in dependencies:
+                    if (
+                        dep_name not in injected_functions
+                        and dep_name not in queued_functions
+                    ):
+                        if dep_name not in common_non_lib_names and "." not in dep_name:
+                            functions_to_inject_queue.append(dep_name)
+                            queued_functions.add(dep_name)
 
+        if processed_count >= MAX_INJECTIONS:
+            logger.warning(
+                f"Function injection stopped after {MAX_INJECTIONS} functions due to safety limit. Injected {len(injected_functions)} functions. Check dependencies if this seems too low.",
+            )
+        else:
+            logger.info(
+                f"Function injection complete. Injected {len(injected_functions)} functions total.",
+            )
+
+        final_code_parts.append(base_code)
         return "".join(final_code_parts)
 
     async def _generate_initial_plan(
