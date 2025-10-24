@@ -134,34 +134,17 @@ jobs:
     - name: Install uv
       run: pip install uv
 
-    - name: Create virtualenv and install deps
+    - name: Sync dependencies with uv
       run: |
-        uv venv --python 3.11 .unity
-        source .unity/bin/activate
+        # Install project and dev dependencies from pyproject.toml
+        uv sync --all-groups
 
-        # 1) Create filtered requirements file
-        grep -vE '^\s*-e\s+\.\./unify' requirements.txt > temp_requirements.txt
-
-        # 2) Install all dependencies
-        uv pip install -r temp_requirements.txt
-
-        # 3) Install playwright browsers WITH system dependencies
-        .unity/bin/python -m playwright install --with-deps
-
-        # 4) Install the local 'unity' project in editable mode
-        uv pip install -e .
-
-        # 5) Install unify package from GitHub
-        uv pip install git+https://github.com/unifyai/unify
-
-        # 6) Install spaCy model
-        uv pip install $(spacy info en_core_web_sm --url)
-
-        # 7) install pytest-xdist
+        # Ensure xdist is available for parallel pytest
         uv pip install pytest-xdist
 
-        # 8) cleanup
-        rm temp_requirements.txt
+    - name: Install Playwright browsers
+      run: |
+        uv run playwright install --with-deps
 
     - name: Restore .cache.ndjson
       id: cache-read
@@ -174,7 +157,7 @@ jobs:
 
     - name: Run unit tests
       run: |
-        xvfb-run .unity/bin/python -m pytest \
+        xvfb-run uv run pytest \
           --timeout=${{ inputs.test_timeout || 240 }} \
           -p no:warnings \
           -vv \
