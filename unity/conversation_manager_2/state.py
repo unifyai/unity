@@ -6,6 +6,7 @@ from typing import Literal, Optional
 from collections import deque
 
 from pydantic import Field
+
 # from unity.conversation_manager_2.actions import build_dynamic_response_models
 from unity.conversation_manager_2.new_events import *
 from unity.contact_manager.types.contact import Contact as ContactType
@@ -74,9 +75,9 @@ class ConversationManagerState:
         user_number: str,
         user_email: str,
         user_whatsapp_number: str,
-        realtime: bool = False
+        realtime: bool = False,
     ):
-        
+
         self.realtime = realtime
 
         # These should not be harcoded
@@ -554,9 +555,13 @@ class ConversationManagerState:
     def build_response_model(self):
         """Build dynamic response models based on available actions."""
         if self.realtime:
-            from unity.conversation_manager_2.actions_realtime import build_dynamic_response_models
+            from unity.conversation_manager_2.actions_realtime import (
+                build_dynamic_response_models,
+            )
         else:
-            from unity.conversation_manager_2.actions import build_dynamic_response_models
+            from unity.conversation_manager_2.actions import (
+                build_dynamic_response_models,
+            )
         self.dynamic_response_models = build_dynamic_response_models(
             include_email=self.assistant_email not in [None, ""],
             include_sms=self.assistant_number not in [None, ""],
