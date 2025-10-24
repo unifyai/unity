@@ -3,7 +3,7 @@
 
 The top-level manager unifies four sub-domains
 
-• tasks (TaskScheduler)  • contacts  • transcripts  • knowledge-base
+• tasks  • contacts  • transcripts  • knowledge
 
 and it exposes exactly **three** conversational entry-points:
 
