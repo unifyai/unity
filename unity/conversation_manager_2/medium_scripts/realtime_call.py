@@ -39,7 +39,7 @@ from livekit.agents import (
     cli,
     UserInputTranscribedEvent,
     UserStateChangedEvent,
-    ConversationItemAddedEvent
+    ConversationItemAddedEvent,
 )
 from livekit import agents
 from livekit.plugins.openai import realtime as openai_realtime
@@ -54,6 +54,7 @@ from livekit.plugins import (
 from livekit.plugins.google.beta import realtime as google_realtime
 from livekit.agents.llm import ChatMessage
 from livekit.plugins.turn_detector.english import EnglishModel
+
 load_dotenv()
 
 from unity.conversation_manager_2.utils import dispatch_agent
@@ -61,7 +62,6 @@ from unity.conversation_manager_2.event_broker import get_event_broker
 from unity.conversation_manager_2.new_events import *
 
 from pathlib import Path
-
 
 
 event_broker = get_event_broker()
@@ -76,7 +76,9 @@ boss_phone_number = ""
 boss_email = ""
 is_boss_user = ""
 
-with open(Path(__file__).resolve().parent.parent / "prompts" / "realtime_phone_agent.md") as f:
+with open(
+    Path(__file__).resolve().parent.parent / "prompts" / "realtime_phone_agent.md"
+) as f:
     SYSTEM_PROMPT = f.read()
 
 # Optional: tweak VAD/turn detection behavior using OpenAI's server VAD or semantic VAD
@@ -85,12 +87,13 @@ with open(Path(__file__).resolve().parent.parent / "prompts" / "realtime_phone_a
 logger = logging.getLogger("gpt-realtime-agent")
 logger.setLevel(logging.INFO)
 
+
 class Assistant(Agent):
     async def on_user_turn_completed(self, turn_ctx, new_message):
         print(turn_ctx)
         print(new_message)
-    
-    # async def transcription_node(self, text, model_settings): 
+
+    # async def transcription_node(self, text, model_settings):
     #     async for delta in text:
     #         print(delta)
     #         yield delta.replace("😘", "")
@@ -130,23 +133,26 @@ async def entrypoint(ctx: JobContext) -> None:
         # tts="cartesia/sonic-2",
     )
 
-    
     user_is_speaking = False
 
     @session.on("user_state_changed")
-    def _on_user_state_changed(ev: 'UserStateChangedEvent'):
+    def _on_user_state_changed(ev: "UserStateChangedEvent"):
         nonlocal user_is_speaking
-        user_is_speaking = (ev.new_state == "speaking")
-    
+        user_is_speaking = ev.new_state == "speaking"
+
     @session.on("conversation_item_added")
-    def _on_chat_item_added(ev: 'UserInputTranscribedEvent'):
-        role = ev.item.role               # "user" | "assistant"
-        text = ev.item.text_content or "" # reliably the final text
+    def _on_chat_item_added(ev: "UserInputTranscribedEvent"):
+        role = ev.item.role  # "user" | "assistant"
+        text = ev.item.text_content or ""  # reliably the final text
         if role == "user":
             event = PhoneUtterance(os.environ["CALL_FROM_NUMBER"], content=text)
         else:
-            event = AssistantPhoneUtterance(os.environ["CALL_FROM_NUMBER"], content=text)
-        asyncio.create_task(event_broker.publish("app:comms:phone_utterance", event.to_json()))
+            event = AssistantPhoneUtterance(
+                os.environ["CALL_FROM_NUMBER"], content=text
+            )
+        asyncio.create_task(
+            event_broker.publish("app:comms:phone_utterance", event.to_json())
+        )
         print(role, text)
 
     voice_provider = os.environ.get("VOICE_PROVIDER", "cartesia")
@@ -159,30 +165,28 @@ async def entrypoint(ctx: JobContext) -> None:
 
     # High-level behavior for the assistant.
     print("HEEEELLOOOOO")
-    boss_first_name     = os.environ.get("BOSS_FIRST_NAME", "")
-    boss_surname        = os.environ.get("BOSS_SURNAME", "")
-    boss_phone_number   = os.environ.get("BOSS_PHONE_NUMBER", "")
-    boss_email          = os.environ.get("BOSS_EMAIL", "")
-    contact_first_name  = os.environ.get("CONTACT_FIRST_NAME", "")
-    contact_surname     = os.environ.get("CONTACT_SURNAME", "")
-    contact_email       = os.environ.get("CONTACT_EMAIL", "")
-    is_boss_user        = os.environ.get("IS_BOSS_USER", "False")
+    boss_first_name = os.environ.get("BOSS_FIRST_NAME", "")
+    boss_surname = os.environ.get("BOSS_SURNAME", "")
+    boss_phone_number = os.environ.get("BOSS_PHONE_NUMBER", "")
+    boss_email = os.environ.get("BOSS_EMAIL", "")
+    contact_first_name = os.environ.get("CONTACT_FIRST_NAME", "")
+    contact_surname = os.environ.get("CONTACT_SURNAME", "")
+    contact_email = os.environ.get("CONTACT_EMAIL", "")
+    is_boss_user = os.environ.get("IS_BOSS_USER", "False")
     system = Template(SYSTEM_PROMPT).render(
-            boss_first_name=boss_first_name,
-            boss_surname=boss_surname,
-            boss_email_address=boss_email if boss_email != "None" else None,
-            boss_phone_number=boss_phone_number if boss_phone_number != "None" else None,
-            contact_first_name=contact_first_name,
-            contact_surname=contact_surname,
-            contact_phone_number=os.environ["CALL_FROM_NUMBER"],
-            contact_email=contact_email,
-            is_boss_user=True if is_boss_user == "True" else False
-        )
+        boss_first_name=boss_first_name,
+        boss_surname=boss_surname,
+        boss_email_address=boss_email if boss_email != "None" else None,
+        boss_phone_number=boss_phone_number if boss_phone_number != "None" else None,
+        contact_first_name=contact_first_name,
+        contact_surname=contact_surname,
+        contact_phone_number=os.environ["CALL_FROM_NUMBER"],
+        contact_email=contact_email,
+        is_boss_user=True if is_boss_user == "True" else False,
+    )
     print("PRINTING SYSTEM PROMPT")
     print(system)
-    agent = Assistant(
-        instructions=system
-    )
+    agent = Assistant(instructions=system)
 
     await event_broker.publish(
         "app:comms:phone_call_started",
@@ -196,20 +200,21 @@ async def entrypoint(ctx: JobContext) -> None:
             await pubsub.subscribe("app:call:call_notifs")
             while True:
                 msg = await pubsub.get_message(
-                        ignore_subscribe_messages=True, timeout=None
-                    )
+                    ignore_subscribe_messages=True, timeout=None
+                )
                 if msg is not None:
                     print("got notif", msg)
                     msg = json.loads(msg["data"])
                     chat_ctx = rt.chat_ctx
-                    chat_ctx.add_message(role="user", content=[f"""[notification] {msg["content"]}"""])
+                    chat_ctx.add_message(
+                        role="user", content=[f"""[notification] {msg["content"]}"""]
+                    )
                     await rt.update_chat_ctx(chat_ctx)
                     print(rt.chat_ctx.items)
                     nonlocal user_is_speaking
                     if not user_is_speaking and chat_ctx.items[-1].role != "assistant":
                         await session.generate_reply(allow_interruptions=True)
                 await asyncio.sleep(0.1)
-
 
     logger.info("starting AgentSession")
     await session.start(room=ctx.room, agent=agent, room_input_options=rio)
@@ -238,8 +243,7 @@ if __name__ == "__main__":
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
         outbound = sys.argv[4]
-        
-        
+
         # realtime specific stff
         is_boss_user = sys.argv[5]
         contact_first_name = sys.argv[6]
@@ -252,15 +256,14 @@ if __name__ == "__main__":
         boss_phone_number = sys.argv[11]
         boss_email = sys.argv[12]
 
-        os.environ["BOSS_FIRST_NAME"]    = boss_first_name
-        os.environ["BOSS_SURNAME"]       = boss_surname
-        os.environ["BOSS_PHONE_NUMBER"]  = boss_phone_number
-        os.environ["BOSS_EMAIL"]         = boss_email
+        os.environ["BOSS_FIRST_NAME"] = boss_first_name
+        os.environ["BOSS_SURNAME"] = boss_surname
+        os.environ["BOSS_PHONE_NUMBER"] = boss_phone_number
+        os.environ["BOSS_EMAIL"] = boss_email
         os.environ["CONTACT_FIRST_NAME"] = contact_first_name
-        os.environ["CONTACT_SURNAME"]    = contact_surname
-        os.environ["CONTACT_EMAIL"]      = contact_email
-        os.environ["IS_BOSS_USER"]       = is_boss_user
-
+        os.environ["CONTACT_SURNAME"] = contact_surname
+        os.environ["CONTACT_EMAIL"] = contact_email
+        os.environ["IS_BOSS_USER"] = is_boss_user
 
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 

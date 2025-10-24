@@ -118,7 +118,7 @@ class ConversationManager:
             user_number=user_number,
             user_email=user_email,
             user_whatsapp_number=user_whatsapp_number,
-            realtime=True
+            realtime=True,
         )
 
         self.chat_history = self.state.chat_history
@@ -204,9 +204,12 @@ class ConversationManager:
             response_model=response_model,
         )
         parsed_out = json.loads(out)
-        print("\033[32m"+json.dumps(parsed_out)+"\033[0m")
+        print("\033[32m" + json.dumps(parsed_out) + "\033[0m")
         if parsed_out.get("phone_guidance"):
-            await self.event_broker.publish("app:call:call_notifs", json.dumps({"content": parsed_out["phone_guidance"]}))
+            await self.event_broker.publish(
+                "app:call:call_notifs",
+                json.dumps({"content": parsed_out["phone_guidance"]}),
+            )
         if parsed_out["actions"] is not None:
             for action in parsed_out["actions"]:
                 if action["action_name"] == "send_sms":
@@ -595,7 +598,9 @@ class ConversationManager:
 
                 # start the process here
                 target_path = (
-                    Path(__file__).parent.resolve() / "medium_scripts" / "realtime_call.py"
+                    Path(__file__).parent.resolve()
+                    / "medium_scripts"
+                    / "realtime_call.py"
                 )
                 # get contact for realtime specific info
                 contact = self.state.get_contact(phone_number=event.contact)
@@ -607,19 +612,16 @@ class ConversationManager:
                     event.contact,
                     self.state.assistant_number,
                     str(False),
-
                     # contact details
                     str(contact.is_boss),
                     str(contact.first_name),
                     str(contact.surname),
                     str(contact.email_address),
-
                     # boss user details
                     str(boss.first_name),
                     str(boss.surname),
                     str(boss.phone_number),
-                    str(boss.email_address)
-
+                    str(boss.email_address),
                 )
 
         elif isinstance(event, PhoneCallStarted):

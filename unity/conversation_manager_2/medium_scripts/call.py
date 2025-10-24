@@ -44,6 +44,7 @@ STT = None
 LLM = None
 VAD = None
 
+
 def prewarm(_ctx=None):
     global STT, LLM, VAD
     try:

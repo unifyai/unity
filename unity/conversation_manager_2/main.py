@@ -40,9 +40,13 @@ def signal_handler(signum, frame):
 async def main(use_realtime=False, project_name: str = "Assistants"):
     global conversation_manager, managers_worker, stop
     if use_realtime:
-        from unity.conversation_manager_2.conversation_manager_realtime import ConversationManager
+        from unity.conversation_manager_2.conversation_manager_realtime import (
+            ConversationManager,
+        )
     else:
-        from unity.conversation_manager_2.conversation_manager import ConversationManager
+        from unity.conversation_manager_2.conversation_manager import (
+            ConversationManager,
+        )
 
     # Set up signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
@@ -108,5 +112,6 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
 
 if __name__ == "__main__":
     import sys
+
     use_realtime = "--realtime" in sys.argv
     asyncio.run(main(use_realtime=use_realtime))
