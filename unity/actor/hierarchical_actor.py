@@ -2516,8 +2516,8 @@ class HierarchicalPlan(BaseActiveTask):
         assessment: VerificationAssessment,
     ):
         """
-        Handles a failed verification, including preemption logic for cascading failures
-        and re-opening the plan if it has already completed.
+        Handles a failed verification, including preemption logic and targeting
+        the correct function for replanning (parent or self).
         """
         if self.is_verifying_post_completion:
             logger.info(
@@ -2531,16 +2531,55 @@ class HierarchicalPlan(BaseActiveTask):
 
         async with self._verification_lock:
             failing_ordinal = item.ordinal
+            target_function_name = item.function_name
+            recovery_ordinal_for_preemption = failing_ordinal
 
+            if assessment.status == "replan_parent":
+                try:
+                    stack = item.full_call_stack_tuple
+                    current_index = stack.index(item.function_name)
+                    if current_index > 0:
+                        target_function_name = stack[current_index - 1]
+                        self.action_log.append(
+                            f"Verification failure of '{item.function_name}' (ord={failing_ordinal}) "
+                            f"escalated to replan parent: '{target_function_name}'.",
+                        )
+                        logger.info(
+                            f"[V-TASK-{failing_ordinal}] Escalating failure to replan parent '{target_function_name}'.",
+                        )
+                        recovery_ordinal_for_preemption = failing_ordinal
+                    else:
+                        self.action_log.append(
+                            f"WARNING: '{item.function_name}' requested replan_parent but is top-level. "
+                            f"Attempting reimplement_local instead.",
+                        )
+                        logger.warning(
+                            f"[V-TASK-{failing_ordinal}] Cannot replan parent of top-level '{item.function_name}'. "
+                            f"Treating as reimplement_local.",
+                        )
+                        target_function_name = item.function_name
+                        assessment.status = "reimplement_local"
+                        recovery_ordinal_for_preemption = failing_ordinal
+
+                except ValueError:
+                    logger.error(
+                        f"Could not find '{item.function_name}' in its own stack snapshot: {stack}. Treating as reimplement_local.",
+                    )
+                    target_function_name = item.function_name
+                    assessment.status = "reimplement_local"
+                    recovery_ordinal_for_preemption = failing_ordinal
             if self._recovery_task:
-                if failing_ordinal < (self._recovery_target_ordinal or float("inf")):
+                if recovery_ordinal_for_preemption < (
+                    self._recovery_target_ordinal or float("inf")
+                ):
                     logger.warning(
-                        f"Preempting recovery for ordinal {self._recovery_target_ordinal} "
-                        f"with earlier failure from '{item.function_name}' (ord={failing_ordinal}).",
+                        f"Preempting recovery for target ordinal {self._recovery_target_ordinal} "
+                        f"with earlier failure detection point (ord={recovery_ordinal_for_preemption}) "
+                        f"targeting function '{target_function_name}'.",
                     )
                     self.action_log.append(
-                        f"PREEMPTION: Earlier failure (ord={failing_ordinal}) for '{item.function_name}' "
-                        f"preempts recovery for ordinal {self._recovery_target_ordinal}.",
+                        f"PREEMPTION: Earlier failure trigger (ord={recovery_ordinal_for_preemption}, target='{target_function_name}') "
+                        f"preempts recovery for target ordinal {self._recovery_target_ordinal}.",
                     )
                     self._recovery_task.cancel()
                     try:
@@ -2549,34 +2588,38 @@ class HierarchicalPlan(BaseActiveTask):
                         pass
                 else:
                     logger.info(
-                        f"Ignoring failure of '{item.function_name}' (ord={failing_ordinal}) because recovery for earlier error (ord={self._recovery_target_ordinal}) is in progress.",
+                        f"Ignoring failure trigger at ordinal {recovery_ordinal_for_preemption} "
+                        f"(target='{target_function_name}') because recovery for earlier/equivalent target "
+                        f"(ord={self._recovery_target_ordinal}) is in progress.",
                     )
                     self.action_log.append(
-                        f"Ignoring failure of '{item.function_name}' (ord={failing_ordinal}) "
-                        f"because recovery for earlier error (ord={self._recovery_target_ordinal}) is in progress.",
-                    )
-                    self.action_log.append(
-                        f"Stale verification for '{item.function_name}' discarded.",
+                        f"Ignoring failure trigger at ord={recovery_ordinal_for_preemption} "
+                        f"(target='{target_function_name}') because recovery for earlier/equivalent target "
+                        f"(ord={self._recovery_target_ordinal}) is in progress.",
                     )
                     return
-
             self._recovery_in_progress = True
 
             logger.critical(
-                f"[V-TASK-{item.ordinal}] VERIFICATION FAILED for '{item.function_name}'. "
-                f"Status: {assessment.status}, Reason: {assessment.reason}. "
-                f"Initiating recovery...",
+                f"[V-TASK-{item.ordinal}] VERIFICATION FAILED. Status: {assessment.status}, "
+                f"Reason: {assessment.reason}. Initiating recovery targeting function '{target_function_name}' "
+                f"(using ordinal {recovery_ordinal_for_preemption} for preemption check).",
             )
             self.action_log.append(
-                f"Async Verification for {item.function_name}: FAILED - Status: {assessment.status}, Reason: '{assessment.reason}'. Initiating recovery.",
+                f"Async Verification for {item.function_name} (ord={item.ordinal}): FAILED - Status: {assessment.status}, "
+                f"Reason: '{assessment.reason}'. Initiating recovery targeting '{target_function_name}'.",
             )
 
             await self._cancel_verifications_after(item.ordinal)
+            self._recovery_target_ordinal = recovery_ordinal_for_preemption
 
-            self._recovery_target_ordinal = item.ordinal
             self._recovery_task = asyncio.create_task(
-                self._perform_verification_recovery(item, assessment),
-                name=f"Recovery-to-{item.ordinal}-{item.function_name}",
+                self._perform_verification_recovery(
+                    item,
+                    assessment,
+                    target_function_name_override=target_function_name,
+                ),
+                name=f"Recovery-TriggerOrd{failing_ordinal}-TargetFunc-{target_function_name}",
             )
 
     async def _perform_verification_recovery(
