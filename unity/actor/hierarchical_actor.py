@@ -1437,7 +1437,7 @@ class _ActionProviderProxy:
                 )
 
             func_name = self._plan.call_stack[-1] if self._plan.call_stack else "global"
-            context = {"function_name": func_name}
+            context = {"function_name": func_name, "run_id": self._plan.run_id}
 
             cache_key = self._plan.actor._generate_cache_key(
                 self._plan,
@@ -2783,7 +2783,7 @@ class HierarchicalPlan(BaseActiveTask):
         return final_keys
 
     def _restart_execution_loop(self, mode: str):
-        """Restart the execution loop with a new run_id."""
+        """Restart the execution loop with a new run_id. Assumes the caller has already cancelled and awaited the previous task."""
         old_run_id = self.run_id
         self.run_id += 1
         logger.info(
@@ -2794,19 +2794,91 @@ class HierarchicalPlan(BaseActiveTask):
         )
 
         asyncio.create_task(self._cancel_all_background_tasks())
-        if self._execution_task and not self._execution_task.done():
-            self._execution_task.cancel()
 
         if old_run_id in self.runtime.call_stacks:
             del self.runtime.call_stacks[old_run_id]
         self.interaction_stack.clear()
         self.call_stack.clear()
         self.runtime.path_context.clear()
+        self.runtime._loop_context_stack.clear()
         self.interaction_stack.append([])
 
         self._execution_task = asyncio.create_task(
             self._initialize_and_run(mode=mode),
+            name=f"MainPlanTask-{self._module_name}-Run{self.run_id}",
         )
+
+    async def _cancel_and_wait_for_task(
+        self,
+        task: Optional[asyncio.Task],
+        reason: str,
+    ):
+        """Robustly cancels a task and waits for it to finish."""
+        if task and not task.done():
+            self.action_log.append(
+                f"CANCEL: Requesting cancellation of task {task.get_name()} due to: {reason}.",
+            )
+            logger.debug(
+                f"Requesting cancellation of task {task.get_name()} (run_id={self.run_id}) due to: {reason}.",
+            )
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                self.action_log.append(
+                    f"CANCEL: Task {task.get_name()} confirmed cancelled.",
+                )
+                logger.debug(f"Task {task.get_name()} confirmed cancelled.")
+            except Exception as e:
+                self.action_log.append(
+                    f"WARNING: Unexpected error waiting for task {task.get_name()} cancellation: {e}",
+                )
+                logger.warning(
+                    f"Unexpected error waiting for task {task.get_name()} cancellation: {e}",
+                    exc_info=True,
+                )
+        elif task:
+            logger.debug(
+                f"Task {task.get_name()} was already done when cancellation requested.",
+            )
+        else:
+            logger.debug(f"No task provided for cancellation ({reason}).")
+
+    async def _clear_browser_queue_for_run(self, run_id_to_clear: int):
+        """
+        Instructs the browser backend to clear pending commands for a specific run_id.
+        This prevents stale commands from an old execution run from executing after
+        the run has been cancelled and a new one has started.
+        """
+        backend = self.actor.action_provider.browser.backend
+        if hasattr(backend, "clear_pending_commands"):
+            try:
+                self.action_log.append(
+                    f"BROWSER: Clearing pending commands for cancelled run_id={run_id_to_clear}.",
+                )
+                logger.info(
+                    f"Clearing pending browser commands for cancelled run_id={run_id_to_clear}.",
+                )
+                await backend.clear_pending_commands(run_id=run_id_to_clear)
+                self.action_log.append(
+                    f"BROWSER: Pending commands cleared for run_id={run_id_to_clear}.",
+                )
+                logger.info(f"Pending commands cleared for run_id={run_id_to_clear}.")
+            except Exception as e:
+                self.action_log.append(
+                    f"WARNING: Failed to clear browser command queue for run_id={run_id_to_clear}: {e}",
+                )
+                logger.warning(
+                    f"Failed to clear browser command queue for run_id={run_id_to_clear}: {e}",
+                    exc_info=True,
+                )
+        else:
+            self.action_log.append(
+                f"WARNING: Browser backend does not support clearing pending commands. Stale actions might execute.",
+            )
+            logger.warning(
+                "Browser backend does not have 'clear_pending_commands'. Stale actions might execute.",
+            )
 
     async def _cancel_all_background_tasks(self):
         """Gracefully cancels all in-flight verification and recovery tasks."""
