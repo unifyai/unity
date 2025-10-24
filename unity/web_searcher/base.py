@@ -52,6 +52,7 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         ----------------------------
         - Avoid redundant serial re-queries. If you need citations/links, ask for
           them in the initial question.
+        - Include any required citations/links and, when relevant, the desired time window and scope in the initial question; avoid provider- or engine-specific hints.
         - Only issue a second `ask` when the first response clearly indicates
           missing coverage or ambiguity that cannot be resolved without another
           targeted fetch.
