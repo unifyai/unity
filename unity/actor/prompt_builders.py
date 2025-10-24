@@ -2388,6 +2388,11 @@ for understanding the current execution context.
           - The **Agent Trace** shows the agent struggling or making an assumption you cannot verify (e.g., "I clicked the button, but I am not sure if it worked.").
           - Choose **`request_clarification`**. This is your default for ambiguity.
 
+        ### ✨ CRITICAL FOR FAILURES (`reimplement_local`, `replan_parent`) ✨
+        If you determine a failure requires code modification (`reimplement_local`) or replanning (`replan_parent`):
+        1.  **Detailed Root Cause:** Your `reason` field MUST clearly explain *why* the function failed, referencing specific evidence from the Agent Trace, Screenshot, or Return Value. Pinpoint the exact mismatch between intent and outcome.
+        2.  **Actionable Fix Strategy:** Your `reason` field MUST also include a concise but specific strategy for how the function should be fixed (for `reimplement_local`) or how the parent should be replanned (for `replan_parent`). This strategy will directly guide the next implementation step.
+
         ---
         ### 💡 Examples of Verification Decisions
 
@@ -2436,6 +2441,14 @@ for understanding the current execution context.
         **Example 3: A Clear Tactical Failure (`reimplement_local`)**
         - **Goal**: "Sign me up for the newsletter with 'test@example.com'."
         - **Function**: `submit_newsletter_signup(email='test@example.com')`
+        - **Function Source**:
+        ```python
+        async def submit_newsletter_signup(email: str):
+            \"\"\"Submits the newsletter signup form with the provided email address.\"\"\"
+            await action_provider.act(f"Type '{{email}}' into the email input field")
+            await action_provider.act("Click the 'Subscribe' button")
+            return "Signup submitted"
+        ```
         - **Agent Trace**:
         - `◆ [act] Submit the newsletter signup form with the provided email.`
         - `REASONING: I see the email input field and the 'Subscribe' button. I will type the email address and then click the button.`
@@ -2448,7 +2461,7 @@ for understanding the current execution context.
         ```json
         {{
             "status": "reimplement_local",
-            "reason": "A tactical error occurred. The Agent Trace confirms the steps (typing, clicking) were executed as intended. However, the Screenshot provides definitive evidence of failure through the 'Please provide a corporate email address' error message. The function's logic needs to be re-run, likely after obtaining a valid email from the user."
+            "reason": "Tactical error: The Agent Trace confirms the steps (typing, clicking) were executed correctly, but the Screenshot provides definitive evidence of failure through the 'Please provide a corporate email address' error message. Root cause: The function blindly submitted the provided email without validating whether it meets the form's requirements (corporate email domain). The form rejected 'test@example.com' as it requires a corporate domain. Fix strategy: The function `submit_newsletter_signup()` needs to be reimplemented to add validation logic before submission. It should either: (1) Check if the provided email appears to be a corporate domain (not generic domains like gmail.com, example.com, etc.) and request clarification from the user if it's not, or (2) Attempt submission, detect the error message on the page after clicking Subscribe, and if the corporate email error appears, request clarification asking the user to provide a corporate email address. The function's logic can be fixed locally - no changes to the parent plan are needed."
         }}
         ```
 
@@ -2494,6 +2507,47 @@ for understanding the current execution context.
         }}
         ```
         **Explanation**: The Agent Trace reveals an inefficient path: the function first tried to click the red color filter directly, got an "Element not found" error, then clicked "Show More Colors" to expand the options, and finally succeeded. The refinement adds explicit guidance to `try_primary_color_filter()` docstring and implementation to check if the color is in the basic set first, so future executions will skip directly to the expanded options for colors like red.
+
+        ---
+
+        **Example 5: A Strategic Failure - Parent's Mistake (`replan_parent`)**
+        - **Goal**: "Find a laptop under $500 and add it to cart"
+        - **Function Under Review**: `apply_price_filter(max_price: int)`
+        - **Function Source (including parent context from Scoped Plan Analysis)**:
+        ```python
+        # --- Parent Function (caller) ---
+        async def search_and_filter_laptops():
+            \"\"\"Searches for laptops and applies price filtering.\"\"\"
+            await action_provider.act("Search for 'laptops' on the website")
+            # ERROR: Missing navigation step to product catalog page!
+            # Should navigate to the product listing page here before filtering
+            await apply_price_filter(500)
+            return "Filtering applied"
+
+        # --- Current Function (under review) ---
+        async def apply_price_filter(max_price: int):
+            \"\"\"Applies a price filter to the current product listing.\"\"\"
+            result = await action_provider.act(
+                f"Apply a price filter to show only items under ${{max_price}}"
+            )
+            return result
+        ```
+        - **Agent Trace**:
+        - `◆ [act] Apply a price filter to show only items under $500`
+        - `REASONING: I need to find and use the price filter controls on the page. Let me scan the visible elements for filter options or a price range selector.`
+        - `✗ I cannot find any price filter controls on the current page. The page is showing search results with a search bar and category links, but no product listing with filters. It appears the page is still on the main search results view, not the product catalog page where filters would be available.`
+        - `REASONING: This is a strategic error. The function's goal is to apply a price filter, but the necessary UI elements (price filter controls) are not present on the current page. The browser is on a search results page, not the detailed product catalog page that would have filtering options. This indicates the parent function failed to navigate to the correct page before calling this function.`
+        - `✓ done (no action taken - impossible to complete)`
+        - **Return Value**: `{{"success": False, "reason": "Price filter controls not found on current page"}}`
+        - **Screenshot**: Shows a search results page with a search bar at the top, category navigation links, and general website content. No product grid or filter sidebar is visible.
+        - **Correct Assessment**:
+        ```json
+        {{
+            "status": "replan_parent",
+            "reason": "Strategic error: The function's goal is to apply a price filter, but the Agent Trace reveals that the browser is on a search results page, not the product catalog page where filter controls would be available. The Screenshot confirms this - it shows a general search interface with no product listing or filter sidebar. The agent correctly identified that the necessary UI elements are missing through no fault of this function's logic. Root cause: Looking at the Parent Function source code in the Scoped Plan Analysis, `search_and_filter_laptops()` calls `action_provider.act('Search for laptops')` and then *immediately* calls `apply_price_filter(500)` without any navigation step in between. The parent assumes searching will automatically land on a product catalog page with filters, but the trace shows the browser is still on a generic search results page. Fix strategy: The parent function `search_and_filter_laptops()` needs to be replanned to add an explicit navigation step after the search (e.g., `await action_provider.act('Navigate to the laptop products page')` or `await action_provider.act('Click on the laptops category to view the full catalog')`) *before* calling `apply_price_filter()`. The parent must ensure the product grid and filter controls are visible before attempting to apply filters."
+        }}
+        ```
+        **Explanation**: This is a clear case for `replan_parent` vs `reimplement_local`. The Agent Trace shows the agent correctly reasoning about what it was asked to do (apply price filter), correctly scanning for the necessary UI elements (filter controls), and correctly concluding that those elements are absent due to being on the wrong page. The function `apply_price_filter()` itself has no tactical errors - it cannot be "fixed" because the problem lies in the parent's plan. By reviewing the Parent Function source code, we can see the structural flaw: `search_and_filter_laptops()` is missing a navigation step between searching and filtering. The parent failed to establish the correct preconditions (being on the product catalog page with filters) before calling this child function. The enhanced reason clearly identifies the missing line in the parent code and provides a concrete fix strategy (add navigation step).
 
         ---
         Now, provide your assessment based on all the evidence and the decision framework. Respond with ONLY the JSON object.
