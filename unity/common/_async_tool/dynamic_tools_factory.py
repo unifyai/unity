@@ -17,18 +17,6 @@ from unity.image_manager.types.image_refs import ImageRefs
 
 
 class DynamicToolFactory:
-    _MANAGEMENT_METHOD_NAMES: set[str] = {
-        "interject",
-        "pause",
-        "resume",
-        "stop",
-        "done",
-        "result",
-        "next_notification",
-        "next_clarification",
-        "ask",
-        "answer_clarification",
-    }
 
     @dataclass
     class _ToolContext:
@@ -87,15 +75,29 @@ class DynamicToolFactory:
         """
         Return a mapping ``name → bound_method`` of *public* callables on *handle*:
             • name does **not** start with ``_``  _and_
-            • name is not one of the management helpers above.
+            • name is not a core steering method defined on base async-tool loop handles
+              (SteerableToolHandle, AsyncToolLoopHandle).
         """
+
+        def _management_method_names_for_handle(_h) -> set[str]:
+            names: set[str] = set()
+            mro = getattr(getattr(_h, "__class__", object), "__mro__", ())
+            for base in mro:
+                bmod = getattr(base, "__module__", "")
+                bname = getattr(base, "__name__", "")
+                if bmod == "unity.common.async_tool_loop" and bname in (
+                    "SteerableToolHandle",
+                    "AsyncToolLoopHandle",
+                ):
+                    for n, member in inspect.getmembers(base, inspect.isroutine):
+                        if not n.startswith("_"):
+                            names.add(n)
+            return names
+
+        management_names = _management_method_names_for_handle(handle)
         methods: dict[str, Callable] = {}
         for name, attr in inspect.getmembers(handle):
-            if (
-                name.startswith("_")
-                or name in DynamicToolFactory._MANAGEMENT_METHOD_NAMES
-                or not callable(attr)
-            ):
+            if name.startswith("_") or name in management_names or not callable(attr):
                 continue
             # Bind the method to *handle* (important for late-added attributes).
             try:
