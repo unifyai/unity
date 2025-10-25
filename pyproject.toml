@@ -6,6 +6,75 @@ build-backend = "setuptools.build_meta"
 name = "unity"
 version = "0.1.0"
 description = "Framework for building AI agents with browser automation capabilities"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.8.0",
+    "anticaptchaofficial>=1.0.69",
+    "browser-use>=0.1.4",
+    "browserbase>=1.4.0",
+    "deepgram-sdk>=4",
+    "fastapi>=0.104.0",
+    "google-api-python-client==2.70.0",
+    "google-auth>=2.17.0",
+    "google-cloud-pubsub>=2.18.0",
+    "google-cloud-storage>=3.4.1",
+    "langchain-anthropic>=1.0.0",
+    "langchain-openai>=1.0.1",
+    "livekit-agents[cartesia,deepgram,elevenlabs,openai,silero,turn-detector]==1.2.11",
+    "livekit-plugins-noise-cancellation==0.2.5",
+    "openai>=1.0.0",
+    "playwright==1.52.0",
+    "psutil>=5.9.0",
+    "pyaudio>=0.2.11",
+    "pydantic>=2.0.0",
+    "pydantic-core>=2.0.0",
+    "pygments>=2.19.2",
+    "python-dotenv>=1.0.0",
+    "redis>=7.0.0",
+    "requests>=2.31.0",
+    "textual>=0.40.0",
+    "textual-dev>=1.2.0",
+    "twilio>=8.0.0",
+    "uvicorn[standard]>=0.24.0",
+    "unifyai",
+
+    # Virtual devices and remote browser setup
+    "websockify>=0.13.0",
+    "sounddevice>=0.5.3",
+    "soundfile>=0.13.1",
+    "numpy>=2.3.4",
+    "opencv-python>=4.11.0.86",
+
+    # Document parsing
+    "langchain>=0.3.27",
+    "tiktoken>=0.11.0",
+    "docling>=2.49.0",
+    "spacy>=3.8.7",
+    "en-core-web-sm",
+
+    # Web search
+    "tavily-python>=0.7.12",
+
+    # Screen sharing annotation
+    "scikit-image>=0.25.2",
+    "pillow>=11.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-xdist>=3.6.1",
+    "pytest-html>=4.1.1",
+    "autoflake>=2.3.1",
+    "black>=25.9.0",
+    "hypothesis>=6.135.29",
+    "viztracer>=1.0.4",
+]
 
 [tool.setuptools.packages.find]
 include = ["unity", "unity.*"]
+
+[tool.uv.sources]
+unifyai = { git = "https://github.com/unifyai/unify.git" }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
