@@ -203,7 +203,7 @@ class MemoryManager(BaseMemoryManager):
         #   • Disallow any modification of the `bio` or `rolling_summary` fields
         #
         # We therefore expose *thin* wrappers around the low-level synchronous
-        # helpers (`_create_contact` / `_update_contact`) that validate the
+        # helpers (`_create_contact` / `update_contact`) that validate the
         # supplied keyword arguments **before** delegating to the real
         # implementation in a background thread.  The *ask* helpers are still
         # exposed unmodified so the LLM can read the current state.
@@ -256,8 +256,8 @@ class MemoryManager(BaseMemoryManager):
 
             return outcome
 
-        @functools.wraps(self._contact_manager._update_contact, updated=())
-        async def _safe_update_contact(**kwargs):
+        @functools.wraps(self._contact_manager.update_contact, updated=())
+        async def _safeupdate_contact(**kwargs):
             # Reject forbidden field modifications
             for forbidden in ("bio", "rolling_summary"):
                 if kwargs.get(forbidden) is not None:
@@ -274,12 +274,12 @@ class MemoryManager(BaseMemoryManager):
             import inspect  # local import
 
             allowed = set(
-                inspect.signature(self._contact_manager._update_contact).parameters,
+                inspect.signature(self._contact_manager.update_contact).parameters,
             )
             cleaned_kwargs = {k: v for k, v in kwargs.items() if k in allowed}
 
             return await asyncio.to_thread(
-                self._contact_manager._update_contact,
+                self._contact_manager.update_contact,
                 **cleaned_kwargs,
             )
 
@@ -334,14 +334,14 @@ class MemoryManager(BaseMemoryManager):
             )
 
         _prune_wrapper(_safe_create_contact, self._contact_manager._create_contact)
-        _prune_wrapper(_safe_update_contact, self._contact_manager._update_contact)
+        _prune_wrapper(_safeupdate_contact, self._contact_manager.update_contact)
 
         # Base helpers -----------------------------------------------------------
         # Always expose the same tools across real and simulated environments.
         tools: Dict[str, Callable[..., Any]] = {
             "contact_ask": self._contact_manager.ask,
             "create_contact": _safe_create_contact,
-            "update_contact": _safe_update_contact,
+            "update_contact": _safeupdate_contact,
             # Full-contact merge helper (no field restrictions)
             "merge_contacts": _safe_merge_contacts,
         }
@@ -445,7 +445,7 @@ class MemoryManager(BaseMemoryManager):
                     "contact_id is required but was not provided by the caller.",
                 )
             await asyncio.to_thread(
-                self._contact_manager._update_contact,
+                self._contact_manager.update_contact,
                 contact_id=final_id,
                 bio=bio,
             )
@@ -545,7 +545,7 @@ class MemoryManager(BaseMemoryManager):
                     "contact_id is required but was not provided by the caller.",
                 )
             await asyncio.to_thread(
-                self._contact_manager._update_contact,
+                self._contact_manager.update_contact,
                 contact_id=final_id,
                 rolling_summary=rolling_summary,
             )
@@ -652,7 +652,7 @@ class MemoryManager(BaseMemoryManager):
                     "contact_id is required but was not provided by the caller.",
                 )
             await asyncio.to_thread(
-                self._contact_manager._update_contact,
+                self._contact_manager.update_contact,
                 contact_id=final_id,
                 response_policy=response_policy,
             )

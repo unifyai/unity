@@ -158,7 +158,7 @@ class ManagersWorker:
                 # contacts = self._contact_manager.filter_contacts().get("contacts", [])
                 # print("got contacts", contacts)
                 # for c in contacts:
-                #     self._contact_manager._update_contact(contact_id=c.contact_id, rolling_summary="")
+                #     self._contact_manager.update_contact(contact_id=c.contact_id, rolling_summary="")
 
                 contacts_task = asyncio.create_task(self._get_contacts())
                 await asyncio.gather(bus_events_task, contacts_task)
@@ -349,10 +349,10 @@ class ManagersWorker:
         except Exception as e:
             print(f"[ManagersWorker] Error creating contact: {e}")
 
-    async def _update_contact(self, contact: dict) -> None:
+    async def update_contact(self, contact: dict) -> None:
         """Update a contact in the ContactManager."""
         try:
-            self._contact_manager._update_contact(
+            self._contact_manager.update_contact(
                 contact_id=contact["contact_id"],
                 first_name=contact["first_name"],
                 surname=contact["surname"],
@@ -363,7 +363,7 @@ class ManagersWorker:
         except Exception as e:
             print(f"[ManagersWorker] Error updating contact: {e}")
 
-    async def _update_contact_rolling_summary(
+    async def update_contact_rolling_summary(
         self,
         contacts_ids: list[int],
         transcripts: list[str],
@@ -656,11 +656,11 @@ class ManagersWorker:
                         )
                     case UpdateContactRequest():
                         asyncio.create_task(
-                            self._update_contact(ev.to_dict()["payload"]),
+                            self.update_contact(ev.to_dict()["payload"]),
                         )
                     case UpdateContactRollingSummaryRequest():
                         asyncio.create_task(
-                            self._update_contact_rolling_summary(
+                            self.update_contact_rolling_summary(
                                 ev.contacts_ids,
                                 ev.transcripts,
                             ),

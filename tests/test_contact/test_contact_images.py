@@ -91,7 +91,7 @@ async def test_lookup_contact_via_image(contact_manager_scenario) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_update_contact_from_image(contact_manager_scenario) -> None:
+async def testupdate_contact_from_image(contact_manager_scenario) -> None:
     cm, _ = contact_manager_scenario
 
     # Build a real ImageHandle from the provided PNG asset

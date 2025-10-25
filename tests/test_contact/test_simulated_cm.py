@@ -296,13 +296,13 @@ def test_privatefilter_contacts_basic():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 11. Private: _update_contact                                               #
+# 11. Private: update_contact                                               #
 # ────────────────────────────────────────────────────────────────────────────
 @_handle_project
-def test_private_update_contact_returns_structured_outcome():
+def test_privateupdate_contact_returns_structured_outcome():
     cm = SimulatedContactManager()
 
-    outcome = cm._update_contact(
+    outcome = cm.update_contact(
         contact_id=42,
         first_name="Alice",
         surname="Example",

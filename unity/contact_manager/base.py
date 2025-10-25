@@ -198,7 +198,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def _update_contact(
+    def update_contact(
         self,
         *,
         contact_id: int,
