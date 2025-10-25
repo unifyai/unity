@@ -271,16 +271,16 @@ async def test_handle_ask():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 10. Private: _filter_contacts                                              #
+# 10. Private: filter_contacts                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @_handle_project
-def test_private_filter_contacts_basic():
+def test_privatefilter_contacts_basic():
     cm = SimulatedContactManager(
         "Simulated CRM for private method tests.",
     )
 
     # Use a permissive filter and small limit to keep runtime low
-    results_dict = cm._filter_contacts(
+    results_dict = cm.filter_contacts(
         filter="first_name is None or first_name is not None",
         offset=0,
         limit=3,

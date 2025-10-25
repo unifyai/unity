@@ -59,7 +59,7 @@ def get_broader_context(
         # 1.  Gather assistant & user bios (robust to missing data) ---------
         cm = contact_manager if contact_manager is not None else ContactManager()
         contacts = sorted(
-            cm._filter_contacts(
+            cm.filter_contacts(
                 filter="(contact_id == 0) or (contact_id == 1)",
                 limit=2,
             ).get("contacts", []),
@@ -75,7 +75,7 @@ def get_broader_context(
         assistant_bio = assist.bio if assist.bio else ""
 
         # user -----------------------------------------------------
-        user = cm._filter_contacts(filter="contact_id == 1", limit=1).get("contacts", [])
+        user = cm.filter_contacts(filter="contact_id == 1", limit=1).get("contacts", [])
         u = user[0]
         user_name = " ".join(p for p in [u.first_name, u.surname] if p).strip()
         user_bio = u.bio if u.bio else ""

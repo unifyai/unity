@@ -112,7 +112,7 @@ async def test_update_contact_from_image(contact_manager_scenario) -> None:
     await handle.result()
 
     # Verify David Smith is now present with correct full name and email
-    matches = cm._filter_contacts(
+    matches = cm.filter_contacts(
         filter="email_address == 'david.smith@gmail.com'",
         limit=1,
     )["contacts"]

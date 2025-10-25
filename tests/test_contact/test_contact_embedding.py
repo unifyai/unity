@@ -34,7 +34,7 @@ def test_contact_embedding_and_search():
     # ------------------------------------------------------------------ #
     # 2️⃣  Keyword search for a term that does NOT appear verbatim       #
     # ------------------------------------------------------------------ #
-    keyword_hits = cm._filter_contacts(filter="'preferences' in bio")["contacts"]
+    keyword_hits = cm.filter_contacts(filter="'preferences' in bio")["contacts"]
     assert isinstance(keyword_hits, list) and len(keyword_hits) == 0
 
     # ------------------------------------------------------------------ #

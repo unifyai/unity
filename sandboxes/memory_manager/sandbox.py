@@ -485,7 +485,7 @@ async def _main_async() -> None:
                     if cid in contact_name_cache:
                         return contact_name_cache[cid]
                     try:
-                        records = mm._contact_manager._filter_contacts(  # type: ignore[attr-defined]
+                        records = mm._contact_manager.filter_contacts(  # type: ignore[attr-defined]
                             filter=f"contact_id == {cid}",
                             limit=1,
                         )
@@ -542,7 +542,7 @@ async def _main_async() -> None:
                         if cid in contact_name_cache:
                             return contact_name_cache[cid]
                         try:
-                            records = mm._contact_manager._filter_contacts(  # type: ignore[attr-defined]
+                            records = mm._contact_manager.filter_contacts(  # type: ignore[attr-defined]
                                 filter=f"contact_id == {cid}",
                                 limit=1,
                             )

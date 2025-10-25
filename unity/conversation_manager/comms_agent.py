@@ -1035,7 +1035,7 @@ class CommsAgent:
         """
         self._ensure_contact_manager()
         contacts = [
-            contact.model_dump() for contact in self.contact_manager._filter_contacts()
+            contact.model_dump() for contact in self.contact_manager.filter_contacts()
         ]
         res = await client.beta.chat.completions.parse(
             model="gpt-4.1",

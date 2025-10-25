@@ -178,7 +178,7 @@ def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
     if kind == "ask":
         return methods_to_tool_dict(
             ContactManager._list_columns,
-            ContactManager._filter_contacts,
+            ContactManager.filter_contacts,
             ContactManager._search_contacts,
             include_class_name=False,
         )
@@ -275,7 +275,7 @@ def mirror_transcript_manager_tools() -> Dict[str, Any]:
 
     # Fallback – current canonical tool set
     return methods_to_tool_dict(
-        ContactManager._filter_contacts,
+        ContactManager.filter_contacts,
         TranscriptManager._filter_messages,
         TranscriptManager._search_messages,
         include_class_name=False,

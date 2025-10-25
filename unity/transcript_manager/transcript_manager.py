@@ -600,7 +600,7 @@ class TranscriptManager(BaseTranscriptManager):
             if cid in name_cache:
                 return name_cache[cid]
             try:
-                recs = cm._filter_contacts(filter=f"contact_id == {cid}", limit=1)
+                recs = cm.filter_contacts(filter=f"contact_id == {cid}", limit=1)
                 if recs:
                     rec = recs[0]
                     full = " ".join(
