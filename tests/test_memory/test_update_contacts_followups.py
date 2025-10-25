@@ -71,7 +71,7 @@ def _patch_create_contact(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_update_contacts_triggers_followups(monkeypatch):
+async def testupdate_contacts_triggers_followups(monkeypatch):
     """`update_contacts` should invoke `update_contact_bio` *and*
     `update_contact_rolling_summary` exactly once for a newly created contact
     when the default flags are used.
@@ -150,7 +150,7 @@ async def test_update_contacts_triggers_followups(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_update_contacts_respects_flags(monkeypatch):
+async def testupdate_contacts_respects_flags(monkeypatch):
     """When both follow-up flags are disabled, the respective helpers should
     *not* be invoked."""
 

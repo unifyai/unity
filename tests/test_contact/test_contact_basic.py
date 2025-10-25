@@ -40,7 +40,7 @@ def test_create_contact():
 
 @pytest.mark.unit
 @_handle_project
-def test_update_contact():
+def testupdate_contact():
     contact_manager = ContactManager()
 
     # create
@@ -59,7 +59,7 @@ def test_update_contact():
     assert contact.first_name == "Dan"
 
     # update
-    contact_manager._update_contact(
+    contact_manager.update_contact(
         contact_id=contact.contact_id,
         first_name="Daniel",
         bio="He's alright",

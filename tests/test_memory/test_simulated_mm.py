@@ -51,7 +51,7 @@ def _build_transcript(useful_line: str) -> str:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
+async def test_mmupdate_contacts_invokes_expected_tools(monkeypatch):
     counts = {"cm_create": 0}
 
     # --- patch SimulatedContactManager._create_contact ---------------------
@@ -109,11 +109,11 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
+async def test_mmupdate_contact_bio_calls_inner_helpers(monkeypatch):
     counts = {"cm_update": 0}
 
-    # --- patch SimulatedContactManager._update_contact ---------------------
-    orig_cm_upd = SimulatedContactManager._update_contact
+    # --- patch SimulatedContactManager.update_contact ---------------------
+    orig_cm_upd = SimulatedContactManager.update_contact
 
     @functools.wraps(orig_cm_upd)
     def spy_cm_upd(self, **kw):
@@ -122,7 +122,7 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
 
     monkeypatch.setattr(
         SimulatedContactManager,
-        "_update_contact",
+        "update_contact",
         spy_cm_upd,
         raising=True,
     )
@@ -176,11 +176,11 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
+async def test_mmupdate_contact_rolling_summary_invocations(monkeypatch):
     counts = {"cm_update": 0}
 
-    # --- patch SimulatedContactManager._update_contact ---------------------
-    orig_cm_upd = SimulatedContactManager._update_contact
+    # --- patch SimulatedContactManager.update_contact ---------------------
+    orig_cm_upd = SimulatedContactManager.update_contact
 
     @functools.wraps(orig_cm_upd)
     def spy_cm_upd(self, **kw):
@@ -189,7 +189,7 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 
     monkeypatch.setattr(
         SimulatedContactManager,
-        "_update_contact",
+        "update_contact",
         spy_cm_upd,
         raising=True,
     )
@@ -235,10 +235,10 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 
     # check ------------------------------------------------------------------
     assert isinstance(new_summary, str) and new_summary.strip()
-    # At least one call to ContactManager._update_contact
+    # At least one call to ContactManager.update_contact
     assert (
         counts["cm_update"] >= 1
-    ), "ContactManager._update_contact should be called at least once for rolling summary"
+    ), "ContactManager.update_contact should be called at least once for rolling summary"
 
 
 # --------------------------------------------------------------------------- #
@@ -246,8 +246,8 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mm_update_contact_response_policy_invocations(monkeypatch):
-    orig_cm_upd = SimulatedContactManager._update_contact
+async def test_mmupdate_contact_response_policy_invocations(monkeypatch):
+    orig_cm_upd = SimulatedContactManager.update_contact
 
     calls = {"cm_update": 0}
 
@@ -258,7 +258,7 @@ async def test_mm_update_contact_response_policy_invocations(monkeypatch):
 
     monkeypatch.setattr(
         SimulatedContactManager,
-        "_update_contact",
+        "update_contact",
         spy_cm_upd,
         raising=True,
     )
@@ -296,10 +296,10 @@ async def test_mm_update_contact_response_policy_invocations(monkeypatch):
 
     await mm.update_contact_response_policy(transcript, contact_id=1)
 
-    # One invocation of ContactManager._update_contact expected
+    # One invocation of ContactManager.update_contact expected
     assert (
         calls["cm_update"] >= 1
-    ), "ContactManager._update_contact should be called at least once for response policy"
+    ), "ContactManager.update_contact should be called at least once for response policy"
 
 
 # --------------------------------------------------------------------------- #

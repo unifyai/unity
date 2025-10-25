@@ -339,7 +339,7 @@ def merge_contacts(
         )  # local import
 
         tm = TranscriptManager(contact_manager=self)
-        tm._update_contact_id(original_contact_id=delete_id, new_contact_id=keep_id)
+        tm.update_contact_id(original_contact_id=delete_id, new_contact_id=keep_id)
 
     return {
         "outcome": "contacts merged successfully",

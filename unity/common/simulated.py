@@ -186,7 +186,7 @@ def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
         return methods_to_tool_dict(
             ContactManager.ask,
             ContactManager._create_contact,
-            ContactManager._update_contact,
+            ContactManager.update_contact,
             ContactManager._delete_contact,
             ContactManager._create_custom_column,
             ContactManager._delete_custom_column,

@@ -37,7 +37,7 @@ def test_data_store_updated_after_update():
     out = cm._create_contact(first_name="CacheTest", surname="Two")
     cid = out["details"]["contact_id"]
 
-    cm._update_contact(contact_id=cid, surname="Updated")
+    cm.update_contact(contact_id=cid, surname="Updated")
 
     # Verify DataStore reflects updated surname
     row = ds[cid]

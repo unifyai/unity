@@ -99,12 +99,12 @@ def test_create_contact_with_custom_field():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
 @_handle_project
-def test_update_contact_custom_field():
+def testupdate_contact_custom_field():
     cm = ContactManager()
 
     cm._create_custom_column(column_name="age", column_type="int")
     cid = cm._create_contact(first_name="Tom", age=30)["details"]["contact_id"]
 
-    cm._update_contact(contact_id=cid, age=31)
+    cm.update_contact(contact_id=cid, age=31)
     contact = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
     assert contact.age == 31
