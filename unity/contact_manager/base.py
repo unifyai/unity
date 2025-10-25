@@ -166,7 +166,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def _filter_contacts(
+    def filter_contacts(
         self,
         *,
         filter: Optional[str] = None,

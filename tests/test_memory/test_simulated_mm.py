@@ -71,13 +71,13 @@ async def test_mm_update_contacts_invokes_expected_tools(monkeypatch):
     # --- ensure the named person does NOT exist yet -----------------------
     # This gently guides the simulation toward a contact creation rather than
     # inventing an existing record and performing an update instead.
-    def _fake_filter_contacts(self, *, filter=None, offset=0, limit=1):
+    def _fakefilter_contacts(self, *, filter=None, offset=0, limit=1):
         return []
 
     monkeypatch.setattr(
         SimulatedContactManager,
-        "_filter_contacts",
-        _fake_filter_contacts,
+        "filter_contacts",
+        _fakefilter_contacts,
         raising=True,
     )
 
@@ -128,7 +128,7 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
     )
 
     # --- align names: ensure contact_id==1 refers to Dana -----------------
-    def _fake_filter_contacts(self, *, filter=None, offset=0, limit=1):
+    def _fakefilter_contacts(self, *, filter=None, offset=0, limit=1):
         # Deterministic single result matching the transcript's person
         return [
             Contact(
@@ -141,8 +141,8 @@ async def test_mm_update_contact_bio_calls_inner_helpers(monkeypatch):
 
     monkeypatch.setattr(
         SimulatedContactManager,
-        "_filter_contacts",
-        _fake_filter_contacts,
+        "filter_contacts",
+        _fakefilter_contacts,
         raising=True,
     )
 
@@ -195,7 +195,7 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
     )
 
     # --- align names: ensure contact_id==1 refers to the person in transcript
-    def _fake_filter_contacts(self, *, filter=None, offset=0, limit=1):
+    def _fakefilter_contacts(self, *, filter=None, offset=0, limit=1):
         # Deterministic single result matching the transcript's person
         return [
             Contact(
@@ -208,8 +208,8 @@ async def test_mm_update_contact_rolling_summary_invocations(monkeypatch):
 
     monkeypatch.setattr(
         SimulatedContactManager,
-        "_filter_contacts",
-        _fake_filter_contacts,
+        "filter_contacts",
+        _fakefilter_contacts,
         raising=True,
     )
 
@@ -264,7 +264,7 @@ async def test_mm_update_contact_response_policy_invocations(monkeypatch):
     )
 
     # --- align names: ensure contact_id==1 refers to Jane -----------------
-    def _fake_filter_contacts(self, *, filter=None, offset=0, limit=1):
+    def _fakefilter_contacts(self, *, filter=None, offset=0, limit=1):
         # Deterministic single result matching the transcript's person
         return [
             Contact(
@@ -277,8 +277,8 @@ async def test_mm_update_contact_response_policy_invocations(monkeypatch):
 
     monkeypatch.setattr(
         SimulatedContactManager,
-        "_filter_contacts",
-        _fake_filter_contacts,
+        "filter_contacts",
+        _fakefilter_contacts,
         raising=True,
     )
 

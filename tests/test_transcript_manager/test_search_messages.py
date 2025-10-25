@@ -143,7 +143,7 @@ async def test_search_messages_cross_contact_and_message_disambiguation():
     top = nearest[0]
 
     # Resolve sender contact to verify identity
-    sender = cm._filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[
+    sender = cm.filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[
         "contacts"
     ][0]
     assert sender.first_name == "Alice"
@@ -197,7 +197,7 @@ async def test_search_messages_sender_bio_only():
 
     assert len(nearest) == 1
     top = nearest[0]
-    sender = cm._filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[
+    sender = cm.filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[
         "contacts"
     ][0]
     assert sender.first_name == "Alice"
@@ -285,7 +285,7 @@ async def test_search_messages_receiver_bio_multi_receiver_min_aggregation():
     assert len(nearest) == 1
     top = nearest[0]
     # The top should be the message that includes Bob among receivers due to min aggregation
-    bob_rec = cm._filter_contacts(filter="first_name == 'Bob'", limit=1)["contacts"][0]
+    bob_rec = cm.filter_contacts(filter="first_name == 'Bob'", limit=1)["contacts"][0]
     assert bob_rec.contact_id in top.receiver_ids
 
 
@@ -389,12 +389,12 @@ async def test_search_messages_combined_sender_and_receiver_terms():
 
     assert len(nearest) >= 1
     top = nearest[0]
-    s = cm._filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[
+    s = cm.filter_contacts(filter=f"contact_id == {top.sender_id}", limit=1)[
         "contacts"
     ][0]
     assert s.first_name == "Alice"
     # Ensure Bob is among receivers
-    bob_rec = cm._filter_contacts(filter="first_name == 'Bob'", limit=1)["contacts"][0]
+    bob_rec = cm.filter_contacts(filter="first_name == 'Bob'", limit=1)["contacts"][0]
     assert bob_rec.contact_id in top.receiver_ids
 
 
@@ -446,7 +446,7 @@ async def test_search_messages_receiver_only_returns_expected_messages():
     # Both results should have receivers among {bob, dave}; order not guaranteed
     eng_ids = {
         c.contact_id
-        for c in cm._filter_contacts(filter="first_name in ['Bob', 'Dave']")["contacts"]
+        for c in cm.filter_contacts(filter="first_name in ['Bob', 'Dave']")["contacts"]
     }
     for m in nearest:
         assert any(rid in eng_ids for rid in m.receiver_ids)

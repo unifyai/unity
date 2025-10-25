@@ -203,7 +203,7 @@ def format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any
         ids_expr = ", ".join(str(i) for i in sorted(unique_ids))
         flt = f"contact_id in [{ids_expr}]"
         try:
-            contacts_payload = self._contact_manager._filter_contacts(
+            contacts_payload = self._contact_manager.filter_contacts(
                 filter=flt,
                 limit=len(unique_ids),
             )

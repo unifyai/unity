@@ -463,7 +463,7 @@ class MemoryManager(BaseMemoryManager):
             service_tier="priority",
         )
         contacts = await asyncio.to_thread(
-            self._contact_manager._filter_contacts,
+            self._contact_manager.filter_contacts,
             filter=f"contact_id == {contact_id}",
             limit=1,
         )
@@ -487,7 +487,7 @@ class MemoryManager(BaseMemoryManager):
         # implementation is synchronous and may hit the network.
         try:
             contacts = await asyncio.to_thread(
-                self._contact_manager._filter_contacts,
+                self._contact_manager.filter_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             )
@@ -564,7 +564,7 @@ class MemoryManager(BaseMemoryManager):
         # ----------------------------------------------------------------
         try:
             contacts = await asyncio.to_thread(
-                self._contact_manager._filter_contacts,
+                self._contact_manager.filter_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             ).get("contacts", [])
@@ -671,7 +671,7 @@ class MemoryManager(BaseMemoryManager):
         # ----------------------------------------------------------------
         try:
             contacts = await asyncio.to_thread(
-                self._contact_manager._filter_contacts,
+                self._contact_manager.filter_contacts,
                 filter=f"contact_id == {contact_id}",
                 limit=1,
             )

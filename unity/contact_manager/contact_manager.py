@@ -124,7 +124,7 @@ class ContactManager(BaseContactManager):
         ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
-                self._filter_contacts,
+                self.filter_contacts,
                 self._search_contacts,
                 include_class_name=False,
             ),
@@ -484,7 +484,7 @@ class ContactManager(BaseContactManager):
         return cols if include_types else list(cols)
 
     @read_only
-    def _filter_contacts(
+    def filter_contacts(
         self,
         *,
         filter: Optional[str] = None,

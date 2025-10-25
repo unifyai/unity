@@ -90,7 +90,7 @@ def test_create_contact_with_custom_field():
     )[
         "details"
     ]["contact_id"]
-    contacts = cm._filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    contacts = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
     assert contacts and contacts[0].department == "Engineering"
 
 
@@ -106,5 +106,5 @@ def test_update_contact_custom_field():
     cid = cm._create_contact(first_name="Tom", age=30)["details"]["contact_id"]
 
     cm._update_contact(contact_id=cid, age=31)
-    contact = cm._filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
+    contact = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
     assert contact.age == 31

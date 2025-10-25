@@ -83,7 +83,7 @@ async def test_km_update_updates_contact():
     _, steps = await h.result()  # we don't need the textual confirmation here
 
     # ‣ Verify that the ContactManager state really changed
-    updated = cm._filter_contacts(filter="email_address == 'jane@example.com'")[
+    updated = cm.filter_contacts(filter="email_address == 'jane@example.com'")[
         "contacts"
     ]
     assert updated, "Jane Doe should exist after KM.store call"

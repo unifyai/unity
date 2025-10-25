@@ -155,7 +155,7 @@ class ManagersWorker:
                 self._contact_manager = ContactManager()
 
                 # clear rolling summary
-                # contacts = self._contact_manager._filter_contacts().get("contacts", [])
+                # contacts = self._contact_manager.filter_contacts().get("contacts", [])
                 # print("got contacts", contacts)
                 # for c in contacts:
                 #     self._contact_manager._update_contact(contact_id=c.contact_id, rolling_summary="")
@@ -220,7 +220,7 @@ class ManagersWorker:
             )
             print(
                 "[ManagersWorker] Initialization complete in "
-                f"{perf_counter() - start_time:.2f} seconds"
+                f"{perf_counter() - start_time:.2f} seconds",
             )
 
     async def _get_bus_events(self) -> None:
@@ -297,7 +297,7 @@ class ManagersWorker:
         """Fetch all contacts and publish back."""
         try:
             # Get all contacts from ContactManager and convert to dict
-            rows = self._contact_manager._filter_contacts().get("contacts", [])
+            rows = self._contact_manager.filter_contacts().get("contacts", [])
             contacts = [c.model_dump() for c in rows]
 
             # Publish reply as Event envelope
@@ -380,7 +380,9 @@ class ManagersWorker:
             print(f"[ManagersWorker] Error updating contact rolling summary: {e}")
 
     async def _conductor_watch_result(
-        self, handle_id: int, handle: SteerableToolHandle
+        self,
+        handle_id: int,
+        handle: SteerableToolHandle,
     ) -> None:
         """Await final result and publish completion (or failure), then cleanup."""
         # await result
@@ -403,7 +405,9 @@ class ManagersWorker:
         self._handle_meta.pop(handle_id, None)
 
     async def _conductor_watch_notifications(
-        self, handle_id: int, handle: SteerableToolHandle
+        self,
+        handle_id: int,
+        handle: SteerableToolHandle,
     ) -> None:
         """Forward notifications as handle responses until handle completes."""
         while not handle.done():
@@ -426,7 +430,9 @@ class ManagersWorker:
             )
 
     async def _conductor_watch_clarifications(
-        self, handle_id: int, handle: SteerableToolHandle
+        self,
+        handle_id: int,
+        handle: SteerableToolHandle,
     ) -> None:
         """Forward clarifications to CM until handle completes."""
         while not handle.done():
@@ -489,7 +495,10 @@ class ManagersWorker:
         asyncio.create_task(self._conductor_watch_clarifications(handle_id, handle))
 
     def _register_handle_action(
-        self, handle_id: int, action_name: str, query: str
+        self,
+        handle_id: int,
+        action_name: str,
+        query: str,
     ) -> None:
         """Register a handle action."""
         handle_data = self._handle_registry.get(handle_id)
@@ -499,16 +508,19 @@ class ManagersWorker:
 
         # record intervention
         handle_data["handle_actions"].append(
-            {"action_name": action_name, "query": query}
+            {"action_name": action_name, "query": query},
         )
         return handle_data["handle"]
 
     async def _handle_conductor_clarification_response(
-        self, event: ConductorClarificationResponse
+        self,
+        event: ConductorClarificationResponse,
     ) -> None:
         """Handle a Conductor clarification response."""
         handle: SteerableToolHandle = self._register_handle_action(
-            event.handle_id, event.action_name, event.query
+            event.handle_id,
+            event.action_name,
+            event.query,
         )
 
         # perform intervention
@@ -519,10 +531,13 @@ class ManagersWorker:
             return
 
     async def _handle_conductor_handle_request(
-        self, event: ConductorHandleRequest
+        self,
+        event: ConductorHandleRequest,
     ) -> None:
         handle: SteerableToolHandle = self._register_handle_action(
-            event.handle_id, event.action_name, event.query
+            event.handle_id,
+            event.action_name,
+            event.query,
         )
 
         # perform intervention
@@ -555,7 +570,7 @@ class ManagersWorker:
                     result = "Handle Done" if done_result else "Handle Not Done"
                 case _:
                     print(
-                        f"[ManagersWorker] Unknown action_name={event.action_name} for intervention"
+                        f"[ManagersWorker] Unknown action_name={event.action_name} for intervention",
                     )
                     return
         except Exception as e:
@@ -637,17 +652,18 @@ class ManagersWorker:
                         asyncio.create_task(self._get_contact_by_id(ev.contact_id))
                     case CreateContactRequest():
                         asyncio.create_task(
-                            self._create_contact(ev.to_dict()["payload"])
+                            self._create_contact(ev.to_dict()["payload"]),
                         )
                     case UpdateContactRequest():
                         asyncio.create_task(
-                            self._update_contact(ev.to_dict()["payload"])
+                            self._update_contact(ev.to_dict()["payload"]),
                         )
                     case UpdateContactRollingSummaryRequest():
                         asyncio.create_task(
                             self._update_contact_rolling_summary(
-                                ev.contacts_ids, ev.transcripts
-                            )
+                                ev.contacts_ids,
+                                ev.transcripts,
+                            ),
                         )
                     case ConductorRequest():
                         asyncio.create_task(self._handle_conductor_request(ev))
@@ -655,11 +671,11 @@ class ManagersWorker:
                         asyncio.create_task(self._handle_conductor_handle_request(ev))
                     case ConductorClarificationResponse():
                         asyncio.create_task(
-                            self._handle_conductor_clarification_response(ev)
+                            self._handle_conductor_clarification_response(ev),
                         )
                     case _:
                         print(
-                            f"[ManagersWorker] Unknown event: {ev.to_dict()['event_name']}"
+                            f"[ManagersWorker] Unknown event: {ev.to_dict()['event_name']}",
                         )
             except Exception as e:
                 print(f"[ManagersWorker] Error dispatching {req_key} event: {e}")
