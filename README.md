@@ -2,12 +2,11 @@
 
 ## Setup
 
-### Create venv inside this folder
+### Setup the environment
 ```
 cd ~/unity (wherever you cloned it)
-uv venv --python 3.11 .unity
-source .unity/bin/activate
-uv pip install -r requirements.txt
+uv sync
+source .venv/bin/activate
 ```
 
 ### Environment Variables
