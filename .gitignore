@@ -21,3 +21,4 @@ dump.rdb
 parsed_results_output/
 evals/
 magnitude/
+unity.egg-info/
