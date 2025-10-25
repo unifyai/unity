@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -67,86 +67,6 @@ class BaseSecretManager(BaseStateManager, metaclass=SingletonABCMeta):
     @abstractmethod
     def clear(self) -> None:
         raise NotImplementedError
-
-    # ------------------------------------------------------------------ #
-    # Private helpers that concrete managers must implement              #
-    # ------------------------------------------------------------------ #
-    @abstractmethod
-    def _list_secret_keys(self) -> List[str]:
-        """Return all available secret names (keys) stored by the manager.
-
-        Returns
-        -------
-        list[str]
-            Sorted, unique list of secret names.
-        """
-
-    @abstractmethod
-    def _search_secrets(
-        self,
-        *,
-        references: Optional[Dict[str, str]] = None,
-        k: int = 10,
-    ) -> List["Secret"]:
-        """Semantic search over secrets (typically by description).
-
-        Parameters
-        ----------
-        references : dict[str, str] | None, default None
-            Mapping from a source expression (e.g., "description") to the
-            reference text used for similarity ranking. ``None`` or empty
-            disables semantic search and should fall back to recency.
-        k : int, default 10
-            Maximum number of results.
-
-        Returns
-        -------
-        list[Secret]
-            Up to ``k`` redacted Secret models (must not expose raw values).
-        """
-
-    @abstractmethod
-    def _filter_secrets(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> List["Secret"]:
-        """Retrieve secret records that satisfy *filter* (read-only)."""
-
-    @abstractmethod
-    def _create_secret(
-        self,
-        *,
-        name: str,
-        value: str,
-        description: Optional[str] = None,
-    ) -> "ToolOutcome":
-        """Create a new secret with a unique name."""
-
-    @abstractmethod
-    def _update_secret(
-        self,
-        *,
-        name: str,
-        value: Optional[str] = None,
-        description: Optional[str] = None,
-    ) -> "ToolOutcome":
-        """Update an existing secret identified by its unique name."""
-
-    @abstractmethod
-    def _delete_secret(
-        self,
-        *,
-        name: str,
-    ) -> "ToolOutcome":
-        """Permanently remove a secret by name."""
-
-
-if TYPE_CHECKING:
-    from .types import Secret
-    from ..common.tool_outcome import ToolOutcome
 
 
 # Attach centralised docstring
