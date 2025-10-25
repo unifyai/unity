@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 import asyncio
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -87,70 +87,6 @@ class BaseGuidanceManager(BaseStateManager, metaclass=SingletonABCMeta):
     @abstractmethod
     def clear(self) -> None:
         raise NotImplementedError
-
-    # ------------------------------ Private tools -----------------------------
-    @abstractmethod
-    def _filter(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> List["Guidance"]:
-        """
-        Return guidance records that satisfy the Python-expression filter.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def _search(
-        self,
-        *,
-        references: Optional[Dict[str, str]] = None,
-        k: int = 10,
-    ) -> List["Guidance"]:
-        """
-        Semantic search across guidance using title/content (or derived expressions).
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def _add_guidance(
-        self,
-        *,
-        title: Optional[str] = None,
-        content: Optional[str] = None,
-        images: Optional[Dict[str, int]] = None,
-    ) -> "ToolOutcome":
-        """Create and persist a new guidance entry and return a standard outcome."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def _update_guidance(
-        self,
-        *,
-        guidance_id: int,
-        title: Optional[str] = None,
-        content: Optional[str] = None,
-        images: Optional[Dict[str, int]] = None,
-    ) -> "ToolOutcome":
-        """Modify one guidance entry identified by guidance_id and return the outcome."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def _delete_guidance(
-        self,
-        *,
-        guidance_id: int,
-    ) -> "ToolOutcome":
-        """Delete the specified guidance entry and return the outcome."""
-        raise NotImplementedError
-
-
-if TYPE_CHECKING:
-    # Avoid runtime imports to prevent circular dependencies
-    from .types.guidance import Guidance
-    from ..common.tool_outcome import ToolOutcome
 
 
 # Attach centralised docstring
