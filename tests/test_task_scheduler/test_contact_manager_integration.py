@@ -17,7 +17,7 @@ def test_ts_tools_expose_contact_manager_ask():
     cm_tool_key = "ContactManager_ask"
 
     # ask-side tools
-    assert cm_tool_key in ts._ask_tools, (
+    assert cm_tool_key in ts._tools["ask"], (
         f"{cm_tool_key} must be present in _ask_tools to enable the LLM to "
         "resolve contact information during TaskScheduler.ask runs."
     )
