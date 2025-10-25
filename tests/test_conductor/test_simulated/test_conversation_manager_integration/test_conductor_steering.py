@@ -112,11 +112,14 @@ async def test_conductor_steers_with_ask():
     ask_mock.__self__ = mock_cm_handle
 
     # 4. Patch both methods on the handle instance *before* passing it to the Conductor.
-    with patch.object(
-        mock_cm_handle,
-        "get_full_transcript",
-        transcript_mock,
-    ), patch.object(mock_cm_handle, "ask", ask_mock):
+    with (
+        patch.object(
+            mock_cm_handle,
+            "get_full_transcript",
+            transcript_mock,
+        ),
+        patch.object(mock_cm_handle, "ask", ask_mock),
+    ):
 
         # 5. Now, create the Conductor, injecting the pre-patched handle.
         cond = SimulatedConductor(
