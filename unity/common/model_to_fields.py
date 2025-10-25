@@ -97,9 +97,19 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
                 if has_none and len(non_none) == 1:
                     base = non_none[0]
                     sub = _pydantic_json_schema_for(base)
-                    # If nested model/list schema is available, wrap with null
+                    # If nested model/list schema is available, wrap with null and hoist $defs
                     if sub is not None:
-                        return {"anyOf": [sub, {"type": "null"}]}
+                        defs = None
+                        try:
+                            if isinstance(sub, dict) and "$defs" in sub:
+                                defs = sub.get("$defs")
+                                sub = {k: v for k, v in sub.items() if k != "$defs"}
+                        except Exception:
+                            defs = None
+                        field_schema = {"anyOf": [sub, {"type": "null"}]}
+                        if defs is not None:
+                            field_schema["$defs"] = defs
+                        return field_schema
                     # Otherwise, synthesise a minimal schema for common primitives/containers
                     try:
                         primitive_map = {
