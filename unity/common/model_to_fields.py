@@ -143,7 +143,21 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
             if origin in (list, Sequence):
                 (item_type,) = get_args(ann) if get_args(ann) else (None,)
                 if isinstance(item_type, type) and issubclass(item_type, BaseModel):
-                    return {"type": "array", "items": item_type.model_json_schema()}
+                    item_schema = item_type.model_json_schema()
+                    # Hoist $defs from the item schema to the array root so $ref resolves
+                    defs = None
+                    try:
+                        if isinstance(item_schema, dict) and "$defs" in item_schema:
+                            defs = item_schema.get("$defs")
+                            item_schema = {
+                                k: v for k, v in item_schema.items() if k != "$defs"
+                            }
+                    except Exception:
+                        defs = None
+                    arr_schema = {"type": "array", "items": item_schema}
+                    if defs is not None:
+                        arr_schema["$defs"] = defs
+                    return arr_schema
                 # List of something else → not a nested Pydantic model
                 return None
         except Exception:
