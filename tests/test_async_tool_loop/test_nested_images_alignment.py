@@ -114,7 +114,7 @@ async def test_overview_after_clarification_images() -> None:
 
     async def need_clar(*, _clarification_up_q, _clarification_down_q):
         await _clarification_up_q.put(
-            {"question": "q?", "images": [RawImageRef(image_id=55)]},
+            {"question": "q?", "images": [RawImageRef(image_id=rid)]},
         )
         _ = await _clarification_down_q.get()
         return {"ok": True}
@@ -126,7 +126,9 @@ async def test_overview_after_clarification_images() -> None:
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
     )
-    client.set_system_message("Answer with 'ok'.")
+    client.set_system_message(
+        "1️⃣ Call `need_clar`. 2️⃣ When the tool asks a question, answer using the `_clarify_…` helper with the single word 'ok'.",
+    )
 
     from unity.image_manager.utils import make_solid_png_base64
     from unity.image_manager.image_manager import ImageManager
@@ -141,11 +143,15 @@ async def test_overview_after_clarification_images() -> None:
         message="go",
         tools={"need_clar": need_clar},
         images=[],
+        tool_policy=lambda step, available: (
+            ("required", {"need_clar": available["need_clar"]})
+            if step == 0
+            else ("auto", {})
+        ),
     )
 
-    # Wait for clarify helper to be requested and answered
+    # Wait for need_clar to be requested so the clarification gets raised
     await _wait_for_tool_request(client, "need_clar")
-    await _wait_for_tool_result(client, "clarify_", 1)
 
     # Scan for latest overview content containing the new image id
     import asyncio
@@ -156,12 +162,12 @@ async def test_overview_after_clarification_images() -> None:
             for m in client.messages
             if m.get("role") == "tool" and m.get("name") == "live_images_overview"
         ]
-        if ov_msgs and ('"image_id": 55' in (ov_msgs[-1].get("content") or "")):
+        if ov_msgs and (f'"image_id": {rid}' in (ov_msgs[-1].get("content") or "")):
             break
         await asyncio.sleep(0.01)
 
     assert ov_msgs, "Expected overview reinjected after clarification images"
-    assert '"image_id": 55' in (ov_msgs[-1].get("content") or "")
+    assert f'"image_id": {rid}' in (ov_msgs[-1].get("content") or "")
 
     await h.result()
 
