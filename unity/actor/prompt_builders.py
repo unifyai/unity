@@ -132,14 +132,13 @@ def _format_images_for_prompt(images: Optional[dict[str, Any]]) -> str:
         return ""
 
     image_lines = [
-        "The user has provided the following images for additional context. "
-        "Each image is associated with a specific part of the user's request, indicated by the 'span' (e.g., [start:end]). "
-        "Refer to these images to better understand the user's intent and the visual elements they are describing.",
+        "The user has provided the following images for additional context. ",
+        "Refer to these images to better understand the user's intent and any relevant visual details.",
     ]
     for key, handle in images.items():
         try:
             caption = getattr(handle, "caption", "No caption provided.")
-            image_lines.append(f"- Image for span `{key}`: {caption}")
+            image_lines.append(f"- Image `{key}`: {caption}")
         except Exception:
             continue
 
