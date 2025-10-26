@@ -365,3 +365,128 @@ async def test_images_and_ask_image(monkeypatch) -> None:
 
     # Final answer should reflect Emily's colour
     assert final.strip().lower().startswith("blue")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_overview_injected_before_first_llm_step(monkeypatch) -> None:
+    """
+    Verify the synthetic `live_images_overview` assistant tool-call/result are injected
+    before the first LLM thinking step (no model choice is used to call it).
+    """
+
+    import asyncio
+    from unity.common._async_tool import loop as _loop
+
+    # Spy on LLM generate to capture the log index at the first thinking step and block it
+    llm_called = asyncio.Event()
+    proceed = asyncio.Event()
+    index_before_llm: int | None = None
+
+    orig_gwp = getattr(_loop, "generate_with_preprocess")
+
+    async def _spy_gwp(client, preprocess_msgs, **gen_kwargs):
+        nonlocal index_before_llm
+        llm_called.set()
+        try:
+            index_before_llm = len(client.messages)
+        except Exception:
+            index_before_llm = None
+        # Block until the test allows progress to ensure we can assert ordering
+        await proceed.wait()
+        return await orig_gwp(client, preprocess_msgs, **gen_kwargs)
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message("Say 'done'.")
+
+    # Seed a single image in the live registry and align a typed ref
+    LIVE_IMAGES_REGISTRY.set(
+        {
+            7: DummyImageHandle(
+                image_id=7,
+                caption="seven cats",
+                raw_bytes=_solid_png_bytes(),
+            ),
+        },
+    )
+
+    images = ImageRefs(
+        [
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=7),
+                annotation="group photo",
+            ),
+        ],
+    )
+
+    h = start_async_tool_loop(
+        client=client,
+        message="Hello",
+        tools={},
+        images=images,
+        max_steps=5,
+        timeout=120,
+    )
+
+    # Poll for the synthetic assistant tool-call/result BEFORE LLM is invoked
+    async def _find_overview_msgs(timeout_s: float = 2.0):
+        start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start < timeout_s:
+            # Find assistant tool-call and result for overview
+            asst_idx = None
+            call_id = None
+            for idx, m in enumerate(client.messages):
+                if m.get("role") != "assistant":
+                    continue
+                for tc in m.get("tool_calls") or []:
+                    fn = tc.get("function", {})
+                    if fn.get("name") == "live_images_overview":
+                        asst_idx = idx
+                        call_id = tc.get("id")
+                        break
+                if asst_idx is not None:
+                    break
+
+            if asst_idx is not None:
+                # Find the corresponding tool result and its index
+                result_msg = None
+                result_idx = None
+                for idx, m in enumerate(client.messages):
+                    if (
+                        m.get("role") == "tool"
+                        and m.get("name") == "live_images_overview"
+                        and (call_id is None or m.get("tool_call_id") == call_id)
+                    ):
+                        result_msg = m
+                        result_idx = idx
+                if result_msg is not None:
+                    return asst_idx, result_idx, result_msg
+            await asyncio.sleep(0.01)
+        return None
+
+    found = await _find_overview_msgs()
+    assert (
+        found is not None
+    ), "Expected synthetic overview tool result before first LLM step"
+    asst_idx, result_idx, tool_msg = found
+    content = tool_msg.get("content") or "{}"
+    assert '"image_id": 7' in content
+    assert '"caption": "seven cats"' in content
+
+    # Ensure overview assistant tool-call and tool result are recorded before the first LLM step
+    assert llm_called.is_set(), "LLM did not start; test spy did not fire"
+    assert index_before_llm is not None, "Spy did not capture index before LLM call"
+    assert asst_idx < index_before_llm
+    assert result_idx < index_before_llm
+
+    # Allow the LLM to proceed and complete
+    proceed.set()
+    await h.result()

@@ -238,6 +238,85 @@ async def test_notification_payload_appends_images() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_overview_reinjected_on_interjection_images(monkeypatch) -> None:
+    """
+    When an interjection brings new images, the overview should be reinjected
+    automatically with the full updated AnnotatedImageRefs list.
+    """
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message("Acknowledge with 'ok'.")
+
+    manager = ImageManager()
+    from unity.image_manager.utils import make_solid_png_base64
+
+    # First image at loop start
+    [id1] = manager.add_images(
+        [
+            {"caption": "first", "data": make_solid_png_base64(2, 2, (0, 0, 255))},
+        ],
+    )
+
+    images = [RawImageRef(image_id=id1)]
+    h = start_async_tool_loop(
+        client=client,
+        message="Start",
+        tools={},
+        images=images,
+        max_steps=10,
+        timeout=240,
+    )
+
+    # Verify initial overview present
+    def _latest_overview_content() -> str:
+        msgs = [
+            m
+            for m in client.messages
+            if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+        ]
+        return (msgs[-1].get("content") or "{}") if msgs else ""
+
+    import asyncio
+
+    for _ in range(100):
+        if '"image_id": ' in _latest_overview_content():
+            break
+        await asyncio.sleep(0.01)
+    initial = _latest_overview_content()
+    assert '"image_id": ' in initial and '"caption": "first"' in initial
+
+    # Interject with a second image → expect reinjection containing both ids
+    [id2] = manager.add_images(
+        [
+            {"caption": "second", "data": make_solid_png_base64(2, 2, (255, 0, 0))},
+        ],
+    )
+    await h.interject("new image", image_refs=[RawImageRef(image_id=id2)])
+
+    # Wait briefly for reinjection to occur
+    for _ in range(100):
+        newer = _latest_overview_content()
+        if '"image_id": %d' % id2 in newer:
+            break
+        await asyncio.sleep(0.01)
+
+    newer = _latest_overview_content()
+    assert ('"image_id": %d' % id1) in newer
+    assert ('"image_id": %d' % id2) in newer
+    assert ("first" in newer) and ("second" in newer)
+
+    # Finish
+    await h.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_ask_image_with_images_param_appends_log() -> None:
     client = unify.AsyncUnify(
         "gpt-5@openai",
