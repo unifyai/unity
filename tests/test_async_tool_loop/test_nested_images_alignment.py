@@ -66,10 +66,10 @@ async def _await_tool(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_live_images_overview_helper_is_exposed() -> None:
+async def test_live_images_overview_is_injected_synthetically() -> None:
     """
-    Verify that live image helpers are exposed and callable by asserting a call
-    to `live_images_overview` in the first assistant turn.
+    Verify that a synthetic call to `live_images_overview` is injected in the
+    first assistant turn and that its tool result exists.
     """
 
     client = unify.AsyncUnify(
@@ -80,7 +80,7 @@ async def test_live_images_overview_helper_is_exposed() -> None:
         traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
-        "You are running inside an automated test. In your FIRST assistant turn, call the helper `live_images_overview`. After the helper returns, provide a short final reply.",
+        "You are running inside an automated test. Provide a short final reply.",
     )
 
     # Provide live images via the ImageRefs container
@@ -93,8 +93,6 @@ async def test_live_images_overview_helper_is_exposed() -> None:
         images=images,
     )
 
-    # Ensure the helper is requested and its result is logged before asserting
-    await _await_tool(client, "live_images_overview", min_results=1)
     await h.result()
 
     # The tool result for live_images_overview should exist
