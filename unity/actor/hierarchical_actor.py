@@ -4489,7 +4489,7 @@ class HierarchicalActor(BaseActor):
         {formatted_trajectory}
 
         **YOUR WORKFLOW:**
-        1.  **Analyze:** Use the `live_images_overview()` tool to understand the images you've been given. Compare them to determine if a correction is needed. If they are the same, you are done.
+        1.  **Analyze:** Review the injected image overview (tool result) in the transcript that lists all available images with their annotations and metadata. Compare them to determine if a correction is needed. If they are the same, you are done.
         2.  **Plan & Execute:** Write Python code using the `action_provider` to reverse the trajectory. This may take multiple steps. After each step, you will receive new visual feedback to guide your next action.
         3.  **Complete:** When the browser state visually matches the target state, your work is done.
         """
