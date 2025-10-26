@@ -53,13 +53,13 @@ class DummyImageHandle:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_live_images_helpers_exposed_with_alignment_description(
+async def test_live_images_helpers_exposed_with_overview(
     monkeypatch,
 ) -> None:
     """
     Verify that the loop exposes `live_images_overview`, `ask_image`, and
     `attach_image_raw` on the first LLM turn and that the overview docstring
-    includes span-aligned substring and caption.
+    includes the image id and caption.
     """
 
     tools_snapshots: list[list[dict]] = []
@@ -102,7 +102,7 @@ async def test_live_images_helpers_exposed_with_alignment_description(
         [
             AnnotatedImageRef(
                 raw_image_ref=RawImageRef(image_id=42),
-                annotation="greeting span",
+                annotation="greeting",
             ),
         ],
     )
@@ -247,12 +247,12 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
+async def test_images_and_ask_image(monkeypatch) -> None:
     """
-    Motivating example: Given a message with two "this colour" spans – one for Susan and one
-    for Emily – seed two live images aligned to those spans. Verify that:
-      - the first exposure includes both spans with their substrings
-      - the model calls ask_image on the Emily-aligned image id
+    Motivating example: Given a message that refers to two colours – one for Susan and one
+    for Emily – seed two live images. Verify that:
+      - the first exposure includes both image ids and captions
+      - the model calls ask_image on Emily's image id
       - the loop inserts the ask_image tool result and returns the final answer
     """
 

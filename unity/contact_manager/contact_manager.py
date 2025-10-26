@@ -1,4 +1,5 @@
 from typing import List, Dict, Optional, Callable, Any, Tuple, Union
+from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 import asyncio
 import functools
 import re
@@ -176,7 +177,7 @@ class ContactManager(BaseContactManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
-        images: Optional[Dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -258,7 +259,7 @@ class ContactManager(BaseContactManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
-        images: Optional[Dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 

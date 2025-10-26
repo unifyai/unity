@@ -280,14 +280,14 @@ async def test_ask_image_with_images_param_appends_log() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
+async def test_two_images_then_interjection_three_asks_real_llm() -> None:
     """
     Real-LLM flow:
-    - Initial user message references two spans: "this paint" (John) and "that paint" (David)
-      with live images aligned to those spans.
+    - Initial user message references two paints: "this paint" (John) and "that paint" (David)
+      with live images provided.
     - The assistant should call `ask_image` twice to identify both colours (from the visuals),
       compute a 50/50 mix, and wait.
-    - A user interjection then introduces Jenny's paint (with an aligned image via `images` on
+    - A user interjection then introduces Jenny's paint (with an image via `images` on
       interject). The assistant should call `ask_image` once more for Jenny, then mix again and
       answer with the single final colour word.
     - We assert three `ask_image` tool results and a final answer of "brown". This keeps the test
@@ -297,7 +297,7 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
 
     # Real ImageHandles created below
 
-    # Initial message – two guests with span-aligned references
+    # Initial message – two guests with provided images
     user_msg = (
         "We're throwing an art party, with two guests. John has brought this paint, and David has "
         "brought that paint. We will now mix the colours together 50/50. What will be the resulting colour?"
@@ -315,7 +315,7 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
             {"data": b64_red},
         ],
     )
-    # Provide annotated refs to align each image with the referenced person/spans
+    # Provide annotated refs for each referenced person
     images = [
         AnnotatedImageRef(
             raw_image_ref=RawImageRef(image_id=john_id),
