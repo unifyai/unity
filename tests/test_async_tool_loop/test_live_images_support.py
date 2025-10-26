@@ -53,13 +53,13 @@ class DummyImageHandle:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_live_images_helpers_exposed_with_overview(
+async def test_live_images_helpers_exposed_and_overview_injected(
     monkeypatch,
 ) -> None:
     """
-    Verify that the loop exposes `live_images_overview`, `ask_image`, and
-    `attach_image_raw` on the first LLM turn and that the overview docstring
-    includes the image id and caption.
+    Verify that the loop exposes image helpers (`ask_image`, `attach_image_raw`)
+    and injects a synthetic `live_images_overview` tool call/result that contains
+    the image id and caption in its payload.
     """
 
     tools_snapshots: list[list[dict]] = []
@@ -119,17 +119,35 @@ async def test_live_images_helpers_exposed_with_overview(
     # We must have recorded at least one tool exposure set
     assert tools_snapshots, "No LLM call captured; expected at least one exposure set."
     names = [t.get("function", {}).get("name") for t in tools_snapshots[0]]
-    assert {"live_images_overview", "ask_image", "attach_image_raw"}.issubset(
-        set(names),
-    )
+    # Only actionable helpers are exposed to the LLM
+    assert {"ask_image", "attach_image_raw"}.issubset(set(names))
 
-    # The overview description should include the id and caption
-    live_tool = next(
-        t for t in tools_snapshots[0] if t["function"]["name"] == "live_images_overview"
-    )
-    desc = live_tool["function"]["description"]
-    assert "id=42" in desc
-    assert "caption='cat on mat'" in desc
+    # Synthetic overview must be injected as an assistant tool-call + tool result
+
+    # Find the synthetic assistant tool-call
+    calls = []
+    for m in client.messages:
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function", {})
+                if fn.get("name") == "live_images_overview":
+                    calls.append(tc)
+    assert calls, "Expected a synthetic assistant tool call for live_images_overview"
+    call_id = calls[0].get("id")
+
+    # Corresponding tool result should contain image_id and caption
+    tmsgs = [
+        m
+        for m in client.messages
+        if m.get("role") == "tool"
+        and m.get("name") == "live_images_overview"
+        and (call_id is None or m.get("tool_call_id") == call_id)
+    ]
+    assert tmsgs, "Expected a tool-result message for live_images_overview"
+    content = tmsgs[-1].get("content") or "{}"
+    # Payload is JSON; assert id and caption appear
+    assert '"image_id": 42' in content
+    assert '"caption": "cat on mat"' in content
 
 
 @pytest.mark.asyncio
@@ -324,19 +342,17 @@ async def test_images_and_ask_image(monkeypatch) -> None:
 
     final = await handle.result()
 
-    # Verify the first exposure contains the overview with both ids and captions
-    assert tools_snapshots, "No LLM call captured; expected at least one exposure set."
-    first_tools = tools_snapshots[0]
-    live_tool = next(
-        t for t in first_tools if t["function"]["name"] == "live_images_overview"
-    )
-    desc = live_tool["function"]["description"]
-
-    # Both occurrences should appear by id and caption
-    assert "id=201" in desc
-    assert "id=202" in desc
-    assert "caption='red tile'" in desc
-    assert "caption='blue tile'" in desc
+    # Verify the synthetic overview tool result contains both ids and captions
+    ov_msgs = [
+        m
+        for m in client.messages
+        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+    ]
+    assert ov_msgs, "Expected a tool-result message for live_images_overview"
+    ov_content = ov_msgs[-1].get("content") or "{}"
+    assert '"image_id": 201' in ov_content
+    assert '"image_id": 202' in ov_content
+    assert ("red tile" in ov_content) and ("blue tile" in ov_content)
 
     # Confirm an ask_image tool-result message exists and contains the BLUE payload
     ask_msgs = [
