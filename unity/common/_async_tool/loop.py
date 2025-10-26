@@ -621,9 +621,32 @@ async def async_tool_loop_inner(
 
             if log_steps:
                 try:
+                    # Log the synthetic assistant tool selection in the same style as real LLM output
+                    from .utils import (
+                        try_parse_json as _try_parse_json,
+                    )  # local import to avoid cycles
+
+                    _msg_for_logging = copy.deepcopy(asst_msg)
+                    _tcs = _msg_for_logging.get("tool_calls") or []
+                    for _tc in _tcs:
+                        _fn = _tc.get("function", {})
+                        _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
                     logger.info(
-                        f"Injected live_images_overview – {len(annotated_list)} image(s)",
-                        prefix="🖼️",
+                        f"{json.dumps(_msg_for_logging, indent=4)}",
+                        prefix="🤖",
+                    )
+
+                    # Log the synthetic tool response to mirror a normal tool result (pretty content)
+                    _tool_for_logging = copy.deepcopy(tool_msg)
+                    try:
+                        _tool_for_logging["content"] = _try_parse_json(
+                            _tool_for_logging.get("content"),
+                        )
+                    except Exception:
+                        pass
+                    logger.info(
+                        f"{json.dumps(_tool_for_logging, indent=4)}",
+                        prefix=f"✅  ToolCall Completed [0.00s]",
                     )
                 except Exception:
                     pass
