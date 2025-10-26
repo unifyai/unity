@@ -183,7 +183,7 @@ def _aggregate_receiver_min(
 def format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
     """Return a combined payload for contacts and messages (stable shape)."""
     if not messages:
-        return {}
+        return {"messages": []}
 
     unique_ids: set[int] = set()
     for m in messages:

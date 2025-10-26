@@ -54,9 +54,9 @@ async def test_transcript_embedding_semantic_search():
     tm.join_published()
 
     # Ensure that a lexical search for the word 'budgeting' returns no results
-    # New behavior: empty results return an empty dict {}
+    # New behavior: empty results return {"messages": []}
     lexical_result = tm._filter_messages(filter="'budgeting' in content")
-    assert lexical_result == {}
+    assert lexical_result == {"messages": []}
 
     # Use semantic search to find the nearest messages to the query
     nearest = tm._search_messages(references={"content": "banking and budgeting"}, k=2)[
