@@ -237,7 +237,6 @@ def build_live_image_tools(
 ) -> dict[str, Any]:
     """
     Construct helper tools for working with live images within a loop.
-    - live_images_overview
     - ask_image
     - attach_image_raw
     """
@@ -273,48 +272,13 @@ def build_live_image_tools(
         except Exception:
             continue
 
-    overview_doc = (
-        "Live images available in the current session:\n"
-        + "\n".join(listings or ["(none)"])
-        + "\n"
-        + "Calling this overview 'tool' is a redundant no-op, the live images are all presented above in this dynamically updated 'tool description'"
-    )
+    # Synthetic image overview is injected directly into the transcript elsewhere.
 
     # Merge previously appended images (if any)
     with _suppress(Exception):
         prior = LIVE_IMAGES_LOG.get() or []
     if prior:
-        prior_lines = []
-        for rec in prior:
-            try:
-                _iid = int(rec.get("image_id"))
-                _annotation = rec.get("annotation")
-                _caption = None
-                _ts = ""
-                with _suppress(Exception):
-                    _h = id_to_handle.get(_iid)
-                    _caption = getattr(_h, "caption", None)
-                    _ts = getattr(
-                        getattr(_h, "timestamp", None),
-                        "isoformat",
-                        lambda: "",
-                    )()
-                prior_lines.append(
-                    f"- id={_iid}, caption={_caption!r}, timestamp={_ts!r}, annotation={_annotation!r}",
-                )
-            except Exception:
-                continue
-        if prior_lines:
-            overview_doc = (
-                overview_doc
-                + "\n\nAppended images (this session):\n"
-                + "\n".join(prior_lines)
-            )
-
-    async def live_images_overview() -> dict:
-        return {"status": "ok"}
-
-    live_images_overview.__doc__ = overview_doc
+        pass
 
     # Keep a set of already-attached ids (idempotent attach)
     attached_ids: set[int] = set()
@@ -524,7 +488,6 @@ def build_live_image_tools(
     )
 
     return {
-        "live_images_overview": live_images_overview,
         "ask_image": ask_image,
         "attach_image_raw": attach_image_raw,
     }
@@ -539,28 +502,7 @@ async def align_images_for(
 
 
 def refresh_overview_doc_if_present(normalized_tools: dict) -> None:
-    """Refresh live_images_overview docstring to include current appended images log."""
-    try:
-        if "live_images_overview" not in normalized_tools:
-            return
-        fn = normalized_tools["live_images_overview"].fn
-        base_doc = getattr(fn, "__doc__", "") or ""
-        sep = "\n\nAppended images (this session):\n"
-        if sep in base_doc:
-            base_doc = base_doc.split(sep, 1)[0]
-
-        prior_lines = []
-        with suppress(Exception):
-            for rec in LIVE_IMAGES_LOG.get() or []:
-                try:
-                    prior_lines.append(
-                        f"- source={rec.get('source')}, id={int(rec.get('image_id'))}, annotation={rec.get('annotation')!r}",
-                    )
-                except Exception:
-                    continue
-        fn.__doc__ = base_doc + (sep + "\n".join(prior_lines) if prior_lines else "")
-    except Exception:
-        return
+    return
 
 
 # ── Lightweight helpers for logging image attachments ───────────────────────

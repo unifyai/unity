@@ -169,7 +169,7 @@ class DynamicToolFactory:
             "    Status acknowledgement including the underlying call id.\n\n"
             "Notes\n"
             "-----\n"
-            "- Images are appended to the live images log immediately and reflected in `live_images_overview`.\n"
+            "- Images are appended to the live images log immediately.\n"
             "- The stop request is forwarded to the underlying handle when available."
         )
 
