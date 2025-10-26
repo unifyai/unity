@@ -106,6 +106,68 @@ async def test_live_images_overview_is_injected_synthetically() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_overview_after_clarification_images() -> None:
+    """
+    When a child tool requests clarification and supplies images with the question,
+    the overview should be reinjected including those images.
+    """
+
+    async def need_clar(*, _clarification_up_q, _clarification_down_q):
+        await _clarification_up_q.put(
+            {"question": "q?", "images": [RawImageRef(image_id=55)]},
+        )
+        _ = await _clarification_down_q.get()
+        return {"ok": True}
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message("Answer with 'ok'.")
+
+    from unity.image_manager.utils import make_solid_png_base64
+    from unity.image_manager.image_manager import ImageManager
+
+    manager = ImageManager()
+    [rid] = manager.add_images(
+        [{"caption": "clar", "data": make_solid_png_base64(2, 2, (0, 0, 255))}],
+    )
+
+    h = start_async_tool_loop(
+        client=client,
+        message="go",
+        tools={"need_clar": need_clar},
+        images=[],
+    )
+
+    # Wait for clarify helper to be requested and answered
+    await _wait_for_tool_request(client, "need_clar")
+    await _wait_for_tool_result(client, "clarify_", 1)
+
+    # Scan for latest overview content containing the new image id
+    import asyncio
+
+    for _ in range(100):
+        ov_msgs = [
+            m
+            for m in client.messages
+            if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+        ]
+        if ov_msgs and ('"image_id": 55' in (ov_msgs[-1].get("content") or "")):
+            break
+        await asyncio.sleep(0.01)
+
+    assert ov_msgs, "Expected overview reinjected after clarification images"
+    assert '"image_id": 55' in (ov_msgs[-1].get("content") or "")
+
+    await h.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_inner_tool_receives_images_mapping() -> None:
     """
     A base tool receives whatever `images` payload the model sends (no implicit handle resolution).
