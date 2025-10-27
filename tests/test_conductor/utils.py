@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 
-def normalize_tool_name(name: str, manager_prefix: str) -> str:
+def normalize_tool_name(name: str, manager_prefix: Optional[str] = None) -> str:
     """
     Normalise tool names emitted by the tool loop for a given manager.
 
@@ -44,7 +44,10 @@ def normalize_tool_name(name: str, manager_prefix: str) -> str:
     return s
 
 
-def tool_names_from_messages(msgs: List[dict], manager_prefix: str) -> List[str]:
+def tool_names_from_messages(
+    msgs: List[dict],
+    manager_prefix: Optional[str] = None,
+) -> List[str]:
     """Extract normalised tool names from tool-role messages (skips status checks)."""
     names: List[str] = []
     for m in msgs:
@@ -55,7 +58,10 @@ def tool_names_from_messages(msgs: List[dict], manager_prefix: str) -> List[str]
     return names
 
 
-def assistant_requested_tool_names(msgs: List[dict], manager_prefix: str) -> List[str]:
+def assistant_requested_tool_names(
+    msgs: List[dict],
+    manager_prefix: Optional[str] = None,
+) -> List[str]:
     """Extract normalised tool names that the assistant requested (skips status checks)."""
     names: List[str] = []
     for m in msgs:

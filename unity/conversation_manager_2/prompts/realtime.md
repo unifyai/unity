@@ -36,7 +36,7 @@
                     <rolling_summary last_update="date which the rolling summary was last updated">
                         [summary of the all the conversations you had with the contact so far]
                     </rolling_sumamry>
-                    
+
                 </contact_details>
 
                 <threads>

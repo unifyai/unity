@@ -26,10 +26,12 @@ class KeyEvent(BaseModel):
 
     timestamp: float = Field(..., description="The precise timestamp of the event.")
     image_annotation: str = Field(
-        ..., description="The rich, contextual description of the event."
+        ...,
+        description="The rich, contextual description of the event.",
     )
     representative_timestamp: float = Field(
-        ..., description="The timestamp of the frame representing this event."
+        ...,
+        description="The timestamp of the frame representing this event.",
     )
 
 
