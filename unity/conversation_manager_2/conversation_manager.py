@@ -241,23 +241,16 @@ class ConversationManager:
             out = event["content"]
             parsed_out = json.loads(out)
             if self.state.mode == "unify_call":
-                assistant_unify_call_utterance_event = AssistantUnifyCallUtterance(
-                    1,
-                    parsed_out["phone_utterance"],
+                event = AssistantUnifyCallUtterance(
+                    1, parsed_out["phone_utterance"]
                 )
-                await self.event_broker.publish(
-                    "app:comms:unify_call_utterance",
-                    assistant_unify_call_utterance_event.to_json(),
-                )
+                topic = "app:comms:unify_call_utterance"
             else:
-                assistant_phone_utterance_event = AssistantPhoneUtterance(
-                    self.state.phone_contact.phone_number,
-                    parsed_out["phone_utterance"],
+                event = AssistantPhoneUtterance(
+                    self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
                 )
-                await self.event_broker.publish(
-                    "app:comms:phone_utterance",
-                    assistant_phone_utterance_event.to_json(),
-                )
+                topic = "app:comms:phone_utterance"
+            await self.event_broker.publish(topic, event.to_json())
 
         else:
             out = await llm_call(
