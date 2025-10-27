@@ -589,6 +589,7 @@ class ConversationManager:
             if role == "Assistant":
                 delta += timedelta(seconds=2)
             minutes, seconds = divmod(int(delta.total_seconds()), 60)
+            # ToDo: Make this MM:SS once we have explicit types working
             call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
         if "default-assistant" not in self.state.assistant_id:
             call_url = (
