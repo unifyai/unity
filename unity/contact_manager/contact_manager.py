@@ -593,8 +593,6 @@ class ContactManager(BaseContactManager):
         - When a single term is provided, results are ranked by ``cosine(column_emb, ref)``.
         - When multiple terms are provided, results are ranked by the sum of cosines across
           all terms to favour contacts similar across several fields.
-        - Embedding columns (``*_emb``) are excluded from the returned models to keep payloads
-          compact.
         """
         return _srch_search(self, references=references, k=k)
 
