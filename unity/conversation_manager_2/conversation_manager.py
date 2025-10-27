@@ -252,13 +252,13 @@ class ConversationManager:
             out = event["content"]
             parsed_out = json.loads(out)
             if self.state.mode == "unify_call":
-                assistant_event = AssistantUnifyCallUtterance(
+                assistant_unify_call_utterance_event = AssistantUnifyCallUtterance(
                     1,
                     parsed_out["phone_utterance"],
                 )
                 await self.event_broker.publish(
                     "app:comms:unify_call_utterance",
-                    assistant_event.to_json(),
+                    assistant_unify_call_utterance_event.to_json(),
                 )
             else:
                 assistant_phone_utterance_event = AssistantPhoneUtterance(
