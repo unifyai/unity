@@ -22,3 +22,5 @@ parsed_results_output/
 evals/
 magnitude/
 unity.egg-info/
+*/node_modules*
+*.soffice-profile*
