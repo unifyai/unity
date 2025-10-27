@@ -464,7 +464,19 @@ class FunctionManager(BaseFunctionManager):
         *,
         implementations: Union[str, List[str]],
         preconditions: Optional[Dict[str, Dict]] = None,
+        overwrite: bool = False,
     ) -> Dict[str, str]:
+        """
+        Add or update functions in batch.
+        
+        Args:
+            implementations: Function source code (single string or list of strings).
+            preconditions: Optional preconditions for functions.
+            overwrite: If True, update existing functions; if False, skip duplicates.
+            
+        Returns:
+            Dictionary mapping function names to status ("added", "updated", "skipped", or "error").
+        """
 
         if preconditions is None:
             preconditions = {}
@@ -492,30 +504,50 @@ class FunctionManager(BaseFunctionManager):
                 key = name_in_error or potential_name
                 parse_errors[key] = f"error: {e}"
 
-        results: Dict[str, str] = parse_errors  # Start results with parsing errors
+        results: Dict[str, str] = parse_errors
 
-        # Get *all* function names currently in manager + this batch for accurate dependency check
+        # Get existing functions for duplicate detection and dependency checking
         try:
-            # Assumes list_functions is efficient enough or cache locally if needed
-            existing_names = set(self.list_functions().keys())
+            existing_functions = self.list_functions()
+            existing_names = set(existing_functions.keys())
             all_known_function_names = existing_names.union(temp_names)
         except Exception as e:
             logger.warning(
                 f"Failed to list existing functions for dependency check: {e}",
             )
+            existing_functions = {}
+            existing_names = set()
             all_known_function_names = temp_names
+        
+        # Check for duplicates and separate into new vs. existing functions
+        duplicates_to_skip: Set[str] = set()
+        existing_to_update: Set[str] = set()
+        
+        for name in temp_names:
+            if name in existing_names:
+                if overwrite:
+                    # Mark for in-place update
+                    existing_to_update.add(name)
+                else:
+                    # Skip this function - already exists
+                    duplicates_to_skip.add(name)
+                    results[name] = "skipped: already exists"
 
-        # Second pass: Validate dependencies and Persist successfully parsed functions
+        # Validate dependencies and prepare entries for batch operations
+        entries_to_create: List[Dict[str, Any]] = []
+        entries_to_update: List[Dict[str, Any]] = []
+        log_ids_to_update: List[int] = []
+        log_id_to_name: Dict[int, str] = {}
+        functions_to_write: List[Tuple[str, str]] = []
+        
         for name, tree, node, source in parsed:
+            if name in duplicates_to_skip:
+                continue
+                
             try:
-                # Collect verified dependencies (user-defined functions) for tracking
-                dependencies = self._collect_verified_dependencies(
-                    node,
-                    all_known_function_names,
-                )
+                dependencies = self._collect_verified_dependencies(node, all_known_function_names)
                 dependencies_list = sorted(list(dependencies))
 
-                # Validate against ALL function calls (includes built-ins) for dangerous built-ins check
                 all_calls = self._collect_function_calls(node)
                 self._validate_function_calls(name, all_calls, temp_names)
                 namespace = create_sandbox_globals()
@@ -526,23 +558,33 @@ class FunctionManager(BaseFunctionManager):
                 embedding_text = f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
                 precondition = preconditions.get(name)
 
-                unify.log(
-                    context=self._ctx,
-                    name=name,
-                    argspec=signature,
-                    docstring=docstring,
-                    implementation=source,
-                    calls=dependencies_list,
-                    embedding_text=embedding_text,
-                    precondition=precondition,
-                    guidance_ids=[],
-                    new=True,
-                )
-                results[name] = "added"
-
-                p = self._write_function_file(name, source)
-                if p is not None:
-                    self._register_function_file(name, p)
+                entry_data = {
+                    "argspec": signature,
+                    "docstring": docstring,
+                    "implementation": source,
+                    "calls": dependencies_list,
+                    "embedding_text": embedding_text,
+                    "precondition": precondition,
+                }
+                
+                if name in existing_to_update:
+                    # Update existing function
+                    log_id = self._get_log_by_function_id(
+                        function_id=existing_functions[name]["function_id"],
+                        raise_if_missing=True
+                    ).id
+                    log_ids_to_update.append(log_id)
+                    log_id_to_name[log_id] = name
+                    entries_to_update.append(entry_data)
+                    results[name] = "updated"
+                else:
+                    # Create new function
+                    entry_data["name"] = name
+                    entry_data["guidance_ids"] = []
+                    entries_to_create.append(entry_data)
+                    results[name] = "added"
+                
+                functions_to_write.append((name, source))
             except ValueError as e:
                 results[name] = f"error: {e}"
             except Exception as e:
@@ -551,6 +593,45 @@ class FunctionManager(BaseFunctionManager):
                     f"Unexpected error processing function {name}: {e}",
                     exc_info=True,
                 )
+
+        # Batch create new functions
+        if entries_to_create:
+            try:
+                unify.create_logs(
+                    context=self._ctx,
+                    entries=entries_to_create,
+                    batched=True,
+                )
+            except Exception as e:
+                logger.error(f"Failed to batch create function logs: {e}", exc_info=True)
+                for entry in entries_to_create:
+                    name = entry["name"]
+                    if results.get(name) == "added":
+                        results[name] = f"error: Failed to create log - {e}"
+                        functions_to_write = [(n, s) for n, s in functions_to_write if n != name]
+        
+        # Batch update existing functions
+        if log_ids_to_update and entries_to_update:
+            try:
+                unify.update_logs(
+                    logs=log_ids_to_update,
+                    context=self._ctx,
+                    entries=entries_to_update,
+                    overwrite=True,
+                )
+            except Exception as e:
+                logger.error(f"Failed to batch update function logs: {e}", exc_info=True)
+                for log_id in log_ids_to_update:
+                    name = log_id_to_name.get(log_id)
+                    if name and results.get(name) == "updated":
+                        results[name] = f"error: Failed to update log - {e}"
+                        functions_to_write = [(n, s) for n, s in functions_to_write if n != name]
+
+        # Write function files to disk
+        for name, source in functions_to_write:
+            p = self._write_function_file(name, source)
+            if p is not None:
+                self._register_function_file(name, p)
 
         return results
 
