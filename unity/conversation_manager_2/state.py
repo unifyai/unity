@@ -365,10 +365,6 @@ class ConversationManagerState:
                     ),
                 )
 
-            case UnifyCallReceived() as e:
-                # mark call as active (no additional UI thread message)
-                self.mode = "unify_call"
-
             case SMSRecieved() as e:
                 contact = self.get_contact(phone_number=e.contact)
                 self.push_message(
