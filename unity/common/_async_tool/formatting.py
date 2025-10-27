@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from typing import Any, Union
+import json
 
 from ..llm_helpers import _dumps, _strip_image_keys, _collect_images
 
@@ -36,17 +37,30 @@ def serialize_tool_content(
         )
 
     # Final result path – promote embedded images, keep a clean textual view without raw base64
+    # Additionally, when payload is a pure string that contains JSON, parse & pretty-print it; otherwise keep as-is.
+    parsed_payload = payload
+    if isinstance(payload, str):
+        with suppress(Exception):
+            maybe = json.loads(payload)
+            # Only adopt parsed structure when it's a JSON object/array; otherwise treat as plain text
+            if isinstance(maybe, (dict, list)):
+                parsed_payload = maybe
+
     images: list[str] = []
     with suppress(Exception):
-        _collect_images(payload, images)
+        _collect_images(parsed_payload, images)
 
     # Always apply prune + shorthand for final tool results so models that support
     # these modes render compactly and consistently in tool outputs
-    text_repr = _dumps(
-        _strip_image_keys(payload),
-        indent=4,
-        context={"prune_empty": True, "shorthand": True},
-    )
+    if isinstance(parsed_payload, (dict, list)):
+        text_repr = _dumps(
+            _strip_image_keys(parsed_payload),
+            indent=4,
+            context={"prune_empty": True, "shorthand": True},
+        )
+    else:
+        # Fallback: preserve plain string results exactly as returned
+        text_repr = payload
 
     if images:
         content_blocks: list = []
