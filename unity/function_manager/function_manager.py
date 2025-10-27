@@ -331,13 +331,19 @@ class FunctionManager(BaseFunctionManager):
         )
         self._store.ensure_context()
 
-    def _get_log_by_function_id(self, *, function_id: int) -> unify.Log:
+    def _get_log_by_function_id(
+        self, *, function_id: int, raise_if_missing: bool = True
+    ) -> Optional[unify.Log]:
         logs = unify.get_logs(
             context=self._ctx,
             filter=f"function_id == {function_id}",
             exclude_fields=list_private_fields(self._ctx),
         )
-        assert len(logs) == 1, f"No function with id {function_id!r} exists."
+        if len(logs) == 0:
+            if raise_if_missing:
+                raise ValueError(f"No function with id {function_id!r} exists.")
+            return None
+        assert len(logs) == 1, f"Multiple functions found with id {function_id!r}."
         return logs[0]
 
     # ------------------------------------------------------------------ #
@@ -485,9 +491,9 @@ class FunctionManager(BaseFunctionManager):
 
         parsed: List[Tuple[str, ast.Module, ast.FunctionDef, str]] = []
         parse_errors: Dict[str, str] = {}
-        temp_names: Set[str] = set()  # Track names parsed successfully in this batch
+        temp_names: Set[str] = set()
 
-        # First pass: Parse all implementations
+        # Parse all implementations
         for i, source in enumerate(implementations):
             try:
                 # _parse_implementation validates basic structure (one func at col 0)
@@ -679,32 +685,101 @@ class FunctionManager(BaseFunctionManager):
     def delete_function(
         self,
         *,
-        function_id: int,
+        function_id: Union[int, List[int]],
         delete_dependents: bool = True,
     ) -> Dict[str, str]:
-
-        log = self._get_log_by_function_id(function_id=function_id)
-        target_name = log.entries["name"]
-
-        # Identify dependants (direct callers)
-        if delete_dependents:
-            dependants = unify.get_logs(
+        """
+        Delete one or more functions and optionally their dependents in a single batch operation.
+        
+        Args:
+            function_id: Function ID (int) or list of function IDs to delete.
+            delete_dependents: If True, also delete all functions that depend on target(s).
+            
+        Returns:
+            Dictionary mapping function names to "deleted" or "already_deleted".
+        """
+        # Normalize to list
+        function_ids = [function_id] if isinstance(function_id, int) else function_id
+        
+        if not function_ids:
+            return {}
+        
+        # Handle single function optimization
+        if len(function_ids) == 1:
+            log = self._get_log_by_function_id(function_id=function_ids[0], raise_if_missing=False)
+            if log is None:
+                return {f"function_{function_ids[0]}": "already_deleted"}
+            
+            target_name = log.entries["name"]
+            ids_to_delete = {function_ids[0]}
+            log_ids_to_delete = [log.id]
+            results = {target_name: "deleted"}
+        else:
+            # Multiple functions - build from all logs
+            all_logs = unify.get_logs(
                 context=self._ctx,
-                filter=f"'{target_name}' in calls",
+                exclude_fields=list_private_fields(self._ctx),
             )
-            for dep in dependants:
-                if dep.entries["function_id"] == function_id:
-                    continue  # skip the target itself
-                self.delete_function(
-                    function_id=dep.entries["function_id"],
-                    delete_dependents=True,
-                )
+            
+            id_to_log = {lg.entries["function_id"]: lg for lg in all_logs}
+            id_to_name = {lg.entries["function_id"]: lg.entries["name"] for lg in all_logs}
+            
+            ids_to_delete = set(function_ids)
+            target_names = {id_to_name[fid] for fid in function_ids if fid in id_to_name}
+            
+            if not target_names:
+                return {}
+            
+            log_ids_to_delete = [id_to_log[fid].id for fid in function_ids if fid in id_to_log]
+            results = {id_to_name[fid]: "deleted" for fid in function_ids if fid in id_to_name}
+            
+            function_calls = {
+                lg.entries["function_id"]: set(lg.entries.get("calls", []))
+                for lg in all_logs
+            }
 
-        unify.delete_logs(
-            context=self._ctx,
-            logs=log.id,
-        )
-        return {target_name: "deleted"}
+        if delete_dependents:
+            # Get all logs if not already loaded
+            if len(function_ids) == 1:
+                all_logs = unify.get_logs(
+                    context=self._ctx,
+                    exclude_fields=list_private_fields(self._ctx),
+                )
+                id_to_log = {lg.entries["function_id"]: lg for lg in all_logs}
+                id_to_name = {lg.entries["function_id"]: lg.entries["name"] for lg in all_logs}
+                function_calls = {
+                    lg.entries["function_id"]: set(lg.entries.get("calls", []))
+                    for lg in all_logs
+                }
+                target_names = {target_name}
+            
+            # BFS to find all transitive dependents
+            to_process = set(target_names)
+            processed = set()
+            
+            while to_process:
+                current_name = to_process.pop()
+                if current_name in processed:
+                    continue
+                processed.add(current_name)
+                
+                for fid, calls in function_calls.items():
+                    if current_name in calls and fid not in ids_to_delete:
+                        ids_to_delete.add(fid)
+                        if fid in id_to_log:
+                            log_ids_to_delete.append(id_to_log[fid].id)
+                            dep_name = id_to_name[fid]
+                            results[dep_name] = "deleted"
+                            to_process.add(dep_name)
+
+        # Batch delete all functions
+        if log_ids_to_delete:
+            unify.delete_logs(
+                context=self._ctx,
+                logs=log_ids_to_delete,
+            )
+        
+        return results
 
     # 4. Search --------------------------------------------------------- #
 
