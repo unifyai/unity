@@ -526,27 +526,16 @@ class ConversationManager:
     async def publish_transcript(self, event: Event):
         event_name = event.to_dict()["event_name"].lower()
         print("publishing transcript", event_name)
-        medium = (
-            "phone_call"
-            if "phone" in event_name
-            else (
-                "sms_message"
-                if "sms" in event_name
-                else (
-                    "email"
-                    if "email" in event_name
-                    else (
-                        "unify_call"
-                        if "unifycall" in event_name
-                        else (
-                            "unify_message"
-                            if "unifymessage" in event_name
-                            else "whatsapp_message"
-                        )
-                    )
-                )
-            )
-        )
+        if "unify" in event_name:
+            medium = "unify_call" if "call" in event_name else "unify_message"
+        elif "phone" in event_name:
+            medium = "phone_call"
+        elif "sms" in event_name:
+            medium = "sms_message"
+        elif "email" in event_name:
+            medium = "email"
+        else:
+            medium = "whatsapp_message"
         role = (
             "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
         )
