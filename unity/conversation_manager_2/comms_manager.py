@@ -276,7 +276,9 @@ class CommsManager:
                         topic = "app:comms:unify_call_received"
                     else:
                         event = PhoneCallRecieved(
-                            contact=event.get("caller_number", event.get("user_number")),
+                            contact=event.get(
+                                "caller_number", event.get("user_number")
+                            ),
                             conference_name=event.get("conference_name", ""),
                         )
                         topic = "app:comms:call_recieved"
