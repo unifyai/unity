@@ -703,8 +703,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             if down_q is not None:
                 await down_q.put(answer)
 
-    # No _adopt: passthrough no longer adopts delegates; outer loop remains active.
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3.  A convenience wrapper that *starts* the loop and returns the handle

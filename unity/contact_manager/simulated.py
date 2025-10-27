@@ -487,7 +487,7 @@ class SimulatedContactManager(BaseContactManager):
 
         return handle
 
-    def _filter_contacts(
+    def filter_contacts(
         self,
         *,
         filter: Optional[str] = None,
@@ -495,7 +495,7 @@ class SimulatedContactManager(BaseContactManager):
         limit: int = 100,
     ) -> List[Contact]:
         """
-        Simulated variant of :pyfunc:`ContactManager._filter_contacts`.
+        Simulated variant of :pyfunc:`ContactManager.filter_contacts`.
 
         The same stateful LLM used by the public methods generates a JSON
         payload that strictly conforms to ``_ContactsListResponse`` via
@@ -510,7 +510,7 @@ class SimulatedContactManager(BaseContactManager):
         )
 
         prompt = (
-            "You are simulating the private helper `_filter_contacts` of a CRM. "
+            "You are simulating the private helper `filter_contacts` of a CRM. "
             "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
             f"{filter_clause} Offset: {offset}. Limit: {limit}.\n\n"
             "Respond ONLY with a JSON object that conforms to the provided response schema.\n\n"
@@ -529,7 +529,7 @@ class SimulatedContactManager(BaseContactManager):
 
             if loop and loop.is_running():
                 raise RuntimeError(
-                    "SimulatedContactManager._filter_contacts cannot be invoked from within an active event loop.",
+                    "SimulatedContactManager.filter_contacts cannot be invoked from within an active event loop.",
                 )
             raw = asyncio.run(_call_llm())
         finally:
@@ -628,9 +628,9 @@ class SimulatedContactManager(BaseContactManager):
         return model.model_dump()
 
     # ------------------------------------------------------------------ #
-    #  Simulated _update_contact                                          #
+    #  Simulated update_contact                                          #
     # ------------------------------------------------------------------ #
-    def _update_contact(
+    def update_contact(
         self,
         *,
         contact_id: int,
@@ -646,7 +646,7 @@ class SimulatedContactManager(BaseContactManager):
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> "ToolOutcome":
         """
-        Simulated variant of :pyfunc:`ContactManager._update_contact` with strict
+        Simulated variant of :pyfunc:`ContactManager.update_contact` with strict
         structured output enforced via ``response_format``. The shared stateful
         LLM generates a JSON payload that we validate against ``_UpdateOutcome``.
         """
@@ -673,7 +673,7 @@ class SimulatedContactManager(BaseContactManager):
             updates = {"note": "no-op update requested – acknowledge anyway"}
 
         instruction = (
-            "You are simulating the private helper `_update_contact` of a CRM. "
+            "You are simulating the private helper `update_contact` of a CRM. "
             "There is no real database – maintain consistency with the ongoing conversation and your prior outputs.\n\n"
             f"Update the contact with id {contact_id} using the following fields (treat them as the diff to apply).\n"
             "Respond ONLY with a JSON object that conforms to the provided response schema."
@@ -696,7 +696,7 @@ class SimulatedContactManager(BaseContactManager):
 
             if loop and loop.is_running():
                 raise RuntimeError(
-                    "SimulatedContactManager._update_contact cannot be invoked from within an active event loop.",
+                    "SimulatedContactManager.update_contact cannot be invoked from within an active event loop.",
                 )
             raw = asyncio.run(_call_llm())
         finally:

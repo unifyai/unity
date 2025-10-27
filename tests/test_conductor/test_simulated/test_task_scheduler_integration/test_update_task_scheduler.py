@@ -19,7 +19,7 @@ UPDATE_QUERIES: list[str] = [
     "Create a new task: Call Alice about the Q3 budget tomorrow at 09:00.",
     "Update the priority of 'Draft Budget FY26' to high.",
     "Delete the task named 'Old Onboarding Checklist'.",
-    "Create a task to email Contoso about invoices and set it due next Friday.",
+    "Create a task to email Contoso about invoices. Set the deadline to 2025-12-05 17:00 UTC (deadline only; do not set start_at).",
 ]
 
 

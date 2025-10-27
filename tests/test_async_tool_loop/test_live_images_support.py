@@ -53,13 +53,13 @@ class DummyImageHandle:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_live_images_helpers_exposed_with_alignment_description(
+async def test_live_images_helpers_exposed_and_overview_injected(
     monkeypatch,
 ) -> None:
     """
-    Verify that the loop exposes `live_images_overview`, `ask_image`, and
-    `attach_image_raw` on the first LLM turn and that the overview docstring
-    includes span-aligned substring and caption.
+    Verify that the loop exposes image helpers (`ask_image`, `attach_image_raw`)
+    and injects a synthetic `live_images_overview` tool call/result that contains
+    the image id and caption in its payload.
     """
 
     tools_snapshots: list[list[dict]] = []
@@ -102,7 +102,7 @@ async def test_live_images_helpers_exposed_with_alignment_description(
         [
             AnnotatedImageRef(
                 raw_image_ref=RawImageRef(image_id=42),
-                annotation="greeting span",
+                annotation="greeting",
             ),
         ],
     )
@@ -119,17 +119,35 @@ async def test_live_images_helpers_exposed_with_alignment_description(
     # We must have recorded at least one tool exposure set
     assert tools_snapshots, "No LLM call captured; expected at least one exposure set."
     names = [t.get("function", {}).get("name") for t in tools_snapshots[0]]
-    assert {"live_images_overview", "ask_image", "attach_image_raw"}.issubset(
-        set(names),
-    )
+    # Only actionable helpers are exposed to the LLM
+    assert {"ask_image", "attach_image_raw"}.issubset(set(names))
 
-    # The overview description should include the id and caption
-    live_tool = next(
-        t for t in tools_snapshots[0] if t["function"]["name"] == "live_images_overview"
-    )
-    desc = live_tool["function"]["description"]
-    assert "id=42" in desc
-    assert "caption='cat on mat'" in desc
+    # Synthetic overview must be injected as an assistant tool-call + tool result
+
+    # Find the synthetic assistant tool-call
+    calls = []
+    for m in client.messages:
+        if m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function", {})
+                if fn.get("name") == "live_images_overview":
+                    calls.append(tc)
+    assert calls, "Expected a synthetic assistant tool call for live_images_overview"
+    call_id = calls[0].get("id")
+
+    # Corresponding tool result should contain image_id and caption
+    tmsgs = [
+        m
+        for m in client.messages
+        if m.get("role") == "tool"
+        and m.get("name") == "live_images_overview"
+        and (call_id is None or m.get("tool_call_id") == call_id)
+    ]
+    assert tmsgs, "Expected a tool-result message for live_images_overview"
+    content = tmsgs[-1].get("content") or "{}"
+    # Payload is JSON; assert id and caption appear
+    assert '"image_id": 42' in content
+    assert '"caption": "cat on mat"' in content
 
 
 @pytest.mark.asyncio
@@ -247,12 +265,12 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
+async def test_images_and_ask_image(monkeypatch) -> None:
     """
-    Motivating example: Given a message with two "this colour" spans – one for Susan and one
-    for Emily – seed two live images aligned to those spans. Verify that:
-      - the first exposure includes both spans with their substrings
-      - the model calls ask_image on the Emily-aligned image id
+    Motivating example: Given a message that refers to two colours – one for Susan and one
+    for Emily – seed two live images. Verify that:
+      - the first exposure includes both image ids and captions
+      - the model calls ask_image on Emily's image id
       - the loop inserts the ask_image tool result and returns the final answer
     """
 
@@ -324,19 +342,17 @@ async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
 
     final = await handle.result()
 
-    # Verify the first exposure contains the overview with both ids and captions
-    assert tools_snapshots, "No LLM call captured; expected at least one exposure set."
-    first_tools = tools_snapshots[0]
-    live_tool = next(
-        t for t in first_tools if t["function"]["name"] == "live_images_overview"
-    )
-    desc = live_tool["function"]["description"]
-
-    # Both occurrences should appear by id and caption
-    assert "id=201" in desc
-    assert "id=202" in desc
-    assert "caption='red tile'" in desc
-    assert "caption='blue tile'" in desc
+    # Verify the synthetic overview tool result contains both ids and captions
+    ov_msgs = [
+        m
+        for m in client.messages
+        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+    ]
+    assert ov_msgs, "Expected a tool-result message for live_images_overview"
+    ov_content = ov_msgs[-1].get("content") or "{}"
+    assert '"image_id": 201' in ov_content
+    assert '"image_id": 202' in ov_content
+    assert ("red tile" in ov_content) and ("blue tile" in ov_content)
 
     # Confirm an ask_image tool-result message exists and contains the BLUE payload
     ask_msgs = [
@@ -349,3 +365,128 @@ async def test_semantic_alignment_and_ask_image(monkeypatch) -> None:
 
     # Final answer should reflect Emily's colour
     assert final.strip().lower().startswith("blue")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_overview_injected_before_first_llm_step(monkeypatch) -> None:
+    """
+    Verify the synthetic `live_images_overview` assistant tool-call/result are injected
+    before the first LLM thinking step (no model choice is used to call it).
+    """
+
+    import asyncio
+    from unity.common._async_tool import loop as _loop
+
+    # Spy on LLM generate to capture the log index at the first thinking step and block it
+    llm_called = asyncio.Event()
+    proceed = asyncio.Event()
+    index_before_llm: int | None = None
+
+    orig_gwp = getattr(_loop, "generate_with_preprocess")
+
+    async def _spy_gwp(client, preprocess_msgs, **gen_kwargs):
+        nonlocal index_before_llm
+        llm_called.set()
+        try:
+            index_before_llm = len(client.messages)
+        except Exception:
+            index_before_llm = None
+        # Block until the test allows progress to ensure we can assert ordering
+        await proceed.wait()
+        return await orig_gwp(client, preprocess_msgs, **gen_kwargs)
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message("Say 'done'.")
+
+    # Seed a single image in the live registry and align a typed ref
+    LIVE_IMAGES_REGISTRY.set(
+        {
+            7: DummyImageHandle(
+                image_id=7,
+                caption="seven cats",
+                raw_bytes=_solid_png_bytes(),
+            ),
+        },
+    )
+
+    images = ImageRefs(
+        [
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=7),
+                annotation="group photo",
+            ),
+        ],
+    )
+
+    h = start_async_tool_loop(
+        client=client,
+        message="Hello",
+        tools={},
+        images=images,
+        max_steps=5,
+        timeout=120,
+    )
+
+    # Poll for the synthetic assistant tool-call/result BEFORE LLM is invoked
+    async def _find_overview_msgs(timeout_s: float = 2.0):
+        start = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start < timeout_s:
+            # Find assistant tool-call and result for overview
+            asst_idx = None
+            call_id = None
+            for idx, m in enumerate(client.messages):
+                if m.get("role") != "assistant":
+                    continue
+                for tc in m.get("tool_calls") or []:
+                    fn = tc.get("function", {})
+                    if fn.get("name") == "live_images_overview":
+                        asst_idx = idx
+                        call_id = tc.get("id")
+                        break
+                if asst_idx is not None:
+                    break
+
+            if asst_idx is not None:
+                # Find the corresponding tool result and its index
+                result_msg = None
+                result_idx = None
+                for idx, m in enumerate(client.messages):
+                    if (
+                        m.get("role") == "tool"
+                        and m.get("name") == "live_images_overview"
+                        and (call_id is None or m.get("tool_call_id") == call_id)
+                    ):
+                        result_msg = m
+                        result_idx = idx
+                if result_msg is not None:
+                    return asst_idx, result_idx, result_msg
+            await asyncio.sleep(0.01)
+        return None
+
+    found = await _find_overview_msgs()
+    assert (
+        found is not None
+    ), "Expected synthetic overview tool result before first LLM step"
+    asst_idx, result_idx, tool_msg = found
+    content = tool_msg.get("content") or "{}"
+    assert '"image_id": 7' in content
+    assert '"caption": "seven cats"' in content
+
+    # Ensure overview assistant tool-call and tool result are recorded before the first LLM step
+    assert llm_called.is_set(), "LLM did not start; test spy did not fire"
+    assert index_before_llm is not None, "Spy did not capture index before LLM call"
+    assert asst_idx < index_before_llm
+    assert result_idx < index_before_llm
+
+    # Allow the LLM to proceed and complete
+    proceed.set()
+    await h.result()

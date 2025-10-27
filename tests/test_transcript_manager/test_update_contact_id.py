@@ -10,8 +10,8 @@ from tests.helpers import _handle_project
 
 @pytest.mark.unit
 @_handle_project  # ensures isolated Unify context per run
-def test_update_contact_id_rewrites_sender_and_receivers():
-    """Verify TranscriptManager._update_contact_id swaps ids across *all* messages."""
+def testupdate_contact_id_rewrites_sender_and_receivers():
+    """Verify TranscriptManager.update_contact_id swaps ids across *all* messages."""
 
     tm = TranscriptManager()
 
@@ -65,7 +65,7 @@ def test_update_contact_id_rewrites_sender_and_receivers():
     assert len(initial) == 3, "Exactly three messages should have been logged initially"
 
     # --- Run the update ---------------------------------------------------
-    outcome = tm._update_contact_id(original_contact_id=OLD_ID, new_contact_id=NEW_ID)
+    outcome = tm.update_contact_id(original_contact_id=OLD_ID, new_contact_id=NEW_ID)
 
     # Outcome shape & counts
     assert outcome["outcome"] == "contact ids updated"

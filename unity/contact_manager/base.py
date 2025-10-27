@@ -4,6 +4,7 @@ from __future__ import annotations
 from abc import abstractmethod
 import asyncio
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
+from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -34,7 +35,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        images: Optional[Dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the **existing contact list** (read‑only) and obtain a live
@@ -56,16 +57,16 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         channel exists, proceed with sensible defaults/best‑guess values and
         state those assumptions in the outer loop's final reply.
 
-        Do *not* request *how* the question should be answered; just ask the
-        question in natural language and allow this `ask` method to determine
-        the best method to answer it.
+        Do not request how the question should be answered; ask in natural
+        language and allow this method to determine the best approach.
 
         Visual inputs policy
         --------------------
-        • When any relevant visual inputs (images) are available, include them via
-          the ``images`` argument for this call.
-        • Prefer a curated subset of images aligned to the question. If curation is
-          not straightforward, include all available live images rather than none.
+        • When relevant images are available, pass them via the ``images`` argument.
+        • Provide image references as their numeric ``image_id`` values, optionally
+          with short annotations (e.g., "contact card") to guide interpretation.
+        • Prefer a curated subset aligned to the question; if curation is unclear,
+          include all potentially relevant images rather than none.
 
         Examples
         --------
@@ -77,24 +78,20 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         Parameters
         ----------
         text : str
-            The user's plain-English question (e.g. *"Show me Alice's phone
-            number."*).
+            The user's plain-English question (e.g. "Show me Alice's phone number.").
         _return_reasoning_steps : bool, default ``False``
-            When *True*, :pyfunc:`SteerableToolHandle.result` returns a
+            When True, :pyfunc:`SteerableToolHandle.result` returns a
             tuple ``(answer, messages)`` where *messages* is the invisible
             chain-of-thought exchanged with the LLM.
         _parent_chat_context : list[dict] | None
-            **Read-only** conversation context to prepend to the tool loop.
+            Read-only conversation context to prepend to the tool loop.
         _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
-            Optional duplex channels.  When supplied the LLM can ask the human
-            follow-up questions via *up_q* and must read answers from
-            *down_q*.
-        images : dict[str, Any] | None
-            Optional live images aligned to the initial user message. Keys are span
-            strings of the form "[start:end]" referring to character indices within
-            the user message. Values are image handle objects (e.g. `ImageHandle`) or
-            numeric ids resolvable to handles. When provided, image‑related helper
-            tools may be exposed by the runtime for working with vision inputs.
+            Optional duplex channels. When supplied the LLM can ask the human
+            follow-up questions via *up_q* and must read answers from *down_q*.
+        images : optional
+            Optional references to images relevant to the question. Pass the numeric
+            ``image_id`` for each image, optionally with a brief annotation. If images
+            are available and relevant, include them.
 
         Returns
         -------
@@ -113,21 +110,21 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        images: Optional[Dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         """
         Apply a **mutation** request – create, edit, delete or merge contacts –
         expressed in plain English and receive a steerable LLM handle.
 
-        Do *not* request *how* the change should be implemented; describe the
-        desired end‑state in natural language and allow the `update` method to
-        determine the best method to apply it.
+        Do not request how the change should be implemented; describe the
+        desired end‑state in natural language and allow this method to
+        determine the best approach.
 
         Ask vs Clarification
         --------------------
-        • `ask` is ONLY for inspecting/locating contacts that ALREADY EXIST (e.g.,
+        • ``ask`` is ONLY for inspecting/locating contacts that already exist (e.g.,
           to find ``contact_id`` or verify stored fields).
-        • Do NOT use `ask` to ask the human for details about NEW contacts being
+        • Do NOT use ``ask`` to ask the human for details about new contacts being
           created/changed in this update request; call ``request_clarification``
           when a clarification channel is available.
         • When no clarification tool exists, proceed with sensible defaults or
@@ -135,24 +132,23 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
 
         Visual inputs policy
         --------------------
-        • When any relevant visual inputs (images) are available, include them via
-          the ``images`` argument for this call.
-        • Prefer a curated subset of images aligned to the request. If curation is
-          not straightforward, include all available live images rather than none.
+        • When relevant images are available, pass them via the ``images`` argument.
+        • Provide image references as their numeric ``image_id`` values, optionally
+          with short annotations (e.g., "contact card") to guide interpretation.
+        • Prefer a curated subset aligned to the request; if curation is unclear,
+          include all potentially relevant images rather than none.
 
         Parameters
         ----------
         text : str
-            The user's request (e.g. *"Add Sarah Connor's phone number …"*).
+            The user's request (e.g. "Add Sarah Connor's phone number …").
         _return_reasoning_steps, _parent_chat_context,
         _clarification_up_q, _clarification_down_q
             Same semantics as in :py:meth:`ask`.
-        images : dict[str, Any] | None
-            Optional live images aligned to the initial user message. Keys are span
-            strings of the form "[start:end]" referring to character indices within
-            the user message. Values are image handle objects (e.g. `ImageHandle`) or
-            numeric ids resolvable to handles. When provided, image‑related helper
-            tools may be exposed by the runtime for working with vision inputs.
+        images : optional
+            Optional references to images relevant to the request. Pass the numeric
+            ``image_id`` for each image, optionally with a brief annotation. If images
+            are available and relevant, include them.
 
         Returns
         -------
@@ -166,7 +162,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def _filter_contacts(
+    def filter_contacts(
         self,
         *,
         filter: Optional[str] = None,
@@ -198,7 +194,7 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
         raise NotImplementedError
 
     @abstractmethod
-    def _update_contact(
+    def update_contact(
         self,
         *,
         contact_id: int,
@@ -237,27 +233,6 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
             A standard outcome payload summarising what changed.  Must be
             non-empty so that simulated managers can fabricate realistic
             confirmations.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def _delete_contact(
-        self,
-        *,
-        contact_id: int,
-    ) -> "ToolOutcome":
-        """
-        Permanently **remove** a contact from storage.
-
-        Parameters
-        ----------
-        contact_id : int
-            Identifier of the contact to delete.
-
-        Returns
-        -------
-        ToolOutcome
-            A standard outcome payload summarising what was deleted (at minimum the contact_id).
         """
         raise NotImplementedError
 

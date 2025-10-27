@@ -178,7 +178,7 @@ def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
     if kind == "ask":
         return methods_to_tool_dict(
             ContactManager._list_columns,
-            ContactManager._filter_contacts,
+            ContactManager.filter_contacts,
             ContactManager._search_contacts,
             include_class_name=False,
         )
@@ -186,7 +186,7 @@ def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
         return methods_to_tool_dict(
             ContactManager.ask,
             ContactManager._create_contact,
-            ContactManager._update_contact,
+            ContactManager.update_contact,
             ContactManager._delete_contact,
             ContactManager._create_custom_column,
             ContactManager._delete_custom_column,
@@ -275,7 +275,7 @@ def mirror_transcript_manager_tools() -> Dict[str, Any]:
 
     # Fallback – current canonical tool set
     return methods_to_tool_dict(
-        ContactManager._filter_contacts,
+        ContactManager.filter_contacts,
         TranscriptManager._filter_messages,
         TranscriptManager._search_messages,
         include_class_name=False,
@@ -531,3 +531,59 @@ def mirror_web_searcher_tools() -> Dict[str, Any]:
         WebSearcher._map,
         include_class_name=False,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GuidanceManager mirroring
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def mirror_guidance_manager_tools(kind: str) -> Dict[str, Any]:
+    """Build a tool-dict mirroring the real GuidanceManager's tools.
+
+    kind: "ask" or "update". Uses AST reflection of GuidanceManager.__init__
+    with a static fallback kept in sync with the concrete implementation.
+    """
+    from unity.common.llm_helpers import methods_to_tool_dict
+    from unity.guidance_manager.guidance_manager import GuidanceManager as GM
+
+    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
+
+    try:
+        pairs = _extract_owner_method_pairs(
+            GM,
+            target_attr,
+            self_external_map=None,
+            extra_class_names={"GuidanceManager": GM},
+        )
+        if pairs:
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
+    except Exception:
+        pass
+
+    # Fallback – keep aligned with GuidanceManager.__init__
+    if kind == "ask":
+        return methods_to_tool_dict(
+            GM._list_columns,
+            GM._filter,
+            GM._search,
+            GM._get_images_for_guidance,
+            GM._ask_image,
+            GM._attach_image_to_context,
+            GM._attach_guidance_images_to_context,
+            GM._get_functions_for_guidance,
+            GM._attach_functions_for_guidance_to_context,
+            include_class_name=False,
+        )
+    else:
+        return methods_to_tool_dict(
+            GM.ask,
+            GM._add_guidance,
+            GM._update_guidance,
+            GM._delete_guidance,
+            GM._create_custom_column,
+            GM._delete_custom_column,
+            include_class_name=False,
+        )

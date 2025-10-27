@@ -747,3 +747,189 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
     done_event.set()
     final = await h.result()
     assert final.strip().lower() in {"done", "all done", "ok"}
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_helpers_hide_next_notification_and_clarification(client):
+    """
+    Verify dynamic tools do NOT expose `next_notification_…` or `next_clarification_…`
+    for an in‑flight inner handle (would fail before the management-set change).
+    """
+
+    class MockPassthroughHandle(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+
+        async def ask(self, question: str) -> "SteerableToolHandle":
+            return self
+
+        async def interject(self, message: str):
+            return None
+
+        def stop(self, reason: str | None = None):
+            self._done.set()
+            return "stopped"
+
+        def pause(self):
+            return "paused"
+
+        def resume(self):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "inner_done"
+
+        # Event APIs
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    inner_handle = MockPassthroughHandle()
+
+    @unify.traced
+    async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
+        return inner_handle
+
+    client.set_system_message(
+        "1️⃣ Call `spawn_handle` to start a nested task.\n2️⃣ Wait until it finishes.\n3️⃣ Then reply with OK.",
+    )
+
+    # Minimal spy: capture dynamic helper registrations only (source of truth)
+    from unity.common._async_tool import dynamic_tools_factory as _dtf
+
+    # Also spy the dynamic tool registration point to capture exact helper names
+    registered_helpers: list[str] = []
+    orig_register_tool = _dtf.DynamicToolFactory._register_tool
+
+    def _spy_register_tool(self, func_name: str, fallback_doc: str, fn):  # type: ignore[no-redef]
+        registered_helpers.append(func_name)
+        return orig_register_tool(self, func_name, fallback_doc, fn)
+
+    setattr(_dtf.DynamicToolFactory, "_register_tool", _spy_register_tool)
+
+    outer = start_async_tool_loop(
+        client,
+        message="start",
+        tools={"spawn_handle": spawn_handle},
+        timeout=120,
+    )
+
+    # Ensure the assistant has requested the spawn tool
+    await _wait_for_tool_request(client, "spawn_handle")
+
+    # Reset spies, then force an immediate LLM turn so dynamic helpers are exposed
+    registered_helpers.clear()
+    await outer.interject("probe for dynamic helpers")
+
+    # Wait until at least one standard helper is registered
+    async def _helpers_registered() -> bool:
+        return any(
+            any(h.startswith(p) for h in registered_helpers)
+            for p in ("pause_", "resume_", "stop_", "interject_", "ask_")
+        )
+
+    await _wait_for_condition(_helpers_registered, poll=0.05, timeout=30.0)
+
+    # Ensure that next_notification_* and next_clarification_* are NOT exposed
+    combined = set(registered_helpers)
+    assert not any(
+        n.startswith("next_notification_") for n in combined
+    ), f"unexpected next_notification_* exposed: {sorted(combined)}"
+    assert not any(
+        n.startswith("next_clarification_") for n in combined
+    ), f"unexpected next_clarification_* exposed: {sorted(combined)}"
+
+    # Finish inner handle and let the loop complete
+    inner_handle._done.set()
+    final = await outer.result()
+    assert final.strip().lower() in {"ok", "inner_done"}
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_helpers_hide_get_history_for_async_handle(client):
+    """
+    Verify dynamic tools do NOT expose `get_history_…` for an in‑flight nested
+    AsyncToolLoopHandle (this would have been exposed before dynamic base-method
+    exclusion).
+    """
+
+    @unify.traced
+    async def spawn_inner_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
+        # Start an inner async tool loop and return its handle immediately
+        inner_client = unify.AsyncUnify(
+            MODEL_NAME,
+            reasoning_effort="high",
+            service_tier="priority",
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
+        )
+        return start_async_tool_loop(
+            inner_client,
+            message="Inner loop: reply OK.",
+            tools={},
+            timeout=60,
+        )
+
+    client.set_system_message(
+        "1️⃣ Call `spawn_inner_handle` to start a nested async tool loop.\n"
+        "2️⃣ Wait until it finishes.\n"
+        "3️⃣ Then reply with OK.",
+    )
+
+    # Spy dynamic helper registrations
+    from unity.common._async_tool import dynamic_tools_factory as _dtf
+
+    registered_helpers: list[str] = []
+    orig_register_tool = _dtf.DynamicToolFactory._register_tool
+
+    def _spy_register_tool(self, func_name: str, fallback_doc: str, fn):  # type: ignore[no-redef]
+        registered_helpers.append(func_name)
+        return orig_register_tool(self, func_name, fallback_doc, fn)
+
+    setattr(_dtf.DynamicToolFactory, "_register_tool", _spy_register_tool)
+
+    outer = start_async_tool_loop(
+        client,
+        message="start",
+        tools={"spawn_inner_handle": spawn_inner_handle},
+        timeout=120,
+    )
+
+    # Ensure the assistant requests the spawning tool
+    await _wait_for_tool_request(client, "spawn_inner_handle")
+
+    # Force an immediate assistant turn to expose dynamic helpers
+    registered_helpers.clear()
+    await outer.interject("probe dynamic helpers")
+
+    # Wait until we see at least one standard helper for the nested handle
+    async def _helpers_registered() -> bool:
+        return any(
+            any(h.startswith(p) for h in registered_helpers)
+            for p in ("pause_", "resume_", "stop_", "interject_", "ask_")
+        )
+
+    await _wait_for_condition(_helpers_registered, poll=0.05, timeout=30.0)
+
+    # Assert that no get_history_* helper is exposed
+    combined = set(registered_helpers)
+    assert not any(
+        n.startswith("get_history_") for n in combined
+    ), f"unexpected get_history_* exposed: {sorted(combined)}"
+
+    # Let the nested loop finish so the test can complete cleanly
+    final = await outer.result()
+    assert final.strip().lower() in {"ok"}

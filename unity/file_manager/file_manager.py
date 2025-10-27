@@ -500,7 +500,7 @@ class FileManager(BaseFileManager):
     ) -> List[File]:
         """
         Filter files using a boolean Python expression evaluated per row.
-        Mirrors ContactManager._filter_contacts.
+        Mirrors ContactManager.filter_contacts.
 
         Parameters
         ----------

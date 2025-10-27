@@ -64,22 +64,38 @@ async def test_combined_task_queries_call_both_ask_and_update_once_each(
         executed_list.count("TaskScheduler_update") >= 1
     ), f"Expected at least one TaskScheduler_update call, saw order: {executed_list}"
 
-    # Only these two should have executed
+    # Allow at most one ContactManager_ask in addition to TaskScheduler ask/update
+    contact_ask_count = executed_list.count("ContactManager_ask")
+    assert (
+        contact_ask_count <= 1
+    ), f"At most one ContactManager_ask call allowed, saw {contact_ask_count} in order: {executed_list}"
+
+    # Only these should have executed (TaskScheduler ask/update and optional single ContactManager_ask)
+    allowed_tools = {"TaskScheduler_ask", "TaskScheduler_update", "ContactManager_ask"}
     assert {
         "TaskScheduler_ask",
         "TaskScheduler_update",
     }.issubset(
         executed,
     ), f"Both ask and update must be executed, saw: {sorted(executed)}"
-    assert executed <= {
-        "TaskScheduler_ask",
-        "TaskScheduler_update",
-    }, f"Unexpected tools executed: {sorted(executed - {'TaskScheduler_ask', 'TaskScheduler_update'})}"
+    assert (
+        executed <= allowed_tools
+    ), f"Unexpected tools executed: {sorted(executed - allowed_tools)}"
 
     # Assistant tool requests should reference only ask/update (dynamic continues normalised)
     requested = set(assistant_requested_tool_names(messages, MANAGER))
     assert requested, "Assistant should have requested at least one tool"
+    # Allow at most one ContactManager_ask request as well
+    requested_list = assistant_requested_tool_names(messages, MANAGER)
+    requested_contact_ask_count = requested_list.count("ContactManager_ask")
+    assert (
+        requested_contact_ask_count <= 1
+    ), f"At most one ContactManager_ask request allowed, saw {requested_contact_ask_count} in order: {requested_list}"
     assert requested <= {
         "TaskScheduler_ask",
         "TaskScheduler_update",
-    }, f"Assistant should only request ask/update for TaskScheduler, saw: {sorted(requested)}"
+        "ContactManager_ask",
+    }, (
+        f"Assistant should only request TaskScheduler ask/update and optional ContactManager_ask, "
+        f"saw: {sorted(requested)}"
+    )

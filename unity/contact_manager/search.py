@@ -12,6 +12,8 @@ from .types.contact import Contact
 
 def _pack_contacts_result(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     contacts_list = [Contact(**r) for r in rows]
+    if not contacts_list:
+        return {"contacts": []}
     fwd = Contact.shorthand_map()
     inv = Contact.shorthand_inverse_map()
     return {

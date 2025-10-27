@@ -2104,7 +2104,7 @@ class TranscriptGenerator:
                 match: list[Contact] = []
                 # Attempt 1: exact case-insensitive FULL-NAME match when a surname is present
                 if first_name and surname:
-                    match = cm._filter_contacts(
+                    match = cm.filter_contacts(
                         filter=(
                             "first_name is not None and surname is not None and "
                             f"first_name.lower() == '{first_name}' and surname.lower() == '{surname}'"
@@ -2113,12 +2113,12 @@ class TranscriptGenerator:
                     )
                 # Attempt 2: only when NO surname provided – reuse a unique first-name match
                 if not match and first_name and not surname:
-                    match = cm._filter_contacts(
+                    match = cm.filter_contacts(
                         filter=f"first_name.lower() == '{first_name}'",
                         limit=1,
                     )
                     if not match:
-                        match = cm._filter_contacts(
+                        match = cm.filter_contacts(
                             filter=f"first_name.lower().startswith('{first_name}')",
                             limit=1,
                         )
@@ -2481,7 +2481,7 @@ class TranscriptGenerator:
 
         try:
             cm = self._tm._contact_manager  # type: ignore[attr-defined]
-            existing = cm._filter_contacts(limit=1000)
+            existing = cm.filter_contacts(limit=1000)
         except Exception:
             existing = []  # graceful fallback
 

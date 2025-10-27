@@ -78,7 +78,7 @@ def test_custom_column_shorthand_map_and_json_alias():
     # Create a contact using the custom field, then ensure JSON shorthand uses the alias
     out = cm._create_contact(first_name="Zoe", nickname="Z")
     cid = out["details"]["contact_id"]
-    contact = cm._filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
+    contact = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
 
     dumped = contact.model_dump(mode="json", context={"shorthand": True})
     assert alias in dumped and dumped[alias] == "Z"

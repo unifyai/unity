@@ -21,7 +21,7 @@ def _programmatic_contact_check(
     else:
         filter_str = f"{identifier_key} == '{identifier_value}'"
 
-    retrieved_contacts = contact_manager._filter_contacts(filter=filter_str)["contacts"]
+    retrieved_contacts = contact_manager.filter_contacts(filter=filter_str)["contacts"]
 
     assert (
         len(retrieved_contacts) >= 1
@@ -83,7 +83,7 @@ async def test_update_existing_contact_details(
     alice_email_key = "alice_alice.smith@example.com"
     alice_smith_id = id_map.get(alice_email_key)
     if alice_smith_id is None:
-        results = cm._filter_contacts(
+        results = cm.filter_contacts(
             filter="email_address == 'alice.smith@example.com'",
         )["contacts"]
         assert results, "Alice Smith not found for test setup"
@@ -120,7 +120,7 @@ async def test_update_with_parent_context_identification(
     )
     charlie_id = id_map.get(charlie_email_key)
     if charlie_id is None:
-        results = cm._filter_contacts(
+        results = cm.filter_contacts(
             filter="email_address == 'goodgrief@example.org'",
         )["contacts"]
         assert results, "Charlie Brown not found for test setup"
@@ -230,7 +230,7 @@ async def test_update_with_clarification_needed(
         {"first_name": "Alice", "surname": "Wonderland"},
     )
     # Check that Alice Smith's surname wasn't changed
-    alice_smith_contacts = cm._filter_contacts(
+    alice_smith_contacts = cm.filter_contacts(
         filter="email_address == 'alice.smith@example.com'",
     )["contacts"]
     assert alice_smith_contacts, "Alice Smith not found post-test"
@@ -278,7 +278,7 @@ async def test_update_stop_operation(
     assert handle.done()
 
     await asyncio.sleep(0.2)
-    prof_x_search = cm._filter_contacts(filter="email_address == 'prox@xmen.com'")[
+    prof_x_search = cm.filter_contacts(filter="email_address == 'prox@xmen.com'")[
         "contacts"
     ]
     assert (
@@ -297,7 +297,7 @@ async def test_update_add_bio(
     cm, _ = contact_manager_scenario
 
     # Pick Bob Johnson
-    bob = cm._filter_contacts(filter="first_name == 'Bob' and surname == 'Johnson'")[
+    bob = cm.filter_contacts(filter="first_name == 'Bob' and surname == 'Johnson'")[
         "contacts"
     ]
     assert bob, "Bob Johnson must exist for this test"

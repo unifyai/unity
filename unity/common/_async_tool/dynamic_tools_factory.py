@@ -17,14 +17,6 @@ from unity.image_manager.types.image_refs import ImageRefs
 
 
 class DynamicToolFactory:
-    _MANAGEMENT_METHOD_NAMES: set[str] = {
-        "interject",
-        "pause",
-        "resume",
-        "stop",
-        "done",
-        "result",
-    }
 
     @dataclass
     class _ToolContext:
@@ -83,15 +75,29 @@ class DynamicToolFactory:
         """
         Return a mapping ``name → bound_method`` of *public* callables on *handle*:
             • name does **not** start with ``_``  _and_
-            • name is not one of the management helpers above.
+            • name is not a core steering method defined on base async-tool loop handles
+              (SteerableToolHandle, AsyncToolLoopHandle).
         """
+
+        def _management_method_names_for_handle(_h) -> set[str]:
+            names: set[str] = set()
+            mro = getattr(getattr(_h, "__class__", object), "__mro__", ())
+            for base in mro:
+                bmod = getattr(base, "__module__", "")
+                bname = getattr(base, "__name__", "")
+                if bmod == "unity.common.async_tool_loop" and bname in (
+                    "SteerableToolHandle",
+                    "AsyncToolLoopHandle",
+                ):
+                    for n, member in inspect.getmembers(base, inspect.isroutine):
+                        if not n.startswith("_"):
+                            names.add(n)
+            return names
+
+        management_names = _management_method_names_for_handle(handle)
         methods: dict[str, Callable] = {}
         for name, attr in inspect.getmembers(handle):
-            if (
-                name.startswith("_")
-                or name in DynamicToolFactory._MANAGEMENT_METHOD_NAMES
-                or not callable(attr)
-            ):
+            if name.startswith("_") or name in management_names or not callable(attr):
                 continue
             # Bind the method to *handle* (important for late-added attributes).
             try:
@@ -163,7 +169,7 @@ class DynamicToolFactory:
             "    Status acknowledgement including the underlying call id.\n\n"
             "Notes\n"
             "-----\n"
-            "- Images are appended to the live images log immediately and reflected in `live_images_overview`.\n"
+            "- Images are appended to the live images log immediately.\n"
             "- The stop request is forwarded to the underlying handle when available."
         )
 
@@ -326,6 +332,46 @@ class DynamicToolFactory:
                 ],
                 return_annotation=Dict[str, str],
             )
+
+    def _create_ask_tool(
+        self,
+        tool_context: _ToolContext,
+        handle: Any,
+    ) -> None:
+        """
+        Expose a synthetic helper to invoke the handle's `ask` method for inspection.
+
+        Behaviour
+        ---------
+        - For nested async handles, returns the downstream handle so the loop can adopt
+          and await its result (consistent with base-tool passthrough behaviour).
+        - Otherwise returns the direct answer value from the handle.
+        """
+
+        if handle is None or not hasattr(handle, "ask"):
+            return
+
+        async def _ask(**_kw):
+            # Robust forwarding with support for positional fallback (question)
+            return await forward_handle_call(
+                handle,
+                "ask",
+                _kw,
+                fallback_positional_keys=["question"],
+            )
+
+        # Reflect downstream signature/annotations for clean tool schema
+        with suppress(Exception):
+            self._adopt_signature_and_annotations(getattr(handle, "ask"), _ask)
+
+        self._register_tool(
+            func_name=f"ask_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            fallback_doc=(
+                f"Ask a read-only question about the running call {tool_context.fn_name}({tool_context.arg_repr}).\n\n"
+                "Returns either a nested handle (adopted by the loop) or a direct answer."
+            ),
+            fn=_ask,
+        )
 
     def _create_clarify_tool(
         self,
@@ -599,6 +645,10 @@ class DynamicToolFactory:
 
         if info.clar_up_queue is not None:
             self._create_clarify_tool(create_tool_ctx)
+
+        # Synthetic `ask` helper for LLM-accessible inspection
+        if handle_available:
+            self._create_ask_tool(create_tool_ctx, handle)
 
         # Determine capability and current pause state; expose only one helper at a time
         cap_pause = (handle_available and hasattr(handle, "pause")) or (

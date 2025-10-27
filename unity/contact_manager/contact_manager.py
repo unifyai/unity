@@ -1,4 +1,5 @@
 from typing import List, Dict, Optional, Callable, Any, Tuple, Union
+from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 import asyncio
 import functools
 import re
@@ -124,7 +125,7 @@ class ContactManager(BaseContactManager):
         ask_tools: Dict[str, Callable] = {
             **methods_to_tool_dict(
                 self._list_columns,
-                self._filter_contacts,
+                self.filter_contacts,
                 self._search_contacts,
                 include_class_name=False,
             ),
@@ -136,7 +137,7 @@ class ContactManager(BaseContactManager):
             **methods_to_tool_dict(
                 self.ask,
                 self._create_contact,
-                self._update_contact,
+                self.update_contact,
                 self._delete_contact,
                 self._create_custom_column,
                 self._delete_custom_column,
@@ -176,7 +177,7 @@ class ContactManager(BaseContactManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
-        images: Optional[Dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -258,7 +259,7 @@ class ContactManager(BaseContactManager):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
-        images: Optional[Dict[str, Any]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client()
 
@@ -484,7 +485,7 @@ class ContactManager(BaseContactManager):
         return cols if include_types else list(cols)
 
     @read_only
-    def _filter_contacts(
+    def filter_contacts(
         self,
         *,
         filter: Optional[str] = None,
@@ -673,7 +674,7 @@ class ContactManager(BaseContactManager):
           Subsequent creations will receive the next available id.
         - ``response_policy`` defaults to a conservative policy that avoids sharing sensitive
           information when not explicitly provided.
-        - Unspecified fields remain ``None`` and can be populated later via ``_update_contact``.
+        - Unspecified fields remain ``None`` and can be populated later via ``update_contact``.
         - For custom columns, ensure the column exists beforehand via ``_create_custom_column``;
           otherwise the request will fail server‑side.
         """
@@ -691,7 +692,7 @@ class ContactManager(BaseContactManager):
             **kwargs,
         )
 
-    def _update_contact(
+    def update_contact(
         self,
         *,
         contact_id: int,
@@ -865,7 +866,7 @@ class ContactManager(BaseContactManager):
         - Private vector columns (names ending with ``"_emb"``) are ignored during merge.
         - After the merge, transcript messages that referenced the deleted contact will have
           their ``contact_id`` updated to the kept id for consistency.
-        - Custom fields are applied via ``_update_contact``; built‑in fields are applied
+        - Custom fields are applied via ``update_contact``; built‑in fields are applied
           directly as arguments.
         """
 

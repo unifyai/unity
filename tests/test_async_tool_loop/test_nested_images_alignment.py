@@ -66,11 +66,10 @@ async def _await_tool(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_align_images_for_helper_builds_arg_scoped_mapping() -> None:
+async def test_live_images_overview_is_injected_synthetically() -> None:
     """
-    Arg-scoped image alignment has been removed. This test now verifies that
-    live image helpers are exposed and callable by asserting a call to
-    `live_images_overview` in the first assistant turn.
+    Verify that a synthetic call to `live_images_overview` is injected in the
+    first assistant turn and that its tool result exists.
     """
 
     client = unify.AsyncUnify(
@@ -81,10 +80,10 @@ async def test_align_images_for_helper_builds_arg_scoped_mapping() -> None:
         traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(
-        "You are running inside an automated test. In your FIRST assistant turn, call the helper `live_images_overview`. After the helper returns, provide a short final reply.",
+        "You are running inside an automated test. Provide a short final reply.",
     )
 
-    # Provide live images via the new ImageRefs container (no arg-scoped spans)
+    # Provide live images via the ImageRefs container
     images = ImageRefs([RawImageRef(image_id=42)])
 
     h = start_async_tool_loop(
@@ -94,8 +93,6 @@ async def test_align_images_for_helper_builds_arg_scoped_mapping() -> None:
         images=images,
     )
 
-    # Ensure the helper is requested and its result is logged before asserting
-    await _await_tool(client, "live_images_overview", min_results=1)
     await h.result()
 
     # The tool result for live_images_overview should exist
@@ -109,10 +106,77 @@ async def test_align_images_for_helper_builds_arg_scoped_mapping() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_inner_tool_receives_and_resolves_arg_scoped_images() -> None:
+async def test_overview_after_clarification_images() -> None:
     """
-    Arg‑scoped image alignment/resolution has been removed. A base tool receives
-    whatever `images` payload the model sends (no implicit handle resolution).
+    When a child tool requests clarification and supplies images with the question,
+    the overview should be reinjected including those images.
+    """
+
+    async def need_clar(*, _clarification_up_q, _clarification_down_q):
+        await _clarification_up_q.put(
+            {"question": "q?", "images": [RawImageRef(image_id=rid)]},
+        )
+        _ = await _clarification_down_q.get()
+        return {"ok": True}
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "1️⃣ Call `need_clar`. 2️⃣ When the tool asks a question, answer using the `_clarify_…` helper with the single word 'ok'.",
+    )
+
+    from unity.image_manager.utils import make_solid_png_base64
+    from unity.image_manager.image_manager import ImageManager
+
+    manager = ImageManager()
+    [rid] = manager.add_images(
+        [{"caption": "clar", "data": make_solid_png_base64(2, 2, (0, 0, 255))}],
+    )
+
+    h = start_async_tool_loop(
+        client=client,
+        message="go",
+        tools={"need_clar": need_clar},
+        images=[],
+        tool_policy=lambda step, available: (
+            ("required", {"need_clar": available["need_clar"]})
+            if step == 0
+            else ("auto", {})
+        ),
+    )
+
+    # Wait for need_clar to be requested so the clarification gets raised
+    await _wait_for_tool_request(client, "need_clar")
+
+    # Scan for latest overview content containing the new image id
+    import asyncio
+
+    for _ in range(100):
+        ov_msgs = [
+            m
+            for m in client.messages
+            if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+        ]
+        if ov_msgs and (f'"image_id": {rid}' in (ov_msgs[-1].get("content") or "")):
+            break
+        await asyncio.sleep(0.01)
+
+    assert ov_msgs, "Expected overview reinjected after clarification images"
+    assert f'"image_id": {rid}' in (ov_msgs[-1].get("content") or "")
+
+    await h.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_inner_tool_receives_images_mapping() -> None:
+    """
+    A base tool receives whatever `images` payload the model sends (no implicit handle resolution).
     """
 
     def analyze(*, question: str, images: dict[str, object]) -> dict:
@@ -135,10 +199,10 @@ async def test_inner_tool_receives_and_resolves_arg_scoped_images() -> None:
     )
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
-        '{\n  "question": "Hello world",\n  "images": { "question[0:5]": 42 }\n}. Then provide a short final reply.',
+        '{\n  "question": "Hello world",\n  "images": { "img_key": 42 }\n}. Then provide a short final reply.',
     )
     images = {
-        "[0:5]": DummyImageHandle(
+        "img_key": DummyImageHandle(
             image_id=42,
             caption="blue square",
             raw_bytes=_solid_png_bytes(),
@@ -166,7 +230,7 @@ async def test_inner_tool_receives_and_resolves_arg_scoped_images() -> None:
     content = tool_msgs[-1].get("content") or "{}"
     obj = json.loads(content)
     rec = obj.get("received") or {}
-    assert rec.get("keys") == ["question[0:5]"]
+    assert rec.get("keys") == ["img_key"]
     # No implicit handle resolution – raw ids are passed as-is to the tool
     # and remain non-handle values (-1 from the test analyzer logic).
     assert rec.get("ids") == [-1]
@@ -175,10 +239,10 @@ async def test_inner_tool_receives_and_resolves_arg_scoped_images() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_invalid_arg_or_span_entries_are_dropped() -> None:
+async def test_various_image_mapping_keys_are_preserved() -> None:
     """
-    Arg‑scoped alignment validation has been removed; the scheduler passes through
-    whatever mapping is provided. This test now verifies the tool receives all entries.
+    The scheduler passes through whatever mapping is provided. This test verifies
+    the tool receives all entries.
     """
 
     def analyze(*, question: str, images: dict[str, object]) -> dict:
@@ -193,11 +257,11 @@ async def test_invalid_arg_or_span_entries_are_dropped() -> None:
     )
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
-        '{\n  "question": "Hello",\n  "images": { "question[0:5]": 42, "text[0:4]": 42, "question[10:20]": 42 }\n}. '
+        '{\n  "question": "Hello",\n  "images": { "k1": 42, "k2": 42, "k3": 42 }\n}. '
         "Then provide a short final reply.",
     )
     images = {
-        "[0:5]": DummyImageHandle(
+        "k1": DummyImageHandle(
             image_id=42,
             caption="blue square",
             raw_bytes=_solid_png_bytes(),
@@ -222,7 +286,7 @@ async def test_invalid_arg_or_span_entries_are_dropped() -> None:
     assert tool_msgs, "Expected a tool-result message for analyze"
     obj = json.loads(tool_msgs[-1].get("content") or "{}")
     keys = obj.get("received_keys") or []
-    assert keys == ["question[0:5]", "text[0:4]", "question[10:20]"]
+    assert keys == ["k1", "k2", "k3"]
 
 
 @pytest.mark.asyncio
@@ -248,7 +312,7 @@ async def test_no_implicit_images_pass_when_omitted() -> None:
         "Do NOT include an `images` field. Then provide a short final reply.",
     )
     images = {
-        "[0:5]": DummyImageHandle(
+        "img_key": DummyImageHandle(
             image_id=42,
             caption="blue square",
             raw_bytes=_solid_png_bytes(),
@@ -295,7 +359,7 @@ async def test_images_value_may_be_handle_objects() -> None:
     )
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
-        '{\n  "question": "Hello world",\n  "images": { "question[0:5]": { "__handle__": true } }\n}. Then provide a short final reply.',
+        '{\n  "question": "Hello world",\n  "images": { "img_key": { "__handle__": true } }\n}. Then provide a short final reply.',
     )
 
     handle_obj = DummyImageHandle(
@@ -304,7 +368,7 @@ async def test_images_value_may_be_handle_objects() -> None:
         raw_bytes=_solid_png_bytes(),
     )
 
-    images = {"[0:5]": handle_obj}
+    images = {"img_key": handle_obj}
 
     h = start_async_tool_loop(
         client=client,

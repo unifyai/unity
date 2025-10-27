@@ -37,7 +37,7 @@ def test_data_store_updated_after_update():
     out = cm._create_contact(first_name="CacheTest", surname="Two")
     cid = out["details"]["contact_id"]
 
-    cm._update_contact(contact_id=cid, surname="Updated")
+    cm.update_contact(contact_id=cid, surname="Updated")
 
     # Verify DataStore reflects updated surname
     row = ds[cid]
@@ -69,7 +69,7 @@ def test_data_store_deleted_after_delete():
 
 @pytest.mark.unit
 @_handle_project
-def test_filter_contacts_repopulates_data_store():
+def testfilter_contacts_repopulates_data_store():
     cm = ContactManager()
 
     ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
@@ -82,8 +82,8 @@ def test_filter_contacts_repopulates_data_store():
     ds.clear()
 
     # Read via filter_contacts and ensure cache is repopulated
-    rows = cm._filter_contacts(filter=f"contact_id == {cid}")["contacts"]
-    rows = cm._filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    rows = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
+    rows = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"]
     assert rows and rows[0].contact_id == cid
 
     row = ds[cid]

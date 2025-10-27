@@ -600,7 +600,7 @@ class TranscriptManager(BaseTranscriptManager):
             if cid in name_cache:
                 return name_cache[cid]
             try:
-                recs = cm._filter_contacts(filter=f"contact_id == {cid}", limit=1)
+                recs = cm.filter_contacts(filter=f"contact_id == {cid}", limit=1)
                 if recs:
                     rec = recs[0]
                     full = " ".join(
@@ -657,7 +657,7 @@ class TranscriptManager(BaseTranscriptManager):
     ) -> Dict[str, Any]:
         return _filter_messages_impl(self, filter=filter, offset=offset, limit=limit)
 
-    def _update_contact_id(
+    def update_contact_id(
         self,
         *,
         original_contact_id: int,

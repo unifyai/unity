@@ -238,6 +238,85 @@ async def test_notification_payload_appends_images() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_overview_reinjected_on_interjection_images(monkeypatch) -> None:
+    """
+    When an interjection brings new images, the overview should be reinjected
+    automatically with the full updated AnnotatedImageRefs list.
+    """
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message("Acknowledge with 'ok'.")
+
+    manager = ImageManager()
+    from unity.image_manager.utils import make_solid_png_base64
+
+    # First image at loop start
+    [id1] = manager.add_images(
+        [
+            {"caption": "first", "data": make_solid_png_base64(2, 2, (0, 0, 255))},
+        ],
+    )
+
+    images = [RawImageRef(image_id=id1)]
+    h = start_async_tool_loop(
+        client=client,
+        message="Start",
+        tools={},
+        images=images,
+        max_steps=10,
+        timeout=240,
+    )
+
+    # Verify initial overview present
+    def _latest_overview_content() -> str:
+        msgs = [
+            m
+            for m in client.messages
+            if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+        ]
+        return (msgs[-1].get("content") or "{}") if msgs else ""
+
+    import asyncio
+
+    for _ in range(100):
+        if '"image_id": ' in _latest_overview_content():
+            break
+        await asyncio.sleep(0.01)
+    initial = _latest_overview_content()
+    assert '"image_id": ' in initial and '"caption": "first"' in initial
+
+    # Interject with a second image → expect reinjection containing both ids
+    [id2] = manager.add_images(
+        [
+            {"caption": "second", "data": make_solid_png_base64(2, 2, (255, 0, 0))},
+        ],
+    )
+    await h.interject("new image", image_refs=[RawImageRef(image_id=id2)])
+
+    # Wait briefly for reinjection to occur
+    for _ in range(100):
+        newer = _latest_overview_content()
+        if '"image_id": %d' % id2 in newer:
+            break
+        await asyncio.sleep(0.01)
+
+    newer = _latest_overview_content()
+    assert ('"image_id": %d' % id1) in newer
+    assert ('"image_id": %d' % id2) in newer
+    assert ("first" in newer) and ("second" in newer)
+
+    # Finish
+    await h.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_ask_image_with_images_param_appends_log() -> None:
     client = unify.AsyncUnify(
         "gpt-5@openai",
@@ -280,14 +359,14 @@ async def test_ask_image_with_images_param_appends_log() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
+async def test_two_images_then_interjection_three_asks_real_llm() -> None:
     """
     Real-LLM flow:
-    - Initial user message references two spans: "this paint" (John) and "that paint" (David)
-      with live images aligned to those spans.
+    - Initial user message references two paints: "this paint" (John) and "that paint" (David)
+      with live images provided.
     - The assistant should call `ask_image` twice to identify both colours (from the visuals),
       compute a 50/50 mix, and wait.
-    - A user interjection then introduces Jenny's paint (with an aligned image via `images` on
+    - A user interjection then introduces Jenny's paint (with an image via `images` on
       interject). The assistant should call `ask_image` once more for Jenny, then mix again and
       answer with the single final colour word.
     - We assert three `ask_image` tool results and a final answer of "brown". This keeps the test
@@ -297,7 +376,7 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
 
     # Real ImageHandles created below
 
-    # Initial message – two guests with span-aligned references
+    # Initial message – two guests with provided images
     user_msg = (
         "We're throwing an art party, with two guests. John has brought this paint, and David has "
         "brought that paint. We will now mix the colours together 50/50. What will be the resulting colour?"
@@ -315,7 +394,7 @@ async def test_two_span_images_then_interjection_three_asks_real_llm() -> None:
             {"data": b64_red},
         ],
     )
-    # Provide annotated refs to align each image with the referenced person/spans
+    # Provide annotated refs for each referenced person
     images = [
         AnnotatedImageRef(
             raw_image_ref=RawImageRef(image_id=john_id),

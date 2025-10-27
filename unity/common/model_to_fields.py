@@ -80,22 +80,59 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
     def _pydantic_json_schema_for(annotation: Any) -> dict | None:
         """Return a JSON Schema dict for a Pydantic model annotation when possible.
 
+        Behaviour:
+        - Preserve Optional/Union[..., None] nullability by returning anyOf with {"type":"null"}.
         - For BaseModel subclasses (including RootModel) → use model_json_schema().
         - For containers like List[Model] → build a minimal array schema with items.
-        - For Optional[Model] → return the schema for the non-None branch.
         """
         try:
             ann = _unwrap_annotated(annotation)
             origin = get_origin(ann)
 
-            # Optional / Union[Model, None]
+            # Optional / Union[..., None] – preserve nullability
             if origin in (Union, UnionType):
-                non_none = [
-                    a for a in get_args(ann) if a is not type(None)
-                ]  # noqa: E721
-                if len(non_none) == 1:
-                    return _pydantic_json_schema_for(non_none[0])
-                # Mixed unions are not supported as storage types → fall back
+                args = list(get_args(ann))
+                has_none = any(a is type(None) for a in args)  # noqa: E721
+                non_none = [a for a in args if a is not type(None)]  # noqa: E721
+                if has_none and len(non_none) == 1:
+                    base = non_none[0]
+                    sub = _pydantic_json_schema_for(base)
+                    # If nested model/list schema is available, wrap with null and hoist $defs
+                    if sub is not None:
+                        defs = None
+                        try:
+                            if isinstance(sub, dict) and "$defs" in sub:
+                                defs = sub.get("$defs")
+                                sub = {k: v for k, v in sub.items() if k != "$defs"}
+                        except Exception:
+                            defs = None
+                        field_schema = {"anyOf": [sub, {"type": "null"}]}
+                        if defs is not None:
+                            field_schema["$defs"] = defs
+                        return field_schema
+                    # Otherwise, synthesise a minimal schema for common primitives/containers
+                    try:
+                        primitive_map = {
+                            str: {"type": "string"},
+                            int: {"type": "integer"},
+                            float: {"type": "number"},
+                            bool: {"type": "boolean"},
+                            datetime: {"type": "string", "format": "date-time"},
+                            date: {"type": "string", "format": "date"},
+                            time: {"type": "string", "format": "time"},
+                        }
+                        if base in primitive_map:
+                            return {"anyOf": [primitive_map[base], {"type": "null"}]}
+                        b_origin = get_origin(base)
+                        if b_origin in (list, Sequence):
+                            return {"anyOf": [{"type": "array"}, {"type": "null"}]}
+                        if b_origin in (dict, Mapping) or base is dict:
+                            return {"anyOf": [{"type": "object"}, {"type": "null"}]}
+                    except Exception:
+                        pass
+                    # Fallback so ColumnType mapping can handle rare cases
+                    return None
+                # Other unions not supported here
                 return None
 
             # Direct BaseModel subclass (covers RootModel as well)
@@ -106,7 +143,21 @@ def model_to_fields(model: type[BaseModel]) -> dict[str, dict[str, Any]]:
             if origin in (list, Sequence):
                 (item_type,) = get_args(ann) if get_args(ann) else (None,)
                 if isinstance(item_type, type) and issubclass(item_type, BaseModel):
-                    return {"type": "array", "items": item_type.model_json_schema()}
+                    item_schema = item_type.model_json_schema()
+                    # Hoist $defs from the item schema to the array root so $ref resolves
+                    defs = None
+                    try:
+                        if isinstance(item_schema, dict) and "$defs" in item_schema:
+                            defs = item_schema.get("$defs")
+                            item_schema = {
+                                k: v for k, v in item_schema.items() if k != "$defs"
+                            }
+                    except Exception:
+                        defs = None
+                    arr_schema = {"type": "array", "items": item_schema}
+                    if defs is not None:
+                        arr_schema["$defs"] = defs
+                    return arr_schema
                 # List of something else → not a nested Pydantic model
                 return None
         except Exception:
