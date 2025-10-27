@@ -154,22 +154,17 @@ class ConversationManager:
             print("running filler task...")
             self._filler_started.set()
             # choose correct streaming channel
-            response_channel = (
-                "app:unify_call:response_gen"
-                if self.state.mode == "unify_call"
-                else "app:call:response_gen"
-            )
             await self.event_broker.publish(
-                response_channel,
+                f"app:{self.state.mode}:response_gen",
                 json.dumps({"type": "start_gen"}),
             )
             if filler_text:
                 await self.event_broker.publish(
-                    response_channel,
+                    f"app:{self.state.mode}:response_gen",
                     json.dumps({"type": "gen_chunk", "chunk": filler_text}),
                 )
             await self.event_broker.publish(
-                response_channel,
+                f"app:{self.state.mode}:response_gen",
                 json.dumps({"type": "end_gen"}),
             )
             print("filler task done")
