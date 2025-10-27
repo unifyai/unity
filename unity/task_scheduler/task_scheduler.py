@@ -83,6 +83,7 @@ from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
 from .llm import new_llm_client
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
+from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 
 
 # Sentinel for optional-argument presence detection
@@ -426,6 +427,7 @@ class TaskScheduler(BaseTaskScheduler):
             Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
             None,
         ] = "default",
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client("gpt-5@openai")
 
@@ -454,12 +456,15 @@ class TaskScheduler(BaseTaskScheduler):
             ),
         )
 
-        # Prepare effective tool_policy – central helper determines requirement
-        if tool_policy == "default":
-            effective_tool_policy = self._default_ask_tool_policy
+        # Prepare effective tool_policy – prefer image-aware policy when images are present
+        if images:
+            effective_tool_policy = self._ask_tool_policy_with_images
         else:
-            # pass through callable or None
-            effective_tool_policy = tool_policy
+            if tool_policy == "default":
+                effective_tool_policy = self._default_ask_tool_policy
+            else:
+                # pass through callable or None
+                effective_tool_policy = tool_policy
 
         # Start the tool-use loop
         handle = self._start_loop(
@@ -473,6 +478,7 @@ class TaskScheduler(BaseTaskScheduler):
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
+            images=images,
         )
         # Logging wrapper applied by decorator
 
@@ -501,6 +507,7 @@ class TaskScheduler(BaseTaskScheduler):
             Callable[[int, Dict[str, Any]], tuple[str, Dict[str, Any]]],
             None,
         ] = "default",
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         client = new_llm_client("gpt-5@openai")
 
@@ -567,6 +574,7 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
             tool_policy=effective_tool_policy,
+            images=images,
         )
         # Logging wrapper applied by decorator
 
@@ -588,6 +596,7 @@ class TaskScheduler(BaseTaskScheduler):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         freeform_text: str = text
 
@@ -652,6 +661,7 @@ class TaskScheduler(BaseTaskScheduler):
             parent_chat_context=_parent_chat_context,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            images=images,
         )
 
     # ------------------------------------------------------------------ #
@@ -832,6 +842,7 @@ class TaskScheduler(BaseTaskScheduler):
         parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         clarification_up_q: Optional[asyncio.Queue[str]] = None,
         clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         """Compose tools and prompt, then start the execute reasoning loop."""
         client = new_llm_client("gpt-5@openai")
@@ -947,6 +958,7 @@ class TaskScheduler(BaseTaskScheduler):
             log_steps=True,
             preprocess_msgs=inject_broader_context,
             handle_cls=ExecuteLoopHandle,
+            images=images,
         )
 
         return outer_handle
@@ -4000,6 +4012,21 @@ class TaskScheduler(BaseTaskScheduler):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
+    @staticmethod
+    def _ask_tool_policy_with_images(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """On step 0, require one of search_tasks/ask_image/attach_image_raw; auto thereafter."""
+        if step_index < 1:
+            allowed_first_turn: Dict[str, Any] = {}
+            for name in ("search_tasks", "ask_image", "attach_image_raw"):
+                if name in current_tools:
+                    allowed_first_turn[name] = current_tools[name]
+            if allowed_first_turn:
+                return ("required", allowed_first_turn)
+        return ("auto", current_tools)
+
     # ------------------------------------------------------------------ #
     #  Small centralised write helper                                     #
     # ------------------------------------------------------------------ #
@@ -4072,6 +4099,7 @@ class TaskScheduler(BaseTaskScheduler):
             ]
         ] = None,
         handle_cls: Optional["type[SteerableToolHandle]"] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         """Centralised wrapper around start_async_tool_loop."""
         return start_async_tool_loop(
@@ -4085,6 +4113,7 @@ class TaskScheduler(BaseTaskScheduler):
             preprocess_msgs=inject_broader_context,
             tool_policy=tool_policy,
             handle_cls=handle_cls,
+            images=images,
         )
 
     def _maybe_add_clarification_tool(
