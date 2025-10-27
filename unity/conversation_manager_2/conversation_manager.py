@@ -221,25 +221,20 @@ class ConversationManager:
             ):
                 if event["type"] == "chunk":
                     if first_chunk:
-                        response_channel = (
-                            "app:unify_call:response_gen"
-                            if self.state.mode == "unify_call"
-                            else "app:call:response_gen"
-                        )
                         await self.event_broker.publish(
-                            response_channel,
+                            f"app:{self.state.mode}:response_gen",
                             json.dumps({"type": "start_gen"}),
                         )
                         first_chunk = False
                     await self.event_broker.publish(
-                        response_channel,
+                        f"app:{self.state.mode}:response_gen",
                         json.dumps(
                             {"type": "gen_chunk", "chunk": event["content"]},
                         ),
                     )
                 elif event["type"] == "end_streamed_field":
                     await self.event_broker.publish(
-                        response_channel,
+                        f"app:{self.state.mode}:response_gen",
                         json.dumps({"type": "end_gen"}),
                     )
 
