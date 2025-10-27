@@ -242,9 +242,7 @@ class ConversationManager:
             parsed_out = json.loads(out)
             if self.state.mode == "unify_call":
                 topic = "app:comms:unify_call_utterance"
-                event = AssistantUnifyCallUtterance(
-                    1, parsed_out["phone_utterance"]
-                )
+                event = AssistantUnifyCallUtterance(1, parsed_out["phone_utterance"])
             else:
                 topic = "app:comms:phone_utterance"
                 event = AssistantPhoneUtterance(
@@ -683,11 +681,11 @@ class ConversationManager:
         if event.__class__.loggable:
             asyncio.create_task(self.publish_bus_events(event))
 
-        if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
+        if isinstance(event, (PhoneCallRecieved, PhoneCallSent, UnifyCallReceived)):
             # start phone call process and wait untils its done, we should probably make sure
             # first that any running llm calls are awaited, and any scheduled llm calls are canceled
             # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
-            if self.state.mode in ["call", "gmeet"]:
+            if self.state.mode in ["call", "gmeet", "unify_call"]:
                 # can't make the call
                 ...
             else:
@@ -699,42 +697,34 @@ class ConversationManager:
                     await self.current_response
 
                 # start the process here
-                target_path = (
-                    Path(__file__).parent.resolve() / "medium_scripts" / "call.py"
-                )
-                self.call_proc = run_script(
-                    str(target_path),
-                    "dev",
-                    event.contact,
-                    self.state.assistant_number,
-                    self.state.voice_provider,
-                    self.state.voice_id if self.state.voice_id else "None",
-                    "None",
-                    str(False),
-                )
-
-        elif isinstance(event, UnifyCallReceived):
-            # start worker once, then wait for UnifyCallStarted to kick LLM
-            if not getattr(self, "call_proc", None):
-                target_path = (
-                    Path(__file__).parent.resolve() / "medium_scripts" / "unify_call.py"
-                )
-                agent_name = (
-                    event.agent_name
-                    if isinstance(event, UnifyCallReceived) and event.agent_name
-                    else (
-                        f"unity_{self.state.assistant_id}_web"
-                        if self.state.assistant_id
-                        else "unity_unify_call_1"
+                target_path = Path(__file__).parent.resolve() / "medium_scripts"
+                if self.state.mode == "unify_call":
+                    target_path = target_path / "unify_call.py"
+                    agent_name = (
+                        event.agent_name
+                        if isinstance(event, UnifyCallReceived) and event.agent_name
+                        else (
+                            f"unity_{self.state.assistant_id}_web"
+                            if self.state.assistant_id
+                            else "unity_unify_call_1"
+                        )
                     )
-                )
-                self.call_proc = run_script(
-                    str(target_path),
-                    "dev",
-                    self.state.voice_provider,
-                    self.state.voice_id if self.state.voice_id else "",
-                    agent_name,
-                )
+                    args = [
+                        self.state.voice_provider,
+                        self.state.voice_id if self.state.voice_id else "",
+                        agent_name,
+                    ]
+                else:
+                    target_path = target_path / "call.py"
+                    args = [
+                        event.contact,
+                        self.state.assistant_number,
+                        self.state.voice_provider,
+                        self.state.voice_id if self.state.voice_id else "None",
+                        "None",
+                        str(False),
+                    ]
+                self.call_proc = run_script(str(target_path), "dev", *args)
 
         elif isinstance(event, (PhoneCallStarted, UnifyCallStarted)):
             # self.mode = "call"
