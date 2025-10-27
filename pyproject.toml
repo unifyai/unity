@@ -70,6 +70,7 @@ dev = [
     "black>=25.9.0",
     "hypothesis>=6.135.29",
     "viztracer>=1.0.4",
+    "pytest-dotenv>=0.5.2",
 ]
 
 [tool.setuptools.packages.find]
