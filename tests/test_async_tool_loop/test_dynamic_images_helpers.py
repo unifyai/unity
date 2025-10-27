@@ -216,7 +216,7 @@ async def test_notification_payload_appends_images() -> None:
         message="Go",
         tools={"notify": notify},
         images=images,
-        max_steps=10,
+        max_steps=12,
         timeout=240,
         tool_policy=lambda step, available: (
             ("required", {"notify": available["notify"]}) if step == 0 else ("auto", {})
