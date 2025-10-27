@@ -75,10 +75,23 @@ class Event:
         return cls
 
 
+# --------------------------------------------------------------------------- #
+# Comms Events
+# --------------------------------------------------------------------------- #
+
+
 @dataclass
 class PhoneCallRecieved(Event):
     contact: str
     conference_name: str = ""
+
+
+@dataclass
+class UnifyCallReceived(Event):
+    """Frontend/worker confirmed agent connected to room; begin LLM."""
+
+    contact: int
+    agent_name: str | None = None
 
 
 @dataclass
@@ -87,8 +100,26 @@ class PhoneCallStarted(Event):
 
 
 @dataclass
+class UnifyCallStarted(Event):
+    """A browser-based voice call session has started (no phone number).
+
+    "contact" should reference the boss/user contact id (typically 1).
+    """
+
+    contact: int
+
+
+@dataclass
 class PhoneUtterance(Event):
     contact: str
+    content: str
+
+
+@dataclass
+class UnifyCallUtterance(Event):
+    """User utterance during a browser-based voice call session."""
+
+    contact: int
     content: str
 
 
@@ -100,6 +131,13 @@ class Interrupt(Event):
 @dataclass
 class PhoneCallEnded(Event):
     contact: str
+
+
+@dataclass
+class UnifyCallEnded(Event):
+    """The browser-based voice call session has ended."""
+
+    contact: int
 
 
 @dataclass
@@ -122,6 +160,14 @@ class PhoneCallSent(Event):
 @dataclass
 class AssistantPhoneUtterance(Event):
     contact: str
+    content: str
+
+
+@dataclass
+class AssistantUnifyCallUtterance(Event):
+    """Assistant utterance during a browser-based voice call session."""
+
+    contact: int
     content: str
 
 

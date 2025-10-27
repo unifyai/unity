@@ -154,16 +154,16 @@ class ConversationManager:
             print("running filler task...")
             self._filler_started.set()
             await self.event_broker.publish(
-                "app:call:response_gen",
+                f"app:{self.state.mode}:response_gen",
                 json.dumps({"type": "start_gen"}),
             )
             if filler_text:
                 await self.event_broker.publish(
-                    "app:call:response_gen",
+                    f"app:{self.state.mode}:response_gen",
                     json.dumps({"type": "gen_chunk", "chunk": filler_text}),
                 )
             await self.event_broker.publish(
-                "app:call:response_gen",
+                f"app:{self.state.mode}:response_gen",
                 json.dumps({"type": "end_gen"}),
             )
             print("filler task done")
@@ -196,7 +196,7 @@ class ConversationManager:
 
         # Use dynamic response models (set_details must be called before run_llm)
         response_model = self.state.dynamic_response_models[self.state.mode]
-        if self.state.mode in ["call", "gmeet"]:
+        if self.state.mode in ["call", "gmeet", "unify_call"]:
             print("running...")
             first_chunk = True
 
@@ -222,32 +222,33 @@ class ConversationManager:
                 if event["type"] == "chunk":
                     if first_chunk:
                         await self.event_broker.publish(
-                            "app:call:response_gen",
+                            f"app:{self.state.mode}:response_gen",
                             json.dumps({"type": "start_gen"}),
                         )
                         first_chunk = False
                     await self.event_broker.publish(
-                        "app:call:response_gen",
+                        f"app:{self.state.mode}:response_gen",
                         json.dumps(
                             {"type": "gen_chunk", "chunk": event["content"]},
                         ),
                     )
                 elif event["type"] == "end_streamed_field":
                     await self.event_broker.publish(
-                        "app:call:response_gen",
+                        f"app:{self.state.mode}:response_gen",
                         json.dumps({"type": "end_gen"}),
                     )
 
             out = event["content"]
             parsed_out = json.loads(out)
-            assistant_phone_utterance_event = AssistantPhoneUtterance(
-                self.state.phone_contact.phone_number,
-                parsed_out["phone_utterance"],
-            )
-            await self.event_broker.publish(
-                "app:comms:phone_utterance",
-                assistant_phone_utterance_event.to_json(),
-            )
+            if self.state.mode == "unify_call":
+                topic = "app:comms:unify_call_utterance"
+                event = AssistantUnifyCallUtterance(1, parsed_out["phone_utterance"])
+            else:
+                topic = "app:comms:phone_utterance"
+                event = AssistantPhoneUtterance(
+                    self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
+                )
+            await self.event_broker.publish(topic, event.to_json())
 
         else:
             out = await llm_call(
@@ -523,23 +524,16 @@ class ConversationManager:
     async def publish_transcript(self, event: Event):
         event_name = event.to_dict()["event_name"].lower()
         print("publishing transcript", event_name)
-        medium = (
-            "phone_call"
-            if "phone" in event_name
-            else (
-                "sms_message"
-                if "sms" in event_name
-                else (
-                    "email"
-                    if "email" in event_name
-                    else (
-                        "unify_message"
-                        if "unifymessage" in event_name
-                        else "whatsapp_message"
-                    )
-                )
-            )
-        )
+        if "unify" in event_name:
+            medium = "unify_call" if "call" in event_name else "unify_message"
+        elif "phone" in event_name:
+            medium = "phone_call"
+        elif "sms" in event_name:
+            medium = "sms_message"
+        elif "email" in event_name:
+            medium = "email"
+        else:
+            medium = "whatsapp_message"
         role = (
             "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
         )
@@ -553,7 +547,15 @@ class ConversationManager:
             **self.state.email_contacts_map,
             **self.state.phone_contacts_map,
         }
-        if isinstance(event, (UnifyMessageSent, UnifyMessageRecieved)):
+        if isinstance(
+            event,
+            (
+                UnifyMessageSent,
+                UnifyMessageRecieved,
+                UnifyCallUtterance,
+                AssistantUnifyCallUtterance,
+            ),
+        ):
             contact_id = 1
         elif event.contact in contacts_map:
             contact_id = contacts_map[event.contact].contact_id
@@ -565,11 +567,23 @@ class ConversationManager:
         exchange_id = UNASSIGNED
         if medium == "phone_call":
             exchange_id = self.state.call_exchange_id
+        if medium == "unify_call":
+            exchange_id = self.state.unify_call_exchange_id
 
         call_utterance_timestamp = ""
         call_url = ""
-        if self.state.call_start_timestamp:
-            delta = datetime.now() - self.state.call_start_timestamp
+        # compute utterance timestamp based on active call type
+        timestamp = (
+            self.state.call_start_timestamp
+            if medium == "phone_call"
+            else (
+                self.state.unify_call_start_timestamp
+                if medium == "unify_call"
+                else None
+            )
+        )
+        if timestamp:
+            delta = datetime.now() - timestamp
             if role == "Assistant":
                 delta += timedelta(seconds=2)
             minutes, seconds = divmod(int(delta.total_seconds()), 60)
@@ -667,11 +681,11 @@ class ConversationManager:
         if event.__class__.loggable:
             asyncio.create_task(self.publish_bus_events(event))
 
-        if isinstance(event, (PhoneCallRecieved, PhoneCallSent)):
+        if isinstance(event, (PhoneCallRecieved, PhoneCallSent, UnifyCallReceived)):
             # start phone call process and wait untils its done, we should probably make sure
             # first that any running llm calls are awaited, and any scheduled llm calls are canceled
             # llm inference should not start until the process is set up (through PhoneCallStartedEvent)
-            if self.state.mode in ["call", "gmeet"]:
+            if self.state.mode in ["call", "gmeet", "unify_call"]:
                 # can't make the call
                 ...
             else:
@@ -683,29 +697,47 @@ class ConversationManager:
                     await self.current_response
 
                 # start the process here
-                target_path = (
-                    Path(__file__).parent.resolve() / "medium_scripts" / "call.py"
-                )
-                self.call_proc = run_script(
-                    str(target_path),
-                    "dev",
-                    event.contact,
-                    self.state.assistant_number,
-                    self.state.voice_provider,
-                    self.state.voice_id if self.state.voice_id else "None",
-                    "None",
-                    str(False),
-                )
+                target_path = Path(__file__).parent.resolve() / "medium_scripts"
+                if self.state.mode == "unify_call":
+                    target_path = target_path / "unify_call.py"
+                    agent_name = (
+                        event.agent_name
+                        if isinstance(event, UnifyCallReceived) and event.agent_name
+                        else (
+                            f"unity_{self.state.assistant_id}_web"
+                            if self.state.assistant_id
+                            else "unity_unify_call_1"
+                        )
+                    )
+                    args = [
+                        self.state.voice_provider,
+                        self.state.voice_id if self.state.voice_id else "",
+                        agent_name,
+                    ]
+                else:
+                    target_path = target_path / "call.py"
+                    args = [
+                        event.contact,
+                        self.state.assistant_number,
+                        self.state.voice_provider,
+                        self.state.voice_id if self.state.voice_id else "None",
+                        "None",
+                        str(False),
+                    ]
+                self.call_proc = run_script(str(target_path), "dev", *args)
 
-        elif isinstance(event, PhoneCallStarted):
+        elif isinstance(event, (PhoneCallStarted, UnifyCallStarted)):
             # self.mode = "call"
             # contact = self.phone_contacts_map.get(event.contact)
             # self.call_contact = contact
             await self.schedule_llm_run(0, cancel_running=True)
 
-        elif isinstance(event, PhoneCallEnded):
+        elif isinstance(event, (PhoneCallEnded, UnifyCallEnded)):
             self.state.mode = "text"
-            self.call_contact = None
+            if isinstance(event, PhoneCallEnded):
+                self.call_contact = None
+            elif isinstance(event, UnifyCallEnded):
+                self.unify_call_contact = None
             self.cleanup_call_proc()
             # cancel any running filler task when call ends
             if self._filler_task and not self._filler_task.done():
@@ -715,7 +747,7 @@ class ConversationManager:
                 self._filler_task = None
             await self.schedule_llm_run(0, cancel_running=True)
 
-        elif isinstance(event, PhoneUtterance):
+        elif isinstance(event, (PhoneUtterance, UnifyCallUtterance)):
             # schedule filler concurrently so it doesn't block the LLM call
             if self._filler_task and not self._filler_task.done():
                 self._filler_task.cancel()
@@ -729,7 +761,7 @@ class ConversationManager:
             asyncio.create_task(self.publish_transcript(event))
             await self.schedule_llm_run(0, cancel_running=True)
 
-        elif isinstance(event, AssistantPhoneUtterance):
+        elif isinstance(event, (AssistantPhoneUtterance, AssistantUnifyCallUtterance)):
             # do not do anything here, let the user reply back or whatever
             asyncio.create_task(self.publish_transcript(event))
 
@@ -741,8 +773,8 @@ class ConversationManager:
                 **self.state.get_details(),
             }
 
-            # unify_message assumes boss contact, create first on startup to avoid errors
-            if payload["medium"] == "unify_message":
+            # For unify_message/unify_call assume boss contact; create to avoid errors
+            if "unify" in payload["medium"]:
                 self.state.update_or_create_new_contact(
                     1,
                     payload["user_name"].split(" ")[0],
@@ -759,7 +791,7 @@ class ConversationManager:
 
         elif isinstance(event, AssistantUpdateEvent):
             await self.publish_contact_update(
-                self.state.inverted_contacts_map[0].model_dump()
+                self.state.inverted_contacts_map[0].model_dump(),
             )
             await self.publish_contact_update(
                 self.state.inverted_contacts_map[1].model_dump()

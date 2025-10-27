@@ -268,41 +268,32 @@ class CommsManager:
                         self.loop,
                     )
 
-                    # Extract phone numbers from the message data
-                    conference_name = event.get("conference_name", "")
-                    from_number = event.get("caller_number", "")
-                    to_number = "+" + conference_name.replace("Unity_", "")
+                    # Create the event based on the thread
+                    if thread == "unify_call":
+                        event = UnifyCallReceived(
+                            contact=1, agent_name=event.get("agent_name")
+                        )
+                        topic = "app:comms:unify_call_received"
+                    else:
+                        event = PhoneCallRecieved(
+                            contact=event.get(
+                                "caller_number", event.get("user_number")
+                            ),
+                            conference_name=event.get("conference_name", ""),
+                        )
+                        topic = "app:comms:call_recieved"
 
-                    # TODO: differentiate between calls picked up from outbound calls and inbound calls
+                    # Publish the event
                     task = asyncio.run_coroutine_threadsafe(
-                        self.message_queue.publish(
-                            "app:comms:call_recieved",
-                            PhoneCallRecieved(
-                                contact=event.get(
-                                    "caller_number",
-                                    event.get("user_number"),
-                                ),
-                                conference_name=conference_name,
-                                # voice_id=event.get("voice_id", None),
-                                # voice_provider=event.get("voice_provider", None),
-                            ).to_json(),
-                        ),
-                        self.loop,
+                        self.message_queue.publish(topic, event.to_json()), self.loop
                     )
-                    # this should be handled through the comms agents i think
-                    # self.call_proc = run_script(
-                    #     "call.py",
-                    #     "dev",
-                    #     from_number,
-                    #     to_number,
-                    # )
                     message.ack()
                     task.result()
                 except json.JSONDecodeError:
-                    print("Invalid message format for call event")
+                    print(f"Invalid message format for {thread} event")
                     message.nack()
                 except Exception as e:
-                    print(f"Error processing call event: {e}")
+                    print(f"Error processing {thread} event: {e}")
                     message.nack()
             else:
                 print(f"Unknown event type: {thread}")
