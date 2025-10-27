@@ -555,7 +555,6 @@ async def async_tool_loop_inner(
                                 "isoformat",
                                 lambda: "",
                             )(),
-                            "is_pending": bool(getattr(_h, "is_pending", False)),
                         },
                     )
                 except Exception:
