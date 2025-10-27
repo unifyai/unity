@@ -503,22 +503,41 @@ async def llm_call(
     prompt: str,
     screenshot: bytes | str | None = None,
     images: Optional[dict[str, Any]] = None,
+    static_prompt: Optional[str] = None,
 ) -> str:
     """
-    Convenience wrapper for a simple, stateless LLM call.
+    Convenience wrapper for a simple, stateless LLM call with optional prompt caching.
 
     This helper automatically resets the client's message history before making
     the call to ensure no context is leaked from previous interactions.
+
+    Args:
+        client: The AsyncUnify client to use for the LLM call
+        prompt: The dynamic prompt content (user message)
+        screenshot: Optional screenshot to include in the prompt
+        images: Optional dictionary of image handles to include
+        static_prompt: Optional static content to cache (sent as system message with cache_control)
+
+    Returns:
+        The LLM's response as a string (automatically extracts content from ChatCompletion
+        if the client has return_full_completion=True)
+
+    Note:
+        When static_prompt is provided, the static content
+        is sent as a system message with LiteLLM's cache_control directive. This enables
+        provider-agnostic prompt caching across OpenAI, Anthropic, Gemini, etc.
+        The static prompt should be ≥2,048 tokens for optimal caching benefits.
     """
     client.reset_messages()
-    content = [{"type": "text", "text": prompt}]
+    user_content = [{"type": "text", "text": prompt}]
+
     if screenshot:
         if isinstance(screenshot, str):
             screenshot_b64 = screenshot
         else:
             screenshot_b64 = base64.b64encode(screenshot).decode("utf-8")
 
-        content.append(
+        user_content.append(
             {
                 "type": "image_url",
                 "image_url": {
@@ -532,7 +551,7 @@ async def llm_call(
             try:
                 image_bytes = handle.raw()
                 b64_image = base64.b64encode(image_bytes).decode("utf-8")
-                content.append(
+                user_content.append(
                     {
                         "type": "image_url",
                         "image_url": {
@@ -543,8 +562,55 @@ async def llm_call(
             except Exception as e:
                 logger.warning(f"Could not process image for prompt: {e}")
 
-    messages_to_send = [{"role": "user", "content": content}]
-    return await client.generate(messages=messages_to_send)
+    if static_prompt:
+        messages_to_send = [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": static_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": user_content,
+            },
+        ]
+    else:
+        messages_to_send = [{"role": "user", "content": user_content}]
+
+    response = await client.generate(messages=messages_to_send)
+
+    if static_prompt:
+        try:
+            usage = None
+
+            if hasattr(response, "usage"):
+                usage = response.usage
+            if usage:
+                cached = 0
+
+                if hasattr(usage, "prompt_tokens_details") and hasattr(
+                    usage.prompt_tokens_details,
+                    "cached_tokens",
+                ):
+                    cached = usage.prompt_tokens_details.cached_tokens or 0
+                elif hasattr(usage, "cache_read_input_tokens"):
+                    cached = usage.cache_read_input_tokens or 0
+
+                if cached > 0:
+                    logger.debug(f"✓ Prompt cache hit: {cached:,} tokens cached")
+                logger.debug(f"Usage: {usage}")
+        except Exception as e:
+            logger.debug(f"Could not access cache metadata: {e}")
+
+    if isinstance(response, str):
+        return response
+    else:
+        return response.choices[0].message.content
 
 
 class PlanSanitizer(ast.NodeTransformer):
@@ -1805,24 +1871,33 @@ class HierarchicalPlan(BaseActiveTask):
 
         self.plan_generation_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
+            return_full_completion=True,
         )
         self.verification_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
+            return_full_completion=True,
         )
         self.implementation_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
+            return_full_completion=True,
         )
         self.summarization_client: unify.AsyncUnify = unify.AsyncUnify(
-            "gemini-2.5-flash@vertex-ai",
+            "gemini-2.5-pro@vertex-ai",
+            return_full_completion=True,
         )
         # TODO: DEPRECATED
         self.course_correction_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
+            return_full_completion=True,
         )
         self.modification_client: unify.AsyncUnify = unify.AsyncUnify(
             "gemini-2.5-pro@vertex-ai",
+            return_full_completion=True,
         )
-        self.ask_client: unify.AsyncUnify = unify.AsyncUnify("gemini-2.5-pro@vertex-ai")
+        self.ask_client: unify.AsyncUnify = unify.AsyncUnify(
+            "gemini-2.5-pro@vertex-ai",
+            return_full_completion=True,
+        )
 
     def _set_final_result(self, result: str):
         """Sets the final result and the completion event."""
@@ -3112,23 +3187,26 @@ class HierarchicalPlan(BaseActiveTask):
                     context_dict,
                 )
 
-                prompt = prompt_builders.build_interjection_prompt(
-                    interjection=message,
-                    parent_chat_context=self.parent_chat_context,
-                    scoped_context=scoped_context_str,
-                    call_stack=self.call_stack,
-                    action_log=self.action_log[-10:],
-                    goal=self.goal,
-                    idempotency_cache=self.idempotency_cache,
-                    tools=self.actor.tools,
-                    images=images,
+                static_prompt, dynamic_prompt = (
+                    prompt_builders.build_interjection_prompt(
+                        interjection=message,
+                        parent_chat_context=self.parent_chat_context,
+                        scoped_context=scoped_context_str,
+                        call_stack=self.call_stack,
+                        action_log=self.action_log[-10:],
+                        goal=self.goal,
+                        idempotency_cache=self.idempotency_cache,
+                        tools=self.actor.tools,
+                        images=images,
+                    )
                 )
 
                 self.modification_client.set_response_format(InterjectionDecision)
                 try:
                     decision_str = await llm_call(
                         self.modification_client,
-                        prompt,
+                        dynamic_prompt,
+                        static_prompt=static_prompt,
                         images=images,
                     )
                     decision = InterjectionDecision.model_validate_json(decision_str)
@@ -5181,27 +5259,30 @@ class HierarchicalActor(BaseActor):
             except Exception as e:
                 logger.warning(f"Could not fetch recent transcript: {e}")
 
-            prompt = prompt_builders.build_dynamic_implement_prompt(
-                goal=plan.goal,
-                scoped_context=scoped_context_str_for_prompt,
-                call_stack=call_stack_list_for_prompt,
-                function_name=function_name,
-                function_sig=func_sig,
-                function_docstring=docstring,
-                clarification_question=kwargs.get("clarification_question"),
-                clarification_answer=kwargs.get("clarification_answer"),
-                replan_context=replan_reason,
-                tools=self.tools,
-                existing_functions=existing_functions,
-                recent_transcript=recent_transcript,
-                parent_chat_context=plan.parent_chat_context,
-                images=plan.images,
+            static_prompt, dynamic_prompt = (
+                prompt_builders.build_dynamic_implement_prompt(
+                    goal=plan.goal,
+                    scoped_context=scoped_context_str_for_prompt,
+                    call_stack=call_stack_list_for_prompt,
+                    function_name=function_name,
+                    function_sig=func_sig,
+                    function_docstring=docstring,
+                    clarification_question=kwargs.get("clarification_question"),
+                    clarification_answer=kwargs.get("clarification_answer"),
+                    replan_context=replan_reason,
+                    tools=self.tools,
+                    existing_functions=existing_functions,
+                    recent_transcript=recent_transcript,
+                    parent_chat_context=plan.parent_chat_context,
+                    images=plan.images,
+                )
             )
             plan.implementation_client.set_response_format(ImplementationDecision)
             try:
                 response_str = await llm_call(
                     plan.implementation_client,
-                    prompt,
+                    dynamic_prompt,
+                    static_prompt=static_prompt,
                     screenshot=browser_screenshot,
                     images=plan.images,
                 )
@@ -5288,7 +5369,7 @@ class HierarchicalActor(BaseActor):
         context_dict = self._get_scoped_context_from_plan_state(plan)
         scoped_context_str = self._format_scoped_context_for_prompt(context_dict)
 
-        prompt = prompt_builders.build_verification_prompt(
+        static_prompt, dynamic_prompt = prompt_builders.build_verification_prompt(
             goal=plan.goal,
             function_name=function_name,
             function_docstring=function_docstring,
@@ -5307,7 +5388,8 @@ class HierarchicalActor(BaseActor):
         try:
             response_str = await llm_call(
                 plan.verification_client,
-                prompt,
+                dynamic_prompt,
+                static_prompt=static_prompt,
                 screenshot=screenshot,
             )
             assessment = VerificationAssessment.model_validate_json(response_str)
