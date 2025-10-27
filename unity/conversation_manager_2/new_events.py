@@ -424,6 +424,7 @@ class ConductorRequest(Event):
         )
 
 
+@dataclass
 class ConductorResponse(Event):
     """Event to respond to a Conductor request."""
 
