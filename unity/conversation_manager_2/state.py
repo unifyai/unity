@@ -264,100 +264,103 @@ class ConversationManagerState:
                         e.timestamp,
                     ),
                 )
-            case PhoneCallStarted() as e:
-                self.call_start_timestamp = e.timestamp
-                self.mode = "call"
-                contact = self.get_contact(phone_number=e.contact)
-                self.phone_contact = contact
+            case PhoneCallStarted() | UnifyCallStarted() as e:
+                if isinstance(e, PhoneCallStarted):
+                    self.mode = "call"
+                    self.call_start_timestamp = e.timestamp
+                    contact = self.get_contact(phone_number=e.contact)
+                    self.phone_contact = contact
+                    thread_type = "phone"
+                else:
+                    self.mode = "unify_call"
+                    self.unify_call_start_timestamp = e.timestamp
+                    contact = self.get_contact(
+                        contact_id=1
+                    )  # unify_call always targets boss
+                    self.unify_call_contact = contact
+                    thread_type = "unify_call"
+
                 self.push_message(
                     contact,
-                    "phone",
-                    Message(contact.full_name, "<Phone call started...>", e.timestamp),
+                    thread_type,
+                    Message(
+                        contact.full_name,
+                        f"<{thread_type.replace('_call', '').capitalize()} Call started...>",
+                        e.timestamp,
+                    ),
                 )
                 self.push_notif(
                     Notification(
                         "comms",
-                        f"Phone Call started with '{contact.full_name}'",
+                        f"{thread_type.replace('_call', '').capitalize()} Call started with '{contact.full_name}'",
                         e.timestamp,
                     ),
                 )
 
-            case PhoneUtterance() as e:
-                contact = self.get_contact(phone_number=e.contact)
+            case PhoneUtterance() | UnifyCallUtterance() as e:
+                if isinstance(e, PhoneUtterance):
+                    contact = self.get_contact(phone_number=e.contact)
+                    thread_type = "phone"
+                else:
+                    contact = self.get_contact(contact_id=1)
+                    thread_type = "unify_call"
+
                 self.push_message(
                     contact,
-                    "phone",
+                    thread_type,
                     Message(contact.full_name, e.content, e.timestamp),
                 )
                 self.push_notif(
                     Notification(
                         "comms",
-                        f"Phone Call Utterance recieved from '{contact.full_name}'",
+                        f"{thread_type.replace('_call', '').capitalize()} Call Utterance received from '{contact.full_name}'",
                         e.timestamp,
                     ),
                 )
             # made by assistant
-            case AssistantPhoneUtterance() as e:
-                contact = self.get_contact(phone_number=e.contact)
+            case AssistantPhoneUtterance() | AssistantUnifyCallUtterance() as e:
+                if isinstance(e, AssistantPhoneUtterance):
+                    contact = self.get_contact(phone_number=e.contact)
+                    thread_type = "phone"
+                else:
+                    contact = self.get_contact(contact_id=1)
+                    thread_type = "unify_call"
+
                 self.push_message(
                     contact,
-                    "phone",
+                    thread_type,
                     Message("You", e.content, e.timestamp),
                 )
                 self.push_notif(
                     Notification(
                         "comms",
-                        f"Phone Call Utterance sent to '{contact.full_name}'",
+                        f"{thread_type.replace('_call', '').capitalize()} Call Utterance sent to '{contact.full_name}'",
                         e.timestamp,
                     ),
                 )
-            case PhoneCallEnded() as e:
-                contact = self.get_contact(phone_number=e.contact)
-                self.push_message(
-                    contact,
-                    "phone",
-                    Message(contact.full_name, "<Phone Call Ended...>", e.timestamp),
-                )
-                self.push_notif(
-                    Notification(
-                        "comms",
-                        f"Phone Call Ended with '{contact.full_name}'",
-                        e.timestamp,
-                    ),
-                )
-                self.phone_contact = None
+            case PhoneCallEnded() | UnifyCallEnded() as e:
+                if isinstance(e, PhoneCallEnded):
+                    contact = self.get_contact(phone_number=e.contact)
+                    thread_type = "phone"
+                    self.phone_contact = None
+                else:
+                    contact = self.get_contact(contact_id=1)
+                    thread_type = "unify_call"
+                    self.unify_call_contact = None
 
-            # unify_call lifecycle
-            case UnifyCallStarted() as e:
-                self.mode = "unify_call"
-                # unify_call always targets boss contact (id=1)
-                contact = self.get_contact(contact_id=1)
-                self.unify_call_contact = contact
-                self.unify_call_start_timestamp = e.timestamp
                 self.push_message(
                     contact,
-                    "unify_call",
-                    Message(contact.full_name, "<Unify call started...>", e.timestamp),
-                )
-                self.push_notif(
-                    Notification(
-                        "comms",
-                        f"Unify Call started with '{contact.full_name}'",
+                    thread_type,
+                    Message(
+                        contact.full_name,
+                        f"<{thread_type.replace('_call', '').capitalize()} Call Ended...>",
                         e.timestamp,
                     ),
                 )
-
-            case UnifyCallUtterance() as e:
-                contact = self.get_contact(contact_id=1)
-                self.push_message(
-                    contact,
-                    "unify_call",
-                    Message(contact.full_name, e.content, e.timestamp),
-                )
                 self.push_notif(
                     Notification(
                         "comms",
-                        f"Unify Call Utterance received from '{contact.full_name}'",
+                        f"{thread_type.replace('_call', '').capitalize()} Call Ended with '{contact.full_name}'",
                         e.timestamp,
                     ),
                 )
@@ -365,37 +368,6 @@ class ConversationManagerState:
             case UnifyCallReceived() as e:
                 # mark call as active (no additional UI thread message)
                 self.mode = "unify_call"
-
-            case AssistantUnifyCallUtterance() as e:
-                contact = self.get_contact(contact_id=1)
-                self.push_message(
-                    contact,
-                    "unify_call",
-                    Message("You", e.content, e.timestamp),
-                )
-                self.push_notif(
-                    Notification(
-                        "comms",
-                        f"Unify Call Utterance sent to '{contact.full_name}'",
-                        e.timestamp,
-                    ),
-                )
-
-            case UnifyCallEnded() as e:
-                contact = self.get_contact(contact_id=1)
-                self.push_message(
-                    contact,
-                    "unify_call",
-                    Message(contact.full_name, "<Unify Call Ended...>", e.timestamp),
-                )
-                self.push_notif(
-                    Notification(
-                        "comms",
-                        f"Unify Call Ended with '{contact.full_name}'",
-                        e.timestamp,
-                    ),
-                )
-                self.unify_call_contact = None
 
             case SMSRecieved() as e:
                 contact = self.get_contact(phone_number=e.contact)
