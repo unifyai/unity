@@ -51,6 +51,141 @@ def test_add_multiple_functions_with_dependency():
 
 
 @_handle_project
+@pytest.mark.unit
+def test_batch_add_multiple_functions():
+    """Test that adding multiple functions works efficiently (uses batch creation)."""
+    # Create several independent functions
+    sources = [
+        "def func_a(x):\n    return x * 2\n",
+        "def func_b(y):\n    return y + 10\n",
+        "def func_c(z):\n    return z - 5\n",
+        "def func_d(w):\n    return w / 2\n",
+        "def func_e(v):\n    return v ** 2\n",
+    ]
+
+    fm = FunctionManager()
+    result = fm.add_functions(implementations=sources)
+
+    # All functions should be added successfully
+    assert result == {
+        "func_a": "added",
+        "func_b": "added",
+        "func_c": "added",
+        "func_d": "added",
+        "func_e": "added",
+    }
+
+    # Verify all functions are listed
+    listing = fm.list_functions()
+    assert set(listing.keys()) == {"func_a", "func_b", "func_c", "func_d", "func_e"}
+
+    # Verify each function has correct metadata
+    for func_name in ["func_a", "func_b", "func_c", "func_d", "func_e"]:
+        assert "argspec" in listing[func_name]
+        assert "function_id" in listing[func_name]
+
+
+@_handle_project
+@pytest.mark.unit
+def test_add_duplicate_functions_skips_by_default():
+    """Test that adding duplicate functions skips them by default."""
+    fm = FunctionManager()
+
+    # Add initial function
+    result1 = fm.add_functions(implementations="def alpha(x):\n    return x * 2\n")
+    assert result1 == {"alpha": "added"}
+
+    # Try to add the same function again
+    result2 = fm.add_functions(implementations="def alpha(x):\n    return x * 3\n")
+    assert result2 == {"alpha": "skipped: already exists"}
+
+    # Verify only one function exists with original implementation
+    listing = fm.list_functions()
+    assert len(listing) == 1
+    assert "alpha" in listing
+
+    # Verify the original implementation is still there
+    full = fm.list_functions(include_implementations=True)
+    assert "x * 2" in full["alpha"]["implementation"]
+    assert "x * 3" not in full["alpha"]["implementation"]
+
+
+@_handle_project
+@pytest.mark.unit
+def test_add_duplicate_functions_with_overwrite():
+    """Test that adding duplicate functions with overwrite=True updates them in-place."""
+    fm = FunctionManager()
+
+    # Add initial function
+    result1 = fm.add_functions(implementations="def alpha(x):\n    return x * 2\n")
+    assert result1 == {"alpha": "added"}
+
+    original_id = fm.list_functions()["alpha"]["function_id"]
+
+    # Add the same function with overwrite=True
+    result2 = fm.add_functions(
+        implementations="def alpha(x):\n    return x * 3\n",
+        overwrite=True,
+    )
+    assert result2 == {"alpha": "updated"}
+
+    # Verify still only one function exists
+    listing = fm.list_functions()
+    assert len(listing) == 1
+    assert "alpha" in listing
+
+    # Function ID should remain the same (in-place update, not delete+create)
+    new_id = listing["alpha"]["function_id"]
+    assert new_id == original_id, "Function ID should be preserved with in-place update"
+
+    # Verify the new implementation replaced the old one
+    full = fm.list_functions(include_implementations=True)
+    assert "x * 3" in full["alpha"]["implementation"]
+    assert "x * 2" not in full["alpha"]["implementation"]
+
+
+@_handle_project
+@pytest.mark.unit
+def test_add_mixed_new_and_duplicate_functions():
+    """Test adding a batch with both new and duplicate functions."""
+    fm = FunctionManager()
+
+    # Add initial functions
+    result1 = fm.add_functions(
+        implementations=[
+            "def alpha():\n    return 1\n",
+            "def beta():\n    return 2\n",
+        ],
+    )
+    assert result1 == {"alpha": "added", "beta": "added"}
+
+    # Add a mix of new and duplicate functions
+    result2 = fm.add_functions(
+        implementations=[
+            "def alpha():\n    return 10\n",  # Duplicate
+            "def gamma():\n    return 3\n",  # New
+            "def beta():\n    return 20\n",  # Duplicate
+        ],
+    )
+
+    assert result2 == {
+        "alpha": "skipped: already exists",
+        "gamma": "added",
+        "beta": "skipped: already exists",
+    }
+
+    # Verify correct functions exist
+    listing = fm.list_functions()
+    assert set(listing.keys()) == {"alpha", "beta", "gamma"}
+
+    # Verify original implementations are preserved
+    full = fm.list_functions(include_implementations=True)
+    assert "return 1" in full["alpha"]["implementation"]
+    assert "return 2" in full["beta"]["implementation"]
+    assert "return 3" in full["gamma"]["implementation"]
+
+
+@_handle_project
 @pytest.mark.parametrize(
     "source,exp_msg",
     [
@@ -71,8 +206,9 @@ def test_add_multiple_functions_with_dependency():
 def test_validation_errors(source: str, exp_msg: str):
     fm = FunctionManager()
     results = fm.add_functions(implementations=source)
-    assert any("error" in str(v) and exp_msg in str(v) for v in results.values()), \
-        f"Expected error containing '{exp_msg}' in results: {results}"
+    assert any(
+        "error" in str(v) and exp_msg in str(v) for v in results.values()
+    ), f"Expected error containing '{exp_msg}' in results: {results}"
 
 
 # --------------------------------------------------------------------------- #
@@ -146,6 +282,172 @@ def test_delete_function_without_cascading_leaves_dependants():
     fm.delete_function(function_id=0, delete_dependents=False)
     remaining = fm.list_functions()
     assert remaining.keys() == {"twin"}
+
+
+@_handle_project
+@pytest.mark.unit
+def test_delete_already_deleted_function():
+    """Test that deleting an already-deleted function doesn't raise an error."""
+    fm = FunctionManager()
+    fm.add_functions(implementations="def alpha():\n    return 1\n")
+    listing = fm.list_functions()
+    function_id = listing["alpha"]["function_id"]
+
+    # Delete the function
+    result = fm.delete_function(function_id=function_id)
+    assert result == {"alpha": "deleted"}
+    assert fm.list_functions() == {}
+
+    # Try to delete it again - should return success, not raise error
+    result = fm.delete_function(function_id=function_id)
+    assert "already_deleted" in result[f"function_{function_id}"]
+
+
+@_handle_project
+@pytest.mark.unit
+def test_delete_multiple_functions_handles_duplicates():
+    """Test that deleting multiple functions handles cases where some are already deleted."""
+    fm = FunctionManager()
+    sources = [
+        "def func_a():\n    return 1\n",
+        "def func_b():\n    return 2\n",
+        "def func_c():\n    return 3\n",
+    ]
+    fm.add_functions(implementations=sources)
+
+    listing = fm.list_functions()
+    ids = [listing[name]["function_id"] for name in ["func_a", "func_b", "func_c"]]
+
+    # Delete all functions in a loop (simulates user script pattern)
+    for function_id in ids:
+        result = fm.delete_function(function_id=function_id)
+        # Should either delete or report already deleted
+        assert (
+            "deleted" in list(result.values())[0]
+            or "already_deleted" in list(result.values())[0]
+        )
+
+    # All functions should be gone
+    assert fm.list_functions() == {}
+
+
+@_handle_project
+@pytest.mark.unit
+def test_batch_delete_functions():
+    """Test batch deletion of multiple functions at once."""
+    fm = FunctionManager()
+    sources = [
+        "def func_a():\n    return 1\n",
+        "def func_b():\n    return 2\n",
+        "def func_c():\n    return 3\n",
+        "def func_d():\n    return 4\n",
+        "def func_e():\n    return 5\n",
+    ]
+    fm.add_functions(implementations=sources)
+
+    listing = fm.list_functions()
+    assert len(listing) == 5
+
+    # Get IDs for batch deletion
+    ids = [listing[name]["function_id"] for name in ["func_a", "func_b", "func_c"]]
+
+    # Batch delete 3 functions at once using delete_function with list
+    result = fm.delete_function(function_id=ids)
+    assert set(result.keys()) == {"func_a", "func_b", "func_c"}
+    assert all(v == "deleted" for v in result.values())
+
+    # Check remaining functions
+    remaining = fm.list_functions()
+    assert set(remaining.keys()) == {"func_d", "func_e"}
+
+
+@_handle_project
+@pytest.mark.unit
+def test_batch_delete_all_functions():
+    """Test deleting all functions at once by passing all IDs."""
+    fm = FunctionManager()
+    sources = [
+        "def func_a():\n    return 1\n",
+        "def func_b():\n    return 2\n",
+        "def func_c():\n    return 3\n",
+    ]
+    fm.add_functions(implementations=sources)
+
+    listing = fm.list_functions()
+    assert len(listing) == 3
+
+    # Get all IDs and delete all functions at once
+    all_ids = [data["function_id"] for data in listing.values()]
+    result = fm.delete_function(function_id=all_ids, delete_dependents=False)
+    assert set(result.keys()) == {"func_a", "func_b", "func_c"}
+    assert all(v == "deleted" for v in result.values())
+
+    # No functions should remain
+    assert fm.list_functions() == {}
+
+
+@_handle_project
+@pytest.mark.unit
+def test_batch_delete_with_dependents():
+    """Test batch deletion with cascading deletes of dependents."""
+    fm = FunctionManager()
+    sources = [
+        "def base_a():\n    return 1\n",
+        "def base_b():\n    return 2\n",
+        "def caller_ab():\n    return base_a\n",  # Depends on base_a
+        "def caller_b():\n    return base_b\n",  # Depends on base_b
+        "def independent():\n    return 99\n",
+    ]
+    fm.add_functions(implementations=sources)
+
+    listing = fm.list_functions()
+    assert len(listing) == 5
+
+    # Get IDs for base functions
+    base_ids = [listing["base_a"]["function_id"], listing["base_b"]["function_id"]]
+
+    # Batch delete with cascade should also delete caller_ab and caller_b
+    result = fm.delete_function(function_id=base_ids, delete_dependents=True)
+
+    # Should delete base_a, base_b, caller_ab, caller_b (4 functions)
+    assert len(result) == 4
+    assert set(result.keys()) == {"base_a", "base_b", "caller_ab", "caller_b"}
+    assert all(v == "deleted" for v in result.values())
+
+    # Only independent should remain
+    remaining = fm.list_functions()
+    assert set(remaining.keys()) == {"independent"}
+
+
+@_handle_project
+@pytest.mark.unit
+def test_batch_delete_empty_list():
+    """Test that batch deleting an empty list is a no-op."""
+    fm = FunctionManager()
+    fm.add_functions(implementations="def alpha():\n    return 1\n")
+
+    result = fm.delete_function(function_id=[])
+    assert result == {}
+
+    # Function should still exist
+    assert "alpha" in fm.list_functions()
+
+
+@_handle_project
+@pytest.mark.unit
+def test_batch_delete_nonexistent_functions():
+    """Test that batch deleting non-existent functions doesn't error."""
+    fm = FunctionManager()
+    fm.add_functions(implementations="def alpha():\n    return 1\n")
+
+    # Try to delete functions that don't exist
+    result = fm.delete_function(function_id=[9999, 8888])
+
+    # Should return empty since no functions matched
+    assert result == {}
+
+    # Original function should still exist
+    assert "alpha" in fm.list_functions()
 
 
 # --------------------------------------------------------------------------- #
