@@ -6,7 +6,13 @@ import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common._async_tool.loop_config import LIVE_IMAGES_REGISTRY
-from unity.image_manager.types import RawImageRef, AnnotatedImageRef, ImageRefs
+from unity.image_manager.types import (
+    RawImageRef,
+    AnnotatedImageRef,
+    ImageRefs,
+    AnnotatedImageRefs,
+    RawImageRefs,
+)
 from tests.helpers import _handle_project, SETTINGS
 
 
@@ -261,6 +267,95 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
     assert (
         final_reply.strip().lower().startswith("red")
     ), f"Assistant did not identify the image colour – got: {final_reply!r}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_live_images_accepts_annotated_and_raw_refs_variants(monkeypatch) -> None:
+    """
+    Regression test: The loop should accept AnnotatedImageRefs and RawImageRefs containers.
+
+    Prior to the duck-typing change, passing these RootModel variants would fail to seed
+    live images. Now, the synthetic overview should be injected and include the image id.
+    """
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message("Reply exactly with the word 'done'.")
+
+    # Seed a real image so ImageManager can resolve ids if needed
+    from unity.image_manager.utils import make_solid_png_base64
+    from unity.image_manager.image_manager import ImageManager
+
+    manager = ImageManager()
+    [img_id] = manager.add_images(
+        [
+            {
+                "caption": "variant check",
+                "data": make_solid_png_base64(2, 2, (0, 255, 0)),
+            },
+        ],
+    )
+
+    # Case A: AnnotatedImageRefs
+    images_a = AnnotatedImageRefs(
+        [
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_id)),
+                annotation="green tile",
+            ),
+        ],
+    )
+
+    h_a = start_async_tool_loop(
+        client=client,
+        message="Check annotated",
+        tools={},
+        images=images_a,
+    )
+    await h_a.result()
+
+    ov_msgs_a = [
+        m
+        for m in client.messages
+        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+    ]
+    assert ov_msgs_a, "Expected overview for AnnotatedImageRefs"
+    assert f'"image_id": {int(img_id)}' in (ov_msgs_a[-1].get("content") or "")
+
+    # Reset client for second case to avoid cross-talk
+    client_b = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client_b.set_system_message("Reply exactly with the word 'done'.")
+
+    # Case B: RawImageRefs
+    images_b = RawImageRefs([RawImageRef(image_id=int(img_id))])
+
+    h_b = start_async_tool_loop(
+        client=client_b,
+        message="Check raw",
+        tools={},
+        images=images_b,
+    )
+    await h_b.result()
+
+    ov_msgs_b = [
+        m
+        for m in client_b.messages
+        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+    ]
+    assert ov_msgs_b, "Expected overview for RawImageRefs"
+    assert f'"image_id": {int(img_id)}' in (ov_msgs_b[-1].get("content") or "")
 
 
 @pytest.mark.asyncio
