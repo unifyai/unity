@@ -189,6 +189,9 @@ class TranscriptManager(BaseTranscriptManager):
             None,
         ] = "default",
         _call_id: Optional[str] = None,
+        images: Optional[
+            "ImageRefs" | list["RawImageRef" | "AnnotatedImageRef"]
+        ] = None,
     ) -> SteerableToolHandle:
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self.get_tools("ask"))
@@ -221,17 +224,23 @@ class TranscriptManager(BaseTranscriptManager):
             ),
         )
 
-        # Decide effective tool policy (default requires search_messages first)
-        if tool_policy == "default":
-            effective_tool_policy = require_first("search_messages")
+        # Decide effective tool policy (default requires search_messages first),
+        # with special handling when images are present to encourage image-aware tools.
+        if images:
+            effective_tool_policy = self._ask_tool_policy_with_images
+            use_semantic_cache = None
         else:
-            effective_tool_policy = tool_policy
-
-        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
-        # When semantic cache read is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
-        effective_tool_policy = (
-            None if use_semantic_cache in ("read", "both") else effective_tool_policy
-        )
+            if tool_policy == "default":
+                effective_tool_policy = require_first("search_messages")
+            else:
+                effective_tool_policy = tool_policy
+            use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+            # When semantic cache read is enabled, use "auto" tool policy to allow the LLM to return without calling any tools
+            effective_tool_policy = (
+                None
+                if use_semantic_cache in ("read", "both")
+                else effective_tool_policy
+            )
 
         # ── 2.  Launch the interactive tool-use loop ───────────────────────
         handle = start_async_tool_loop(
@@ -248,6 +257,7 @@ class TranscriptManager(BaseTranscriptManager):
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
+            images=images,
         )
 
         # ── 4.  Optional reasoning exposure  ───────────────────────────────
@@ -929,3 +939,22 @@ class TranscriptManager(BaseTranscriptManager):
     ) -> tuple[str, Dict[str, Any]]:
         # Deprecated: use common.llm_policies.require_first("search_messages") instead.
         return require_first("search_messages")(step_index, current_tools)
+
+    @staticmethod
+    def _ask_tool_policy_with_images(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """On step 0, require one of search_messages/ask_image/attach_image_raw; auto thereafter.
+
+        Encourages the model to either begin with a semantic query over transcripts
+        or explicitly use the image helpers when visual context is supplied.
+        """
+        if step_index < 1:
+            allowed_first_turn: Dict[str, Any] = {}
+            for name in ("search_messages", "ask_image", "attach_image_raw"):
+                if name in current_tools:
+                    allowed_first_turn[name] = current_tools[name]
+            if allowed_first_turn:
+                return ("required", allowed_first_turn)
+        return ("auto", current_tools)
