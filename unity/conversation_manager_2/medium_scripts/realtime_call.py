@@ -35,11 +35,8 @@ from livekit.agents import (
     AgentSession,
     JobContext,
     RoomInputOptions,
-    WorkerOptions,
-    cli,
     UserInputTranscribedEvent,
     UserStateChangedEvent,
-    ConversationItemAddedEvent,
 )
 from livekit import agents
 from livekit.plugins.openai import realtime as openai_realtime
@@ -51,9 +48,6 @@ from livekit.plugins import (
     # noise_cancellation,
     silero,
 )
-from livekit.plugins.google.beta import realtime as google_realtime
-from livekit.agents.llm import ChatMessage
-from livekit.plugins.turn_detector.english import EnglishModel
 
 load_dotenv()
 
@@ -77,7 +71,7 @@ boss_email = ""
 is_boss_user = ""
 
 with open(
-    Path(__file__).resolve().parent.parent / "prompts" / "realtime_phone_agent.md"
+    Path(__file__).resolve().parent.parent / "prompts" / "realtime_phone_agent.md",
 ) as f:
     SYSTEM_PROMPT = f.read()
 
@@ -148,10 +142,11 @@ async def entrypoint(ctx: JobContext) -> None:
             event = PhoneUtterance(os.environ["CALL_FROM_NUMBER"], content=text)
         else:
             event = AssistantPhoneUtterance(
-                os.environ["CALL_FROM_NUMBER"], content=text
+                os.environ["CALL_FROM_NUMBER"],
+                content=text,
             )
         asyncio.create_task(
-            event_broker.publish("app:comms:phone_utterance", event.to_json())
+            event_broker.publish("app:comms:phone_utterance", event.to_json()),
         )
         print(role, text)
 
@@ -200,14 +195,16 @@ async def entrypoint(ctx: JobContext) -> None:
             await pubsub.subscribe("app:call:call_notifs")
             while True:
                 msg = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=None
+                    ignore_subscribe_messages=True,
+                    timeout=None,
                 )
                 if msg is not None:
                     print("got notif", msg)
                     msg = json.loads(msg["data"])
                     chat_ctx = rt.chat_ctx
                     chat_ctx.add_message(
-                        role="user", content=[f"""[notification] {msg["content"]}"""]
+                        role="user",
+                        content=[f"""[notification] {msg["content"]}"""],
                     )
                     await rt.update_chat_ctx(chat_ctx)
                     print(rt.chat_ctx.items)

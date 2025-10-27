@@ -14,12 +14,12 @@ This Node.js service acts as an HTTP wrapper for the Magnitude `BrowserAgent`, a
     # First, clone the unity repository if you haven't already
     git clone <unity-repo-url>
     cd unity
-    
+
     # Clone Unity's magnitude fork into the magnitude/ subdirectory
     git clone https://github.com/unifyai/magnitude.git magnitude
     cd magnitude
     git checkout unity-modifications  # Our branch with Unity enhancements
-    
+
     # Build magnitude-core
     cd packages/magnitude-core
     npm install

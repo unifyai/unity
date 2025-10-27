@@ -18,7 +18,7 @@ from unity.conversation_manager_2.actions_realtime import (
 )
 from unity.conversation_manager_2.state import ConversationManagerState
 from unity.helpers import run_script, terminate_process
-from unity.conversation_manager_2.llm_utils import stream_llm_call, llm_call
+from unity.conversation_manager_2.llm_utils import llm_call
 from unity.transcript_manager.types.message import UNASSIGNED
 
 
@@ -687,10 +687,10 @@ class ConversationManager:
 
         elif isinstance(event, AssistantUpdateEvent):
             await self.publish_contact_update(
-                self.state.inverted_contacts_map[0].model_dump()
+                self.state.inverted_contacts_map[0].model_dump(),
             )
             await self.publish_contact_update(
-                self.state.inverted_contacts_map[1].model_dump()
+                self.state.inverted_contacts_map[1].model_dump(),
             )
 
         elif isinstance(event, Error):

@@ -1,6 +1,6 @@
 import asyncio
 import json
-from unittest.mock import patch, AsyncMock, MagicMock, call
+from unittest.mock import patch, AsyncMock, MagicMock
 from pathlib import Path
 
 import pytest
@@ -110,12 +110,12 @@ async def test_full_api_flow_detection_and_annotation(mocked_manager):
 
     # --- Stage 1: Detection ---
     mocks["detect"].generate.return_value = json.dumps(
-        {"moments": [{"timestamp": 1.5, "reason": "visual_change"}]}
+        {"moments": [{"timestamp": 1.5, "reason": "visual_change"}]},
     )
 
     # Simulate the result of the detection being put on the queue
     await manager._detection_queue.put(
-        ([{"timestamp": 1.5, "reason": "visual_change"}], {1.5: PNG_RED_B64})
+        ([{"timestamp": 1.5, "reason": "visual_change"}], {1.5: PNG_RED_B64}),
     )
 
     analysis_task = manager.analyze_turn()
@@ -201,7 +201,9 @@ async def test_summary_update_triggered_after_annotation(mocked_manager):
     red_b64 = PNG_RED_B64.split(",", 1)[1]
 
     handles = manager._image_manager.add_images(
-        [{"data": red_b64}], synchronous=True, return_handles=True
+        [{"data": red_b64}],
+        synchronous=True,
+        return_handles=True,
     )
     detected_events = [DetectedEvent(1.0, "test", handles[0])]
 
@@ -234,19 +236,21 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
     manager.settings.debounce_delay_sec = 0.05
 
     silent_handle = manager._image_manager.add_images(
-        [{"data": PNG_RED_B64}], synchronous=False, return_handles=True
+        [{"data": PNG_RED_B64}],
+        synchronous=False,
+        return_handles=True,
     )[0]
     manager._stored_silent_detected_events = [
-        DetectedEvent(1.0, "silent_change", silent_handle)
+        DetectedEvent(1.0, "silent_change", silent_handle),
     ]
 
     mocks["detect"].generate.return_value = json.dumps(
-        {"moments": [{"timestamp": 2.5, "reason": "speech_related_change"}]}
+        {"moments": [{"timestamp": 2.5, "reason": "speech_related_change"}]},
     )
 
     await manager.push_speech("second turn", 2.0, 3.0)
     await manager._detection_queue.put(
-        ([{"timestamp": 2.5, "reason": "speech_related_change"}], {2.5: PNG_GREEN_B64})
+        ([{"timestamp": 2.5, "reason": "speech_related_change"}], {2.5: PNG_GREEN_B64}),
     )
 
     analysis_task = manager.analyze_turn()
@@ -298,7 +302,9 @@ async def test_debounce_logic_groups_speech_events(mocked_manager):
     manager.settings.debounce_delay_sec = 0.2
 
     with patch.object(
-        manager, "_detect_key_moments", new_callable=AsyncMock
+        manager,
+        "_detect_key_moments",
+        new_callable=AsyncMock,
     ) as mock_detect:
         await manager.push_speech("first part", 1.0, 1.1)
         await asyncio.sleep(0.05)
@@ -324,10 +330,12 @@ async def test_inactivity_flush_triggers_for_visual_events(mocked_manager):
     manager._inactivity_task.cancel()
 
     with patch.object(
-        manager, "_detect_key_moments", new_callable=AsyncMock
+        manager,
+        "_detect_key_moments",
+        new_callable=AsyncMock,
     ) as mock_detect:
         manager._pending_vision_events.append(
-            {"timestamp": 1.0, "after_frame_b64": PNG_RED_B64}
+            {"timestamp": 1.0, "after_frame_b64": PNG_RED_B64},
         )
         manager._last_activity_time = asyncio.get_event_loop().time()
 
@@ -369,7 +377,7 @@ async def test_detection_llm_retries_on_failure(mocked_manager):
     # that is now correctly propagated by the decorator.
     try:
         await manager._detect_key_moments(
-            TurnState(speech_event={"payload": {"content": "test", "start_time": 0.0}})
+            TurnState(speech_event={"payload": {"content": "test", "start_time": 0.0}}),
         )
     except Exception:
         # The first two calls fail, the third one succeeds.
@@ -392,7 +400,7 @@ async def test_detection_llm_handles_invalid_json(mocked_manager, caplog):
     # The test now verifies that it handles this by logging the error.
     try:
         await manager._detect_key_moments(
-            TurnState(speech_event={"payload": {"content": "test", "start_time": 0.0}})
+            TurnState(speech_event={"payload": {"content": "test", "start_time": 0.0}}),
         )
     except json.JSONDecodeError:
         pass
@@ -429,7 +437,8 @@ async def test_adaptive_frame_dropping_under_load(caplog):
 def test_custom_settings_are_applied():
     """Ensures that custom settings passed to the constructor are used."""
     custom_settings = ScreenShareManagerSettings(
-        debounce_delay_sec=0.0123, mse_threshold=99.9
+        debounce_delay_sec=0.0123,
+        mse_threshold=99.9,
     )
     manager = ScreenShareManager(settings=custom_settings)
 
@@ -451,7 +460,8 @@ def test_custom_settings_are_applied():
     ],
 )
 async def test_visual_change_detection_significant_changes(
-    manager: ScreenShareManager, image_pair
+    manager: ScreenShareManager,
+    image_pair,
 ):
     """Tests that the vision pipeline correctly identifies REAL, significant UI changes."""
     manager = await manager
@@ -486,7 +496,8 @@ async def test_visual_change_detection_significant_changes(
     ],
 )
 async def test_visual_change_detection_insignificant_changes(
-    manager: ScreenShareManager, image_pair
+    manager: ScreenShareManager,
+    image_pair,
 ):
     """Tests that the vision pipeline correctly IGNORES insignificant visual noise."""
     manager = await manager

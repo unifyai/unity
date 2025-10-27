@@ -59,9 +59,9 @@ async def run_consumer_workflow():
     # --- Stage 1: Detection (Fast and Non-Blocking) ---
     analysis_task = screen_manager.analyze_turn()
     print("Detection task started...")
-    
+
     # The consumer can do other work here while detection runs...
-    
+
     detected_events = await analysis_task
     if not detected_events:
         print("No key events were detected.")
@@ -73,20 +73,20 @@ async def run_consumer_workflow():
     # --- Stage 2: Annotation (Concurrent) ---
     # The consumer provides its own context to improve annotation quality.
     annotation_context = "The user is filling out a profile form and just stated their intent to submit."
-    
+
     # This call runs annotation in the background.
     annotation_task = asyncio.create_task(
         screen_manager.annotate_events(detected_events, annotation_context)
     )
     print("Annotation task started in the background...")
-    
+
     # Await the final result only when the annotated handles are needed.
     final_annotated_handles = await annotation_task
     print("Annotation task finished.")
 
     for handle in final_annotated_handles:
         print(f"  - Image (Pending ID: {handle.image_id}): {handle.annotation}")
-    
+
     # 4. Clean up
     screen_manager.stop()
 
