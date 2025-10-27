@@ -588,8 +588,6 @@ async def async_tool_loop_inner(
                 ],
             }
 
-            # Mark as non-step so max_steps accounting ignores synthetic injection
-            asst_msg["_non_step"] = True
             await _msg_dispatcher.append_msgs([asst_msg])
             try:
                 await to_event_bus(asst_msg, cfg)
@@ -604,8 +602,6 @@ async def async_tool_loop_inner(
                 call_id=call_id,
                 content=_dumps(payload, indent=4),
             )
-            # Mark as non-step as well
-            tool_msg["_non_step"] = True
             await insert_tool_message_after_assistant(
                 assistant_meta,
                 asst_msg,
