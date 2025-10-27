@@ -79,15 +79,19 @@ RUN mkdir -p /opt/novnc && \
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs
 
-# Copy requirements file
-COPY requirements.txt .
+# Install uv using official installation script
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    mv /root/.local/bin/uv /usr/local/bin/ && \
+    mv /root/.local/bin/uvx /usr/local/bin/
+
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
 
 # Install PyTorch CPU-only first (smaller and faster for containers)
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+RUN uv pip install --system --no-cache torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install $(spacy info en_core_web_sm --url)
+# Install Python dependencies using uv (system-wide, no virtual environment)
+RUN uv pip install --system --no-cache .
 
 # Copy all application files
 COPY . /app
