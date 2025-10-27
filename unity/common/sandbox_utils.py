@@ -9,6 +9,7 @@ import datetime
 import collections
 import typing
 from typing import Dict, Any
+import functools
 
 try:
     import pydantic
@@ -124,6 +125,8 @@ def create_sandbox_globals() -> Dict[str, Any]:
         "Tuple": typing.Tuple,
         "Set": typing.Set,
         "Union": typing.Union,
+        "Literal": typing.Literal,
+        "functools": functools,
     }
 
     if HAS_PYDANTIC:
