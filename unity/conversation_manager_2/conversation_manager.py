@@ -153,7 +153,6 @@ class ConversationManager:
             # Signal started and emit sequence
             print("running filler task...")
             self._filler_started.set()
-            # choose correct streaming channel
             await self.event_broker.publish(
                 f"app:{self.state.mode}:response_gen",
                 json.dumps({"type": "start_gen"}),
