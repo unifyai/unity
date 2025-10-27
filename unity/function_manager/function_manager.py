@@ -86,6 +86,7 @@ class _DependencyVisitor(ast.NodeVisitor):
                 self.dependencies.add(self._assignment_map[returned_name])
         self.generic_visit(node)
 
+
 class FunctionManager(BaseFunctionManager):
     """
     Keeps a catalogue of user-supplied Python functions that can reference
@@ -332,7 +333,10 @@ class FunctionManager(BaseFunctionManager):
         self._store.ensure_context()
 
     def _get_log_by_function_id(
-        self, *, function_id: int, raise_if_missing: bool = True
+        self,
+        *,
+        function_id: int,
+        raise_if_missing: bool = True,
     ) -> Optional[unify.Log]:
         logs = unify.get_logs(
             context=self._ctx,
@@ -474,12 +478,12 @@ class FunctionManager(BaseFunctionManager):
     ) -> Dict[str, str]:
         """
         Add or update functions in batch.
-        
+
         Args:
             implementations: Function source code (single string or list of strings).
             preconditions: Optional preconditions for functions.
             overwrite: If True, update existing functions; if False, skip duplicates.
-            
+
         Returns:
             Dictionary mapping function names to status ("added", "updated", "skipped", or "error").
         """
@@ -524,11 +528,11 @@ class FunctionManager(BaseFunctionManager):
             existing_functions = {}
             existing_names = set()
             all_known_function_names = temp_names
-        
+
         # Check for duplicates and separate into new vs. existing functions
         duplicates_to_skip: Set[str] = set()
         existing_to_update: Set[str] = set()
-        
+
         for name in temp_names:
             if name in existing_names:
                 if overwrite:
@@ -545,13 +549,16 @@ class FunctionManager(BaseFunctionManager):
         log_ids_to_update: List[int] = []
         log_id_to_name: Dict[int, str] = {}
         functions_to_write: List[Tuple[str, str]] = []
-        
+
         for name, tree, node, source in parsed:
             if name in duplicates_to_skip:
                 continue
-                
+
             try:
-                dependencies = self._collect_verified_dependencies(node, all_known_function_names)
+                dependencies = self._collect_verified_dependencies(
+                    node,
+                    all_known_function_names,
+                )
                 dependencies_list = sorted(list(dependencies))
 
                 all_calls = self._collect_function_calls(node)
@@ -572,12 +579,12 @@ class FunctionManager(BaseFunctionManager):
                     "embedding_text": embedding_text,
                     "precondition": precondition,
                 }
-                
+
                 if name in existing_to_update:
                     # Update existing function
                     log_id = self._get_log_by_function_id(
                         function_id=existing_functions[name]["function_id"],
-                        raise_if_missing=True
+                        raise_if_missing=True,
                     ).id
                     log_ids_to_update.append(log_id)
                     log_id_to_name[log_id] = name
@@ -589,7 +596,7 @@ class FunctionManager(BaseFunctionManager):
                     entry_data["guidance_ids"] = []
                     entries_to_create.append(entry_data)
                     results[name] = "added"
-                
+
                 functions_to_write.append((name, source))
             except ValueError as e:
                 results[name] = f"error: {e}"
@@ -609,13 +616,18 @@ class FunctionManager(BaseFunctionManager):
                     batched=True,
                 )
             except Exception as e:
-                logger.error(f"Failed to batch create function logs: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to batch create function logs: {e}",
+                    exc_info=True,
+                )
                 for entry in entries_to_create:
                     name = entry["name"]
                     if results.get(name) == "added":
                         results[name] = f"error: Failed to create log - {e}"
-                        functions_to_write = [(n, s) for n, s in functions_to_write if n != name]
-        
+                        functions_to_write = [
+                            (n, s) for n, s in functions_to_write if n != name
+                        ]
+
         # Batch update existing functions
         if log_ids_to_update and entries_to_update:
             try:
@@ -626,12 +638,17 @@ class FunctionManager(BaseFunctionManager):
                     overwrite=True,
                 )
             except Exception as e:
-                logger.error(f"Failed to batch update function logs: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to batch update function logs: {e}",
+                    exc_info=True,
+                )
                 for log_id in log_ids_to_update:
                     name = log_id_to_name.get(log_id)
                     if name and results.get(name) == "updated":
                         results[name] = f"error: Failed to update log - {e}"
-                        functions_to_write = [(n, s) for n, s in functions_to_write if n != name]
+                        functions_to_write = [
+                            (n, s) for n, s in functions_to_write if n != name
+                        ]
 
         # Write function files to disk
         for name, source in functions_to_write:
@@ -690,26 +707,29 @@ class FunctionManager(BaseFunctionManager):
     ) -> Dict[str, str]:
         """
         Delete one or more functions and optionally their dependents in a single batch operation.
-        
+
         Args:
             function_id: Function ID (int) or list of function IDs to delete.
             delete_dependents: If True, also delete all functions that depend on target(s).
-            
+
         Returns:
             Dictionary mapping function names to "deleted" or "already_deleted".
         """
         # Normalize to list
         function_ids = [function_id] if isinstance(function_id, int) else function_id
-        
+
         if not function_ids:
             return {}
-        
+
         # Handle single function optimization
         if len(function_ids) == 1:
-            log = self._get_log_by_function_id(function_id=function_ids[0], raise_if_missing=False)
+            log = self._get_log_by_function_id(
+                function_id=function_ids[0],
+                raise_if_missing=False,
+            )
             if log is None:
                 return {f"function_{function_ids[0]}": "already_deleted"}
-            
+
             target_name = log.entries["name"]
             ids_to_delete = {function_ids[0]}
             log_ids_to_delete = [log.id]
@@ -720,19 +740,27 @@ class FunctionManager(BaseFunctionManager):
                 context=self._ctx,
                 exclude_fields=list_private_fields(self._ctx),
             )
-            
+
             id_to_log = {lg.entries["function_id"]: lg for lg in all_logs}
-            id_to_name = {lg.entries["function_id"]: lg.entries["name"] for lg in all_logs}
-            
+            id_to_name = {
+                lg.entries["function_id"]: lg.entries["name"] for lg in all_logs
+            }
+
             ids_to_delete = set(function_ids)
-            target_names = {id_to_name[fid] for fid in function_ids if fid in id_to_name}
-            
+            target_names = {
+                id_to_name[fid] for fid in function_ids if fid in id_to_name
+            }
+
             if not target_names:
                 return {}
-            
-            log_ids_to_delete = [id_to_log[fid].id for fid in function_ids if fid in id_to_log]
-            results = {id_to_name[fid]: "deleted" for fid in function_ids if fid in id_to_name}
-            
+
+            log_ids_to_delete = [
+                id_to_log[fid].id for fid in function_ids if fid in id_to_log
+            ]
+            results = {
+                id_to_name[fid]: "deleted" for fid in function_ids if fid in id_to_name
+            }
+
             function_calls = {
                 lg.entries["function_id"]: set(lg.entries.get("calls", []))
                 for lg in all_logs
@@ -746,23 +774,25 @@ class FunctionManager(BaseFunctionManager):
                     exclude_fields=list_private_fields(self._ctx),
                 )
                 id_to_log = {lg.entries["function_id"]: lg for lg in all_logs}
-                id_to_name = {lg.entries["function_id"]: lg.entries["name"] for lg in all_logs}
+                id_to_name = {
+                    lg.entries["function_id"]: lg.entries["name"] for lg in all_logs
+                }
                 function_calls = {
                     lg.entries["function_id"]: set(lg.entries.get("calls", []))
                     for lg in all_logs
                 }
                 target_names = {target_name}
-            
+
             # BFS to find all transitive dependents
             to_process = set(target_names)
             processed = set()
-            
+
             while to_process:
                 current_name = to_process.pop()
                 if current_name in processed:
                     continue
                 processed.add(current_name)
-                
+
                 for fid, calls in function_calls.items():
                     if current_name in calls and fid not in ids_to_delete:
                         ids_to_delete.add(fid)
@@ -778,7 +808,7 @@ class FunctionManager(BaseFunctionManager):
                 context=self._ctx,
                 logs=log_ids_to_delete,
             )
-        
+
         return results
 
     # 4. Search --------------------------------------------------------- #
