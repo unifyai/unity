@@ -774,7 +774,7 @@ class ConversationManager:
             }
 
             # For unify_message/unify_call assume boss contact; create to avoid errors
-            if payload["medium"] in ("unify_message", "unify_call"):
+            if "unify" in payload["medium"]:
                 self.state.update_or_create_new_contact(
                     1,
                     payload["user_name"].split(" ")[0],
