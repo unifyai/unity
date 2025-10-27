@@ -764,54 +764,18 @@ class ConversationManager:
                     agent_name,
                 )
 
-        elif isinstance(event, UnifyCallEnded):
-            self.state.mode = "text"
-            self.unify_call_contact = None
-            # cancel any running filler task when call ends
-            if self._filler_task and not self._filler_task.done():
-                self._filler_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._filler_task
-                self._filler_task = None
-            # terminate unify_call worker if running
-            if hasattr(self, "call_proc") and self.call_proc:
-                try:
-                    terminate_process(self.call_proc)
-                except Exception as e:
-                    print(f"Error terminating unify_call process: {e}")
-                self.call_proc = None
-            await self.schedule_llm_run(0, cancel_running=True)
-
-        elif isinstance(event, UnifyCallStarted):
-            # Agent connected, begin LLM
-            await self.schedule_llm_run(0, cancel_running=True)
-
-        elif isinstance(event, UnifyCallUtterance):
-            # schedule filler and LLM similar to phone utterance
-            if self._filler_task and not self._filler_task.done():
-                self._filler_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._filler_task
-            self._filler_started = asyncio.Event()
-            self._filler_done = asyncio.Event()
-            if self.user_turn_end_callback:
-                print("starting filler task (unify_call)...")
-                self._filler_task = asyncio.create_task(self._run_filler_once())
-            asyncio.create_task(self.publish_transcript(event))
-            await self.schedule_llm_run(0, cancel_running=True)
-
-        elif isinstance(event, AssistantUnifyCallUtterance):
-            asyncio.create_task(self.publish_transcript(event))
-
-        elif isinstance(event, PhoneCallStarted):
+        elif isinstance(event, (PhoneCallStarted, UnifyCallStarted)):
             # self.mode = "call"
             # contact = self.phone_contacts_map.get(event.contact)
             # self.call_contact = contact
             await self.schedule_llm_run(0, cancel_running=True)
 
-        elif isinstance(event, PhoneCallEnded):
+        elif isinstance(event, (PhoneCallEnded, UnifyCallEnded)):
             self.state.mode = "text"
-            self.call_contact = None
+            if isinstance(event, PhoneCallEnded):
+                self.call_contact = None
+            elif isinstance(event, UnifyCallEnded):
+                self.unify_call_contact = None
             self.cleanup_call_proc()
             # cancel any running filler task when call ends
             if self._filler_task and not self._filler_task.done():
@@ -821,7 +785,7 @@ class ConversationManager:
                 self._filler_task = None
             await self.schedule_llm_run(0, cancel_running=True)
 
-        elif isinstance(event, PhoneUtterance):
+        elif isinstance(event, (PhoneUtterance, UnifyCallUtterance)):
             # schedule filler concurrently so it doesn't block the LLM call
             if self._filler_task and not self._filler_task.done():
                 self._filler_task.cancel()
@@ -835,7 +799,7 @@ class ConversationManager:
             asyncio.create_task(self.publish_transcript(event))
             await self.schedule_llm_run(0, cancel_running=True)
 
-        elif isinstance(event, AssistantPhoneUtterance):
+        elif isinstance(event, (AssistantPhoneUtterance, AssistantUnifyCallUtterance)):
             # do not do anything here, let the user reply back or whatever
             asyncio.create_task(self.publish_transcript(event))
 
