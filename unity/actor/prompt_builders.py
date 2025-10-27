@@ -11,7 +11,6 @@ from unity.common.llm_helpers import (
 from unity.common.async_tool_loop import SteerableToolHandle
 
 
-
 def _build_verification_static_prefix() -> str:
     """
     Builds the static, cacheable prefix for verification prompts.
@@ -2490,8 +2489,6 @@ def build_initial_plan_prompt(
     ).strip()
 
 
-
-
 def build_dynamic_implement_prompt(
     goal: str,
     scoped_context: str,
@@ -2900,6 +2897,7 @@ def build_interjection_prompt(
     ).strip()
 
     return (static_prefix, dynamic_content)
+
 
 def build_ask_prompt(
     goal: str,
