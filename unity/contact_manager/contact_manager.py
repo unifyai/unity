@@ -495,8 +495,7 @@ class ContactManager(BaseContactManager):
         """
         Filter contacts using a boolean Python expression evaluated per row.
 
-        Prefer this for exact, column‑wise filtering (e.g. id or equality checks). For
-        fuzzy or semantic matches across free‑text columns, use ``_search_contacts``.
+        For exact, equality, inequality, membership checks and column-wise filtering (e.g. id or equality checks).
 
         Parameters
         ----------
