@@ -63,11 +63,9 @@ def append_image_refs_with_source(
     try:
         if image_refs is None:
             return
-        refs: List[RawImageRef | AnnotatedImageRef]
-        if isinstance(image_refs, ImageRefs):
-            refs = list(image_refs.root)
-        else:
-            refs = list(image_refs or [])
+        # Support ImageRefs, AnnotatedImageRefs, RawImageRefs, or plain list via duck typing on `root`
+        items = getattr(image_refs, "root", image_refs) or []
+        refs: List[RawImageRef | AnnotatedImageRef] = list(items)
 
         reg = LIVE_IMAGES_REGISTRY.get()
         log = LIVE_IMAGES_LOG.get()
@@ -75,11 +73,7 @@ def append_image_refs_with_source(
         try:
             missing_ids: List[int] = []
             ids_in_refs: List[int] = []
-            for ref in (
-                list(image_refs.root)
-                if isinstance(image_refs, ImageRefs)
-                else list(image_refs)
-            ):
+            for ref in list(items):
                 if isinstance(ref, AnnotatedImageRef):
                     iid = int(ref.raw_image_ref.image_id)
                 elif isinstance(ref, RawImageRef):
@@ -171,9 +165,8 @@ def set_live_images_context(
                 )  # local import
 
                 ids_to_fetch: List[int] = []
-                refs_list = (
-                    list(images.root) if isinstance(images, ImageRefs) else list(images)
-                )
+                # Support ImageRefs, AnnotatedImageRefs, RawImageRefs, or plain list via duck typing on `root`
+                refs_list = list(getattr(images, "root", images) or [])
                 for ref in refs_list:
                     if isinstance(ref, AnnotatedImageRef):
                         iid = int(ref.raw_image_ref.image_id)
@@ -198,8 +191,8 @@ def set_live_images_context(
         # Seed log from refs under source 'user_message'
         logs: list[dict] = []
         if images is not None:
-            refs = list(images.root) if isinstance(images, ImageRefs) else list(images)
-            for ref in refs:
+            items = list(getattr(images, "root", images) or [])
+            for ref in items:
                 if isinstance(ref, AnnotatedImageRef):
                     logs.append(
                         {
