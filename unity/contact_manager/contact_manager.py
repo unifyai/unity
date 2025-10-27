@@ -477,7 +477,7 @@ class ContactManager(BaseContactManager):
         - Columns that store embeddings (those whose names end with ``"_emb"``)
           may exist in the backend but are not filtered out here; consumers that
           don't want to see private vector columns should filter them out
-          themselves (other tools in this class exclude them where appropriate).
+          themselves.
         - Column names follow snake_case. Built‑in columns are derived directly from
           the Pydantic ``Contact`` model and are immutable.
         """
@@ -514,8 +514,7 @@ class ContactManager(BaseContactManager):
         Returns
         -------
         List[Contact]
-            Matching contacts as Pydantic ``Contact`` models in creation order. Embedding
-            columns (``*_emb``) are excluded from the payload to keep responses small.
+            Matching contacts as Pydantic ``Contact`` models in creation order.
 
         Notes
         -----
@@ -860,7 +859,6 @@ class ContactManager(BaseContactManager):
 
         Notes
         -----
-        - Private vector columns (names ending with ``"_emb"``) are ignored during merge.
         - After the merge, transcript messages that referenced the deleted contact will have
           their ``contact_id`` updated to the kept id for consistency.
         - Custom fields are applied via ``update_contact``; built‑in fields are applied
