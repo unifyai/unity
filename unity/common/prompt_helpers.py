@@ -102,8 +102,10 @@ def images_policy_block() -> str:
     return (
         "Images policy (when images are present)\n"
         "--------------------------------------\n"
-        "- Treat images as arbitrary user-provided visuals (screenshots, photos, attachments, UI snippets). Do not assume assistant-specific identifiers (task_id, contact_id, queue_id) are visible.\n"
-        "- When information is needed from a single image in an isolation manner, then call `ask_image` with a narrowly scoped question to extract concrete, observable details. Keep questions minimal and goal-directed, with questions appropriate to the source of the image; where did it come from? Why was it captured or shared?\n"
-        "- Use any extracted cues no matter how vague (e.g., what is *in the image*, what is being *done* if it's a screenshot from a screen share) to drive domain tool calls (search_* / filter_*) that resolve precise records, IDs, and schedules. The image will almost never contain these details in the actual image itself, it's just another piece of context which cannot be relied on in isolation.\n"
+        "- Treat images as freeform user-provided visuals (screenshots, photos, attachments, UI snippets).\n"
+        "- Do not assume assistant-specific identifiers (task_id, contact_id, queue_id) are visible, they almost *never* will be.\n"
+        "- When information is needed from a single image in an isolation manner, then call `ask_image` with a narrowly scoped question to extract concrete, observable details.\n"
+        "- If the caption is vague or absent, then start with something *very* simple like 'what is in this image?' Do *not* overcomplicat the first question until we know *what is in the image*.\n"
+        "- Use any extracted cues no matter how vague (e.g., what is *in the image*, what is being *done* if it's a screenshot from a screen share).\n"
         "- Attach images (`attach_image_raw`) when persistent visual context is helpful for follow-up turns; otherwise prefer targeted ask_image calls to minimize noise."
     )
