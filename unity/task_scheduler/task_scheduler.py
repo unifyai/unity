@@ -2485,10 +2485,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Move one or more runnable tasks to a specific queue and position.
 
-        This implementation minimizes backend calls by computing the desired
-        final order and delegating the materialization to a single
-        `_set_queue` call. Within a single tool call, the backend state is
-        assumed stable; we therefore avoid redundant reads/writes.
+        This implementation minimizes backend calls. Within a single tool call, the backend state is assumed stable.
 
         Returns
         -------
