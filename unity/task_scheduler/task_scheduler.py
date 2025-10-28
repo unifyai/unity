@@ -2315,9 +2315,6 @@ class TaskScheduler(BaseTaskScheduler):
         -----------
         - You want to change the order of tasks that are ALREADY members of a
           single queue. This method does not move tasks across queues.
-        - If you need to insert or remove members from a queue, prefer
-          :pyfunc:`_set_queue` or combine :pyfunc:`_move_tasks_to_queue` with
-          this method.
 
         Parameters
         ----------

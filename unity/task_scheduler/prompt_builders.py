@@ -226,6 +226,7 @@ def build_update_prompt(
     list_queues_fname = tool_name(tools, "list_queues")
     get_queue_fname = tool_name(tools, "get_queue")
     get_queue_for_task_fname = tool_name(tools, "get_queue_for_task")
+    set_queue_fname = tool_name(tools, "set_queue")
     reorder_queue_fname = tool_name(tools, "reorder_queue")
     move_tasks_to_queue_fname = tool_name(tools, "move_tasks_to_queue")
     partition_queue_fname = tool_name(tools, "partition_queue")
@@ -302,6 +303,13 @@ def build_update_prompt(
             [
                 f"• Split a queue into dated batches: `{partition_queue_fname}(parts=[{{'task_ids':[0,2], 'queue_start_at':'2035-07-01T09:00:00Z'}}, {{'task_ids':[1,3], 'queue_start_at':'2035-07-02T09:00:00Z'}}])`.",
                 "  This is the most direct way to express: do subset A at time X and subset B at time Y.",
+            ],
+        )
+
+    if set_queue_fname and move_tasks_to_queue_fname and reorder_queue_fname:
+        usage_examples_lines.extend(
+            [
+                f"• To insert or remove members from a queue, prefer `{set_queue_fname}` or combine `{move_tasks_to_queue_fname}` with `{reorder_queue_fname}` to update the queue order.",
             ],
         )
 
