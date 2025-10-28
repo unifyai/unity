@@ -2269,15 +2269,15 @@ class TaskScheduler(BaseTaskScheduler):
     def _get_queue_for_task(self, *, task_id: int) -> List[Task]:
         """
         Return the runnable queue (head→tail) containing `task_id`.
-
-        Strategy
-        --------
-        - Fast-path: when a local queue index is available and not marked stale,
-          resolve `queue_id` and delegate to `_get_queue(queue_id=…)`.
-        - Otherwise, read the single row; if it carries a numeric `queue_id`,
-          delegate to `_get_queue(queue_id=…)`; else fall back to
-          `_walk_queue_from_task` which ignores `queue_id` and follows links.
         """
+        # Strategy
+        # ---------
+        # - Fast-path: when a local queue index is available and not marked stale,
+        # resolve `queue_id` and delegate to `_get_queue(queue_id=…)`.
+        # - Otherwise, read the single row; if it carries a numeric `queue_id`,
+        # delegate to `_get_queue(queue_id=…)`; else fall back to
+        # `_walk_queue_from_task` which ignores `queue_id` and follows links.
+
         # Fast-path via LocalTaskView when membership is known.
         try:
             qid_cached = self._view.get_queue_id_for_task(int(task_id))
