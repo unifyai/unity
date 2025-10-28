@@ -205,6 +205,82 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
     assert any('"BLUE"' in (m.get("content") or "") for m in tool_msgs)
 
 
+@pytest.mark.eval
+@pytest.mark.requires_real_unify
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_image_uses_parent_chat_context(monkeypatch) -> None:
+    """
+    Analogue to the ImageHandle.ask parent-context test: verify that the dynamically
+    generated `ask_image` helper automatically threads the parent chat context and
+    the real LLM can answer a question that only makes sense when combining the
+    image content (Google logo) with the slogan provided in the parent context.
+    """
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+
+    # Seed a real Google logo image via ImageManager so ask_image will resolve it by id
+    from pathlib import Path as _Path
+    from unity.image_manager.image_manager import ImageManager as _ImageManager
+
+    raw = (
+        _Path(__file__).parent.parent / "test_image_manager" / "assets" / "google.jpeg"
+    ).read_bytes()
+    import base64 as _b64
+
+    img_b64 = _b64.b64encode(raw).decode("utf-8")
+
+    _im = _ImageManager()
+    [img_id] = _im.add_images(
+        [
+            {
+                "caption": "Google logo (ask_image parent-context test)",
+                "data": img_b64,
+            },
+        ],
+    )
+
+    # Provide the image id as a live image reference so helpers are exposed
+    from unity.image_manager.types import ImageRefs, RawImageRef
+
+    images = ImageRefs([RawImageRef(image_id=int(img_id))])
+
+    # Parent chat context carries the slogan
+    parent_ctx = [
+        {"role": "assistant", "content": 'Our company slogan is "Get em!"'},
+    ]
+
+    # Instruct the model to call ask_image for the id with the context-dependent question,
+    # then finish by echoing the exact letters it found.
+    client.set_system_message(
+        "Call the helper ask_image exactly once for the provided image id with the question: "
+        "'Which letters in this search engine logo appear in our company slogan? "
+        "Reply only with these letters and nothing else. Do not include any missing letters in your response.' "
+        "After receiving the tool result, respond with exactly the same letters.",
+    )
+
+    h = start_async_tool_loop(
+        client=client,
+        message="Please analyze the image accordingly.",
+        tools={},
+        images=images,
+        parent_chat_context=parent_ctx,
+    )
+
+    final = await h.result()
+
+    assert isinstance(final, str) and final.strip()
+    fl = final.strip().lower()
+    assert "g" in fl and "e" in fl
+    assert "o" not in fl and "l" not in fl
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
