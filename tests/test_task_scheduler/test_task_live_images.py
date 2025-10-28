@@ -71,7 +71,7 @@ async def test_taskscheduler_ask_live_images_queue_order(first_head: str) -> Non
     manager = ImageManager()
     b64_first = _load_png_b64("deprioritize_tasks.png")
     b64_second = _load_png_b64("organize_weekly_rotar.png")
-    generic_caption = "screenshots captured from the user sharing their screen with us during our live ongoing meet"
+    generic_caption = "screenshots captured from the user sharing their screen with us during our live ongoing meet; a more detailed caption is pending..."
     [img_a] = manager.add_images(
         [
             {"caption": generic_caption, "data": b64_first},
