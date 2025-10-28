@@ -4267,7 +4267,7 @@ class TaskScheduler(BaseTaskScheduler):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[TaskRow]:
+    ) -> List[Task]:
         """
         Run a **column-wise Python expression** (`filter`) against every task
         and return the matching rows.
@@ -4366,7 +4366,7 @@ class TaskScheduler(BaseTaskScheduler):
             if isinstance(rep, list):
                 row["repeat"] = [_rehydrate_repeat(x) for x in rep]
 
-        return rows
+        return [Task(**row) for row in rows]
 
     # ────────────────────────────────────────────────────────────────────
     # Broader context helper
