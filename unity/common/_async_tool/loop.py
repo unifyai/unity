@@ -415,6 +415,9 @@ async def async_tool_loop_inner(
         live_image_tools = build_live_image_tools(
             reference_message=message,
             append_user_messages=_msg_dispatcher.append_msgs,
+            client=client,
+            parent_chat_context=parent_chat_context,
+            propagate_chat_context=propagate_chat_context,
         )
         # Remove the dummy overview helper; image overview is injected synthetically
         with suppress(Exception):

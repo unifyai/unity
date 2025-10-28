@@ -227,6 +227,9 @@ def build_live_image_tools(
     reference_message: Any,
     *,
     append_user_messages,
+    client: Any = None,
+    parent_chat_context: Optional[list[dict]] = None,
+    propagate_chat_context: bool = True,
 ) -> dict[str, Any]:
     """
     Construct helper tools for working with live images within a loop.
@@ -311,6 +314,34 @@ def build_live_image_tools(
         if ih is None:
             return {"error": f"image_id {iid} not found"}
         try:
+            # Automatically include parent chat context, mirroring nested tool loops
+            if propagate_chat_context:
+                try:
+                    # Avoid duplicating the synthetic header; use current messages only
+                    cur_msgs = [
+                        m
+                        for m in getattr(client, "messages", [])
+                        if not m.get("_ctx_header")
+                    ]
+                except Exception:
+                    cur_msgs = []
+
+                ctx_repr = None
+                try:
+                    from .messages import (
+                        chat_context_repr as _chat_ctx_repr,
+                    )  # local import
+
+                    ctx_repr = _chat_ctx_repr(parent_chat_context, cur_msgs)
+                except Exception:
+                    ctx_repr = parent_chat_context or []
+
+                return await ih.ask(
+                    question,
+                    parent_chat_context_cont=ctx_repr,
+                )
+
+            # Fallback: no propagation
             return await ih.ask(question)
         except Exception as _exc:  # noqa: BLE001
             return {"error": str(_exc)}
