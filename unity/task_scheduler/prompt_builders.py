@@ -574,7 +574,7 @@ def build_execute_prompt(
         "",
         "Reporting",
         "---------",
-        "• Execution returns an ActiveQueue handle. Include the executed task id(s) in your final response.",
+        "• Execution returns an live steerable handle. Include the executed task id(s) in your final response.",
     ]
 
     # Append current time for determinism and cache friendliness
