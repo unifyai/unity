@@ -38,10 +38,11 @@ def test_create_triggerable_task():
     )["details"]["task_id"]
 
     row = ts._filter_tasks(filter=f"task_id == {task_id}", limit=1)[0]
-    assert row["status"] == Status.triggerable
-    assert row["schedule"] is None
-    assert row["trigger"]["medium"] == Medium.EMAIL
-    assert row["trigger"]["from_contact_ids"] == [42]
+    assert row.status == Status.triggerable
+    assert row.schedule is None
+    assert row.trigger is not None
+    assert row.trigger.medium == Medium.EMAIL
+    assert row.trigger.from_contact_ids == [42]
 
 
 # --------------------------------------------------------------------------- #
