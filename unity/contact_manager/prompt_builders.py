@@ -13,6 +13,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
     parallelism_guidance,
+    images_policy_block,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -202,6 +203,8 @@ Anti‑patterns to avoid
             "",
             usage_examples,
             "",
+            images_policy_block(),
+            "",
             parallelism_guidance(),
             "",
             clar_section,
@@ -379,6 +382,8 @@ Anti‑patterns to avoid
             special_contacts_block,
             "",
             usage_examples,
+            "",
+            images_policy_block(),
             "",
             parallelism_guidance(),
             "",
