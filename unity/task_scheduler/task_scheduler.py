@@ -1411,7 +1411,7 @@ class TaskScheduler(BaseTaskScheduler):
                 if prev_tid is not None:
                     try:
                         prev_row = self._get_single_row_or_raise(int(prev_tid))
-                        derived_qid = prev_row.get("queue_id")
+                        derived_qid = prev_row.queue_id
                     except Exception:
                         derived_qid = None
                 if derived_qid is None:
@@ -2295,7 +2295,7 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             return []
 
-        qid = row.get("queue_id")
+        qid = row.queue_id
         if isinstance(qid, int):
             return self._get_queue(queue_id=qid)
 
@@ -2355,7 +2355,7 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             member_ids = []
 
-        in_queue_rows: list[TaskRow] | None = None
+        in_queue_rows: list[Task] | None = None
         if not member_ids:
             # Single filtered read of runnable rows in this queue
             if isinstance(queue_id, int):
@@ -2375,11 +2375,11 @@ class TaskScheduler(BaseTaskScheduler):
                 in_queue_rows = [
                     r
                     for r in all_rows
-                    if r.get("schedule") is not None
-                    and r.get("queue_id") == queue_id
-                    and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+                    if r.schedule is not None
+                    and r.queue_id == queue_id
+                    and self._to_status(r.status) not in self._TERMINAL_STATUSES
                 ]
-            member_ids = [int(r.get("task_id")) for r in (in_queue_rows or [])]
+            member_ids = [int(r.task_id) for r in (in_queue_rows or [])]
 
         # Validate permutation
         current_set: set[int] = {int(t) for t in member_ids}
@@ -2676,20 +2676,20 @@ class TaskScheduler(BaseTaskScheduler):
             }
 
         rows = self._filter_tasks(filter=f"task_id in {order}")
-        ids_found = {r.get("task_id") for r in rows}
+        ids_found = {r.task_id for r in rows}
         missing = [tid for tid in order if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
         for r in rows:
-            st = self._to_status(r.get("status"))
-            assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
+            st = self._to_status(r.status)
+            assert st not in self._TERMINAL_STATUSES, f"Task {r.task_id} is terminal"
         # Reject placing trigger-based tasks into a runnable queue
         for r in rows:
-            if r.get("trigger") is not None:
+            if r.trigger is not None:
                 raise ValueError(
-                    f"Task {r['task_id']} is trigger-based and cannot be placed in the queue.",
+                    f"Task {r.task_id} is trigger-based and cannot be placed in the queue.",
                 )
         # Build a one-shot rows map for reuse throughout this tool call
-        rows_by_id: Dict[int, Dict[str, Any]] = {int(r.get("task_id")): r for r in rows}
+        rows_by_id: Dict[int, TaskRow] = {int(r.task_id): r for r in rows}
         # Allow editing a queue that includes the currently active task; preserve its status below
         active_tid: Optional[int] = None
         try:
@@ -2828,7 +2828,7 @@ class TaskScheduler(BaseTaskScheduler):
 
             # Fetch current row once for status derivation and no-op detection
             row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
-            existing_status = row.get("status")
+            existing_status = row.status
             is_head = idx == 0
             head_has_start_at = "start_at" in sched
 
@@ -2851,8 +2851,8 @@ class TaskScheduler(BaseTaskScheduler):
             # Skip no-op writes when the current row already matches the desired state
             try:
                 cur_sched = {**(row.get("schedule") or {})}
-                cur_qid = row.get("queue_id")
-                cur_status = row.get("status")
+                cur_qid = row.queue_id
+                cur_status = row.status
                 same_sched = (
                     cur_sched.get("prev_task") == sched.get("prev_task")
                     and cur_sched.get("next_task") == sched.get("next_task")
@@ -3161,7 +3161,7 @@ class TaskScheduler(BaseTaskScheduler):
             if parts and parts[0].get("task_ids"):
                 _head_tid = int(parts[0]["task_ids"][0])
                 _head_row = self._get_single_row_or_raise(_head_tid)
-                source_qid = _head_row.get("queue_id")
+                source_qid = _head_row.queue_id
         except Exception:
             source_qid = None
 
@@ -3944,8 +3944,7 @@ class TaskScheduler(BaseTaskScheduler):
                     head_tid = int(order[0])
                     try:
                         head_row = self._get_single_row_or_raise(head_tid)
-                        sched = {**(head_row.get("schedule") or {})}
-                        sched["start_at"] = start_at
+                        sched = head_row.schedule or Schedule(start_at=start_at)
                         self._validated_write(
                             task_id=head_tid,
                             entries={"schedule": sched, "status": Status.scheduled},
