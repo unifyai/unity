@@ -423,28 +423,6 @@ async def async_tool_loop_inner(
         with suppress(Exception):
             live_image_tools.pop("live_images_overview", None)
 
-        # Append a concise, generic images policy to the system message so image-aware
-        # behaviour is consistent across all managers that use this loop.
-        try:
-            _images_policy = (
-                "Images policy (when images are present)\n"
-                "--------------------------------------\n"
-                "- Treat images as arbitrary user-provided visuals (screenshots, photos, attachments, UI snippets). Do not assume assistant-specific identifiers (task_id, contact_id, queue_id) are visible.\n"
-                "- When information is needed from an image, call ask_image with a narrowly scoped question to extract concrete, observable facts. Keep questions minimal and goal-directed.\n"
-                "- Use annotations, captions, and explicit user text as the sole ground truth for aligning references (e.g., ‘this one’ / ‘that one’). Do NOT invent ordering rules; if alignment is unclear and not provided, ask a concise clarifying question or proceed conservatively.\n"
-                "- Use extracted cues (e.g., names, titles, dates/times, UI labels, keywords, organizations) to drive domain tool calls (search_* / filter_*) that resolve precise records, IDs, and schedules. Do not assume the image alone contains all details.\n"
-                "- If critical details are not visible and not stated, avoid unsupported assumptions and note uncertainties or ask a short clarifying question.\n"
-                "- Attach images (attach_image_raw) when persistent visual context is helpful for follow-up turns; otherwise prefer targeted ask_image calls to minimize noise.\n"
-            )
-            try:
-                existing_sys = client.system_message or ""
-            except Exception:
-                existing_sys = ""
-            client.set_system_message((existing_sys + "\n\n" + _images_policy).strip())
-        except Exception:
-            # Never let a system-message enrichment failure break the loop
-            pass
-
     # Merge helpers (if any) with base tools before normalisation
     tools = {**tools, **(live_image_tools or {})}
 
