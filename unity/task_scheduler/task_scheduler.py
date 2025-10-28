@@ -280,9 +280,9 @@ class TaskScheduler(BaseTaskScheduler):
             assert (
                 len(primed_tasks) == 1
             ), f"More than one primed task found:\n{primed_tasks}"
-            self._primed_task: Optional[Dict[str, Any]] = primed_tasks[0]
+            self._primed_task: Optional[Task] = primed_tasks[0]
         else:
-            self._primed_task: Optional[Dict[str, Any]] = None
+            self._primed_task: Optional[Task] = None
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
@@ -3594,8 +3594,8 @@ class TaskScheduler(BaseTaskScheduler):
             for row in rows:
                 self._validate_scheduled_invariants(
                     status=new_status_enum,
-                    schedule=row.get("schedule"),
-                    err_prefix=f"While changing status of task {row['task_id']}:",
+                    schedule=row.schedule,
+                    err_prefix=f"While changing status of task {row.task_id}:",
                 )
 
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
