@@ -758,8 +758,7 @@ class ContactManager(BaseContactManager):
         -----
         - Fields not supplied remain unchanged.
         - This operation overwrites the stored values for the selected fields.
-        - ``contact_id`` itself cannot be changed here; use ``_merge_contacts`` if you need
-          to consolidate records and choose which id to keep.
+        - ``contact_id`` itself cannot be changed.
         """
 
         return _op_update(
@@ -879,6 +878,23 @@ class ContactManager(BaseContactManager):
         column_type: ColumnType | str,
         column_description: Optional[str] = None,
     ) -> Dict[str, str]:
+        """
+        Create a new custom column on the contacts table.
+
+        Parameters
+        ----------
+        column_name : str
+            The name of the new custom column. Must be a valid snake_case name.
+        column_type : ColumnType | str
+            The type of the new custom column.
+        column_description : str | None
+            The description of the new custom column.
+
+        Returns
+        -------
+        Dict[str, str]
+            A dictionary containing the name and type of the new custom column.
+        """
         return _cc_create(
             self,
             column_name=column_name,
@@ -887,6 +903,19 @@ class ContactManager(BaseContactManager):
         )
 
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
+        """
+        Delete a custom column from the contacts table.
+
+        Parameters
+        ----------
+        column_name : str
+            The name of the custom column to delete.
+
+        Returns
+        -------
+        Dict[str, str]
+            A dictionary containing the name.
+        """
         return _cc_delete(self, column_name=column_name)
 
     # ──────────────────────────────────────────────────────────────────────
