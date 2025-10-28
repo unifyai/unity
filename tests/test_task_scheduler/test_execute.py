@@ -20,6 +20,8 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
 from unity.task_scheduler.types.schedule import Schedule
+from unity.task_scheduler.types.activated_by import ActivatedBy
+from unity.task_scheduler.types.status import Status
 
 #  The helper used in the existing test‑suite – applies project‑level monkey‐
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -329,8 +331,7 @@ async def test_execute_creates_new_task_and_executes(monkeypatch):
     created_tasks = ts._filter_tasks()
     phrase = description.rstrip(".").casefold()
     assert any(
-        phrase in (t.get("name", "") or "").casefold()
-        or phrase in (t.get("description", "") or "").casefold()
+        phrase in t.name.casefold() or phrase in t.description.casefold()
         for t in created_tasks
     ), "A new task with the provided description should have been created"
 
@@ -399,7 +400,7 @@ async def test_execute_sets_activated_by_explicit():
 
     # Verify activated_by on the activated instance (may already be completed)
     rows = ts._filter_tasks(filter=f"task_id == {task_id}")
-    assert any(r.get("activated_by") == "explicit" for r in rows)
+    assert any(r.activated_by == ActivatedBy.explicit for r in rows)
 
 
 @pytest.mark.asyncio
@@ -421,13 +422,13 @@ async def test_update_status_cannot_force_active_and_does_not_set_activation_met
     # Ensure no activation metadata exists prior to activation
     rows = ts._filter_tasks(filter=f"task_id == {task_id}")
     assert len(rows) == 1
-    assert rows[0].get("activated_by") in (None, "")
+    assert rows[0].activated_by is None
 
     # Change a non-active status and ensure activated_by remains unset
     ts._update_task(task_id=task_id, status="paused")
     rows2 = ts._filter_tasks(filter=f"task_id == {task_id}")
-    assert rows2[0].get("status") == "paused"
-    assert rows2[0].get("activated_by") in (None, "")
+    assert rows2[0].status == Status.paused
+    assert rows2[0].activated_by is None
 
 
 @pytest.mark.asyncio
@@ -485,19 +486,20 @@ async def test_isolated_execute_detaches_entirely(monkeypatch):
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
 
     # B should be isolated as a single-task head (no prev/next followers)
-    sched_b = rows_b[0].get("schedule") or {}
-    assert sched_b.get("prev_task") is None
-    assert sched_b.get("next_task") is None
+    sched_b = rows_b[0].schedule
+    assert sched_b is None
 
     # A should now link directly to C; C.prev_task should be A
-    sched_a = rows_a[0].get("schedule") or {}
-    sched_c = rows_c[0].get("schedule") or {}
-    assert sched_a.get("next_task") == c
-    assert sched_c.get("prev_task") == a
+    sched_a = rows_a[0].schedule
+    sched_c = rows_c[0].schedule
+    assert sched_c is not None
+    assert sched_a is not None
+    assert sched_a.next_task == c
+    assert sched_c.prev_task == a
 
     # Only the head owns start_at → ensure C (non-head) does not inherit it unless it became head
     # Here A remains head, so C must not have start_at
-    assert "start_at" not in sched_c or sched_c.get("start_at") in (None, "")
+    assert sched_c.start_at is None
 
 
 @pytest.mark.asyncio
@@ -523,12 +525,13 @@ async def test_isolated_execute_start_at_to_second_when_head_moves(monkeypatch):
     rows_y = ts._filter_tasks(filter=f"task_id == {y}")
 
     # X detached
-    assert rows_x[0].get("schedule") in (None, {})
+    assert rows_x[0].schedule is None
 
     # Y becomes new head: prev_task=None and has start_at
-    sched_y = rows_y[0].get("schedule") or {}
-    assert sched_y.get("prev_task") is None
-    assert "start_at" in sched_y and sched_y.get("start_at")
+    sched_y = rows_y[0].schedule
+    assert sched_y is not None
+    assert sched_y.prev_task is None
+    assert sched_y.start_at is not None
 
 
 @pytest.mark.asyncio
@@ -555,16 +558,18 @@ async def test_execute_default_keeps_followers():
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
 
-    sched_b = rows_b[0].get("schedule") or {}
-    sched_c = rows_c[0].get("schedule") or {}
+    sched_b = rows_b[0].schedule
+    sched_c = rows_c[0].schedule
+    assert sched_b is not None
+    assert sched_c is not None
 
     # B becomes sub-head of its chain
-    assert sched_b.get("prev_task") is None
-    assert sched_b.get("next_task") == c
+    assert sched_b.prev_task is None
+    assert sched_b.next_task == c
     # C follows B
-    assert sched_c.get("prev_task") == b
+    assert sched_c.prev_task == b
     # C must not carry start_at (non-head)
-    assert "start_at" not in sched_c or sched_c.get("start_at") in (None, "")
+    assert sched_c.start_at is None
 
     # Stop to avoid leaking the background task and wait for shutdown
     try:
