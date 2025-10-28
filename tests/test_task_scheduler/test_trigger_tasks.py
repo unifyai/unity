@@ -112,8 +112,8 @@ def test_clear_trigger_transitions_status():
     ts._update_task(task_id=tid, trigger=None)
 
     row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
-    assert row["trigger"] is None
-    assert row["status"] == Status.queued
+    assert row.trigger is None
+    assert row.status == Status.queued
 
 
 # --------------------------------------------------------------------------- #
@@ -195,7 +195,7 @@ async def test_triggerable_start_clones_instance():
 
     # One physical row before activation
     rows_before = ts._filter_tasks(filter=f"task_id == {tid}")
-    assert len(rows_before) == 1 and rows_before[0]["instance_id"] == 0
+    assert len(rows_before) == 1 and rows_before[0].instance_id == 0
 
     # Activate
     handle = await ts.execute(text=str(tid))
@@ -204,9 +204,9 @@ async def test_triggerable_start_clones_instance():
     rows_after = ts._filter_tasks(filter=f"task_id == {tid}")
     assert len(rows_after) == 2
 
-    status_by_inst = {r["instance_id"]: r["status"] for r in rows_after}
-    assert status_by_inst[0] == "active"
-    assert status_by_inst[1] == "triggerable"
+    status_by_inst = {r.instance_id: r.status for r in rows_after}
+    assert status_by_inst[0] == Status.active
+    assert status_by_inst[1] == Status.triggerable
 
     # Clean-up (avoid background thread leaks)
     handle.stop(cancel=True)
