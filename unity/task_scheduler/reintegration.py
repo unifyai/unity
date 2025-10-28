@@ -48,9 +48,7 @@ class ReintegrationManager:
         rows = self._s._filter_tasks(filter=f"task_id == {neighbour_tid}", limit=1)
         if not rows:
             return False
-        return (
-            self._s._to_status(rows[0].get("status")) not in self._s._TERMINAL_STATUSES
-        )
+        return self._s._to_status(rows[0].status) not in self._s._TERMINAL_STATUSES
 
     def apply(self, *, task_id: int, allow_active: bool = False) -> Dict[str, str]:
         # Locate plan (prefer non-terminal instance)
@@ -58,14 +56,12 @@ class ReintegrationManager:
         live = [
             r
             for r in rows
-            if self._s._to_status(r.get("status")) not in self._s._TERMINAL_STATUSES
+            if self._s._to_status(r.status) not in self._s._TERMINAL_STATUSES
         ]
         instance_id = None
         plan: Optional[ReintegrationPlan] = None
         if live:
-            instance_id = sorted(live, key=lambda r: r.get("instance_id", 0))[0].get(
-                "instance_id",
-            )
+            instance_id = sorted(live, key=lambda r: r.instance_id)[0].instance_id
             plan = self._s._reintegration_plans.get((task_id, instance_id))
         else:
             for (tid, iid), p in getattr(self._s, "_reintegration_plans", {}).items():
@@ -89,17 +85,16 @@ class ReintegrationManager:
         original_status = plan.original_status
 
         cur_rows = self._s._filter_tasks(filter=f"task_id == {tid}", limit=1)
-        cur_row = cur_rows[0] if cur_rows else {}
+        cur_row = cur_rows[0] if cur_rows else None
 
-        if (
-            self._s._to_status(cur_row.get("status")) == Status.active
-            and not allow_active
+        if cur_row is not None and (
+            self._s._to_status(cur_row.status) == Status.active and not allow_active
         ):
             raise RuntimeError(
                 "Cannot reinstate while the task is active. Stop/defer first.",
             )
 
-        if cur_row.get("trigger") is not None:
+        if cur_row is not None and cur_row.trigger is not None:
             raise ValueError(
                 "Task currently has a trigger; remove the trigger before restoring its schedule/queue position.",
             )
@@ -148,7 +143,7 @@ class ReintegrationManager:
         if (
             desired_status == Status.primed
             and self._s._primed_task is not None
-            and self._s._primed_task.get("task_id") != tid
+            and self._s._primed_task.task_id != tid
         ):
             desired_status = Status.queued
 
@@ -186,16 +181,18 @@ class ReintegrationManager:
                 )
                 if next_rows:
                     next_row = next_rows[0]
-                    next_sched = next_row.get("schedule") or {}
+                    next_sched = next_row.schedule
+                    if next_sched is None:
+                        return
                     if (
                         _q_prev(next_sched) is not None
-                        and (next_sched.get("start_at") is None)
-                        and self._s._to_status(next_row.get("status"))
+                        and (next_sched.start_at is None)
+                        and self._s._to_status(next_row.status)
                         in {Status.scheduled, Status.primed}
                     ):
                         self._s._update_task_status_instance(
                             task_id=final_next,
-                            instance_id=next_row["instance_id"],
+                            instance_id=next_row.instance_id,
                             new_status="queued",
                         )
 
