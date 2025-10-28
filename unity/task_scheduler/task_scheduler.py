@@ -4144,7 +4144,7 @@ class TaskScheduler(BaseTaskScheduler):
         handle.result = wrapped_result  # type: ignore[assignment]
         return handle
 
-    def _get_single_row_or_raise(self, task_id: int) -> TaskRow:
+    def _get_single_row_or_raise(self, task_id: int) -> Task:
         """Fetch exactly one task row by id or raise ValueError."""
         rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
         if not rows:
@@ -4191,7 +4191,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Also guard against orphan 'active' rows (e.g., after crash) even if pointer is None.
         try:
             any_active = any(
-                r.get("status") == str(Status.active)
+                r.status == Status.active
                 for r in self._filter_tasks(filter="status == 'active'", limit=1)
             )
         except Exception:
