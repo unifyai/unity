@@ -233,6 +233,8 @@ def build_update_prompt(
     update_task_fname = tool_name(tools, "update_task")
     reinstate_task_fname = tool_name(tools, "reinstate_task_to_previous_queue")
 
+    contact_ask_fname = tool_name(tools, "contactmanager")  # e.g. "ContactManager_ask"
+
     # Clarification helper (optional)
     request_clar_fname = tool_name(tools, "request_clarification")
 
@@ -244,6 +246,7 @@ def build_update_prompt(
             "delete_task": delete_task_fname,
             "cancel_tasks": cancel_tasks_fname,
             "update_task": update_task_fname,
+            "ContactManager.ask": contact_ask_fname,
         },
         tools,
     )
@@ -393,8 +396,8 @@ def build_update_prompt(
             "",
             "Contact context",
             "---------------",
-            "• When a trigger references people (by contact ids), call ContactManager.ask to resolve/confirm the ids and the intent before writing.",
-            "• Avoid repeated calls to ContactManager.ask in the same update session if a prior call already yielded the required ids and no new ambiguity was introduced.",
+            f"• When a trigger references people (by contact ids), call {contact_ask_fname} to resolve/confirm the ids and the intent before writing.",
+            f"• Avoid repeated calls to {contact_ask_fname} in the same update session if a prior call already yielded the required ids and no new ambiguity was introduced.",
             "",
             "Anti‑patterns to avoid",
             "---------------------",
