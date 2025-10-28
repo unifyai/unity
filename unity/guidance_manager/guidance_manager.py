@@ -444,9 +444,7 @@ class GuidanceManager(BaseGuidanceManager):
         Notes
         -----
         This tool is read-only and returns metadata only. It never exposes raw
-        image bytes. Use `attach_image_to_context` or
-        `attach_guidance_images_to_context` when persistent visual context is
-        required inside the loop.
+        image bytes.
         """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
@@ -513,9 +511,7 @@ class GuidanceManager(BaseGuidanceManager):
         -------
         str
             Text answer from the vision model. This does not persist visual
-            context across turns; use ``attach_image_to_context`` or
-            ``attach_guidance_images_to_context`` when follow‑ups should keep
-            seeing the image(s).
+            context across turns.
         """
         handles = self._image_manager.get_images([int(image_id)])
         if not handles:
