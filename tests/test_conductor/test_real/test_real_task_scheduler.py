@@ -99,8 +99,8 @@ async def test_real_conductor_task_update_calls_task_scheduler():
     # Verify the mutation took effect in the real TaskScheduler instance
     tasks = ts._filter_tasks()
     assert tasks and any(
-        (t.name or "").lower() == "promote jeff smith"
-        or "promote jeff smith" in (t.description or "").lower()
+        t.name.lower() == "promote jeff smith"
+        or "promote jeff smith" in t.description.lower()
         for t in tasks
     )
 
