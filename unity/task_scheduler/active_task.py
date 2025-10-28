@@ -331,7 +331,7 @@ class ActiveTask(BaseActiveTask):
             cur_status = None
             try:
                 if rows:
-                    cur_status = rows[0].get("status")
+                    cur_status = rows[0].status
             except Exception:
                 cur_status = None
             if rows and cur_status not in ("cancelled", "failed"):
