@@ -4,6 +4,8 @@ import asyncio, pytest, re, json
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project
+from unity.task_scheduler.types.status import Status
+from unity.task_scheduler.types.priority import Priority
 
 
 # ----------------------------------------------------------------------------
@@ -145,7 +147,7 @@ async def test_ts_update_uses_parent_context():
     ).result()
 
     row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
-    assert row["status"] == "completed", assertion_failed(
+    assert row.status == Status.completed, assertion_failed(
         "Task status 'completed'",
         json.dumps(row, indent=2),
         "Parent-context nickname not respected by update()",
@@ -206,7 +208,7 @@ async def test_ts_update_requests_clarification():
     await asyncio.wait_for(task, timeout=300)
 
     row = ts._filter_tasks(filter=f"task_id == {tid_report}", limit=1)[0]
-    assert row["priority"] == "high", assertion_failed(
+    assert row.priority == Priority.high, assertion_failed(
         "Task priority 'high'",
         json.dumps(row, indent=2),
         "Priority not updated after clarification",
