@@ -103,9 +103,7 @@ def images_policy_block() -> str:
         "Images policy (when images are present)\n"
         "--------------------------------------\n"
         "- Treat images as arbitrary user-provided visuals (screenshots, photos, attachments, UI snippets). Do not assume assistant-specific identifiers (task_id, contact_id, queue_id) are visible.\n"
-        "- When information is needed from an image, call ask_image with a narrowly scoped question to extract concrete, observable facts. Keep questions minimal and goal-directed.\n"
-        "- Use annotations, captions, and explicit user text as the sole ground truth for aligning references (e.g., ‘this one’ / ‘that one’). Do NOT invent ordering rules; if alignment is unclear and not provided, ask a concise clarifying question or proceed conservatively.\n"
-        "- Use extracted cues (e.g., names, titles, dates/times, UI labels, keywords, organizations) to drive domain tool calls (search_* / filter_*) that resolve precise records, IDs, and schedules. Do not assume the image alone contains all details.\n"
-        "- If critical details are not visible and not stated, avoid unsupported assumptions and note uncertainties or ask a short clarifying question.\n"
-        "- Attach images (attach_image_raw) when persistent visual context is helpful for follow-up turns; otherwise prefer targeted ask_image calls to minimize noise."
+        "- When information is needed from a single image in an isolation manner, then call `ask_image` with a narrowly scoped question to extract concrete, observable details. Keep questions minimal and goal-directed, with questions appropriate to the source of the image; where did it come from? Why was it captured or shared?\n"
+        "- Use any extracted cues no matter how vague (e.g., what is *in the image*, what is being *done* if it's a screenshot from a screen share) to drive domain tool calls (search_* / filter_*) that resolve precise records, IDs, and schedules. The image will almost never contain these details in the actual image itself, it's just another piece of context which cannot be relied on in isolation.\n"
+        "- Attach images (`attach_image_raw`) when persistent visual context is helpful for follow-up turns; otherwise prefer targeted ask_image calls to minimize noise."
     )
