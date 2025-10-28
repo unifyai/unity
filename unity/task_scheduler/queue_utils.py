@@ -75,7 +75,11 @@ def sync_adjacent_links(
                 # Neighbour went missing – skip symmetric update instead of failing
                 continue
             row_entries = rows[0]
-            n_sched = {**(row_entries.get("schedule") or {})}
+            n_sched = (
+                row_entries.schedule.model_dump()
+                if row_entries.schedule is not None
+                else {}
+            )
             if n_sched.get(field_to_set) == task_id:
                 continue  # already correct
             # Strip start_at if the neighbour ceases to be queue head
@@ -84,7 +88,7 @@ def sync_adjacent_links(
             n_sched[field_to_set] = task_id
             try:
                 log_id = scheduler._get_logs_by_task_ids(
-                    task_ids=row_entries["task_id"],
+                    task_ids=row_entries.task_id,
                 )
             except ValueError:
                 # Neighbour was deleted after we fetched rows – skip
@@ -134,7 +138,7 @@ def sync_adjacent_links(
         # Was the neighbour the *primed* task?  Keep cache in lock-step.
         if (
             scheduler._primed_task is not None
-            and scheduler._primed_task["task_id"] == neighbour_id
+            and scheduler._primed_task.task_id == neighbour_id
         ):
             scheduler._refresh_primed_cache(neighbour_id)
 
