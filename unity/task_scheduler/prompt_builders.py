@@ -20,6 +20,7 @@ from ..common.prompt_helpers import (
     now_utc_str,
     tool_name,
     require_tools,
+    images_policy_block,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -179,6 +180,8 @@ def build_ask_prompt(
         sig_json,
         "",
         usage_examples,
+        "",
+        images_policy_block(),
         "",
         "Parallelism and single‑call preference",
         "-------------------------------------",
@@ -448,6 +451,8 @@ def build_update_prompt(
         "",
         # Padding around mutation-exit is only for ask() prompts; update() does not include it
         usage_examples,
+        "",
+        images_policy_block(),
         "",
         "Parallelism and single‑call preference",
         "-------------------------------------",
