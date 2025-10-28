@@ -1535,8 +1535,7 @@ class TaskScheduler(BaseTaskScheduler):
         ---------------------------
         Use this tool when the user asks to create a series/chain of new tasks
         (potentially across multiple queues) and to establish their order immediately.
-        This avoids multiple calls to the singular ``_create_task`` followed by separate
-        queue manipulation calls. In one call you get:
+        In one call you get both:
         1) predictable, ascending ``task_id`` assignment matching the provided
            list order; and
         2) explicit single‑queue or multi‑queue ordering for those new tasks.
