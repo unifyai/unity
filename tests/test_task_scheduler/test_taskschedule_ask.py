@@ -106,18 +106,18 @@ def _answer_semantic(ts: TaskScheduler, question: str) -> str:
     tasks = ts._filter_tasks()
 
     if "currently primed" in q:
-        return next(t for t in tasks if t["status"] == "primed")["name"]
+        return next(t for t in tasks if t.status == Status.primed).name
 
     if "tasks are queued" in q:
-        return str(sum(1 for t in tasks if t["status"] == "queued"))
+        return str(sum(1 for t in tasks if t.status == Status.queued))
 
     if "client meeting" in q and "scheduled" in q:
-        mtg = next(t for t in tasks if "client meeting" in t["name"].lower())
-        return mtg["schedule"]["start_at"].split("T")[0]
+        mtg = next(t for t in tasks if "client meeting" in t.name.lower())
+        return mtg.schedule.start_at.split("T")[0]
 
     if "priority" in q and "hotfix" in q:
-        hotfix = next(t for t in tasks if "hotfix" in t["name"].lower())
-        return str(hotfix["priority"])
+        hotfix = next(t for t in tasks if "hotfix" in t.name.lower())
+        return str(hotfix.priority)
 
     return "N/A"
 
