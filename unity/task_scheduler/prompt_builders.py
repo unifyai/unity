@@ -286,6 +286,7 @@ def build_update_prompt(
     if list_queues_fname and get_queue_fname and reorder_queue_fname:
         usage_examples_lines.extend(
             [
+                f"• Always refresh the queue membership immediately before calling `{reorder_queue_fname}` by calling `{list_queues_fname}()` and `{get_queue_fname}()`.",
                 f"• Inspect existing queues: `{list_queues_fname}()`; fetch a specific queue: `{get_queue_fname}(queue_id=<id>)`.",
                 f"• Reorder a queue explicitly: `{reorder_queue_fname}(queue_id=<id>, new_order=[...])`.",
             ],

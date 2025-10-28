@@ -2334,8 +2334,6 @@ class TaskScheduler(BaseTaskScheduler):
         - The active task (if any) in this queue retains its ``active`` status.
 
         Guidance for callers (outer loop / LLM):
-        - Always refresh the queue membership immediately before constructing `new_order`
-          by calling `list_queues()` and `get_queue(queue_id=…)`.
         - Tasks executed in isolation are detached from their queues; do not
           include detached tasks in `new_order` for that queue.
         - This method asserts that `new_order` is an exact permutation of the current queue;
