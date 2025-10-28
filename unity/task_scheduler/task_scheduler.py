@@ -2333,7 +2333,8 @@ class TaskScheduler(BaseTaskScheduler):
             • non-heads → at most ``queued``.
         - The active task (if any) in this queue retains its ``active`` status.
 
-        Guidance for callers (outer loop / LLM):
+        Notes
+        -----
         - Tasks executed in isolation are detached from their queues; do not
           include detached tasks in `new_order` for that queue.
         - This method asserts that `new_order` is an exact permutation of the current queue;
@@ -4263,10 +4264,8 @@ class TaskScheduler(BaseTaskScheduler):
         Run a **column-wise Python expression** (`filter`) against every task
         and return the matching rows.
 
-        Do *not* use this tool when searching for a task with a similar name
-        or description. Trying to get an exact match on substrings (especially
-        with multiple words) is very brittle, and likely to return no matches.
-        The `search_tasks` tool is *much* more robust and accurate in such cases.
+        Use this tool only for exact, equality, inequality, membership checks and
+        column-wise filtering (e.g. id or equality checks).
 
         Parameters
         ----------
