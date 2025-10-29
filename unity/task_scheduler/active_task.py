@@ -11,13 +11,16 @@ the scheduler.
 
 import functools
 import asyncio
+import textwrap
 from typing import Optional, Dict, TYPE_CHECKING, List, Any
 
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
 from .llm import new_llm_client
+import logging 
 
+logger = logging.getLogger(__name__)
 
 async def classify_steering_intent(
     message: str,
@@ -288,6 +291,8 @@ class ActiveTask(BaseActiveTask):
             ret = "Stopped."
         self._was_stopped = True
 
+        final_status = "cancelled" if cancel else "stopped"
+
         # Cancel → mark cancelled; Defer → try reinstatement
         if cancel:
             self._mirror_status("cancelled")
@@ -299,6 +304,8 @@ class ActiveTask(BaseActiveTask):
             except Exception:
                 # Best-effort – failure to reinstate must not break stop semantics
                 pass
+
+        asyncio.create_task(self._save_final_summary(final_status))
 
         self._clear_active_pointer()
         return ret
@@ -318,6 +325,82 @@ class ActiveTask(BaseActiveTask):
     @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
         return self._actor_handle.done()
+
+    async def _generate_summary_from_log(self, action_log: List[str]) -> str:
+        """
+        Generates a concise, human-readable summary of the execution from the Actor's action_log which captures a trace of the task's execution.
+        """
+        client = new_llm_client("gpt-5@openai")
+        prompt = textwrap.dedent(
+            f"""
+            You are an assistant summarizing a complex task's execution log.
+            Your summary will be stored in a database `info` column
+            to provide a quick overview of "what actually happened".
+
+            - Focus on the final outcome (e.g., completed, stopped, error).
+            - Mention any user interjections or clarifications.
+            - Mention any major verification failures and recoveries.
+            - Be concise (1-3 sentences).
+
+            EXECUTION LOG:
+            ---
+            {chr(10).join(action_log)}
+            ---
+
+            Concisely summarize what happened:
+        """,
+        )
+        try:
+            summary = await client.generate(prompt)
+            return summary.strip()
+        except Exception as e:
+            logger.error("Error during summary generation: %s", e)
+            return "Summary generation failed. Final Status: <UNKNOWN>"  # Status added in _save_final_summary
+
+    async def _save_final_summary(self, final_status: str):
+        """
+        Generates the final summary and updates the task row in the database.
+        """
+        if (
+            self._scheduler
+            and self._task_id is not None
+            and self._instance_id is not None
+        ):
+            summary = "No execution log was available to generate a summary."
+            try:
+                # The _actor_handle is the HierarchicalPlan, which has the action_log
+                if (
+                    hasattr(self._actor_handle, "action_log")
+                    and self._actor_handle.action_log
+                ):
+                    summary = await self._generate_summary_from_log(
+                        self._actor_handle.action_log,
+                    )
+                else:
+                    summary = f"Task finished with status '{final_status}'. No detailed log found."
+
+                # Replace <UNKNOWN> status in fallback summaries
+                summary = summary.replace("<UNKNOWN>", final_status)
+
+                # Update the task instance with the generated summary
+                update_kwargs: Dict[str, Any] = {
+                    "task_id": self._task_id,
+                    "instance_id": self._instance_id,
+                    "info": summary,
+                }
+                # Map 'stopped' to a no-op status update (only write info)
+                if final_status != "stopped":
+                    update_kwargs["status"] = final_status
+
+                self._scheduler._update_task_instance(  # type: ignore[attr-defined]
+                    **update_kwargs,
+                )
+
+            except Exception as e:
+                logger.error(
+                    "Error saving final task summary: %s",
+                    e,
+                )
 
     @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
