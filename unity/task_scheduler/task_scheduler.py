@@ -1535,8 +1535,7 @@ class TaskScheduler(BaseTaskScheduler):
         ---------------------------
         Use this tool when the user asks to create a series/chain of new tasks
         (potentially across multiple queues) and to establish their order immediately.
-        This avoids multiple calls to the singular ``_create_task`` followed by separate
-        queue manipulation calls. In one call you get:
+        In one call you get both:
         1) predictable, ascending ``task_id`` assignment matching the provided
            list order; and
         2) explicit single‑queue or multi‑queue ordering for those new tasks.
@@ -2270,15 +2269,15 @@ class TaskScheduler(BaseTaskScheduler):
     def _get_queue_for_task(self, *, task_id: int) -> List[Task]:
         """
         Return the runnable queue (head→tail) containing `task_id`.
-
-        Strategy
-        --------
-        - Fast-path: when a local queue index is available and not marked stale,
-          resolve `queue_id` and delegate to `_get_queue(queue_id=…)`.
-        - Otherwise, read the single row; if it carries a numeric `queue_id`,
-          delegate to `_get_queue(queue_id=…)`; else fall back to
-          `_walk_queue_from_task` which ignores `queue_id` and follows links.
         """
+        # Strategy
+        # ---------
+        # - Fast-path: when a local queue index is available and not marked stale,
+        # resolve `queue_id` and delegate to `_get_queue(queue_id=…)`.
+        # - Otherwise, read the single row; if it carries a numeric `queue_id`,
+        # delegate to `_get_queue(queue_id=…)`; else fall back to
+        # `_walk_queue_from_task` which ignores `queue_id` and follows links.
+
         # Fast-path via LocalTaskView when membership is known.
         try:
             qid_cached = self._view.get_queue_id_for_task(int(task_id))
@@ -2315,9 +2314,6 @@ class TaskScheduler(BaseTaskScheduler):
         -----------
         - You want to change the order of tasks that are ALREADY members of a
           single queue. This method does not move tasks across queues.
-        - If you need to insert or remove members from a queue, prefer
-          :pyfunc:`_set_queue` or combine :pyfunc:`_move_tasks_to_queue` with
-          this method.
 
         Parameters
         ----------
@@ -2337,9 +2333,8 @@ class TaskScheduler(BaseTaskScheduler):
             • non-heads → at most ``queued``.
         - The active task (if any) in this queue retains its ``active`` status.
 
-        Guidance for callers (outer loop / LLM):
-        - Always refresh the queue membership immediately before constructing `new_order`
-          by calling `list_queues()` and `get_queue(queue_id=…)`.
+        Notes
+        -----
         - Tasks executed in isolation are detached from their queues; do not
           include detached tasks in `new_order` for that queue.
         - This method asserts that `new_order` is an exact permutation of the current queue;
@@ -2489,10 +2484,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         Move one or more runnable tasks to a specific queue and position.
 
-        This implementation minimizes backend calls by computing the desired
-        final order and delegating the materialization to a single
-        `_set_queue` call. Within a single tool call, the backend state is
-        assumed stable; we therefore avoid redundant reads/writes.
+        This implementation minimizes backend calls. Within a single tool call, the backend state is assumed stable.
 
         Returns
         -------
@@ -3830,6 +3822,94 @@ class TaskScheduler(BaseTaskScheduler):
             log_id = self._get_logs_by_task_ids(task_ids=task_id)
             return self._write_log_entries(logs=log_id, entries=entries, overwrite=True)
 
+    def _update_task_instance(
+        self,
+        *,
+        task_id: int,
+        instance_id: int,
+        **kwargs: Any,
+    ) -> Dict[str, str]:
+        """
+        Validate and update fields for a specific task instance (task_id + instance_id).
+        Supports lifecycle fields such as status and info.
+
+        Raises:
+            ValueError: If the instance doesn't exist or if updates violate invariants.
+        """
+        # Ensure we are not trying to update the *currently* active task pointer directly
+        # (though this method is usually called *after* it finishes).
+        if (
+            self._active_task is not None
+            and self._active_task.task_id == task_id
+            and self._active_task.instance_id == instance_id
+        ):
+            return {
+                "outcome": "skipped",
+                "reason": "Cannot update active task instance directly",
+            }
+
+        # Find the specific log for this instance
+        log_objs = self._view.get_rows(
+            filter=f"task_id == {task_id} and instance_id == {instance_id}",
+            limit=1,
+            return_ids_only=False,
+        )
+        if not log_objs:
+            raise ValueError(
+                f"No task instance found for task_id={task_id}, instance_id={instance_id}",
+            )
+
+        log_to_update = log_objs[0]
+        current_row = dict(log_to_update.entries)
+        entries_to_write = {}
+        current_sched = current_row.get("schedule") or {}
+
+        if "status" in kwargs:
+            new_status = self._to_status(kwargs["status"])
+            if new_status == Status.active:
+                raise ValueError("Direct status changes to 'active' are not allowed.")
+            self._validate_scheduled_invariants(
+                status=new_status,
+                schedule=current_sched,
+                trigger=current_row.get("trigger"),
+                err_prefix=f"While updating instance {task_id}.{instance_id}:",
+            )
+            entries_to_write["status"] = new_status
+
+        # If 'info' is being updated
+        if "info" in kwargs:
+            entries_to_write["info"] = kwargs["info"]
+
+        if not entries_to_write:
+            return {
+                "outcome": "no changes",
+                "details": {"task_id": task_id, "instance_id": instance_id},
+            }
+
+        result = self._write_log_entries(
+            logs=log_to_update.id,
+            entries=entries_to_write,
+            overwrite=True,
+        )
+
+        if "status" in entries_to_write:
+            new_status_written = entries_to_write["status"]
+            if (
+                self._primed_task
+                and self._primed_task.get("task_id") == task_id
+                and self._primed_task.get("instance_id") == instance_id
+            ):
+                if new_status_written != Status.primed:
+                    self._primed_task = None
+            if new_status_written in (
+                Status.completed,
+                Status.cancelled,
+                Status.failed,
+            ):
+                self._view.mark_queue_changed()
+
+        return result
+
     # ────────────────────────────────────────────────────────────────────
     # Small internal helpers
     # ────────────────────────────────────────────────────────────────────
@@ -4271,10 +4351,8 @@ class TaskScheduler(BaseTaskScheduler):
         Run a **column-wise Python expression** (`filter`) against every task
         and return the matching rows.
 
-        Do *not* use this tool when searching for a task with a similar name
-        or description. Trying to get an exact match on substrings (especially
-        with multiple words) is very brittle, and likely to return no matches.
-        The `search_tasks` tool is *much* more robust and accurate in such cases.
+        Use this tool only for exact, equality, inequality, membership checks and
+        column-wise filtering (e.g. id or equality checks).
 
         Parameters
         ----------

@@ -791,10 +791,11 @@ class TranscriptManager(BaseTranscriptManager):
         Returns
         -------
         str
-            Text answer from the vision model. This call does not persist the
-            visual context for follow‑up turns; prefer
-            ``attach_image_to_context``/``attach_message_images_to_context``
-            when subsequent steps should keep seeing the image(s).
+            Text answer from the vision model.
+
+        Notes
+        -----
+            This method does not persist the visual context for follow‑up turns.
         """
         return await _ask_image_impl(self, image_id=image_id, question=question)
 

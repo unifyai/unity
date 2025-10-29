@@ -2308,10 +2308,10 @@ class HierarchicalPlan(BaseActiveTask):
             The final result string of the plan.
         """
         await self._completion_event.wait()
-        return (
-            self._final_result_str
-            or f"Plan finished in state {self._state.name} without a result."
-        )
+        if self._state == _HierarchicalPlanState.ERROR:
+            import traceback
+            raise RuntimeError(f"Plan failed in state ERROR: {traceback.format_exc()}")
+        return self._final_result_str or f"Plan finished in state {self._state.name} without a result."
 
     def done(self) -> bool:
         """
