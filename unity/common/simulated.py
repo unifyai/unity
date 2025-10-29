@@ -333,7 +333,7 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
         )
         return tools
     else:
-        return methods_to_tool_dict(
+        tools = methods_to_tool_dict(
             # Ask entry point is exposed on update side
             TaskScheduler.ask,
             # Creation / deletion / cancellation
@@ -356,6 +356,15 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
             TaskScheduler._update_task,
             include_class_name=False,
         )
+
+        tools.update(
+            methods_to_tool_dict(
+                ContactManager().ask,
+                include_class_name=True,
+            ),
+        )
+
+        return tools
 
 
 # ─────────────────────────────────────────────────────────────────────────────

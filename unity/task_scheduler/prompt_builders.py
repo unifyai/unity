@@ -226,11 +226,14 @@ def build_update_prompt(
     list_queues_fname = tool_name(tools, "list_queues")
     get_queue_fname = tool_name(tools, "get_queue")
     get_queue_for_task_fname = tool_name(tools, "get_queue_for_task")
+    set_queue_fname = tool_name(tools, "set_queue")
     reorder_queue_fname = tool_name(tools, "reorder_queue")
     move_tasks_to_queue_fname = tool_name(tools, "move_tasks_to_queue")
     partition_queue_fname = tool_name(tools, "partition_queue")
     update_task_fname = tool_name(tools, "update_task")
     reinstate_task_fname = tool_name(tools, "reinstate_task_to_previous_queue")
+
+    contact_ask_fname = tool_name(tools, "contactmanager")  # e.g. "ContactManager_ask"
 
     # Clarification helper (optional)
     request_clar_fname = tool_name(tools, "request_clarification")
@@ -243,6 +246,7 @@ def build_update_prompt(
             "delete_task": delete_task_fname,
             "cancel_tasks": cancel_tasks_fname,
             "update_task": update_task_fname,
+            "ContactManager.ask": contact_ask_fname,
         },
         tools,
     )
@@ -285,6 +289,7 @@ def build_update_prompt(
     if list_queues_fname and get_queue_fname and reorder_queue_fname:
         usage_examples_lines.extend(
             [
+                f"• Always refresh the queue membership immediately before calling `{reorder_queue_fname}` by calling `{list_queues_fname}()` and `{get_queue_fname}()`.",
                 f"• Inspect existing queues: `{list_queues_fname}()`; fetch a specific queue: `{get_queue_fname}(queue_id=<id>)`.",
                 f"• Reorder a queue explicitly: `{reorder_queue_fname}(queue_id=<id>, new_order=[...])`.",
             ],
@@ -302,6 +307,13 @@ def build_update_prompt(
             [
                 f"• Split a queue into dated batches: `{partition_queue_fname}(parts=[{{'task_ids':[0,2], 'queue_start_at':'2035-07-01T09:00:00Z'}}, {{'task_ids':[1,3], 'queue_start_at':'2035-07-02T09:00:00Z'}}])`.",
                 "  This is the most direct way to express: do subset A at time X and subset B at time Y.",
+            ],
+        )
+
+    if set_queue_fname and move_tasks_to_queue_fname and reorder_queue_fname:
+        usage_examples_lines.extend(
+            [
+                f"• To insert or remove members from a queue, prefer `{set_queue_fname}` or combine `{move_tasks_to_queue_fname}` with `{reorder_queue_fname}` to update the queue order.",
             ],
         )
 
@@ -384,8 +396,8 @@ def build_update_prompt(
             "",
             "Contact context",
             "---------------",
-            "• When a trigger references people (by contact ids), call ContactManager.ask to resolve/confirm the ids and the intent before writing.",
-            "• Avoid repeated calls to ContactManager.ask in the same update session if a prior call already yielded the required ids and no new ambiguity was introduced.",
+            f"• When a trigger references people (by contact ids), call {contact_ask_fname} to resolve/confirm the ids and the intent before writing.",
+            f"• Avoid repeated calls to {contact_ask_fname} in the same update session if a prior call already yielded the required ids and no new ambiguity was introduced.",
             "",
             "Anti‑patterns to avoid",
             "---------------------",
@@ -562,7 +574,7 @@ def build_execute_prompt(
         "",
         "Reporting",
         "---------",
-        "• Execution returns an ActiveQueue handle. Include the executed task id(s) in your final response.",
+        "• Execution returns an live steerable handle. Include the executed task id(s) in your final response.",
     ]
 
     # Append current time for determinism and cache friendliness
