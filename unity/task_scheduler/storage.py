@@ -16,6 +16,9 @@ import os
 
 import unify
 
+from .types.task import Task
+from .types.status import Status
+
 
 class TasksStore:
     """
@@ -507,7 +510,7 @@ class LocalTaskView:
     def mark_queue_changed(self) -> None:
         self._queue_index_stale = True
 
-    def refresh_queue_index_from_rows(self, rows: List[Dict[str, Any]]) -> None:
+    def refresh_queue_index_from_rows(self, rows: List[Task]) -> None:
         """
         Build queue caches from a list of row dicts containing at least:
         task_id, schedule (dict), status, queue_id.
@@ -517,25 +520,20 @@ class LocalTaskView:
             runnable = [
                 r
                 for r in (rows or [])
-                if r.get("schedule") is not None
-                and str(r.get("status")) not in ("completed", "cancelled", "failed")
+                if r.schedule is not None
+                and r.status not in (Status.completed, Status.cancelled, Status.failed)
             ]
 
-            rows_by_id: Dict[int, Dict[str, Any]] = {}
+            rows_by_id: Dict[int, Task] = {}
             for r in runnable:
-                try:
-                    tid = int(r.get("task_id"))
-                except Exception:
-                    continue
-                rows_by_id[tid] = r
+                rows_by_id[r.task_id] = r
 
             # Identify heads by prev_task is None and numeric queue_id
-            heads: List[Dict[str, Any]] = []
+            heads: List[Task] = []
             for r in runnable:
-                sched = r.get("schedule") or {}
-                prev = sched.get("prev_task")
-                qid = r.get("queue_id")
-                if prev is None and isinstance(qid, int):
+                if r.schedule is None:
+                    continue
+                if r.schedule.prev_task is None and r.queue_id is not None:
                     heads.append(r)
 
             new_index: Dict[int, List[int]] = {}
@@ -543,16 +541,17 @@ class LocalTaskView:
             new_head_start: Dict[int, Optional[str]] = {}
 
             for h in heads:
-                try:
-                    qid = int(h.get("queue_id"))
-                except Exception:
-                    continue
+                qid = h.queue_id
+
+                assert qid is not None
+                assert h.schedule is not None
+
                 order: List[int] = []
                 seen: set[int] = set()
                 cur = h
                 while cur is not None:
                     try:
-                        tid_val = cur.get("task_id")
+                        tid_val = cur.task_id
                         tid = int(tid_val) if tid_val is not None else None
                     except Exception:
                         tid = None
@@ -560,7 +559,7 @@ class LocalTaskView:
                         break
                     seen.add(tid)
                     order.append(tid)
-                    nxt = (cur.get("schedule") or {}).get("next_task")
+                    nxt = cur.schedule.next_task
                     if nxt is None:
                         break
                     try:
@@ -572,10 +571,11 @@ class LocalTaskView:
                     new_index[qid] = order
                     for t in order:
                         new_reverse[t] = qid
-                    try:
-                        new_head_start[qid] = (h.get("schedule") or {}).get("start_at")
-                    except Exception:
-                        new_head_start[qid] = None
+                    new_head_start[qid] = (
+                        h.schedule.start_at.isoformat()
+                        if h.schedule.start_at is not None
+                        else None
+                    )
 
             self._queue_index = new_index
             self._task_to_queue = new_reverse
@@ -596,7 +596,7 @@ class LocalTaskView:
             )
         except Exception:
             rows = []
-        self.refresh_queue_index_from_rows(rows)
+        self.refresh_queue_index_from_rows([Task(**r) for r in rows])
 
     def get_member_ids(self, queue_id: int) -> List[int]:
         try:
