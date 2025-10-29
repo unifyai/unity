@@ -3320,7 +3320,7 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         entries: Dict[str, Any],
         err_prefix: str,
-        current_row: Optional[Dict[str, Any]] = None,
+        current_row: Optional[Task] = None,
         skip_sync: bool = False,
         skip_cross_queue_guard: bool = False,
     ) -> Dict[str, str]:
@@ -3348,9 +3348,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         current = current_row or self._get_single_row_or_raise(task_id)
 
-        prospective_schedule = entries.get("schedule", current.get("schedule"))
-        prospective_status = entries.get("status", current.get("status"))
-        prospective_trigger = entries.get("trigger", current.get("trigger"))
+        prospective_schedule = entries.get("schedule", current.schedule)
+        prospective_status = entries.get("status", current.status)
+        prospective_trigger = entries.get("trigger", current.trigger)
 
         # Belt-and-braces: forbid setting status to 'active' via this funnel.
         norm_status = None
@@ -3432,7 +3432,7 @@ class TaskScheduler(BaseTaskScheduler):
                         rows = []
                     for r in rows:
                         try:
-                            rows_by_id[int(r.get("task_id"))] = r
+                            rows_by_id[int(r.task_id)] = r
                         except Exception:
                             continue
 
@@ -3442,7 +3442,7 @@ class TaskScheduler(BaseTaskScheduler):
                         continue
                     try:
                         nbr_row = rows_by_id.get(int(_tid))
-                        nbr_qid = nbr_row.get("queue_id") if nbr_row else None
+                        nbr_qid = nbr_row.queue_id if nbr_row else None
                     except Exception:
                         nbr_qid = None
                     if nbr_qid != qid:
@@ -3647,7 +3647,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Fetch current row for invariants/derivations
         row = self._get_single_row_or_raise(int(task_id))
-        current_sched = row.get("schedule") or {}
+        current_sched = row.schedule
 
         # No-op guard – allow updates when at least one field is provided OR when
         # the caller explicitly provided 'trigger' (even if None, meaning clear it).
@@ -3669,7 +3669,7 @@ class TaskScheduler(BaseTaskScheduler):
             # If the update itself adds a start_at or the current schedule is present, reject
             if start_at is not None:
                 raise ValueError("Cannot set a trigger alongside a start_at schedule.")
-            if row.get("schedule") is not None:
+            if row.schedule is not None:
                 raise ValueError(
                     "Cannot add a trigger while a schedule exists. Remove schedule first.",
                 )
@@ -3679,9 +3679,7 @@ class TaskScheduler(BaseTaskScheduler):
         if start_at is not None:
             # Disallow start_at when the task is trigger-based
             # Allow when the update explicitly clears the trigger in the same call
-            if row.get("trigger") is not None and not (
-                _trigger_provided and trigger is None
-            ):
+            if row.trigger is not None and not (_trigger_provided and trigger is None):
                 raise ValueError(
                     "Cannot add/update *start_at* – the task is trigger-based.",
                 )
@@ -3725,9 +3723,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Validate queue/schedule invariants when status or start_at provided
         if desired_status is not None or schedule_payload is not None:
             self._validate_scheduled_invariants(
-                status=(
-                    desired_status if desired_status is not None else row.get("status")
-                ),
+                status=(desired_status if desired_status is not None else row.status),
                 schedule=(
                     schedule_payload if schedule_payload is not None else current_sched
                 ),
@@ -3780,7 +3776,7 @@ class TaskScheduler(BaseTaskScheduler):
             _trigger_provided
             and (trigger is None)
             and (status is None)
-            and self._to_status(row.get("status")) == Status.triggerable
+            and self._to_status(row.status) == Status.triggerable
         ):
             # Downgrade to queued when trigger removed (and not setting start_at)
             if schedule_payload is None:
@@ -3791,7 +3787,7 @@ class TaskScheduler(BaseTaskScheduler):
             # Provide queue_id when we know it to avoid an extra guard read and ensure consistency
             if ("schedule" in entries) and ("queue_id" not in entries):
                 try:
-                    _qid = row.get("queue_id")
+                    _qid = row.queue_id
                     if isinstance(_qid, int):
                         entries["queue_id"] = int(_qid)
                 except Exception:
