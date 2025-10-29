@@ -346,7 +346,7 @@ class TaskScheduler(BaseTaskScheduler):
         self._provision_storage()
 
     # ------------------------------ Small helpers ------------------------------ #
-    def _tid_to_log_id_map(self, task_ids: List[int]) -> Dict[int, int]:
+    def _task_id_to_log_id_map(self, task_ids: List[int]) -> Dict[int, int]:
         """Resolve a mapping of task_id → log_id in one call (best-effort)."""
         try:
             log_objs = self._get_logs_by_task_ids(
@@ -355,14 +355,14 @@ class TaskScheduler(BaseTaskScheduler):
             )
         except Exception:
             log_objs = []
+
+        if not log_objs:
+            return {}
+
         id_map: Dict[int, int] = {}
-        for lg in log_objs or []:
+        for lg in log_objs:
             try:
-                e = getattr(lg, "entries", {}) or {}
-                tid = e.get("task_id")
-                lid = getattr(lg, "id", None)
-                if isinstance(tid, int) and isinstance(lid, int):
-                    id_map[int(tid)] = int(lid)
+                id_map[lg.entries["task_id"]] = lg.id
             except Exception:
                 continue
         return id_map
@@ -2425,7 +2425,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         # Build tid→log_id map once
-        id_map: Dict[int, int] = self._tid_to_log_id_map(list(new_order))
+        id_map: Dict[int, int] = self._task_id_to_log_id_map(list(new_order))
 
         # Filter out no-op writes and batch the rest
         to_write_ids: list[int] = []
