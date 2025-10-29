@@ -317,7 +317,7 @@ class TaskScheduler(BaseTaskScheduler):
                 "`instance_id` which tracks multiple executions of the "
                 "same logical task."
             ),
-            fields=model_to_fields(TaskBase),
+            fields=model_to_fields(Task),
         )
 
         # Centralised local view for queue membership, allocator and light caching.
