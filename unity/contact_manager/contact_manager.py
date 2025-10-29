@@ -477,7 +477,7 @@ class ContactManager(BaseContactManager):
         - Columns that store embeddings (those whose names end with ``"_emb"``)
           may exist in the backend but are not filtered out here; consumers that
           don't want to see private vector columns should filter them out
-          themselves (other tools in this class exclude them where appropriate).
+          themselves.
         - Column names follow snake_case. Built‑in columns are derived directly from
           the Pydantic ``Contact`` model and are immutable.
         """
@@ -495,8 +495,7 @@ class ContactManager(BaseContactManager):
         """
         Filter contacts using a boolean Python expression evaluated per row.
 
-        Prefer this for exact, column‑wise filtering (e.g. id or equality checks). For
-        fuzzy or semantic matches across free‑text columns, use ``_search_contacts``.
+        For exact, equality, inequality, membership checks and column-wise filtering (e.g. id or equality checks).
 
         Parameters
         ----------
@@ -515,8 +514,7 @@ class ContactManager(BaseContactManager):
         Returns
         -------
         List[Contact]
-            Matching contacts as Pydantic ``Contact`` models in creation order. Embedding
-            columns (``*_emb``) are excluded from the payload to keep responses small.
+            Matching contacts as Pydantic ``Contact`` models in creation order.
 
         Notes
         -----
@@ -594,8 +592,6 @@ class ContactManager(BaseContactManager):
         - When a single term is provided, results are ranked by ``cosine(column_emb, ref)``.
         - When multiple terms are provided, results are ranked by the sum of cosines across
           all terms to favour contacts similar across several fields.
-        - Embedding columns (``*_emb``) are excluded from the returned models to keep payloads
-          compact.
         """
         return _srch_search(self, references=references, k=k)
 
@@ -762,8 +758,7 @@ class ContactManager(BaseContactManager):
         -----
         - Fields not supplied remain unchanged.
         - This operation overwrites the stored values for the selected fields.
-        - ``contact_id`` itself cannot be changed here; use ``_merge_contacts`` if you need
-          to consolidate records and choose which id to keep.
+        - ``contact_id`` itself cannot be changed.
         """
 
         return _op_update(
@@ -863,7 +858,6 @@ class ContactManager(BaseContactManager):
 
         Notes
         -----
-        - Private vector columns (names ending with ``"_emb"``) are ignored during merge.
         - After the merge, transcript messages that referenced the deleted contact will have
           their ``contact_id`` updated to the kept id for consistency.
         - Custom fields are applied via ``update_contact``; built‑in fields are applied
@@ -884,6 +878,23 @@ class ContactManager(BaseContactManager):
         column_type: ColumnType | str,
         column_description: Optional[str] = None,
     ) -> Dict[str, str]:
+        """
+        Create a new custom column on the contacts table.
+
+        Parameters
+        ----------
+        column_name : str
+            The name of the new custom column. Must be a valid snake_case name.
+        column_type : ColumnType | str
+            The type of the new custom column.
+        column_description : str | None
+            The description of the new custom column.
+
+        Returns
+        -------
+        Dict[str, str]
+            A dictionary containing the name and type of the new custom column.
+        """
         return _cc_create(
             self,
             column_name=column_name,
@@ -892,6 +903,19 @@ class ContactManager(BaseContactManager):
         )
 
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
+        """
+        Delete a custom column from the contacts table.
+
+        Parameters
+        ----------
+        column_name : str
+            The name of the custom column to delete.
+
+        Returns
+        -------
+        Dict[str, str]
+            A dictionary containing the name.
+        """
         return _cc_delete(self, column_name=column_name)
 
     # ──────────────────────────────────────────────────────────────────────

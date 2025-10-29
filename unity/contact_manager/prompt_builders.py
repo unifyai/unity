@@ -13,6 +13,7 @@ from ..common.prompt_helpers import (
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
     parallelism_guidance,
+    images_policy_block,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -117,7 +118,7 @@ Examples
 • For ANY semantic question over free‑form text (bio, rolling_summary, custom text columns), ALWAYS use `{search_contacts_fname}`. Never try to approximate meaning with brittle substring filters.
 • Use `{filter_contacts_fname}` only for exact/boolean logic over structured fields (emails, phone numbers, null checks) or for narrow, constrained text where substring checks make sense (e.g., case‑insensitive contains on first_name).
 
-─ Semantic search: targeted references across columns (ranked by SUM of cosine distances) ─
+─ Semantic search: targeted references across columns ─
 • When the clue could appear across several free‑form fields, provide separate, surgical references instead of one catch‑all. This yields stronger ranking than concatenating everything into one giant string. For example, find the San Francisco software engineer we worked on onboarding with last week:
   `{search_contacts_fname}(references={{'bio': 'San Francisco software engineer', 'rolling_summary': 'worked on onboarding last week'}}, k=2)`
 
@@ -201,6 +202,8 @@ Anti‑patterns to avoid
             special_contacts_block,
             "",
             usage_examples,
+            "",
+            images_policy_block(),
             "",
             parallelism_guidance(),
             "",
@@ -379,6 +382,8 @@ Anti‑patterns to avoid
             special_contacts_block,
             "",
             usage_examples,
+            "",
+            images_policy_block(),
             "",
             parallelism_guidance(),
             "",

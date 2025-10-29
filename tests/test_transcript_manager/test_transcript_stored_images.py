@@ -66,6 +66,8 @@ def test_get_images_for_message_returns_metadata_only_tm():
     assert entry.get("image_id") == int(img_id)
     assert entry.get("caption") == "blue screen capture"
     assert isinstance(entry.get("timestamp"), str)
+    # Stored metadata should include the freeform annotation
+    assert entry.get("annotation") == "blue screen"
     # Ensure no raw image/base64 field is present
     assert "image" not in entry
 

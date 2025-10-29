@@ -6,7 +6,6 @@ import unify
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.message import Message
-from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.utils import make_solid_png_base64
 from tests.helpers import _handle_project
 from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, AnnotatedImageRef
@@ -104,55 +103,6 @@ def test_images_roundtrip_annotated_only():
         ),
     )
     assert isinstance(m.images, AnnotatedImageRefs)
-
-
-@pytest.mark.unit
-@_handle_project
-def test_get_images_for_message_includes_annotation():
-    tm = TranscriptManager()
-    im = ImageManager()
-
-    # Seed a small valid image
-    [img_id] = im.add_images(
-        [
-            {
-                "timestamp": datetime.now(UTC),
-                "caption": "blue pixel",
-                "data": PNG_1x1_BLUE,
-            },
-        ],
-    )
-
-    content = "click this button to open the modal"
-    # Attach one annotated image reference
-    image_refs = AnnotatedImageRefs.model_validate(
-        [
-            AnnotatedImageRef(
-                raw_image_ref=RawImageRef(image_id=int(img_id)),
-                annotation="this button",
-            ),
-        ],
-    )
-
-    msg = Message(
-        medium="email",
-        sender_id=0,
-        receiver_ids=[1],
-        timestamp=datetime.now(UTC),
-        content=content,
-        exchange_id=13579,
-        images=image_refs,
-    )
-
-    tm.log_messages(msg)
-    tm.join_published()
-
-    stored = tm._filter_messages(filter=f"exchange_id == {msg.exchange_id}")["messages"]
-    mid = stored[0].message_id
-
-    items = tm._get_images_for_message(message_id=int(mid))
-    assert items and isinstance(items[0].get("annotation"), (str, type(None)))
-    assert items[0]["annotation"].strip() == "this button"
 
 
 @pytest.mark.unit

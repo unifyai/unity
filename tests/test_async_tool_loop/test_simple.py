@@ -254,6 +254,54 @@ async def test_mixed_sync_async_tools():
     assert "13" in answer.strip()
 
 
+# --------------------------------------------------------------------------- #
+#  PRETTY PRINTING – tool returns pure JSON string                            #
+# --------------------------------------------------------------------------- #
+@unify.traced
+def emit_json() -> str:
+    # Compact JSON string (no spaces/newlines). The loop should pretty‑print it.
+    return '{"foo":1,"bar":[2,3],"baz":{"ok":true}}'
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_pretty_prints_json_string_tool_result():
+    client = new_client()
+
+    # Ask the model to call the tool once, then reply. Result should be pretty‑printed in the transcript.
+    _ = await start_async_tool_loop(
+        client,
+        message=(
+            "In your FIRST assistant message, request EXACTLY ONE tool call to `emit_json` "
+            "with empty arguments {}; after receiving the tool reply, answer with the single word 'ok'."
+        ),
+        tools={"emit_json": emit_json},
+        max_consecutive_failures=2,
+    ).result()
+
+    # Find the tool message for emit_json
+    tool_msgs = [
+        m
+        for m in client.messages
+        if m.get("role") == "tool" and m.get("name") == "emit_json"
+    ]
+    assert tool_msgs, "Expected a tool reply from emit_json"
+    content = tool_msgs[0].get("content") or ""
+
+    # It should now be a pretty‑printed JSON object string (not a quoted JSON string)
+    assert isinstance(content, str)
+    assert content.strip().startswith(
+        "{",
+    ), "Content should start with a JSON object, not a quoted string"
+    assert not content.strip().startswith(
+        '"{',
+    ), "Content should not be a double‑encoded JSON string"
+    assert "\n" in content, "Pretty‑printed JSON should contain newlines"
+    assert (
+        '"foo": 1' in content
+    ), "Pretty‑printed JSON should include spaces after colons"
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D401

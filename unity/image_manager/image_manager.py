@@ -316,6 +316,8 @@ class ImageHandle:
     async def ask(
         self,
         question: str,
+        *,
+        parent_chat_context_cont: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         """
         Ask a high-level question about this image with a single LLM call.
@@ -325,6 +327,16 @@ class ImageHandle:
         tool-use loop).
         If the image is stored as a GCS URL, a temporary signed URL is generated
         to make it accessible to the vision model.
+
+        Parameters
+        ----------
+        question : str
+            The natural-language question to ask about the image.
+        parent_chat_context_cont : list[dict] | None, optional
+            Optional parent chat context continuation. When provided, a single
+            synthetic system message is inserted at the start of the chat that
+            summarises the broader context as JSON (read-only), mirroring the
+            async tool loop behavior. We do not prepend the full transcript.
         """
         # Single-call client
         client = unify.AsyncUnify(
@@ -342,6 +354,22 @@ class ImageHandle:
                 timestamp=self._image.timestamp,
             ),
         )
+
+        # Optional: inject broader parent chat context as a single system header
+        if parent_chat_context_cont:
+            sys_msg = {
+                "role": "system",
+                "_ctx_header": True,
+                "content": (
+                    "Broader context (read-only):\n"
+                    f"{json.dumps(parent_chat_context_cont, indent=2)}\n\n"
+                    "Resolve the *next* user request in light of this."
+                ),
+            }
+            try:
+                client.append_messages([sys_msg])
+            except Exception:
+                pass
 
         # Provide the image as a user content block (vision input).
         # Prefer cached base64 from the DataStore when available to avoid signing/downloading again

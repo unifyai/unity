@@ -415,6 +415,9 @@ async def async_tool_loop_inner(
         live_image_tools = build_live_image_tools(
             reference_message=message,
             append_user_messages=_msg_dispatcher.append_msgs,
+            client=client,
+            parent_chat_context=parent_chat_context,
+            propagate_chat_context=propagate_chat_context,
         )
         # Remove the dummy overview helper; image overview is injected synthetically
         with suppress(Exception):
@@ -555,7 +558,6 @@ async def async_tool_loop_inner(
                                 "isoformat",
                                 lambda: "",
                             )(),
-                            "is_pending": bool(getattr(_h, "is_pending", False)),
                         },
                     )
                 except Exception:
@@ -589,8 +591,6 @@ async def async_tool_loop_inner(
                 ],
             }
 
-            # Mark as non-step so max_steps accounting ignores synthetic injection
-            asst_msg["_non_step"] = True
             await _msg_dispatcher.append_msgs([asst_msg])
             try:
                 await to_event_bus(asst_msg, cfg)
@@ -605,8 +605,6 @@ async def async_tool_loop_inner(
                 call_id=call_id,
                 content=_dumps(payload, indent=4),
             )
-            # Mark as non-step as well
-            tool_msg["_non_step"] = True
             await insert_tool_message_after_assistant(
                 assistant_meta,
                 asst_msg,

@@ -51,21 +51,7 @@ class TimeoutTimer:
         if self._max_steps is None:
             return False
 
-        # Count only messages that should contribute towards the step budget.
-        try:
-            msgs = getattr(self._client, "messages", []) or []
-            effective_len = 0
-            for m in msgs:
-                try:
-                    if isinstance(m, dict) and m.get("_non_step", False):
-                        continue
-                except Exception:
-                    pass
-                effective_len += 1
-        except Exception:
-            effective_len = len(self._client.messages)
-
-        ret = effective_len >= self._max_steps
+        ret = len(self._client.messages) >= self._max_steps
         if self._raise_on_limit and ret:
             raise RuntimeError(
                 f"Conversation exceeded max_steps={self._max_steps} "
