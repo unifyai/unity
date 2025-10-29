@@ -92,6 +92,7 @@ class UnifyCallReceived(Event):
 
     contact: int
     agent_name: str | None = None
+    room_name: str | None = None
 
 
 @dataclass

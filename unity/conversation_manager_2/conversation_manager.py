@@ -219,6 +219,7 @@ class ConversationManager:
                 response_model,
                 "phone_utterance",
             ):
+                print("topic", f"app:{self.state.mode}:response_gen")
                 if event["type"] == "chunk":
                     if first_chunk:
                         await self.event_broker.publish(
@@ -698,11 +699,20 @@ class ConversationManager:
 
                 # start the process here
                 target_path = Path(__file__).parent.resolve() / "medium_scripts"
-                if self.state.mode == "unify_call":
+                if isinstance(event, UnifyCallReceived):
                     target_path = target_path / "unify_call.py"
                     agent_name = (
                         event.agent_name
-                        if isinstance(event, UnifyCallReceived) and event.agent_name
+                        if event.agent_name
+                        else (
+                            f"unity_{self.state.assistant_id}_web"
+                            if self.state.assistant_id
+                            else "unity_unify_call_1"
+                        )
+                    )
+                    room_name = (
+                        event.room_name
+                        if event.room_name
                         else (
                             f"unity_{self.state.assistant_id}_web"
                             if self.state.assistant_id
@@ -713,6 +723,7 @@ class ConversationManager:
                         self.state.voice_provider,
                         self.state.voice_id if self.state.voice_id else "",
                         agent_name,
+                        room_name,
                     ]
                 else:
                     target_path = target_path / "call.py"
@@ -724,6 +735,7 @@ class ConversationManager:
                         "None",
                         str(False),
                     ]
+                print(f"target_path: {target_path}, args: {args}")
                 self.call_proc = run_script(str(target_path), "dev", *args)
 
         elif isinstance(event, (PhoneCallStarted, UnifyCallStarted)):

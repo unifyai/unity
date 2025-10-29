@@ -78,6 +78,7 @@ class Assistant(Agent):
     ) -> AsyncIterable[llm.ChatChunk]:
         while True:
             chunk = await chunk_queue.get()
+            print("chunk", chunk)
             if chunk["type"] == "end_gen":
                 break
             elif chunk["chunk"] is not None:
@@ -206,6 +207,7 @@ async def entrypoint(ctx: agents.JobContext):
                     )
                     if msg is None:
                         continue
+                    print("GOT", msg)
                     data = json.loads(msg["data"])
                     last_activity_time = asyncio.get_event_loop().time()
                     if data["type"] == "start_gen":
@@ -227,6 +229,7 @@ if __name__ == "__main__":
     voice_id = ""
     contact_id = 1
     agent_name = f"unity_unify_call_{contact_id}"
+    room_name = f"unity_unify_call_{contact_id}"
 
     # Parse optional args passed after the "dev" subcommand
     # Example invocation from run_script:
@@ -238,6 +241,8 @@ if __name__ == "__main__":
             voice_id = sys.argv[3]
         if len(sys.argv) > 4:
             agent_name = sys.argv[4]
+        if len(sys.argv) > 5:
+            room_name = sys.argv[5]
         # Trim argv so livekit agents CLI doesn't see extra args
         sys.argv = sys.argv[:2]
 
@@ -248,7 +253,7 @@ if __name__ == "__main__":
 
     # dispatch agent
     print("[unify_call] Dispatching agent")
-    dispatch_agent(agent_name)
+    dispatch_agent(agent_name, room_name)
     print("[unify_call] Agent dispatched")
 
     agents.cli.run_app(
