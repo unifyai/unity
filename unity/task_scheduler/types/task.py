@@ -11,8 +11,6 @@ from .repetition import RepeatPattern
 from .activated_by import ActivatedBy
 from datetime import datetime
 
-UNASSIGNED = -1
-
 
 class TaskBase(BaseModel):
     # Top-level queue identifier for tasks that are members of a runnable queue.
@@ -21,20 +19,6 @@ class TaskBase(BaseModel):
     queue_id: Optional[int] = Field(
         default=None,
         description=("Identifier of the runnable queue this task belongs to."),
-    )
-    task_id: int = Field(
-        default=UNASSIGNED,
-        description="Unique identifier for the task",
-        ge=UNASSIGNED,
-    )
-    instance_id: int = Field(
-        default=UNASSIGNED,
-        description=(
-            "Auto-incrementing counter that distinguishes multiple *instances* "
-            "of the same logical task.  The very first row receives `0`; "
-            "each subsequent clone is incremented by the backend."
-        ),
-        ge=UNASSIGNED,
     )
     name: str = Field(description="Short title of the task")
     description: str = Field(
@@ -89,13 +73,6 @@ class TaskBase(BaseModel):
         description="A summary of what happened during the execution of the task, generated upon completion.",
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def _inject_sentinel(cls, data: dict) -> dict:
-        data.setdefault("task_id", UNASSIGNED)
-        data.setdefault("instance_id", UNASSIGNED)
-        return data
-
     @model_validator(mode="after")
     def _mutually_exclusive_schedule_trigger(self):
         """
@@ -126,11 +103,18 @@ class TaskBase(BaseModel):
 
     def to_post_json(self) -> dict:
         exclude: set[str] = set()
-        if self.task_id == UNASSIGNED:
-            exclude.add("task_id")
-        if self.instance_id == UNASSIGNED:
-            exclude.add("instance_id")
         # Allow backend auto-increment for queue_id by omitting it when unset
         if self.queue_id is None:
             exclude.add("queue_id")
         return self.model_dump(mode="json", exclude=exclude)
+
+
+class Task(TaskBase):
+    task_id: int = Field(description="Unique identifier for the task")
+    instance_id: int = Field(
+        description=(
+            "Auto-incrementing counter that distinguishes multiple *instances* "
+            "of the same logical task.  The very first row receives `0`; "
+            "each subsequent clone is incremented by the backend."
+        ),
+    )
