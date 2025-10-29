@@ -35,7 +35,7 @@ from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.trigger import Trigger
 from .types.repetition import RepeatPattern, Frequency, Weekday
-from .types.task import UNASSIGNED, TaskBase
+from .types.task import TaskBase, Task
 from .types.activated_by import ActivatedBy
 
 # ------------------------------------------------------------------ #
@@ -727,7 +727,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Pick the *oldest* runnable instance (lowest instance_id)
         task_row = sorted(
             candidate_rows,
-            key=lambda r: r.instance_id if r.instance_id is not UNASSIGNED else 0,
+            key=lambda r: r.instance_id,
         )[0]
         if task_row.status in (
             Status.completed,
@@ -4339,7 +4339,7 @@ class TaskScheduler(BaseTaskScheduler):
             row_filter=None,
             unique_id_field="task_id",
         )
-        return [TaskBase(**lg) for lg in filled]
+        return [Task(**lg) for lg in filled]
 
     def _filter_tasks(
         self,
@@ -4347,7 +4347,7 @@ class TaskScheduler(BaseTaskScheduler):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[TaskBase]:
+    ) -> List[Task]:
         """
         Run a **column-wise Python expression** (`filter`) against every task
         and return the matching rows.
@@ -4444,7 +4444,7 @@ class TaskScheduler(BaseTaskScheduler):
             if isinstance(rep, list):
                 row["repeat"] = [_rehydrate_repeat(x) for x in rep]
 
-        return [TaskBase(**row) for row in rows]
+        return [Task(**row) for row in rows]
 
     # ────────────────────────────────────────────────────────────────────
     # Broader context helper
