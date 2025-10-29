@@ -1974,23 +1974,23 @@ class TaskScheduler(BaseTaskScheduler):
         rows = [
             r
             for r in self._filter_tasks()
-            if r.get("schedule") is not None
-            and self._to_status(r.get("status")) not in self._TERMINAL_STATUSES
+            if r.schedule is not None
+            and self._to_status(r.status) not in self._TERMINAL_STATUSES
         ]
 
         # Single-pass index for constant-time next lookups within this tool call
-        rows_by_id: Dict[int, TaskRow] = {}
+        rows_by_id: Dict[int, Task] = {}
         for r in rows:
             try:
-                tid = r.get("task_id")
+                tid = r.task_id
                 if isinstance(tid, int):
                     rows_by_id[tid] = r
             except Exception:
                 pass
 
         # Heads are rows with prev_task == None
-        heads: list[TaskRow] = [
-            r for r in rows if (r.get("schedule") or {}).get("prev_task") is None
+        heads: list[Task] = [
+            r for r in rows if r.schedule is not None and r.schedule.prev_task is None
         ]
 
         out: list[Dict[str, Any]] = []
@@ -1999,12 +1999,15 @@ class TaskScheduler(BaseTaskScheduler):
         new_task_to_queue: Dict[int, int] = {}
         new_head_start_at: Dict[int, Optional[str]] = {}
         for h in heads:
-            sched = h.get("schedule") or {}
-            start_at = sched.get("start_at")
-            qid = h.get("queue_id")
-            if not isinstance(qid, int):
+            qid = h.queue_id
+            if qid is None:
                 continue
 
+            start_at = (
+                h.schedule.start_at.isoformat()
+                if h.schedule.start_at is not None
+                else None
+            )
             # Compute chain size purely in-memory to avoid extra backend reads
             size = 0
             seen: set[int] = set()
@@ -2012,7 +2015,7 @@ class TaskScheduler(BaseTaskScheduler):
             order_for_q: list[int] = []
             while cur is not None:
                 try:
-                    tid_val = cur.get("task_id")
+                    tid_val = cur.task_id
                     tid_int = int(tid_val) if tid_val is not None else None
                 except Exception:
                     tid_int = None
@@ -2022,7 +2025,7 @@ class TaskScheduler(BaseTaskScheduler):
                     seen.add(tid_int)
                     size += 1
                     order_for_q.append(tid_int)
-                nxt = (cur.get("schedule") or {}).get("next_task")
+                nxt = cur.schedule.next_task
                 if nxt is None:
                     break
                 try:
@@ -2042,7 +2045,7 @@ class TaskScheduler(BaseTaskScheduler):
                 {
                     "queue_id": qid,
                     "queue_label": f"Q{qid}",
-                    "head_id": h.get("task_id"),
+                    "head_id": h.task_id,
                     "size": size,
                     "start_at": start_at,
                 },
