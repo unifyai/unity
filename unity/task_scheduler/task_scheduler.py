@@ -35,7 +35,7 @@ from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.trigger import Trigger
 from .types.repetition import RepeatPattern, Frequency, Weekday
-from .types.task import Task
+from .types.task import UNASSIGNED, Task
 from .types.activated_by import ActivatedBy
 
 # ------------------------------------------------------------------ #
@@ -727,14 +727,19 @@ class TaskScheduler(BaseTaskScheduler):
         # Pick the *oldest* runnable instance (lowest instance_id)
         task_row = sorted(
             candidate_rows,
-            key=lambda r: r.get("instance_id", 0),
+            key=lambda r: r.instance_id if r.instance_id is not UNASSIGNED else 0,
         )[0]
-        if task_row["status"] in ("completed", "cancelled", "failed", "active"):
-            raise ValueError(f"Task {task_id} is already {task_row['status']!r}.")
+        if task_row.status in (
+            Status.completed,
+            Status.cancelled,
+            Status.failed,
+            Status.active,
+        ):
+            raise ValueError(f"Task {task_id} is already {task_row.status!r}.")
 
         # Adjust queue linkages for activation (and record reintegration plan).
         # detach=True → isolation semantics; detach=False → chain semantics.
-        desired_next: Optional[int] = _q_next(task_row.get("schedule"))
+        desired_next: Optional[int] = _q_next(task_row.schedule)
 
         self._detach_from_queue_for_activation(
             task_id=task_id,
@@ -743,7 +748,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
-        _task_desc = task_row.get("description") or task_row.get("name") or ""
+        _task_desc = task_row.description or task_row.name or ""
         handle = await ActiveTask.create(
             self._actor,
             task_description=_task_desc,
@@ -751,19 +756,20 @@ class TaskScheduler(BaseTaskScheduler):
             _clarification_up_q=clarification_up_q,
             _clarification_down_q=clarification_down_q,
             task_id=task_id,
-            instance_id=task_row["instance_id"],
+            instance_id=task_row.instance_id,
             scheduler=self,
         )
 
         self._active_task = TaskScheduler.ActivePointer(
             task_id=task_id,
-            instance_id=task_row["instance_id"],
+            instance_id=task_row.instance_id,
             handle=handle,
         )
 
         # Clone if this is a triggerable or recurring task
-        if self._to_status(task_row["status"]) == Status.triggerable or task_row.get(
-            "repeat",
+        if (
+            self._to_status(task_row.status) == Status.triggerable
+            or task_row.repeat is not None
         ):
             self._clone_task_instance(task_row)
 
@@ -774,25 +780,23 @@ class TaskScheduler(BaseTaskScheduler):
         if activated_by is not None:
             reason = activated_by
         else:
-            sched = task_row.get("schedule") or {}
-            if task_row.get("trigger") is not None:
+            sched = task_row.schedule or Schedule()
+            if task_row.trigger is not None:
                 reason = ActivatedBy.trigger
-            elif (sched.get("prev_task") is None) and (
-                sched.get("start_at") is not None
-            ):
+            elif (sched.prev_task is None) and (sched.start_at is not None):
                 reason = ActivatedBy.schedule
-            elif sched.get("prev_task") is not None:
+            elif sched.prev_task is not None:
                 reason = ActivatedBy.queue
             else:
                 reason = ActivatedBy.explicit
 
         self._update_task_status_instance(
             task_id=task_id,
-            instance_id=task_row["instance_id"],
+            instance_id=task_row.instance_id,
             new_status="active",
             activated_by=reason,
         )
-        if self._primed_task and self._primed_task["task_id"] == task_id:
+        if self._primed_task and self._primed_task.task_id == task_id:
             self._primed_task = None
 
         return handle
