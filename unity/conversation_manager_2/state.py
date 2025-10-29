@@ -231,20 +231,27 @@ class ConversationManagerState:
                             notif.pinned = False
                             break
 
-            case PhoneCallRecieved() as e:
-                self.conference_name = e.conference_name
-
-                # contact should always exist here.
-                contact = self.get_contact(phone_number=e.contact)
+            case PhoneCallRecieved() | UnifyCallReceived() as e:
+                if isinstance(e, PhoneCallRecieved):
+                    self.conference_name = e.conference_name
+                    contact = self.get_contact(phone_number=e.contact)
+                    thread_type = "phone"
+                else:
+                    contact = self.get_contact(contact_id=1)
+                    thread_type = "unify_call"
                 self.push_message(
                     contact,
-                    "phone",
-                    Message(contact.full_name, "<Phone call sent...>", e.timestamp),
+                    thread_type,
+                    Message(
+                        contact.full_name,
+                        f"<{thread_type.replace('_call', '').capitalize()} Call recieved...>",
+                        e.timestamp,
+                    ),
                 )
                 self.push_notif(
                     Notification(
                         "comms",
-                        f"Phone Call recieved from '{contact.full_name}'",
+                        f"{thread_type.replace('_call', '').capitalize()} Call recieved from '{contact.full_name}'",
                         e.timestamp,
                     ),
                 )
