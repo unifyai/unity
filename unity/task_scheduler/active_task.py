@@ -18,9 +18,10 @@ from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
 from .llm import new_llm_client
-import logging 
+import logging
 
 logger = logging.getLogger(__name__)
+
 
 async def classify_steering_intent(
     message: str,

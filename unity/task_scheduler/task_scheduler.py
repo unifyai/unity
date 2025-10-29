@@ -3851,7 +3851,10 @@ class TaskScheduler(BaseTaskScheduler):
             and self._active_task.task_id == task_id
             and self._active_task.instance_id == instance_id
         ):
-            return {"outcome": "skipped", "reason": "Cannot update active task instance directly"}
+            return {
+                "outcome": "skipped",
+                "reason": "Cannot update active task instance directly",
+            }
 
         # Find the specific log for this instance
         log_objs = self._view.get_rows(
