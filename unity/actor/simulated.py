@@ -174,6 +174,10 @@ class SimulatedActorHandle(SteerableToolHandle):
         if not self._done_event.is_set():
             with self._step_lock:
                 self._steps_taken += 1
+            if self._steps is not None and self._steps_taken >= self._steps:
+                self._complete(
+                    f"Completed '{self._description}' in {self._steps} steps.",
+                )
             # Emit steps remaining after each user-visible interaction that consumes a step
             try:
                 if self._steps is not None:
@@ -183,10 +187,17 @@ class SimulatedActorHandle(SteerableToolHandle):
                 pass
 
     async def result(self) -> str:
+        # Simulate consuming the final step *if* steps are used and not yet done
+        if self._steps is not None and not self._done_event.is_set():
+            self.simulate_step()
         await asyncio.to_thread(self._done_event.wait)
         return self._result_str  # type: ignore
 
     def stop(self, reason: Optional[str] = None) -> str:
+        if self._done_event.is_set():
+            return (
+                self._result_str or "Already stopped."
+            )  # Return existing result if done
         if not self._description:
             raise Exception("No actions are currently being performed.")
         msg = f"Stopped '{self._description}' for reason: {reason}"
