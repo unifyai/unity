@@ -3830,6 +3830,91 @@ class TaskScheduler(BaseTaskScheduler):
             log_id = self._get_logs_by_task_ids(task_ids=task_id)
             return self._write_log_entries(logs=log_id, entries=entries, overwrite=True)
 
+    def _update_task_instance(
+        self,
+        *,
+        task_id: int,
+        instance_id: int,
+        **kwargs: Any,
+    ) -> Dict[str, str]:
+        """
+        Validate and update fields for a specific task instance (task_id + instance_id).
+        Supports lifecycle fields such as status and info.
+
+        Raises:
+            ValueError: If the instance doesn't exist or if updates violate invariants.
+        """
+        # Ensure we are not trying to update the *currently* active task pointer directly
+        # (though this method is usually called *after* it finishes).
+        if (
+            self._active_task is not None
+            and self._active_task.task_id == task_id
+            and self._active_task.instance_id == instance_id
+        ):
+            return {"outcome": "skipped", "reason": "Cannot update active task instance directly"}
+
+        # Find the specific log for this instance
+        log_objs = self._view.get_rows(
+            filter=f"task_id == {task_id} and instance_id == {instance_id}",
+            limit=1,
+            return_ids_only=False,
+        )
+        if not log_objs:
+            raise ValueError(
+                f"No task instance found for task_id={task_id}, instance_id={instance_id}",
+            )
+
+        log_to_update = log_objs[0]
+        current_row = dict(log_to_update.entries)
+        entries_to_write = {}
+        current_sched = current_row.get("schedule") or {}
+
+        if "status" in kwargs:
+            new_status = self._to_status(kwargs["status"])
+            if new_status == Status.active:
+                raise ValueError("Direct status changes to 'active' are not allowed.")
+            self._validate_scheduled_invariants(
+                status=new_status,
+                schedule=current_sched,
+                trigger=current_row.get("trigger"),
+                err_prefix=f"While updating instance {task_id}.{instance_id}:",
+            )
+            entries_to_write["status"] = new_status
+
+        # If 'info' is being updated
+        if "info" in kwargs:
+            entries_to_write["info"] = kwargs["info"]
+
+        if not entries_to_write:
+            return {
+                "outcome": "no changes",
+                "details": {"task_id": task_id, "instance_id": instance_id},
+            }
+
+        result = self._write_log_entries(
+            logs=log_to_update.id,
+            entries=entries_to_write,
+            overwrite=True,
+        )
+
+        if "status" in entries_to_write:
+            new_status_written = entries_to_write["status"]
+            if (
+                self._primed_task
+                and self._primed_task.get("task_id") == task_id
+                and self._primed_task.get("instance_id") == instance_id
+            ):
+                if new_status_written != Status.primed:
+                    self._primed_task = None
+            if new_status_written in (
+                Status.completed,
+                Status.cancelled,
+                Status.failed,
+            ):
+                self._view.mark_queue_changed()
+
+        return result
+
     # ────────────────────────────────────────────────────────────────────
     # Small internal helpers
     # ────────────────────────────────────────────────────────────────────
