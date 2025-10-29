@@ -9,7 +9,7 @@ import pytest
 
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.task_scheduler.types.task import TaskBase
+from unity.task_scheduler.types.task import Task
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
 from unity.task_scheduler.types.status import Status
 
@@ -178,7 +178,7 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
     a, b, c = await _make_ordered_queue(ts, ["S_A", "S_B", "S_C"])  # type: ignore[misc]
 
     # Snapshot original schedules and queue_ids
-    def _row(tid: int) -> TaskBase:
+    def _row(tid: int) -> Task:
         return ts._filter_tasks(filter=f"task_id == {tid}")[0]
 
     ra0 = _row(a)
@@ -802,7 +802,7 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     rows_c = ts._filter_tasks(filter=f"task_id == {c_id}")
     rows_d = ts._filter_tasks(filter=f"task_id == {d_id}")
 
-    def _is_terminal(row: TaskBase):
+    def _is_terminal(row: Task):
         return row.status in (Status.completed, Status.cancelled, Status.failed)
 
     assert any(_is_terminal(r) for r in rows_a)
