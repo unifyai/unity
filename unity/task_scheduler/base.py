@@ -304,7 +304,7 @@ BaseTaskScheduler.clear.__doc__ = CLEAR_METHOD_DOCSTRING
 
 # Inject live Task schema into docstrings at import time
 try:
-    from .types.task import Task as _DocTask
+    from .types.task import TaskBase as _DocTask
 
     _TASK_SCHEMA_JSON = json.dumps(_DocTask.model_json_schema(), indent=4)
     try:

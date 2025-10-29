@@ -14,7 +14,7 @@ from datetime import datetime
 UNASSIGNED = -1
 
 
-class Task(BaseModel):
+class TaskBase(BaseModel):
     # Top-level queue identifier for tasks that are members of a runnable queue.
     # When a task is queued/scheduled, this must be populated. The schedule
     # object never carries a queue_id field; use this top-level column solely.

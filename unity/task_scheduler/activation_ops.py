@@ -16,7 +16,7 @@ from .queue_utils import (
     sched_next as _q_next,
 )
 from .types.reintegration_plan import ReintegrationPlan
-from .types.task import UNASSIGNED, Task
+from .types.task import UNASSIGNED, TaskBase
 from .types.schedule import Schedule
 
 if TYPE_CHECKING:
@@ -76,7 +76,7 @@ def detach_from_queue_for_activation(
 
     # Derive the current head's start_at so downstream tasks can be reinstated as
     # head-scheduled later if their original predecessor becomes terminal.
-    def _get_row(tid: int) -> Optional[Task]:
+    def _get_row(tid: int) -> Optional[TaskBase]:
         rows = scheduler._filter_tasks(filter=f"task_id == {tid}", limit=1)
         return rows[0] if rows else None
 

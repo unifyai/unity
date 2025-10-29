@@ -35,7 +35,7 @@ from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.trigger import Trigger
 from .types.repetition import RepeatPattern, Frequency, Weekday
-from .types.task import UNASSIGNED, Task
+from .types.task import UNASSIGNED, TaskBase
 from .types.activated_by import ActivatedBy
 
 # ------------------------------------------------------------------ #
@@ -280,9 +280,9 @@ class TaskScheduler(BaseTaskScheduler):
             assert (
                 len(primed_tasks) == 1
             ), f"More than one primed task found:\n{primed_tasks}"
-            self._primed_task: Optional[Task] = primed_tasks[0]
+            self._primed_task: Optional[TaskBase] = primed_tasks[0]
         else:
-            self._primed_task: Optional[Task] = None
+            self._primed_task: Optional[TaskBase] = None
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
@@ -317,7 +317,7 @@ class TaskScheduler(BaseTaskScheduler):
                 "`instance_id` which tracks multiple executions of the "
                 "same logical task."
             ),
-            fields=model_to_fields(Task),
+            fields=model_to_fields(TaskBase),
         )
 
         # Centralised local view for queue membership, allocator and light caching.
@@ -1057,7 +1057,7 @@ class TaskScheduler(BaseTaskScheduler):
             keeps the same ``task_id``, omits ``instance_id`` so the backend auto‑increments it,
             and preserves the existing status (``triggerable`` or ``scheduled``).
         """
-        allowed = set(Task.model_json_schema()["properties"].keys())
+        allowed = set(TaskBase.model_json_schema()["properties"].keys())
         clone_payload = {
             k: v for k, v in task_row.items() if k in allowed and k != "instance_id"
         }
@@ -1424,7 +1424,7 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             derived_qid = None
 
-        task_details = Task(
+        task_details = TaskBase(
             name=name,
             description=description,
             status=status,
@@ -1491,7 +1491,7 @@ class TaskScheduler(BaseTaskScheduler):
         if status == Status.primed:
             # Avoid a backend read: populate primed pointer directly from the created log
             try:
-                primed_row = Task(**log.entries)
+                primed_row = TaskBase(**log.entries)
                 # Ensure required keys are present on the cached row
                 primed_row.task_id = task_id
                 if primed_row.instance_id is UNASSIGNED:
@@ -1979,7 +1979,7 @@ class TaskScheduler(BaseTaskScheduler):
         ]
 
         # Single-pass index for constant-time next lookups within this tool call
-        rows_by_id: Dict[int, Task] = {}
+        rows_by_id: Dict[int, TaskBase] = {}
         for r in rows:
             try:
                 tid = r.task_id
@@ -1989,7 +1989,7 @@ class TaskScheduler(BaseTaskScheduler):
                 pass
 
         # Heads are rows with prev_task == None
-        heads: list[Task] = [
+        heads: list[TaskBase] = [
             r for r in rows if r.schedule is not None and r.schedule.prev_task is None
         ]
 
@@ -2064,7 +2064,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         queue_id: Optional[int] = None,
         strict: bool = True,
-    ) -> List[Task]:
+    ) -> List[TaskBase]:
         """
         Return the runnable queue for a given ``queue_id`` (head→tail).
 
@@ -2097,12 +2097,12 @@ class TaskScheduler(BaseTaskScheduler):
             member_ids = []
         if member_ids:
             fields_needed: List[str] = self._queue_member_fields()
-            rows_by_id: Dict[int, Dict[str, Any]] = self._read_rows_by_ids(
+            rows_by_id: Dict[int, TaskBase] = self._read_rows_by_ids(
                 ids=member_ids,
                 fields=fields_needed,
             )
 
-            ordered: List[Task] = []
+            ordered: List[TaskBase] = []
             for tid in member_ids:
                 row = rows_by_id.get(int(tid))
                 if not isinstance(row, dict):
@@ -2114,11 +2114,11 @@ class TaskScheduler(BaseTaskScheduler):
                 except Exception:
                     pass
                 row = self._sanitize_activation(row)
-                ordered.append(Task(**row))
+                ordered.append(TaskBase(**row))
             return ordered
 
         # Fallback: single filtered read of all runnable rows in this queue
-        rows_in_queue: List[TaskRow] = [
+        rows_in_queue: List[TaskBase] = [
             r
             for r in self._filter_tasks(
                 filter=(
@@ -2136,16 +2136,16 @@ class TaskScheduler(BaseTaskScheduler):
         ids_in_q: set[int] = set()
         for r in rows_in_queue:
             try:
-                tid_val = r.get("task_id")
+                tid_val = r.task_id
                 if isinstance(tid_val, int):
                     ids_in_q.add(int(tid_val))
             except Exception:
                 continue
-        head_candidates: list[TaskRow] = []
-        prefer_none_prev: list[TaskRow] = []
+        head_candidates: list[TaskBase] = []
+        prefer_none_prev: list[TaskBase] = []
         for r in rows_in_queue:
-            sched = r.get("schedule") or {}
-            prev_id = sched.get("prev_task")
+            sched = r.schedule or Schedule()
+            prev_id = sched.prev_task
             if prev_id is None:
                 prefer_none_prev.append(r)
                 head_candidates.append(r)
@@ -2166,7 +2166,7 @@ class TaskScheduler(BaseTaskScheduler):
                 try:
                     head = sorted(
                         head_candidates,
-                        key=lambda x: int(x.get("task_id")),
+                        key=lambda x: int(x.task_id),
                     )[0]
                 except Exception:
                     head = head_candidates[0]
@@ -2174,22 +2174,22 @@ class TaskScheduler(BaseTaskScheduler):
             head = head_candidates[0]
 
         # Build id -> row map for O(1) next lookups without further backend reads
-        rows_by_id: Dict[int, TaskRow] = {}
+        rows_by_id: Dict[int, TaskBase] = {}
         for r in rows_in_queue:
             try:
-                tid_val = r.get("task_id")
+                tid_val = r.task_id
                 if isinstance(tid_val, int):
                     rows_by_id[tid_val] = r
             except Exception:
                 pass
 
         # Walk head→tail using next_task pointers in-memory
-        ordered: List[Task] = []
+        ordered: List[TaskBase] = []
         seen: set[int] = set()
         cur = head
         while cur is not None:
             try:
-                tid_val = cur.get("task_id")
+                tid_val = cur.task_id
                 tid_int = int(tid_val) if tid_val is not None else None
             except Exception:
                 tid_int = None
@@ -2200,9 +2200,10 @@ class TaskScheduler(BaseTaskScheduler):
 
             # Strip stale activation metadata on non-active rows
             _row = self._sanitize_activation(dict(cur))
-            ordered.append(Task(**_row))
+            ordered.append(TaskBase(**_row))
 
-            nxt = (cur.get("schedule") or {}).get("next_task")
+            sch = cur.schedule or Schedule()
+            nxt = sch.next_task
             if nxt is None:
                 break
             try:
@@ -2213,7 +2214,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         return ordered
 
-    def _walk_queue_from_task(self, *, task_id: int) -> List[Task]:
+    def _walk_queue_from_task(self, *, task_id: int) -> List[TaskBase]:
         """
         Walk the chain that contains `task_id` by following schedule.prev_task to
         the head and then schedule.next_task forward, returning rows as `Task`.
@@ -2246,7 +2247,7 @@ class TaskScheduler(BaseTaskScheduler):
             return []
 
         # Walk forward using next_task pointers; include terminal rows for context
-        ordered: List[Task] = []
+        ordered: List[TaskBase] = []
         node = head
         seen: set[int] = set()
         while node is not None:
@@ -2261,7 +2262,7 @@ class TaskScheduler(BaseTaskScheduler):
                 seen.add(tid_int)
             # Strip stale activation metadata on non-active rows
             _row = self._sanitize_activation(dict(node))
-            ordered.append(Task(**_row))
+            ordered.append(TaskBase(**_row))
             nxt_id = (node.get("schedule") or {}).get("next_task")
             if nxt_id is None:
                 break
@@ -2270,7 +2271,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         return ordered
 
-    def _get_queue_for_task(self, *, task_id: int) -> List[Task]:
+    def _get_queue_for_task(self, *, task_id: int) -> List[TaskBase]:
         """
         Return the runnable queue (head→tail) containing `task_id`.
         """
@@ -2354,7 +2355,7 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             member_ids = []
 
-        in_queue_rows: list[Task] | None = None
+        in_queue_rows: list[TaskBase] | None = None
         if not member_ids:
             # Single filtered read of runnable rows in this queue
             if isinstance(queue_id, int):
@@ -3324,7 +3325,7 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         entries: Dict[str, Any],
         err_prefix: str,
-        current_row: Optional[Task] = None,
+        current_row: Optional[TaskBase] = None,
         skip_sync: bool = False,
         skip_cross_queue_guard: bool = False,
     ) -> Dict[str, str]:
@@ -4223,7 +4224,7 @@ class TaskScheduler(BaseTaskScheduler):
         handle.result = wrapped_result  # type: ignore[assignment]
         return handle
 
-    def _get_single_row_or_raise(self, task_id: int) -> Task:
+    def _get_single_row_or_raise(self, task_id: int) -> TaskBase:
         """Fetch exactly one task row by id or raise ValueError."""
         rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
         if not rows:
@@ -4294,7 +4295,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
-    ) -> List[Task]:
+    ) -> List[TaskBase]:
         """
         Semantic search across tasks using one or more reference texts.
 
@@ -4338,7 +4339,7 @@ class TaskScheduler(BaseTaskScheduler):
             row_filter=None,
             unique_id_field="task_id",
         )
-        return [Task(**lg) for lg in filled]
+        return [TaskBase(**lg) for lg in filled]
 
     def _filter_tasks(
         self,
@@ -4346,7 +4347,7 @@ class TaskScheduler(BaseTaskScheduler):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[Task]:
+    ) -> List[TaskBase]:
         """
         Run a **column-wise Python expression** (`filter`) against every task
         and return the matching rows.
@@ -4443,7 +4444,7 @@ class TaskScheduler(BaseTaskScheduler):
             if isinstance(rep, list):
                 row["repeat"] = [_rehydrate_repeat(x) for x in rep]
 
-        return [Task(**row) for row in rows]
+        return [TaskBase(**row) for row in rows]
 
     # ────────────────────────────────────────────────────────────────────
     # Broader context helper
