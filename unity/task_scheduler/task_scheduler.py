@@ -1501,11 +1501,7 @@ class TaskScheduler(BaseTaskScheduler):
         if status == Status.primed:
             # Avoid a backend read: populate primed pointer directly from the created log
             try:
-                primed_row = TaskBase(**log.entries)
-                # Ensure required keys are present on the cached row
-                primed_row.task_id = task_id
-                if primed_row.instance_id is UNASSIGNED:
-                    primed_row.instance_id = task_details.get("instance_id", UNASSIGNED)
+                primed_row = Task(**log.entries)
                 self._primed_task = primed_row
             except Exception:
                 # Fallback to lazy refresh if direct population fails

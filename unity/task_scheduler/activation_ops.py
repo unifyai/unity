@@ -16,7 +16,7 @@ from .queue_utils import (
     sched_next as _q_next,
 )
 from .types.reintegration_plan import ReintegrationPlan
-from .types.task import UNASSIGNED, TaskBase
+from .types.task import TaskBase
 from .types.schedule import Schedule
 
 if TYPE_CHECKING:
