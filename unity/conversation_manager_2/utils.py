@@ -9,12 +9,14 @@ unity_comms_url = os.getenv("UNITY_COMMS_URL")
 
 
 # dispatch agent
-def dispatch_agent(agent_name: str):
+def dispatch_agent(agent_name: str, room_name: str = None):
     try:
+        if not room_name:
+            room_name = agent_name
         response = http.post(
             f"{unity_comms_url}/phone/dispatch-agent",
             headers=admin_headers,
-            json={"agent_name": agent_name},
+            json={"agent_name": agent_name, "room_name": room_name},
             timeout=1,
         )
         if response.status_code != 200:
