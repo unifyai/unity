@@ -607,7 +607,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Also guard against orphan 'active' rows (e.g., after crash) even if pointer is None.
         try:
             any_active = any(
-                r.get("status") == str(Status.active)
+                r.status == Status.active
                 for r in self._filter_tasks(filter="status == 'active'", limit=1)
             )
         except Exception:
@@ -1720,7 +1720,7 @@ class TaskScheduler(BaseTaskScheduler):
                 for r in auto_primed_rows or []:
                     try:
                         self._update_task_status(
-                            task_ids=r.get("task_id"),
+                            task_ids=r.task_id,
                             new_status="queued",
                         )
                     except Exception:
