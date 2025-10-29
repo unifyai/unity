@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 from .types.reintegration_plan import ReintegrationPlan
+from .types.schedule import Schedule
 from .queue_engine import derive_status_after_queue_edit
 from .queue_utils import sched_prev as _q_prev
 
@@ -181,9 +182,7 @@ class ReintegrationManager:
                 )
                 if next_rows:
                     next_row = next_rows[0]
-                    next_sched = next_row.schedule
-                    if next_sched is None:
-                        return
+                    next_sched = next_row.schedule or Schedule()  # TODO: Remove
                     if (
                         _q_prev(next_sched) is not None
                         and (next_sched.start_at is None)

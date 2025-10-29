@@ -103,7 +103,7 @@ def detach_from_queue_for_activation(
             while cur_head is not None and _q_prev(cur_head.schedule) is not None:
                 cur_head = _get_row(_q_prev(cur_head.schedule))
             if cur_head is not None:
-                _sched_head = cur_head.schedule
+                _sched_head = cur_head.schedule or Schedule()  # TODO: Remove
                 if _sched_head is not None:
                     head_start_at = (
                         _sched_head.start_at.isoformat()

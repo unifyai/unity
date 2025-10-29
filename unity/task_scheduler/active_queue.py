@@ -22,6 +22,7 @@ import unify
 
 from ..common.async_tool_loop import SteerableToolHandle
 from .types.activated_by import ActivatedBy
+from .types.schedule import Schedule
 
 if TYPE_CHECKING:  # avoid import cycles at runtime
     from .task_scheduler import TaskScheduler
@@ -513,8 +514,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 )
                 if not rows:
                     return None
-                sched = rows[0].schedule
-                nxt = sched.next_task if sched is not None else None
+                sched = rows[0].schedule or Schedule()  # TODO: Remove
+                nxt = sched.next_task
                 try:
                     nxt_int = int(nxt) if nxt is not None else None
                 except Exception:

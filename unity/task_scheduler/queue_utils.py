@@ -76,7 +76,7 @@ def sync_adjacent_links(
                 continue
             row_entries = rows[0]
             n_sched = (
-                row_entries.schedule.model_dump()  # TODO: fix this
+                row_entries.schedule.model_dump()  # TODO: Remove
                 if row_entries.schedule is not None
                 else {}
             )
