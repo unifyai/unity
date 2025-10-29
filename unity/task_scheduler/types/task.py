@@ -84,6 +84,10 @@ class Task(BaseModel):
             "This is set automatically at activation time and is never directly editable."
         ),
     )
+    info: Optional[str] = Field(
+        default=None,
+        description="A summary of what happened during the execution of the task, generated upon completion.",
+    )
 
     @model_validator(mode="before")
     @classmethod
