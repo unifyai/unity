@@ -3540,14 +3540,14 @@ class TaskScheduler(BaseTaskScheduler):
             Otherwise load the row for ``task_id`` and promote it to the cache.
         """
         if task_id is None and self._primed_task is not None:
-            task_id = self._primed_task["task_id"]
+            task_id = self._primed_task.task_id
         if task_id is None:
             return
 
         rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
         row = rows[0] if rows else None
         # Only cache when the referenced row is actually in 'primed' state
-        if row is not None and self._to_status(row.get("status")) == Status.primed:
+        if row is not None and self._to_status(row.status) == Status.primed:
             self._primed_task = row
         else:
             self._primed_task = None
@@ -3893,8 +3893,8 @@ class TaskScheduler(BaseTaskScheduler):
             new_status_written = entries_to_write["status"]
             if (
                 self._primed_task
-                and self._primed_task.get("task_id") == task_id
-                and self._primed_task.get("instance_id") == instance_id
+                and self._primed_task.task_id == task_id
+                and self._primed_task.instance_id == instance_id
             ):
                 if new_status_written != Status.primed:
                     self._primed_task = None
