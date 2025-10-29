@@ -76,7 +76,7 @@ def sync_adjacent_links(
                 continue
             row_entries = rows[0]
             n_sched = (
-                row_entries.schedule.model_dump()
+                row_entries.schedule.model_dump()  # TODO: fix this
                 if row_entries.schedule is not None
                 else {}
             )
@@ -100,6 +100,7 @@ def sync_adjacent_links(
             )
         else:
             # Handle both unify.Log and plain dict
+            row_obj = row_obj.model_dump()  # TODO: fix this
             if hasattr(row_obj, "entries"):
                 # unify.Log
                 entries = getattr(row_obj, "entries", {}) or {}
