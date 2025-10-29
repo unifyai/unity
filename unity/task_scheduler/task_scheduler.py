@@ -1467,12 +1467,6 @@ class TaskScheduler(BaseTaskScheduler):
                 self._view.sync_max_queue_id_seen(int(derived_qid))
         except Exception:
             pass
-        # Cache the backing log id for fast single-call delete/updates.
-        # Best-effort: no need to memoize here; LocalTaskView wrappers handle cache coherency.
-        try:
-            _ = getattr(log, "id", None)
-        except Exception:
-            pass
 
         # Maintain cached total count (+1 new row)
         try:

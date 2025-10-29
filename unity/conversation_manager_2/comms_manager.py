@@ -202,6 +202,14 @@ class CommsManager:
                 message.ack()
             elif thread == "log_pre_hire_chats":
                 try:
+                    contacts = event.get("contacts", [])
+                    asyncio.run_coroutine_threadsafe(
+                        self.message_queue.publish(
+                            f"app:comms:contacts",
+                            GetContactsResponse(contacts=contacts).to_json(),
+                        ),
+                        self.loop,
+                    )
                     assistant_id = event.get("assistant_id", "")
                     body = event.get("body", []) or []
 
@@ -271,7 +279,9 @@ class CommsManager:
                     # Create the event based on the thread
                     if thread == "unify_call":
                         event = UnifyCallReceived(
-                            contact=1, agent_name=event.get("agent_name")
+                            contact=1,
+                            agent_name=event.get("agent_name"),
+                            room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_call_received"
                     else:
