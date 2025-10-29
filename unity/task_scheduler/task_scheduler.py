@@ -15,7 +15,7 @@ import asyncio
 import functools
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable
-from typing import Literal
+from typing import Literal, overload
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
@@ -1178,12 +1178,28 @@ class TaskScheduler(BaseTaskScheduler):
                 f"Operation not permitted on the active task (task_id={active_task_id})",
             )
 
+    @overload
+    def _get_logs_by_task_ids(
+        self,
+        *,
+        task_ids: Union[int, List[int]],
+        return_ids_only: Literal[True],
+    ) -> List[int]: ...
+
+    @overload
+    def _get_logs_by_task_ids(
+        self,
+        *,
+        task_ids: Union[int, List[int]],
+        return_ids_only: Literal[False],
+    ) -> List[unify.Log]: ...
+
     def _get_logs_by_task_ids(
         self,
         *,
         task_ids: Union[int, List[int]],
         return_ids_only: bool = True,
-    ) -> List[Union[int, unify.Log]]:
+    ):
         """
         Fetch the Unify log objects (or ids) corresponding to one or many task ids.
 
@@ -1196,7 +1212,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         Returns
         -------
-        list[int | unify.Log]
+        list[int] | list[unify.Log]
             The matching log identifiers or objects.
         """
         return self._view.get_log_ids_by_task_ids(

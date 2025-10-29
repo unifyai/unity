@@ -754,7 +754,7 @@ class LocalTaskView:
         *,
         task_ids: Union[int, Iterable[int]],
         return_ids_only: bool = True,
-    ) -> List[Union[int, unify.Log]]:
+    ) -> Union[List[int], List[unify.Log]]:
         """
         Resolve log objects/ids for task_ids, with a read-through memoization
         when callers request ids only.
