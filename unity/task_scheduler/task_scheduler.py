@@ -275,14 +275,14 @@ class TaskScheduler(BaseTaskScheduler):
         # Pointer to the single currently active task handle (or None).
         # Exactly one task can be active at a time.
         self._active_task: Optional[TaskScheduler.ActivePointer] = None
+        self._primed_task: Optional[Task] = None
+
         primed_tasks = self._filter_tasks(filter="status == 'primed'")
         if primed_tasks:
             assert (
                 len(primed_tasks) == 1
             ), f"More than one primed task found:\n{primed_tasks}"
-            self._primed_task: Optional[TaskBase] = primed_tasks[0]
-        else:
-            self._primed_task: Optional[TaskBase] = None
+            self._primed_task = primed_tasks[0]
 
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
