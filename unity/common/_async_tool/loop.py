@@ -39,6 +39,8 @@ from .images import (
     append_image_refs_with_source,
     get_image_log_entries,
     has_live_images_context,
+    LIVE_IMAGES_REGISTRY,
+    LIVE_IMAGES_LOG,
 )
 from ..llm_helpers import method_to_schema, _dumps, short_id
 from .loop_config import (
@@ -292,13 +294,24 @@ async def async_tool_loop_inner(
                 pass
         return False
 
-    # If live images are provided, set the registry for this loop's scope
+    # If explicit images are provided, seed them; otherwise, isolate this loop
+    # from any parent images by setting an empty images context.
+    _img_token, _imglog_token = None, None
     try:
-        if images:
-            _img_token, _imglog_token = set_live_images_context(
-                images,
-                message,
-            )
+        if images is not None:
+            if images:
+                _img_token, _imglog_token = set_live_images_context(
+                    images,
+                    message,
+                )
+            else:
+                # Explicitly provided empty images → isolate
+                _img_token = LIVE_IMAGES_REGISTRY.set({})
+                _imglog_token = LIVE_IMAGES_LOG.set([])
+        else:
+            # No images provided → do not inherit parent loop images
+            _img_token = LIVE_IMAGES_REGISTRY.set({})
+            _imglog_token = LIVE_IMAGES_LOG.set([])
     except Exception:
         _img_token = None
         _imglog_token = None
