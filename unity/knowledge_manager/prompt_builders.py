@@ -633,9 +633,8 @@ def build_ask_prompt(
         1. List each distinct piece of information the question asks for.
         2. Identify which tables / columns can hold that info.
         3. Fetch *all* relevant rows (use `{{search}}` for semantic search; use `{{filter}}` for precise filters).{join_hint}
-        4. If the schema is awkward, refactor it before continuing.
-        5. Aggregate results into a concise answer covering every fact.
-        6. Double-check nothing is missing; if so, repeat the search/refactor.
+        4. Aggregate results into a concise answer covering every fact.
+        5. Double-check nothing is missing; if so, repeat the search.
 
         Do **not** hallucinate data.
         """,
