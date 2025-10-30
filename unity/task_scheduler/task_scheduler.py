@@ -2146,8 +2146,8 @@ class TaskScheduler(BaseTaskScheduler):
                     ids_in_q.add(int(tid_val))
             except Exception:
                 continue
-        head_candidates: list[TaskBase] = []
-        prefer_none_prev: list[TaskBase] = []
+        head_candidates: list[Task] = []
+        prefer_none_prev: list[Task] = []
         for r in rows_in_queue:
             sched = r.schedule or Schedule()  # TODO: Remove
             prev_id = sched.prev_task
