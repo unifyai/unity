@@ -4387,7 +4387,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         exclude_fields.append(
             "activated_by",
-        )  # TODO: Is activated_by only for platform use?
+        )  # TODO: Temporary fix, activated_by should be supported with any status.
 
         rows = self._view.get_entries(
             filter=normalized_filter,
