@@ -101,7 +101,7 @@ async def test_organize_delete_file(file_manager, tmp_path: Path):
     # Parse the file to add it to Unify logs so we can query for file_id
     fm.parse(display_name)
 
-    rows = fm._filter_files(filter=f"filename == '{display_name}'")
+    rows = fm._filter_files(filter=f"file_path == '{display_name}'")
     file_id = rows[0].file_id
 
     instruction = f"Delete the file with ID {file_id}."

@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture()
 def csb_http(monkeypatch):
-    """Fixture to mock unity.common.http.get/post for CodeSandbox service tests.
+    """Fixture to mock unity.utils.http.get/post for CodeSandbox service tests.
 
     Usage:
         cfg = csb_http()
@@ -47,9 +47,17 @@ def csb_http(monkeypatch):
         params: Dict[str, Any] | None = None,
         headers: Dict[str, str] | None = None,
         timeout: int = 30,
+        *,
+        raise_for_status: bool | None = None,
     ):
         state["get_calls"].append(
-            {"url": url, "params": params, "headers": headers, "timeout": timeout},
+            {
+                "url": url,
+                "params": params,
+                "headers": headers,
+                "timeout": timeout,
+                "raise_for_status": raise_for_status,
+            },
         )
         return state["get"]
 
@@ -58,22 +66,30 @@ def csb_http(monkeypatch):
         json: Dict[str, Any] | None = None,
         headers: Dict[str, str] | None = None,
         timeout: int = 30,
+        *,
+        raise_for_status: bool | None = None,
     ):
         state["post_calls"].append(
-            {"url": url, "json": json, "headers": headers, "timeout": timeout},
+            {
+                "url": url,
+                "json": json,
+                "headers": headers,
+                "timeout": timeout,
+                "raise_for_status": raise_for_status,
+            },
         )
         return state["post"]
 
     # Patch at both module level and in the adapter module (which imports them directly)
-    monkeypatch.setattr("unity.common.http.get", _get, raising=True)
-    monkeypatch.setattr("unity.common.http.post", _post, raising=True)
+    monkeypatch.setattr("unify.utils.http.get", _get, raising=True)
+    monkeypatch.setattr("unify.utils.http.post", _post, raising=True)
     monkeypatch.setattr(
-        "unity.file_manager.fs_adapters.codesandbox_adapter.http_get",
+        "unity.file_manager.fs_adapters.codesandbox_adapter.http.get",
         _get,
         raising=True,
     )
     monkeypatch.setattr(
-        "unity.file_manager.fs_adapters.codesandbox_adapter.http_post",
+        "unity.file_manager.fs_adapters.codesandbox_adapter.http.post",
         _post,
         raising=True,
     )

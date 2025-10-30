@@ -17,8 +17,8 @@ async def test_file_manager_initialization(file_manager):
     assert fm is not None
     assert hasattr(fm, "_adapter")
     assert hasattr(fm, "_parser")
-    assert hasattr(fm, "_ask_tools")
-    assert hasattr(fm, "_organize_tools")
+    assert hasattr(fm, "get_tools")
+    assert hasattr(fm, "_tools")
     assert hasattr(fm, "_ctx")
 
 

@@ -6,13 +6,13 @@ import tempfile
 import pytest
 
 from tests.helpers import _handle_project
-from unity.file_manager.file_manager import FileManager
+from unity.file_manager.managers.local import LocalFileManager as FileManager
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_file_manager_ask_guard_triggers_when_enabled(monkeypatch):
+async def test_file_manager_ask_guard_triggers_when_enabled(fm_root, monkeypatch):
     """
     When UNITY_READONLY_ASK_GUARD is enabled, FileManager.ask should be guarded:
     mutation intent triggers an early stop and returns the early response.
@@ -21,7 +21,7 @@ async def test_file_manager_ask_guard_triggers_when_enabled(monkeypatch):
     # Ensure the env flag is on for this test only
     monkeypatch.setenv("UNITY_READONLY_ASK_GUARD", "true")
 
-    fm = FileManager()
+    fm = FileManager(root=fm_root)
 
     # Create a temporary file and register it with the FileManager
     with tempfile.NamedTemporaryFile(delete=False) as tf:
@@ -42,11 +42,10 @@ async def test_file_manager_ask_guard_triggers_when_enabled(monkeypatch):
 
         monkeypatch.setattr(ReadOnlyAskGuardHandle, "stop", _wrapped_stop, raising=True)
 
+        instruction = f"Please overwrite {display_name} with the following content: 'Hello city' and save the changes now."
+
         # Mutation-intent phrasing to trigger the guard classifier (real LLM classification)
-        handle = await fm.ask(
-            display_name,
-            "Please modify this file and save the changes now.",
-        )
+        handle = await fm.ask(instruction)
         result = await handle.result()
 
         # Sanity-check: some answer returned
