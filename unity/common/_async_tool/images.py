@@ -486,11 +486,17 @@ def build_live_image_tools(
         "    The question to ask about the image.\n\n"
         "Behaviour\n"
         "---------\n"
-        "- Returns the answer from the image handle."
+        "- When the caption is vague or context is unknown, START BROAD: first ask a descriptive question such as\n"
+        "  'What is shown in this image? What activity appears to be in progress? Which app/page is visible?'\n"
+        "  Extract salient, observable details (apps, headings, steps, key text) rather than database fields.\n"
+        "- If the caption already clearly describes the scene and intent, you may skip the broad question and ask a targeted\n"
+        "  question that reads a specific on-screen element your context suggests exists.\n"
+        "- Avoid system-specific identifiers or structured record fields (e.g., ids, names, statuses, queue/thread references,\n"
+        "  timestamps) in the first question unless they are clearly visible on-screen.\n\n"
         "Notes\n"
         "-----\n"
-        "- Favour this tool for surgical (and relatively simple) single-image questions."
-        "- Prevents 'polluting' the outer context with the full image data, in cases where this data could end up being a distraction."
+        "- Favour this tool for surgical single-image questions.\n"
+        "- Prevents 'polluting' the outer context with full image bytes."
     )
 
     attach_image_raw.__doc__ = (

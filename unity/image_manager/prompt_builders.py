@@ -40,6 +40,9 @@ def build_image_ask_prompt(*, caption: str | None, timestamp: datetime | None) -
         • Do not include raw image data or base64 in your response.
         • If relevant, you may cite visual evidence (colors, objects, text seen).
         • If uncertain, state the uncertainty and what would resolve it.
+        • Do not assume system-specific identifiers or structured record fields (e.g., ids, names, statuses, queue/thread
+          references, timestamps) are present. If the user's question asks for such fields and they are not visibly shown,
+          state that they are not visible and describe what is visible instead.
         """,
     ).strip()
     # Append current time for reproducibility
