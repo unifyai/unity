@@ -2275,7 +2275,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         return ordered
 
-    def _get_queue_for_task(self, *, task_id: int) -> List[TaskBase]:
+    def _get_queue_for_task(self, *, task_id: int) -> List[Task]:
         """
         Return the runnable queue (head→tail) containing `task_id`.
         """
