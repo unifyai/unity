@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, Union, TYPE_CHECKING
 import unify
 
 from .types.schedule import Schedule
+from .types.task import Task
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -250,8 +251,8 @@ def attach_with_links(
     current_row = None
     if cur_log is not None:
         try:
-            current_row = {**_entries(cur_log)}
-            current_row["task_id"] = int(task_id)
+            # TODO: Isn't task_id included already?
+            current_row = Task(**{**_entries(cur_log), "task_id": int(task_id)})
         except Exception:
             current_row = None
 
