@@ -60,6 +60,8 @@ def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
 async def generate_with_preprocess(
     client: unify.AsyncUnify,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]],
+    *,
+    debug_log: Callable[[list[dict], dict, str], None],
     **gen_kwargs,
 ):
     if preprocess_msgs is None:
@@ -85,6 +87,29 @@ async def generate_with_preprocess(
     except Exception:
         pass
 
+    # Compute a system message with {broader_context} injected (if any)
+    sys_txt = getattr(client, "system_message", "") or ""
+    sys_patched = sys_txt
+    try:
+        # Local import to avoid any import-time cycles
+        from ..llm_helpers import inject_broader_context as _inject_bc  # type: ignore
+
+        sys_list = _inject_bc(
+            [
+                {"role": "system", "content": sys_txt},
+            ],
+        )
+        if sys_list and isinstance(sys_list[0], dict):
+            sys_patched = sys_list[0].get("content") or sys_txt
+    except Exception:
+        sys_patched = sys_txt
+
+    # Late-stage debug log: emit exactly what will be sent to the LLM
+    try:
+        debug_log(patched, gen_kwargs, sys_patched)
+    except Exception:
+        pass
+
     start_len = len(patched)
 
     # ------------------------------------------------------------------
@@ -97,6 +122,13 @@ async def generate_with_preprocess(
     # ``generate`` call and patch **that** for the duration of the call.
     # ------------------------------------------------------------------
     target_attr = "_messages" if hasattr(client, "_messages") else "messages"
+    original_system_message = getattr(client, "system_message", None)
+    try:
+        # Patch the system message to the injected version for the duration of the call
+        if original_system_message is not None:
+            setattr(client, "system_message", sys_patched)
+    except Exception:
+        pass
 
     original_container = getattr(client, target_attr)
     setattr(client, target_attr, patched)
@@ -114,6 +146,12 @@ async def generate_with_preprocess(
         # consistent irrespective of whether we patched `_messages` or
         # `messages`.
         setattr(client, target_attr, original_container)
+        # Restore original system message
+        try:
+            if original_system_message is not None:
+                setattr(client, "system_message", original_system_message)
+        except Exception:
+            pass
 
 
 def chat_context_repr(
