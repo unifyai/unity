@@ -14,7 +14,7 @@ from unity.file_manager.managers.interact import InteractFileManager
 from unity.file_manager.managers.google_drive import GoogleDriveFileManager
 from unity.file_manager.global_file_manager import GlobalFileManager
 from unity.file_manager.types import (
-    File,
+    FileRecord,
     FileSystemCapabilities,
     FileReference,
     FolderReference,
@@ -41,7 +41,7 @@ __all__ = [
     # composite
     "GlobalFileManager",
     # types
-    "File",
+    "FileRecord",
     "FileSystemCapabilities",
     "FileReference",
     "FolderReference",
