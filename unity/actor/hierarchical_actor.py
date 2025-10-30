@@ -4976,6 +4976,11 @@ class HierarchicalActor(BaseActor):
         try:
             tree = ast.parse(base_code)
             initial_references: Set[str] = set()
+            defined_function_names: Set[str] = set(
+                n.name
+                for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            )
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                     initial_references.add(node.func.id)
@@ -5026,6 +5031,8 @@ class HierarchicalActor(BaseActor):
             initial_references = {f for f in initial_references if "." not in f}
 
             for name in initial_references:
+                if name in defined_function_names:
+                    continue
                 if name not in queued_functions:
                     functions_to_inject_queue.append(name)
                     queued_functions.add(name)
