@@ -16,7 +16,7 @@ from .queue_utils import (
     sched_next as _q_next,
 )
 from .types.reintegration_plan import ReintegrationPlan
-from .types.task import TaskBase
+from .types.task import Task
 from .types.schedule import Schedule
 
 if TYPE_CHECKING:
@@ -72,11 +72,11 @@ def detach_from_queue_for_activation(
     sched = task_row.schedule or Schedule()
     prev_tid = _q_prev(sched)
     next_tid = _q_next(sched)
-    start_at = sched.get("start_at") if isinstance(sched, dict) else None
+    start_at = sched.start_at
 
     # Derive the current head's start_at so downstream tasks can be reinstated as
     # head-scheduled later if their original predecessor becomes terminal.
-    def _get_row(tid: int) -> Optional[TaskBase]:
+    def _get_row(tid: int) -> Optional[Task]:
         rows = scheduler._filter_tasks(filter=f"task_id == {tid}", limit=1)
         return rows[0] if rows else None
 
@@ -106,10 +106,12 @@ def detach_from_queue_for_activation(
                 _sched_head = cur_head.schedule or Schedule()  # TODO: Remove
                 if _sched_head is not None:
                     head_start_at = (
-                        _sched_head.start_at.isoformat()
+                        _sched_head.start_at
                         if _sched_head.start_at is not None
                         else None
                     )
+
+    head_start_at = head_start_at.isoformat() if head_start_at is not None else None
 
     # Batch-fetch log objects for all relevant task_ids in one backend call (reuse scheduler helper)
     needed_ids: list[int] = []
