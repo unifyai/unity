@@ -20,7 +20,7 @@ from typing import (
 from contextlib import suppress
 from pydantic import BaseModel
 
-from ...constants import LOGGER, LLM_IO_LOGGING
+from ...constants import LOGGER, LLM_IO_DEBUG
 from ..tool_spec import ToolSpec, normalise_tools
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
@@ -274,17 +274,17 @@ async def async_tool_loop_inner(
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
     # Independent, centrally-configured LLM I/O logging flag
-    log_llm_io = bool(LLM_IO_LOGGING)
+    llm_io_debug = bool(LLM_IO_DEBUG)
 
     # File sink for LLM I/O: always a fresh file per process run
     _llm_io_file: str | None = None
-    if log_llm_io:
+    if llm_io_debug:
         with suppress(Exception):
             ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
             _llm_io_file = os.path.join(os.getcwd(), f".unity_llm_io_{ts}.txt")
 
     def _llm_io_write(header: str, body: str) -> None:
-        if not log_llm_io or _llm_io_file is None:
+        if not llm_io_debug or _llm_io_file is None:
             return
         try:
             with open(_llm_io_file, "a", encoding="utf-8") as _f:
@@ -1425,7 +1425,7 @@ async def async_tool_loop_inner(
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
                 # Optional: log the full raw request payload right before the API call
-                if log_llm_io:
+                if llm_io_debug:
                     with suppress(Exception):
                         _orig_msgs_ref = client.messages
                         _msgs_copy = copy.deepcopy(_orig_msgs_ref)
@@ -1642,7 +1642,7 @@ async def async_tool_loop_inner(
                         llm_turn_required = True
 
                 # If the LLM completed successfully, log the raw response object
-                if log_llm_io and not llm_task.exception():
+                if llm_io_debug and not llm_task.exception():
                     with suppress(Exception):
                         _raw_resp = llm_task.result()
                         _llm_io_write(
@@ -1663,7 +1663,7 @@ async def async_tool_loop_inner(
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
                     # Optional: log the full raw request payload right before the API call
-                    if log_llm_io:
+                    if llm_io_debug:
                         with suppress(Exception):
                             _orig_msgs_ref = client.messages
                             _msgs_copy = copy.deepcopy(_orig_msgs_ref)
@@ -1726,7 +1726,7 @@ async def async_tool_loop_inner(
                         **_gen_kwargs,
                     )
 
-                    if log_llm_io:
+                    if llm_io_debug:
                         with suppress(Exception):
                             _llm_io_write(
                                 "LLM response ⬅️:",
