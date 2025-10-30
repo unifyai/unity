@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 # Backwards-compat shim: re-export BaseFileManager from managers.base
+from unity.common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from unity.file_manager.managers.base import BaseFileManager  # noqa: F401
 from typing import Any, Dict, List, Optional
 import asyncio
@@ -151,6 +152,10 @@ class BaseGlobalFileManager(BaseStateManager, metaclass=SingletonABCMeta):
             when *_return_reasoning_steps* is *True*.
         """
 
+    @abstractmethod
+    def clear(self) -> None:
+        raise NotImplementedError
+
     # ------------------------------------------------------------------ #
     #  Private retrieval helpers (part of the contract)                  #
     # ------------------------------------------------------------------ #
@@ -247,3 +252,7 @@ class BaseGlobalFileManager(BaseStateManager, metaclass=SingletonABCMeta):
     @abstractmethod
     def _delete_file(self, *, filesystem: str, file_id: int) -> Dict[str, Any]:
         """Delete a file from a specific filesystem."""
+
+
+# Attach centralised docstring
+BaseGlobalFileManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING

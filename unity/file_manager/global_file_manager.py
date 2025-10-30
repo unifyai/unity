@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
-import os
 from typing import Any, Callable, Dict, List, Optional
 
 import unify
 
+from unity.common.llm_client import new_llm_client
 from unity.file_manager.managers.base import BaseFileManager
 from unity.file_manager.base import BaseGlobalFileManager
 from unity.common.llm_helpers import (
@@ -36,6 +35,26 @@ class GlobalFileManager(BaseGlobalFileManager):
     """
 
     def __init__(self, managers_by_alias: Dict[str, BaseFileManager]):
+        """
+        Create a GlobalFileManager over multiple filesystem-specific managers.
+
+        Parameters
+        ----------
+        managers_by_alias : dict[str, BaseFileManager]
+            Mapping of filesystem alias (e.g., "local", "drive", "interact") to the
+            corresponding concrete FileManager instance. The aliases are used to
+            namespace filenames in aggregated views (e.g., "/local/notes.txt").
+
+        Notes
+        -----
+        - Registers separate tool surfaces for ``ask`` and ``organize``. For each
+          underlying manager, lightweight alias-prefixed passthrough helpers are
+          added (e.g., ``ask__local``, ``ask_about_file__drive``) so the LLM can
+          route questions to a specific filesystem when needed.
+        - Aggregated tools (``_list_columns``, ``_filter_files``, ``_search_files``)
+          operate across all managers and add a synthetic ``source_filesystem``
+          field for provenance.
+        """
         super().__init__()
         self._managers: Dict[str, BaseFileManager] = dict(managers_by_alias)
 
@@ -85,16 +104,9 @@ class GlobalFileManager(BaseGlobalFileManager):
         self.add_tools("organize", organize_tools)
 
     # Helpers
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
 
     def _list_filesystems(self) -> List[str]:
+        """Return the list of configured filesystem aliases in deterministic order."""
         return list(self._managers.keys())
 
     @staticmethod
@@ -120,6 +132,25 @@ class GlobalFileManager(BaseGlobalFileManager):
         target_id_or_path: str,
         new_name: str,
     ) -> Dict[str, Any]:
+        """
+        Rename a file within a specific filesystem.
+
+        Parameters
+        ----------
+        filesystem : str
+            Alias of the target filesystem (must exist in this manager).
+        target_id_or_path : str
+            Adapter-specific identifier or path for the file to rename. May be
+            namespaced ("/alias/path") or plain; any leading alias is stripped
+            before delegation.
+        new_name : str
+            New filename without directory components.
+
+        Returns
+        -------
+        dict
+            Adapter-specific result from the underlying manager.
+        """
         if filesystem not in self._managers:
             raise ValueError(f"Filesystem '{filesystem}' not found.")
         # Strip filesystem namespace prefix before delegating
@@ -136,6 +167,23 @@ class GlobalFileManager(BaseGlobalFileManager):
         target_id_or_path: str,
         new_parent_path: str,
     ) -> Dict[str, Any]:
+        """
+        Move a file to a new parent path within a specific filesystem.
+
+        Parameters
+        ----------
+        filesystem : str
+            Alias of the target filesystem.
+        target_id_or_path : str
+            Adapter-specific identifier or path of the file to move.
+        new_parent_path : str
+            Destination directory path (within the same filesystem).
+
+        Returns
+        -------
+        dict
+            Adapter-specific result from the underlying manager.
+        """
         if filesystem not in self._managers:
             raise ValueError(f"Filesystem '{filesystem}' not found.")
         # Strip filesystem namespace prefix from both paths before delegating
@@ -147,12 +195,42 @@ class GlobalFileManager(BaseGlobalFileManager):
         )
 
     def _delete_file(self, *, filesystem: str, file_id: int) -> Dict[str, Any]:
+        """
+        Permanently delete a file from a specific filesystem.
+
+        Parameters
+        ----------
+        filesystem : str
+            Alias of the target filesystem.
+        file_id : int
+            Numeric id of the file to delete (adapter-specific).
+
+        Returns
+        -------
+        dict
+            Adapter-specific confirmation payload.
+        """
         if filesystem not in self._managers:
             raise ValueError(f"Filesystem '{filesystem}' not found.")
         return self._managers[filesystem]._delete_file(file_id=file_id)  # type: ignore[attr-defined]
 
     # ----------------- Unify-backed aggregated retrieval ----------------- #
     def _list_columns(self, *, include_types: bool = True):
+        """
+        Return the global schema for files, augmented with ``source_filesystem``.
+
+        Parameters
+        ----------
+        include_types : bool, default True
+            When True, returns ``{column: type}``; otherwise returns a list of
+            column names.
+
+        Returns
+        -------
+        dict[str, Any] | list[str]
+            Consolidated schema from the first manager (they share a model) with
+            an added ``source_filesystem`` column.
+        """
         # Use schema from the first manager (shared model) and add source column
         cols: Dict[str, Any] = {}
         try:
@@ -177,6 +255,25 @@ class GlobalFileManager(BaseGlobalFileManager):
         offset: int = 0,
         limit: int = 100,
     ):
+        """
+        Filter files across all filesystems using a Python expression.
+
+        Parameters
+        ----------
+        filter : str | None, default None
+            Row-level predicate evaluated per underlying manager result row. The
+            predicate may reference any column in the files table; use single
+            quotes for string literals.
+        offset : int, default 0
+            Zero-based index of the first row to include (after aggregation).
+        limit : int, default 100
+            Maximum number of rows to return.
+
+        Returns
+        -------
+        list[dict]
+            Normalized rows with namespaced ``filename`` and ``source_filesystem``.
+        """
         aggregated: List[Dict[str, Any]] = []
         for alias, mgr in self._managers.items():
             try:
@@ -188,9 +285,9 @@ class GlobalFileManager(BaseGlobalFileManager):
                         else getattr(r, "model_dump", lambda: r.__dict__)()
                     )
                     e = dict(e)
-                    fname = e.get("filename")
+                    fname = e.get("file_path")
                     if isinstance(fname, str):
-                        e["filename"] = f"/{alias}/{fname}"
+                        e["file_path"] = f"/{alias}/{fname}"
                     e["source_filesystem"] = alias
                     aggregated.append(e)
             except Exception:
@@ -203,6 +300,25 @@ class GlobalFileManager(BaseGlobalFileManager):
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ):
+        """
+        Semantic search across all filesystems and interleave top results.
+
+        Parameters
+        ----------
+        references : dict[str, str] | None, default None
+            Mapping of ``source_expr → reference_text`` terms. Each source
+            expression is a column or derived expression in the underlying
+            manager. When omitted/empty, falls back to most recent files.
+        k : int, default 10
+            Maximum number of results to return after interleaving per-alias
+            rankings.
+
+        Returns
+        -------
+        list[dict]
+            Up to ``k`` normalized rows (with ``filename`` namespaced and
+            ``source_filesystem`` added).
+        """
         per_alias: Dict[str, List[Dict[str, Any]]] = {}
         for alias, mgr in self._managers.items():
             try:
@@ -215,9 +331,9 @@ class GlobalFileManager(BaseGlobalFileManager):
                         else getattr(r, "model_dump", lambda: r.__dict__)()
                     )
                     e = dict(e)
-                    fname = e.get("filename")
+                    fname = e.get("file_path")
                     if isinstance(fname, str):
-                        e["filename"] = f"/{alias}/{fname}"
+                        e["file_path"] = f"/{alias}/{fname}"
                     e["source_filesystem"] = alias
                     normalized.append(e)
                 per_alias[alias] = normalized
@@ -246,7 +362,30 @@ class GlobalFileManager(BaseGlobalFileManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        """
+        Read-only questions over the aggregated file view.
+
+        Parameters
+        ----------
+        text : str
+            Natural-language query.
+        _return_reasoning_steps : bool, default False
+            When True, ``handle.result()`` returns ``(answer, messages)``.
+        _parent_chat_context : list[dict] | None
+            Optional upstream chat messages to seed the loop.
+        _clarification_up_q / _clarification_down_q : Any | None
+            Duplex queues for interactive clarification.
+        rolling_summary_in_prompts : bool | None
+            Whether to include the rolling activity summary in prompts.
+        _call_id : str | None
+            Correlation id for event logging.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle that yields the final answer and supports pause/resume/stop.
+        """
+        client = new_llm_client()
         tools = dict(self.get_tools("ask"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
 
@@ -332,7 +471,30 @@ class GlobalFileManager(BaseGlobalFileManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        """
+        Plan and execute safe rename/move operations across filesystems.
+
+        Parameters
+        ----------
+        text : str
+            Natural-language organization request.
+        _return_reasoning_steps : bool, default False
+            When True, ``handle.result()`` returns ``(answer, messages)``.
+        _parent_chat_context : list[dict] | None
+            Optional upstream chat messages to seed the loop.
+        _clarification_up_q / _clarification_down_q : Any | None
+            Duplex queues for interactive clarification.
+        rolling_summary_in_prompts : bool | None
+            Whether to include the rolling activity summary in prompts.
+        _call_id : str | None
+            Correlation id for event logging.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle yielding a summary of operations performed.
+        """
+        client = new_llm_client()
         tools = dict(self.get_tools("organize"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
 
@@ -392,9 +554,6 @@ class GlobalFileManager(BaseGlobalFileManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=lambda i, t: ("required", t) if i < 1 else ("auto", t),
-            handle_cls=(
-                ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
-            ),
         )
         if _return_reasoning_steps:
             original_result = handle.result
@@ -405,3 +564,40 @@ class GlobalFileManager(BaseGlobalFileManager):
 
             handle.result = _wrapped_result  # type: ignore[attr-defined]
         return handle
+
+    def clear(self) -> None:  # type: ignore[override]
+        """
+        Reset the GlobalFileManager view and all underlying managers.
+
+        Behaviour
+        ---------
+        - Attempts to delete the GlobalFileManager's own Unify context if one is
+          present or can be derived. This manager does not persist aggregated rows
+          by default, but this step ensures any future or temporary contexts are
+          cleaned up.
+        - Calls ``clear()`` on each underlying filesystem‑specific manager so any
+          per‑filesystem contexts and local caches are reset.
+        - All errors are swallowed to keep ``clear()`` idempotent and safe to call
+          in test setup/teardown.
+        """
+        # Best‑effort: clear a derived global context if present
+        try:
+            ctxs = unify.get_active_context()
+            read_ctx = ctxs.get("read")
+            global_ctx = f"{read_ctx}/FilesGlobal" if read_ctx else "FilesGlobal"
+            try:
+                unify.delete_context(global_ctx)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Fan‑out clear to all underlying managers
+        try:
+            for _, mgr in (self._managers or {}).items():
+                try:
+                    mgr.clear()
+                except Exception:
+                    continue
+        except Exception:
+            pass

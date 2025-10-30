@@ -1,4 +1,4 @@
-from .file import File
+from .file import FileRecord
 from .filesystem import (
     FileSystemCapabilities,
     FileReference,
@@ -8,7 +8,7 @@ from .filesystem import (
 )
 
 __all__ = [
-    "File",
+    "FileRecord",
     "FileSystemCapabilities",
     "FileReference",
     "FolderReference",

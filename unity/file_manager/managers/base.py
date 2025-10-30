@@ -5,6 +5,7 @@ from abc import abstractmethod
 from typing import Any, Dict, List, Optional, Union
 
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.state_managers import BaseStateManager
 
@@ -25,6 +26,23 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
     Implementations MUST NOT create or delete files via LLM tools by default.
     Mutations in "organize" are limited to rename/move and are gated by adapter
     capabilities.
+
+    Contexts & Joins
+    ----------------
+    A concrete FileManager typically manages:
+    - a global index context, and
+    - per-file contexts, optionally with nested per-table contexts.
+
+    Implementations expose read-only join tools to combine these contexts for
+    efficient retrieval:
+    - _filter_join / _search_join: join two contexts and then filter or perform
+      semantic search over the joined result.
+    - _filter_multi_join / _search_multi_join: chain multiple joins (the special
+      placeholder '$prev' may be used to refer to the previous step at call-time).
+
+    Reference conventions for join tools are implementation-specific. The
+    concrete class must document how callers identify the global index and
+    per-file/per-table contexts.
     """
 
     # ------------------------------------------------------------------ #
@@ -119,7 +137,20 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         *,
         include_types: bool = True,
     ) -> Dict[str, Any] | List[str]:
-        """Return the Unify table schema for this file manager's context."""
+        """
+        Return the schema for this manager's primary index context.
+
+        Parameters
+        ----------
+        include_types : bool, default True
+            When True, return a mapping of column → logical type. When False,
+            return just the list of column names.
+
+        Returns
+        -------
+        dict[str, Any] | list[str]
+            Column→type mapping when include_types=True, otherwise a list of column names.
+        """
 
     @abstractmethod
     def _filter_files(
@@ -129,7 +160,15 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """Filter files using a boolean expression evaluated per row (Unify)."""
+        """
+        Filter files using a boolean expression evaluated per row.
+
+        Notes
+        -----
+        For queries that need attributes from per-file content (e.g., content_type,
+        title, summary), prefer joining the global index with a per-file context via
+        the join tools provided by the concrete manager.
+        """
 
     @abstractmethod
     def _search_files(
@@ -138,7 +177,16 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> List[Dict[str, Any]]:
-        """Semantic search over files using Unify vector columns and references."""
+        """
+        Semantic search over files using Unify vector columns and references.
+
+        Notes
+        -----
+        For content-aware queries (e.g., search within sections/sentences), prefer
+        performing a semantic search after joining the global index with the
+        relevant per-file table using the join tools; this focuses embeddings on the
+        correct text column (e.g., "summary").
+        """
 
     @abstractmethod
     def _update_file(
@@ -176,7 +224,21 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def _rename_file(self, *, target_id_or_path: str, new_name: str) -> Dict[str, Any]:
-        """Rename a file."""
+        """
+        Rename a file in the underlying filesystem.
+
+        Parameters
+        ----------
+        target_id_or_path : str
+            Adapter-native identifier or path for the file.
+        new_name : str
+            New filename or basename; adapter determines full path semantics.
+
+        Returns
+        -------
+        dict
+            Adapter reference payload or a summary dict of the rename result.
+        """
 
     @abstractmethod
     def _move_file(
@@ -185,7 +247,21 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         target_id_or_path: str,
         new_parent_path: str,
     ) -> Dict[str, Any]:
-        """Move a file to a new directory."""
+        """
+        Move a file to a new directory in the underlying filesystem.
+
+        Parameters
+        ----------
+        target_id_or_path : str
+            Adapter-native identifier or path for the file.
+        new_parent_path : str
+            Destination directory path in adapter-native form.
+
+        Returns
+        -------
+        dict
+            Adapter reference payload or a summary dict of the move result.
+        """
 
     @abstractmethod
     def _delete_file(self, *, file_id: int) -> Dict[str, Any]:
@@ -220,9 +296,9 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate the existing filesystem (read-only) and obtain a steerable LLM handle.
@@ -239,6 +315,12 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         clarification tool is available, push a question to the up-queue and read from the
         down-queue. If no clarification channel exists, proceed with sensible defaults/best guesses
         and state assumptions in the outer response.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A handle controlling the interactive tool-use loop. Call ``await handle.result()``
+            to get the final answer.
         """
 
     # ------------------------------------------------------------------ #
@@ -251,15 +333,27 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         question: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Answer a question about a single file (read-only) and obtain a steerable LLM handle.
 
         Use when the caller already knows which file is relevant and wants a focused analysis
         (e.g., summarise this PDF, extract key data points from this document).
+
+        Parameters
+        ----------
+        filename : str
+            Logical identifier/path of the target file.
+        question : str
+            Natural-language question about the specific file.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A handle controlling the interactive tool-use loop for file-scoped queries.
         """
 
     # ------------------------------------------------------------------ #
@@ -271,9 +365,9 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
         Restructure/organize the filesystem (rename/move only) using an LLM-driven tool loop.
@@ -282,4 +376,17 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         safe, capability-gated tools (e.g., rename/move) and read-only discovery tools. The loop
         returns a steerable handle; the final result contains a natural-language summary of the
         reorganization plan and actions executed (if any).
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle controlling the interactive tool-use loop for reorganization.
         """
+
+    @abstractmethod
+    def clear(self) -> None:
+        raise NotImplementedError
+
+
+# Attach centralised docstring
+BaseFileManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING
