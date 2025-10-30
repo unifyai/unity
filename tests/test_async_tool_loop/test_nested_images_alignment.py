@@ -390,3 +390,78 @@ async def test_images_value_may_be_handle_objects() -> None:
     # No implicit conversion to handles – analyzer sees a non-handle value
     # and returns -1 for image_id extraction.
     assert obj.get("ids") == [-1]
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_nested_loop_does_not_inherit_parent_images() -> None:
+    """
+    Starting a nested async tool loop without an explicit `images` argument must
+    NOT inherit the parent's live images context. Previously this would inject a
+    synthetic `live_images_overview` into the inner loop; now it should not.
+    """
+
+    inner_clients: list[unify.AsyncUnify] = []
+
+    async def spawn_inner() -> dict:
+        # Create a brand-new inner client and start a nested loop WITHOUT images
+        inner = unify.AsyncUnify(
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
+        )
+        inner.set_system_message(
+            "You are running inside an automated test. Provide a short final reply.",
+        )
+        inner_clients.append(inner)
+        h_inner = start_async_tool_loop(
+            client=inner,
+            message="inner hello",
+            tools={"probe": (lambda: {"ok": True})},
+        )
+        await h_inner.result()
+        return {"inner_ok": True}
+
+    # Outer loop with live images present
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "In your FIRST assistant turn, call the tool `spawn_inner`. Then provide a short final reply.",
+    )
+
+    images = ImageRefs([RawImageRef(image_id=42)])
+
+    h = start_async_tool_loop(
+        client=client,
+        message="outer hello",
+        tools={"spawn_inner": spawn_inner},
+        images=images,
+        tool_policy=lambda step, available: (
+            ("required", {"spawn_inner": available["spawn_inner"]})
+            if step == 0
+            else ("auto", {})
+        ),
+    )
+
+    # Wait deterministically for spawn_inner to be invoked and finished
+    await _await_tool(client, "spawn_inner", min_results=1)
+    await h.result()
+
+    # Inspect the inner loop transcript: it must NOT include the synthetic overview
+    assert inner_clients, "Inner loop was not started"
+    inner_msgs = inner_clients[0].messages
+    inner_overview_msgs = [
+        m
+        for m in inner_msgs
+        if m.get("role") == "tool" and m.get("name") == "live_images_overview"
+    ]
+    assert (
+        not inner_overview_msgs
+    ), "Inner loop unexpectedly inherited parent images (overview present)"
