@@ -247,7 +247,8 @@ class ConversationManager:
             else:
                 topic = "app:comms:phone_utterance"
                 event = AssistantPhoneUtterance(
-                    self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
+                    self.state.phone_contact.phone_number,
+                    parsed_out["phone_utterance"],
                 )
             await self.event_broker.publish(topic, event.to_json())
 
@@ -269,7 +270,8 @@ class ConversationManager:
                         event = ConductorHandleRequest(
                             handle_id=action["handle_id"],
                             action_name=action["action_name"].replace(
-                                "conductor_handle_", ""
+                                "conductor_handle_",
+                                "",
                             ),
                             query=parsed_out["thoughts"],
                             parent_chat_context=self.state.chat_history,
@@ -291,13 +293,13 @@ class ConversationManager:
                         self.event_broker.publish(
                             "app:conductor:input_events",
                             event.to_json(),
-                        )
+                        ),
                     )
                     asyncio.create_task(
                         self.event_broker.publish(
                             "app:managers:input",
                             event.to_json(),
-                        )
+                        ),
                     )
                 elif action["action_name"] == "send_sms":
                     contact = self.state.update_or_create_new_contact(
@@ -785,19 +787,6 @@ class ConversationManager:
                 **self.state.get_details(),
             }
 
-            # For unify_message/unify_call assume boss contact; create to avoid errors
-            if "unify" in payload["medium"]:
-                self.state.update_or_create_new_contact(
-                    1,
-                    payload["user_name"].split(" ")[0],
-                    (
-                        payload["user_name"].split(" ")[1]
-                        if len(payload["user_name"].split(" ")) > 1
-                        else ""
-                    ),
-                    email_address=payload["user_email"],
-                )
-
             await self.publish_startup()
             asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
 
@@ -806,7 +795,7 @@ class ConversationManager:
                 self.state.inverted_contacts_map[0].model_dump(),
             )
             await self.publish_contact_update(
-                self.state.inverted_contacts_map[1].model_dump()
+                self.state.inverted_contacts_map[1].model_dump(),
             )
 
         elif isinstance(
