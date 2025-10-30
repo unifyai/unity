@@ -535,7 +535,9 @@ class ConversationManager:
             return
 
         # Get contact - pass to all params and let get_contact find the match
-        if event.contact.isnumeric():
+        if isinstance(event.contact, int):
+            contact = self.state.get_contact(contact_id=event.contact)
+        elif event.contact.isnumeric():
             contact = self.state.get_contact(contact_id=int(event.contact))
         elif event.contact:
             contact = self.state.get_contact(
