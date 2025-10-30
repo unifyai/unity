@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -211,3 +211,7 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
 
 # Attach centralised docstring
 BaseKnowledgeManager.clear.__doc__ = CLEAR_METHOD_DOCSTRING
+
+
+if TYPE_CHECKING:
+    pass
