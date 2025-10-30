@@ -4,7 +4,8 @@ import asyncio
 import json
 import os
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
+from pydantic import BaseModel
 
 import unify
 from .prompt_builders import build_ask_prompt, build_simulated_method_prompt
@@ -190,6 +191,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _requests_clarification: bool = False,
@@ -216,8 +218,37 @@ class SimulatedWebSearcher(BaseWebSearcher):
             parent_chat_context=_parent_chat_context,
         )
 
+        # When a response_format is requested, use a per-call client configured
+        # with the same system message to return structured output.
+        llm_for_handle = self._llm
+        if response_format is not None:
+            schema_llm = unify.AsyncUnify(
+                "gpt-5@openai",
+                reasoning_effort="high",
+                service_tier="priority",
+                cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+                traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
+            )
+            # Mirror the stateful system message for continuity
+            try:
+                schema_llm.set_system_message(getattr(self._llm, "system_message"))
+            except Exception:
+                # Fallback: rebuild a fresh prompt equivalent
+                ask_msg = build_ask_prompt(tools=self._ask_tools)
+                schema_llm.set_system_message(
+                    "You are a simulated web-search assistant. There is no real browser or API – "
+                    "invent plausible sources and keep your narrative consistent.\n\n"
+                    "For reference, here is the real system message outline used by the production WebSearcher.ask:"
+                    f"\n\n{ask_msg}\n\nBack-story: {self._description}",
+                )
+            try:
+                schema_llm.set_response_format(response_format)
+            except Exception:
+                pass
+            llm_for_handle = schema_llm
+
         handle = _SimulatedWebSearcherHandle(
-            self._llm,
+            llm_for_handle,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
