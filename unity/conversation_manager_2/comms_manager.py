@@ -180,7 +180,7 @@ class CommsManager:
                             f"app:comms:{thread}_message",
                             events_map[thread](
                                 content=content,
-                                contact="1",
+                                contact=event.get("contact_id", 1),
                             ).to_json(),
                         ),
                         self.loop,
