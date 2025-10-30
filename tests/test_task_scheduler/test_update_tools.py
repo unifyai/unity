@@ -120,7 +120,7 @@ def test_update_task_start_at():
         description="Email Q2 customer-satisfaction survey.",
     )
 
-    start = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    start = datetime.now(timezone.utc) + timedelta(days=1)
     ts._update_task(task_id=0, start_at=start)
 
     task_list = ts._filter_tasks()
@@ -138,7 +138,7 @@ def test_update_task_deadline():
         description="Prepare documents for accounting.",
     )
 
-    deadline = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    deadline = datetime.now(timezone.utc) + timedelta(days=30)
     ts._update_task(task_id=0, deadline=deadline)
 
     task_list = ts._filter_tasks()
