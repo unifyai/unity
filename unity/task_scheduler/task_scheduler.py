@@ -2514,15 +2514,15 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Validate existence, reject terminal/trigger-based; single consolidated read
         rows = self._filter_tasks(filter=f"task_id in {block}")
-        ids_found = {r.get("task_id") for r in rows}
+        ids_found = {r.task_id for r in rows}
         missing = [tid for tid in block if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
         for r in rows:
-            st = self._to_status(r.get("status"))
-            assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
-            if r.get("trigger") is not None:
+            st = self._to_status(r.status)
+            assert st not in self._TERMINAL_STATUSES, f"Task {r.task_id} is terminal"
+            if r.trigger is not None:
                 raise ValueError(
-                    f"Task {r['task_id']} is trigger-based and cannot be placed in the queue.",
+                    f"Task {r.task_id} is trigger-based and cannot be placed in the queue.",
                 )
 
         # Determine each task's current queue (prefer local index; reuse prefetched rows)
@@ -2537,12 +2537,12 @@ class TaskScheduler(BaseTaskScheduler):
         # For any remaining ids, reuse the single consolidated read done above
         missing = [t for t in block if int(t) not in source_qid_by_tid]
         if missing:
-            by_id = {int(r.get("task_id")): r for r in (rows or [])}
+            by_id = {int(r.task_id): r for r in (rows or [])}
             for t in missing:
                 row = by_id.get(int(t))
                 try:
                     source_qid_by_tid[int(t)] = (
-                        row.get("queue_id") if isinstance(row, dict) else None
+                        row.queue_id if isinstance(row, dict) else None
                     )
                 except Exception:
                     source_qid_by_tid[int(t)] = None
