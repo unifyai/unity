@@ -4230,7 +4230,7 @@ class TaskScheduler(BaseTaskScheduler):
         handle.result = wrapped_result  # type: ignore[assignment]
         return handle
 
-    def _get_single_row_or_raise(self, task_id: int) -> TaskBase:
+    def _get_single_row_or_raise(self, task_id: int) -> Task:
         """Fetch exactly one task row by id or raise ValueError."""
         rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
         if not rows:
