@@ -2690,7 +2690,7 @@ class TaskScheduler(BaseTaskScheduler):
                     f"Task {r.task_id} is trigger-based and cannot be placed in the queue.",
                 )
         # Build a one-shot rows map for reuse throughout this tool call
-        rows_by_id: Dict[int, TaskRow] = {int(r.task_id): r for r in rows}
+        rows_by_id: Dict[int, Task] = {int(r.task_id): r for r in rows}
         # Allow editing a queue that includes the currently active task; preserve its status below
         active_tid: Optional[int] = None
         try:
@@ -2732,7 +2732,7 @@ class TaskScheduler(BaseTaskScheduler):
         # - current membership to compute removals.
         if queue_id is not None and not assume_empty_target_queue:
             try:
-                rows_in_queue: List[TaskRow] = self._filter_tasks(
+                rows_in_queue: List[Task] = self._filter_tasks(
                     filter=(
                         "schedule is not None and "
                         "status not in ('completed','cancelled','failed') and "
@@ -2743,16 +2743,16 @@ class TaskScheduler(BaseTaskScheduler):
                 rows_in_queue = []
 
             # Derive current members and by-id map from the same read
-            current_members = [int(r.get("task_id")) for r in rows_in_queue]
-            current_rows_by_id = {int(r.get("task_id")): r for r in rows_in_queue}
+            current_members = [int(r.task_id) for r in rows_in_queue]
+            current_rows_by_id = {int(r.task_id): r for r in rows_in_queue}
 
             # Compute existing head start_at locally to avoid an unfiltered scan
             if queue_start_at is None and existing_head_start is None:
                 try:
                     for r in rows_in_queue:
-                        _sched = r.get("schedule") or {}
-                        if _sched.get("prev_task") is None:
-                            existing_head_start = _sched.get("start_at")
+                        _sched = r.schedule or Schedule()  # TODO: Remove
+                        if _sched.prev_task is None:
+                            existing_head_start = _sched.start_at
                             break
                 except Exception:
                     pass
@@ -2764,12 +2764,9 @@ class TaskScheduler(BaseTaskScheduler):
                     _row = rows_by_id.get(int(_tid))
                     if not _row:
                         continue
-                    _sched = _row.get("schedule") or {}
-                    if (
-                        _sched.get("start_at") is not None
-                        and _sched.get("prev_task") is None
-                    ):
-                        existing_head_start = _sched.get("start_at")
+                    _sched = _row.schedule or Schedule()  # TODO: Remove
+                    if _sched.start_at is not None and _sched.prev_task is None:
+                        existing_head_start = _sched.start_at
                         break
             except Exception:
                 pass
@@ -2851,13 +2848,13 @@ class TaskScheduler(BaseTaskScheduler):
 
             # Skip no-op writes when the current row already matches the desired state
             try:
-                cur_sched = {**(row.get("schedule") or {})}
+                cur_sched = row.schedule or Schedule()  # TODO: Remove
                 cur_qid = row.queue_id
                 cur_status = row.status
                 same_sched = (
-                    cur_sched.get("prev_task") == sched.get("prev_task")
-                    and cur_sched.get("next_task") == sched.get("next_task")
-                    and (cur_sched.get("start_at") == sched.get("start_at"))
+                    cur_sched.prev_task == sched.prev_task
+                    and cur_sched.next_task == sched.next_task
+                    and (cur_sched.start_at == sched.get("start_at"))
                 )
                 same_qid = cur_qid == target_qid
                 if "status" in write_entries:
