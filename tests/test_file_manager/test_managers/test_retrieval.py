@@ -6,7 +6,7 @@ from __future__ import annotations
 
 
 import pytest
-from unity.file_manager.types.file import File
+from unity.file_manager.types.file import FileRecord
 from tests.helpers import _handle_project
 
 
@@ -97,7 +97,7 @@ def test_search_files_single_reference_basic(file_manager):
     results = file_manager._search_files(references={"full_text": query}, k=3)
 
     assert len(results) >= 1
-    assert isinstance(results[0], File)
+    assert isinstance(results[0], FileRecord)
     # Should find sports report first
     assert results[0].filename == "sports_report.docx"
 
@@ -486,7 +486,7 @@ def test_filter_files_basic(file_manager):
     success_files = file_manager._filter_files(filter="status == 'success'")
     assert len(success_files) >= 1
     assert all(f.status == "success" for f in success_files)
-    assert isinstance(success_files[0], File)
+    assert isinstance(success_files[0], FileRecord)
 
     # Filter by filename extension
     pdf_files = file_manager._filter_files(filter="filename.endswith('.pdf')")
