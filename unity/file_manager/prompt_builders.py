@@ -42,6 +42,7 @@ def build_file_manager_ask_prompt(
     *,
     num_files: int = 0,
     columns: Dict[str, str] | None = None,
+    table_schemas_json: str | None = None,
     include_activity: bool = True,
 ) -> str:
     """
@@ -64,6 +65,22 @@ def build_file_manager_ask_prompt(
     list_columns_fname = _tool_name(tools, "_list_columns") or _tool_name(
         tools,
         "list_columns",
+    )
+    filter_join_fname = _tool_name(tools, "_filter_join") or _tool_name(
+        tools,
+        "filter_join",
+    )
+    search_join_fname = _tool_name(tools, "_search_join") or _tool_name(
+        tools,
+        "search_join",
+    )
+    filter_mjoin_fname = _tool_name(tools, "_filter_multi_join") or _tool_name(
+        tools,
+        "filter_multi_join",
+    )
+    search_mjoin_fname = _tool_name(tools, "_search_multi_join") or _tool_name(
+        tools,
+        "search_multi_join",
     )
     request_clar_fname = _tool_name(tools, "request_clarification")
 
@@ -110,6 +127,35 @@ def build_file_manager_ask_prompt(
             f"• Use `{filter_files_fname}` for exact/boolean filtering over filenames/metadata.",
         )
 
+    # Join usage guidance (global index ↔ per-file contexts ↔ extracted tables)
+    usage_lines += [
+        "",
+        "─ Joining contexts (advanced but fast) ─",
+        "• Use the provided join tools to combine the global index with a single file's context, and optionally with per-table contexts.",
+        "• The concrete manager resolves context references for you; pass identifiers exactly as described by tool signatures.",
+    ]
+    if any([filter_join_fname, search_join_fname]):
+        if filter_join_fname:
+            usage_lines.append(
+                f"• Filter a join result: `{filter_join_fname}(...)` (join global index to the specific file's context, then filter rows)",
+            )
+        if search_join_fname:
+            usage_lines.append(
+                f"• Semantic search over a join: `{search_join_fname}(...)` (rank rows after joining against a reference query)",
+            )
+    if any([filter_mjoin_fname, search_mjoin_fname]):
+        usage_lines += [
+            "• Chain multiple joins using the multi-join tools and reference the previous step with '$prev'.",
+        ]
+        if filter_mjoin_fname:
+            usage_lines.append(
+                f"• Multi-step filter: `{filter_mjoin_fname}(...)` (chain more than two contexts; use '$prev' to reference the previous result)",
+            )
+        if search_mjoin_fname:
+            usage_lines.append(
+                f"• Multi-step semantic search: `{search_mjoin_fname}(...)`",
+            )
+
     # Add parse guidance
     usage_lines += [
         "",
@@ -147,6 +193,9 @@ def build_file_manager_ask_prompt(
         )
     )
 
+    # Include tables overview if provided
+    overview_block = table_schemas_json or "{}"
+
     return "\n".join(
         [
             "You are an assistant specializing in **retrieving file information and analyzing file contents**.",
@@ -158,7 +207,17 @@ def build_file_manager_ask_prompt(
             "",
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
             "Use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
-            "Please always mention the relevant filename(s) in your response.",
+            "Please always mention the relevant file path(s) in your response.",
+            "",
+            "Context map",
+            "-----------",
+            "• Global index: a lightweight index of files",
+            "• Per-file contexts: rows representing content and hierarchy for a single file",
+            "• Per-table contexts: extracted tables (no predefined fields) for a single file",
+            "",
+            "Tables overview",
+            "----------------",
+            overview_block,
             "",
             f"There are currently {num_files} files stored in a table with the following columns:",
             json.dumps(columns, indent=4),
@@ -178,6 +237,7 @@ def build_file_manager_ask_prompt(
 def build_file_manager_ask_about_file_prompt(
     tools: Dict[str, Callable],
     *,
+    table_schemas_json: str | None = None,
     include_activity: bool = True,
 ) -> str:
     """
@@ -225,6 +285,43 @@ def build_file_manager_ask_about_file_prompt(
             line for line in parse_guidance_lines if line
         ]  # Remove empty strings
 
+    # Add join/search/filter guidance for file-scoped questions
+    filter_join_fname = _tool_name(tools, "_filter_join") or _tool_name(
+        tools,
+        "filter_join",
+    )
+    search_join_fname = _tool_name(tools, "_search_join") or _tool_name(
+        tools,
+        "search_join",
+    )
+    filter_mjoin_fname = _tool_name(tools, "_filter_multi_join") or _tool_name(
+        tools,
+        "filter_multi_join",
+    )
+    search_mjoin_fname = _tool_name(tools, "_search_multi_join") or _tool_name(
+        tools,
+        "search_multi_join",
+    )
+
+    join_guidance_lines = [
+        "",
+        "Context usage (file-scoped)",
+        "---------------------------",
+        "• Prefer joining the global index with this file's per-file context when you need content rows.",
+        "• You may also join with per-table contexts (e.g., extracted sheets) for structured queries.",
+        "• Use the provided join tools to combine these contexts; the manager resolves references for you.",
+    ]
+    if filter_join_fname or search_join_fname:
+        join_guidance_lines.append(
+            "• Filter or semantically search the joined result for precise answers.",
+        )
+    if filter_mjoin_fname or search_mjoin_fname:
+        join_guidance_lines.append(
+            "• Chain multiple joins when additional contexts are needed; use '$prev' to reference the previous result.",
+        )
+
+    overview_block = table_schemas_json or "{}"
+
     return "\n".join(
         [
             activity_block,
@@ -234,10 +331,15 @@ def build_file_manager_ask_about_file_prompt(
             clar_sentence,
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
             "Use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
-            "Please always mention the relevant filename in your response.",
+            "Please always mention the relevant file path in your response.",
             "",
             "Important: When calling tools, use the filename exactly as provided in the user message. Do not construct or modify file paths.",
             *parse_guidance_lines,
+            "",
+            "Tables overview",
+            "----------------",
+            overview_block,
+            *join_guidance_lines,
             "",
             "Tools (name → argspec):",
             sig_json,
@@ -254,6 +356,7 @@ def build_file_manager_organize_prompt(
     *,
     num_files: int = 0,
     columns: Dict[str, str] | None = None,
+    table_schemas_json: str | None = None,
     include_activity: bool = True,
 ) -> str:
     """
@@ -353,6 +456,8 @@ def build_file_manager_organize_prompt(
         )
     )
 
+    overview_block = table_schemas_json or "{}"
+
     return "\n".join(
         [
             activity_block,
@@ -366,6 +471,10 @@ def build_file_manager_organize_prompt(
             "",
             f"There are currently {num_files} files stored in a table with the following columns:",
             json.dumps(columns, indent=4),
+            "",
+            "Tables overview",
+            "----------------",
+            overview_block,
             "",
             "Tools (name → argspec):",
             sig_json,

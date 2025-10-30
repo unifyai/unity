@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Iterable, Optional, List, Dict, Any
 import os
 
-from unity.common.http import get as http_get, post as http_post
+from unify.utils import http
 
 from unity.file_manager.fs_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.types.filesystem import FileSystemCapabilities, FileReference
@@ -80,7 +80,12 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
             return
         try:
             url = f"{self._service_base}/sandboxes/{self._sandbox_id}/connect"
-            resp = http_post(url, headers=self._headers(), timeout=30)
+            resp = http.post(
+                url,
+                headers=self._headers(),
+                timeout=30,
+                raise_for_status=False,
+            )
             if resp.status_code < 400:
                 self._connected = True
         except Exception:
@@ -107,11 +112,12 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         self._ensure_connected()
         try:
             url = f"{self._service_base}/fs/{self._sandbox_id}/readdir"
-            resp = http_get(
+            resp = http.get(
                 url,
                 params={"dir": directory},
                 headers=self._headers(),
                 timeout=60,
+                raise_for_status=False,
             )
             if resp.status_code >= 400:
                 return []
@@ -134,11 +140,12 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         # Try the stat endpoint first
         try:
             url = f"{self._service_base}/fs/{self._sandbox_id}/stat"
-            resp = http_get(
+            resp = http.get(
                 url,
                 params={"path": path},
                 headers=self._headers(),
                 timeout=60,
+                raise_for_status=False,
             )
             if resp.status_code < 400:
                 stat = (resp.json() or {}).get("stat", {})
@@ -228,14 +235,14 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
             else:
                 # HTTP fallback - try to stat
                 self._ensure_connected()
-                from unity.common.http import get as http_get
 
                 url = f"{self._service_base}/fs/{self._sandbox_id}/stat"
-                resp = http_get(
+                resp = http.get(
                     url,
                     params={"path": p},
                     headers=self._headers(),
                     timeout=60,
+                    raise_for_status=False,
                 )
                 if resp.status_code < 400:
                     stat = (resp.json() or {}).get("stat", {})
@@ -259,7 +266,13 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         # HTTP fallback
         self._ensure_connected()
         url = f"{self._service_base}/fs/{self._sandbox_id}/readFile"
-        resp = http_get(url, params={"path": p}, headers=self._headers(), timeout=120)
+        resp = http.get(
+            url,
+            params={"path": p},
+            headers=self._headers(),
+            timeout=120,
+            raise_for_status=False,
+        )
         if resp.status_code >= 400:
             raise RuntimeError(f"CodeSandbox readFile failed: {resp.status_code}")
         return resp.content
@@ -392,11 +405,12 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         else:
             self._ensure_connected()
             url = f"{self._service_base}/fs/{self._sandbox_id}/rename"
-            resp = http_post(
+            resp = http.post(
                 url,
                 json={"oldPath": old_path, "newPath": new_path},
                 headers=self._headers(),
                 timeout=60,
+                raise_for_status=False,
             )
             if resp.status_code >= 400:
                 raise RuntimeError(
@@ -422,11 +436,12 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         else:
             self._ensure_connected()
             url = f"{self._service_base}/fs/{self._sandbox_id}/move"
-            resp = http_post(
+            resp = http.post(
                 url,
                 json={"oldPath": src, "newParentPath": dst_parent},
                 headers=self._headers(),
                 timeout=60,
+                raise_for_status=False,
             )
             if resp.status_code >= 400:
                 raise RuntimeError(
@@ -447,7 +462,13 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         else:
             self._ensure_connected()
             url = f"{self._service_base}/fs/{self._sandbox_id}/delete"
-            resp = http_post(url, json={"path": p}, headers=self._headers(), timeout=60)
+            resp = http.post(
+                url,
+                json={"path": p},
+                headers=self._headers(),
+                timeout=60,
+                raise_for_status=False,
+            )
             if resp.status_code >= 400:
                 raise RuntimeError(
                     f"CodeSandbox delete failed: {resp.status_code} {resp.text[:200]}",
