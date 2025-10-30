@@ -23,20 +23,16 @@ def _load_png_b64(filename: str) -> str:
 @pytest.mark.parametrize(
     "first_head",
     [
-        "Deprioritize Tasks",  # scenario A – Deprioritize first
+        "Invitation Emails",  # scenario A – Invitation first
         "Organize Weekly Rota",  # scenario B – Organize first
     ],
 )
 async def test_taskscheduler_ask_live_images_queue_order(first_head: str) -> None:
     ts = TaskScheduler()
 
-    # Seed four tasks and materialize a single queue; switch head based on param
+    # Seed three tasks and materialize a single queue; switch head based on param
     created = ts._create_tasks(
         tasks=[
-            {
-                "name": "Deprioritize Tasks",
-                "description": 'take all tasks marked as "urgent" and reduce their urgency down to "high"',
-            },
             {
                 "name": "Organize Weekly Rota",
                 "description": (
@@ -55,9 +51,9 @@ async def test_taskscheduler_ask_live_images_queue_order(first_head: str) -> Non
         ],
         queue_ordering=[
             {
-                # Task ids will be 0..3 in the same order as above
+                # Task ids will be 0..2 in the same order as above
                 "order": (
-                    [0, 1, 2, 3] if first_head == "Deprioritize Tasks" else [1, 0, 2, 3]
+                    [1, 0, 2] if first_head == "Invitation Emails" else [0, 1, 2]
                 ),
                 # Head has a start_at timestamp; followers are chained
                 "queue_head": {"start_at": "2036-06-01T09:00:00+00:00"},
@@ -65,11 +61,11 @@ async def test_taskscheduler_ask_live_images_queue_order(first_head: str) -> Non
         ],
     )
 
-    assert created["details"]["task_ids"] == [0, 1, 2, 3]
+    assert created["details"]["task_ids"] == [0, 1, 2]
 
     # Persist two live images and provide typed refs with annotations mapping to the prompt's "this one" / "this other one"
     manager = ImageManager()
-    b64_first = _load_png_b64("deprioritize_tasks.png")
+    b64_first = _load_png_b64("invitation_emails.png")
     b64_second = _load_png_b64("organize_weekly_rotar.png")
     generic_caption = "screenshots captured from the user sharing their screen with us during our live ongoing meet; a more detailed caption is pending..."
     [img_a] = manager.add_images(
