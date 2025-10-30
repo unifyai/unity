@@ -66,7 +66,7 @@ def detach_from_queue_for_activation(
         raise ValueError(f"No runnable task found with id={task_id}")
     task_row = sorted(
         candidate_rows,
-        key=lambda r: r.instance_id if r.instance_id is not UNASSIGNED else 0,
+        key=lambda r: r.instance_id,
     )[0]
 
     sched = task_row.schedule or Schedule()
