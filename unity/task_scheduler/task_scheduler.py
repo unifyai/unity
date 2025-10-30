@@ -2093,13 +2093,11 @@ class TaskScheduler(BaseTaskScheduler):
             return []
 
         # Fast-path via LocalTaskView with a single minimal read.
-        try:
-            if isinstance(queue_id, int):
-                member_ids = list(self._view.get_member_ids(int(queue_id)) or [])
-            else:
-                member_ids = []
-        except Exception:
+        if isinstance(queue_id, int):
+            member_ids = list(self._view.get_member_ids(queue_id) or [])
+        else:
             member_ids = []
+
         if member_ids:
             fields_needed: List[str] = self._queue_member_fields()
             rows_by_id: Dict[int, TaskBase] = self._read_rows_by_ids(
@@ -2140,26 +2138,17 @@ class TaskScheduler(BaseTaskScheduler):
         # A row is a head if: prev_task is None OR prev_task not present among non-terminal members.
         ids_in_q: set[int] = set()
         for r in rows_in_queue:
-            try:
-                tid_val = r.task_id
-                if isinstance(tid_val, int):
-                    ids_in_q.add(int(tid_val))
-            except Exception:
-                continue
+            ids_in_q.add(r.task_id)
+
         head_candidates: list[Task] = []
         prefer_none_prev: list[Task] = []
         for r in rows_in_queue:
-            sched = r.schedule or Schedule()  # TODO: Remove
-            prev_id = sched.prev_task
+            prev_id = r.schedule_prev
             if prev_id is None:
                 prefer_none_prev.append(r)
                 head_candidates.append(r)
             else:
-                try:
-                    prev_int = int(prev_id)
-                except Exception:
-                    prev_int = None  # type: ignore[assignment]
-                if prev_int is None or prev_int not in ids_in_q:
+                if prev_id not in ids_in_q:
                     head_candidates.append(r)
         if not head_candidates:
             return []
@@ -2168,53 +2157,36 @@ class TaskScheduler(BaseTaskScheduler):
             if prefer_none_prev:
                 head = prefer_none_prev[0]
             else:
-                try:
-                    head = sorted(
-                        head_candidates,
-                        key=lambda x: int(x.task_id),
-                    )[0]
-                except Exception:
-                    head = head_candidates[0]
+                head = sorted(
+                    head_candidates,
+                    key=lambda x: x.task_id,
+                )[0]
         else:
             head = head_candidates[0]
 
         # Build id -> row map for O(1) next lookups without further backend reads
         rows_by_id: Dict[int, Task] = {}
         for r in rows_in_queue:
-            try:
-                tid_val = r.task_id
-                if isinstance(tid_val, int):
-                    rows_by_id[tid_val] = r
-            except Exception:
-                pass
+            rows_by_id[r.task_id] = r
 
         # Walk head→tail using next_task pointers in-memory
         ordered: List[Task] = []
         seen: set[int] = set()
         cur = head
         while cur is not None:
-            try:
-                tid_val = cur.task_id
-                tid_int = int(tid_val) if tid_val is not None else None
-            except Exception:
-                tid_int = None
-            if isinstance(tid_int, int):
-                if tid_int in seen:
-                    break
-                seen.add(tid_int)
+            if cur.task_id in seen:
+                break
+
+            seen.add(cur.task_id)
 
             # Strip stale activation metadata on non-active rows
-            _row = self._sanitize_activation(dict(cur))
+            _row = self._sanitize_activation(cur.model_dump())
             ordered.append(Task(**_row))
 
-            nxt = (cur.schedule or Schedule()).next_task  # TODO: Remove
+            nxt = cur.schedule_next
             if nxt is None:
                 break
-            try:
-                nxt_int = int(nxt)
-            except Exception:
-                break
-            cur = rows_by_id.get(nxt_int)
+            cur = rows_by_id.get(nxt)
 
         return ordered
 
