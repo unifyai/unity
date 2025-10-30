@@ -2,7 +2,9 @@ import asyncio
 import unify
 import json
 import inspect
+import os
 import copy
+from datetime import datetime
 
 from typing import (
     Dict,
@@ -42,6 +44,7 @@ from .images import (
     LIVE_IMAGES_REGISTRY,
     LIVE_IMAGES_LOG,
 )
+from .formatting import sanitize_tool_msg_for_logging
 from ..llm_helpers import method_to_schema, _dumps, short_id
 from .loop_config import (
     LoopConfig,
@@ -270,6 +273,34 @@ async def async_tool_loop_inner(
             setattr(outer_handle_container[0], "_log_label", cfg.label)
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
+    # Independent, env-gated LLM I/O logging (request/response at raw API boundary)
+    _env_llm_io = (os.environ.get("UNITY_LOG_LLM_IO") or "").strip().lower()
+    log_llm_io = _env_llm_io in ("1", "true", "yes", "on", "full")
+
+    # File sink for LLM I/O: always a fresh file per process run
+    _llm_io_file: str | None = None
+    if log_llm_io:
+        with suppress(Exception):
+            ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            _llm_io_file = os.path.join(os.getcwd(), f".unity_llm_io_{ts}.txt")
+
+    def _llm_io_write(header: str, body: str) -> None:
+        if not log_llm_io or _llm_io_file is None:
+            return
+        try:
+            with open(_llm_io_file, "a", encoding="utf-8") as _f:
+                _f.write(f"🔄 [{logger.log_label}] {header}\n")
+                _f.write(body.rstrip())
+                _f.write("\n\n")
+            # Emit a concise terminal notice with the destination file
+            try:
+                kind = "request" if "request" in header.lower() else "response"
+                logger.info(f"LLM {kind} written to {_llm_io_file}", prefix="📝")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     _img_token = None
     _imglog_token = None
     # Track already-logged image entries to avoid repeated 🖼️ spam
@@ -1394,6 +1425,65 @@ async def async_tool_loop_inner(
                 if max_parallel_tool_calls is not None:
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
+                # Optional: log the full raw request payload right before the API call
+                if log_llm_io:
+                    with suppress(Exception):
+                        _orig_msgs_ref = client.messages
+                        _msgs_copy = copy.deepcopy(_orig_msgs_ref)
+                        _patched = _msgs_copy
+                        if preprocess_msgs is not None:
+                            try:
+                                _patched = preprocess_msgs(_msgs_copy) or _msgs_copy
+                            except Exception:
+                                _patched = _msgs_copy
+                        # Drop a raw leading system prompt if present (non-context header)
+                        if _patched and isinstance(_patched[0], dict):
+                            _top_p = _patched[0]
+                            if _top_p.get("role") == "system" and not _top_p.get(
+                                "_ctx_header",
+                            ):
+                                _patched = _patched[1:]
+
+                        # Pretty-print messages in-place for logs
+                        try:
+                            from .utils import try_parse_json as _try_parse_json
+                        except Exception:
+                            _try_parse_json = lambda v: v
+
+                        _msgs_pretty = []
+                        for _m in _patched:
+                            _mm = copy.deepcopy(_m)
+                            try:
+                                if _mm.get("role") == "assistant":
+                                    for _tc in _mm.get("tool_calls") or []:
+                                        _fn = _tc.get("function", {})
+                                        _fn["arguments"] = _try_parse_json(
+                                            _fn.get("arguments"),
+                                        )
+                                if _mm.get("role") == "tool":
+                                    _mm = sanitize_tool_msg_for_logging(_mm)
+                            except Exception:
+                                pass
+                            _msgs_pretty.append(_mm)
+
+                        _req_payload = {
+                            "model": getattr(client, "model", None),
+                            # system_message printed separately for readability
+                            "messages": _msgs_pretty,
+                        }
+                        for _k, _v in _gen_kwargs.items():
+                            _req_payload[_k] = _v
+
+                        _sys_txt = getattr(client, "system_message", "") or ""
+                        _sys_block = (
+                            f"System message:\n{_sys_txt}\n\n" if _sys_txt else ""
+                        )
+
+                        _llm_io_write(
+                            "LLM request ➡️:",
+                            f"{_sys_block}{_dumps(_req_payload, indent=4)}",
+                        )
+
                 llm_task = asyncio.create_task(
                     generate_with_preprocess(client, preprocess_msgs, **_gen_kwargs),
                     name="LLMGenerate",
@@ -1552,6 +1642,15 @@ async def async_tool_loop_inner(
                             await _handle_notification(notif_waiters2[pw], pw.result())
                         llm_turn_required = True
 
+                # If the LLM completed successfully, log the raw response object
+                if log_llm_io and not llm_task.exception():
+                    with suppress(Exception):
+                        _raw_resp = llm_task.result()
+                        _llm_io_write(
+                            "LLM response ⬅️:",
+                            _dumps(_raw_resp, indent=4),
+                        )
+
             else:
                 # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
                 try:
@@ -1564,11 +1663,76 @@ async def async_tool_loop_inner(
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
-                    await generate_with_preprocess(
+                    # Optional: log the full raw request payload right before the API call
+                    if log_llm_io:
+                        with suppress(Exception):
+                            _orig_msgs_ref = client.messages
+                            _msgs_copy = copy.deepcopy(_orig_msgs_ref)
+                            _patched = _msgs_copy
+                            if preprocess_msgs is not None:
+                                try:
+                                    _patched = preprocess_msgs(_msgs_copy) or _msgs_copy
+                                except Exception:
+                                    _patched = _msgs_copy
+                            if _patched and isinstance(_patched[0], dict):
+                                _top_p = _patched[0]
+                                if _top_p.get("role") == "system" and not _top_p.get(
+                                    "_ctx_header",
+                                ):
+                                    _patched = _patched[1:]
+
+                            # Pretty-print messages in-place for logs
+                            try:
+                                from .utils import try_parse_json as _try_parse_json
+                            except Exception:
+                                _try_parse_json = lambda v: v
+
+                            _msgs_pretty = []
+                            for _m in _patched:
+                                _mm = copy.deepcopy(_m)
+                                try:
+                                    if _mm.get("role") == "assistant":
+                                        for _tc in _mm.get("tool_calls") or []:
+                                            _fn = _tc.get("function", {})
+                                            _fn["arguments"] = _try_parse_json(
+                                                _fn.get("arguments"),
+                                            )
+                                    if _mm.get("role") == "tool":
+                                        _mm = sanitize_tool_msg_for_logging(_mm)
+                                except Exception:
+                                    pass
+                                _msgs_pretty.append(_mm)
+
+                            _req_payload = {
+                                "model": getattr(client, "model", None),
+                                # system_message printed separately for readability
+                                "messages": _msgs_pretty,
+                            }
+                            for _k, _v in _gen_kwargs.items():
+                                _req_payload[_k] = _v
+
+                            _sys_txt = getattr(client, "system_message", "") or ""
+                            _sys_block = (
+                                f"System message:\n{_sys_txt}\n\n" if _sys_txt else ""
+                            )
+
+                            _llm_io_write(
+                                "LLM request ➡️:",
+                                f"{_sys_block}{_dumps(_req_payload, indent=4)}",
+                            )
+
+                    _result = await generate_with_preprocess(
                         client,
                         preprocess_msgs,
                         **_gen_kwargs,
                     )
+
+                    if log_llm_io:
+                        with suppress(Exception):
+                            _llm_io_write(
+                                "LLM response ⬅️:",
+                                _dumps(_result, indent=4),
+                            )
                 except Exception:
                     raise Exception(
                         f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
