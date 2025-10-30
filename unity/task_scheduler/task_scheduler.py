@@ -2069,7 +2069,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         queue_id: Optional[int] = None,
         strict: bool = True,
-    ) -> List[TaskBase]:
+    ) -> List[Task]:
         """
         Return the runnable queue for a given ``queue_id`` (head→tail).
 
@@ -2107,7 +2107,7 @@ class TaskScheduler(BaseTaskScheduler):
                 fields=fields_needed,
             )
 
-            ordered: List[TaskBase] = []
+            ordered: List[Task] = []
             for tid in member_ids:
                 row = rows_by_id.get(int(tid))
                 if not isinstance(row, dict):
@@ -2119,11 +2119,11 @@ class TaskScheduler(BaseTaskScheduler):
                 except Exception:
                     pass
                 row = self._sanitize_activation(row)
-                ordered.append(TaskBase(**row))
+                ordered.append(Task(**row))
             return ordered
 
         # Fallback: single filtered read of all runnable rows in this queue
-        rows_in_queue: List[TaskBase] = [
+        rows_in_queue: List[Task] = [
             r
             for r in self._filter_tasks(
                 filter=(
@@ -2179,7 +2179,7 @@ class TaskScheduler(BaseTaskScheduler):
             head = head_candidates[0]
 
         # Build id -> row map for O(1) next lookups without further backend reads
-        rows_by_id: Dict[int, TaskBase] = {}
+        rows_by_id: Dict[int, Task] = {}
         for r in rows_in_queue:
             try:
                 tid_val = r.task_id
@@ -2189,7 +2189,7 @@ class TaskScheduler(BaseTaskScheduler):
                 pass
 
         # Walk head→tail using next_task pointers in-memory
-        ordered: List[TaskBase] = []
+        ordered: List[Task] = []
         seen: set[int] = set()
         cur = head
         while cur is not None:
@@ -2205,7 +2205,7 @@ class TaskScheduler(BaseTaskScheduler):
 
             # Strip stale activation metadata on non-active rows
             _row = self._sanitize_activation(dict(cur))
-            ordered.append(TaskBase(**_row))
+            ordered.append(Task(**_row))
 
             nxt = (cur.schedule or Schedule()).next_task  # TODO: Remove
             if nxt is None:
