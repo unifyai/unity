@@ -583,7 +583,9 @@ async def async_tool_loop_inner(
                 "images": _AnnotatedImageRefs.model_validate(annotated_list),
                 "images_meta": images_meta,
                 "hint": (
-                    "Copy any items from 'images' directly into future tools' 'images' argument (AnnotatedImageRefs)."
+                    "Forward these images into future tools that declare an 'images' argument (prefer AnnotatedImageRefs). "
+                    "Rewrite or augment annotations so they align with the delegated question/action (not the original phrasing), "
+                    "and preserve user-referenced ordering when it matters."
                 ),
             }
 

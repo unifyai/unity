@@ -25,6 +25,7 @@ from ..common.prompt_helpers import (
     require_tools as _shared_require_tools,
     parallelism_guidance,
     images_policy_block,
+    images_forwarding_block,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -263,6 +264,8 @@ def build_ask_prompt(
             usage_examples,
             "",
             images_policy_block(),
+            "",
+            images_forwarding_block(),
             "",
             parallelism_guidance(),
             "",

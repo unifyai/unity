@@ -21,6 +21,7 @@ from ..common.prompt_helpers import (
     tool_name,
     require_tools,
     images_policy_block,
+    images_forwarding_block,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -182,6 +183,8 @@ def build_ask_prompt(
         usage_examples,
         "",
         images_policy_block(),
+        "",
+        images_forwarding_block(),
         "",
         # Images-first workflow (nuanced)
         "Images-first workflow for ask()",
@@ -474,6 +477,8 @@ def build_update_prompt(
         "",
         images_policy_block(),
         "",
+        images_forwarding_block(),
+        "",
         "Parallelism and single‑call preference",
         "-------------------------------------",
         "• Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.",
@@ -567,6 +572,8 @@ def build_execute_prompt(
             if request_clar_fname
             else "• If no clarification tool is available, do not ask questions in your final response; proceed using sensible defaults/best‑guess values and state assumptions explicitly."
         ),
+        "",
+        images_forwarding_block(),
         "",
         "A. If the request contains a *numeric task_id*:",
         "   • Isolation is preferred when the user intent is 'start now'.",
