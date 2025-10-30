@@ -4298,7 +4298,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
-    ) -> List[TaskBase]:
+    ) -> List[Task]:
         """
         Semantic search across tasks using one or more reference texts.
 
