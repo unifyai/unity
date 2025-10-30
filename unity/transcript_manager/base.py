@@ -89,6 +89,12 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
             ``image_id`` values (optionally annotated) to enable vision helpers like
             ``ask_image`` or ``attach_image_raw`` within the tool loop.
 
+        Visual inputs policy
+        --------------------
+        • When delegating to another tool that declares an ``images`` parameter, forward the relevant images and
+          rewrite/augment their annotations so they align with the delegated question or action (not the original
+          user phrasing). Prefer AnnotatedImageRefs; preserve user‑referenced ordering when it matters.
+
         Returns
         -------
         SteerableToolHandle

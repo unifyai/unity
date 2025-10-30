@@ -8,6 +8,7 @@ __all__ = [
     "require_tools",
     "parallelism_guidance",
     "images_policy_block",
+    "images_forwarding_block",
 ]
 
 
@@ -115,9 +116,27 @@ def images_policy_block() -> str:
         "  observable details — never invent system-specific fields that may not be present on-screen.\n"
         "- Use any extracted cues (e.g., what is in the image, what appears to be done if this is a screen-share) to guide downstream\n"
         "  tool choices (e.g., semantic searches guided by inferred activity or content).\n"
+        "- Forwarding rule: when delegating to another tool that declares an `images` parameter, forward the relevant images and\n"
+        "  rewrite/augment their annotations so they align with the delegated question or action (not the original user phrasing).\n"
+        "  Prefer AnnotatedImageRefs; include a curated subset and preserve user-referenced ordering when it matters.\n"
         "- Anti-patterns to avoid:\n"
         "  • Asking for system-specific identifiers or structured record fields in the first question unless those are clearly visible.\n"
         "  • Assuming the screenshot is a structured record view from a specific manager.\n"
         "  • Re-asking a broad description when the caption already provides that description.\n"
         "- Attach images (`attach_image_raw`) when persistent visual context is helpful for follow-up turns; otherwise prefer targeted `ask_image` calls."
+    )
+
+
+def images_forwarding_block() -> str:
+    """General guidance for forwarding images into nested tools.
+
+    Manager‑agnostic: safe to include in any prompt where nested tool calls may occur.
+    """
+    return (
+        "Images forwarding to nested tools\n"
+        "----------------------------------\n"
+        "• When delegating to another tool that declares an `images` parameter, forward the relevant images.\n"
+        "• Rewrite or augment image annotations so they align with the delegated question/action (not the original phrasing).\n"
+        "• Prefer AnnotatedImageRefs; include a curated subset and preserve user‑referenced ordering when it matters.\n"
+        "• If no images are relevant, omit them rather than attaching unrelated visuals."
     )
