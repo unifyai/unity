@@ -159,7 +159,7 @@ def test_update_task_repetition():
     ts._update_task(task_id=0, repeat=[rule])
 
     task_list = ts._filter_tasks()
-    assert task_list[0].repeat == rule
+    assert task_list[0].repeat[0] == rule
 
 
 @_handle_project
