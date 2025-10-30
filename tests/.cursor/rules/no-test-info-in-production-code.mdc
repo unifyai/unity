@@ -1,0 +1,6 @@
+---
+description: No Test Info in Production Code
+globs: ["**/*"]
+alwaysApply: true
+---
+If a test is failing, we should **never** expose **any** test-specific information into the prompts or docstrings as a short-term hack to get the test passing. No information about the test cases should ever make its way into any fast-paths, docstrings or prompts in the production code we're testing, even minor details. We should ensure that all fixes are fully general, and **much** broader than the specific details for the test which is currently failing. We do **not** want to risk overfitting the production system to a specific set of tests.
