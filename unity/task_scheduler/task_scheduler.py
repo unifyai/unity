@@ -4383,17 +4383,23 @@ class TaskScheduler(BaseTaskScheduler):
         # multiple instances of the same task_id to be returned (e.g., clones).
         effective_limit = limit
 
+        exclude_fields = [
+            name
+            for name in self._get_columns().keys()
+            if isinstance(name, str) and name.startswith("_")
+        ]
+
+        exclude_fields.append(
+            "activated_by",
+        )  # TODO: Is activated_by only for platform use?
+
         rows = self._view.get_entries(
             filter=normalized_filter,
             offset=offset,
             limit=effective_limit,
             # Avoid an extra backend call here by deriving private fields from the
             # cached schema instead of calling get_fields() again.
-            exclude_fields=[
-                name
-                for name in self._get_columns().keys()
-                if isinstance(name, str) and name.startswith("_")
-            ],
+            exclude_fields=exclude_fields,
         )
 
         # Rehydrate Enum values inside repetition patterns so callers see
