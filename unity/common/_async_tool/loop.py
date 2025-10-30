@@ -20,7 +20,7 @@ from typing import (
 from contextlib import suppress
 from pydantic import BaseModel
 
-from ...constants import LOGGER
+from ...constants import LOGGER, LLM_IO_LOGGING
 from ..tool_spec import ToolSpec, normalise_tools
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
@@ -273,9 +273,8 @@ async def async_tool_loop_inner(
             setattr(outer_handle_container[0], "_log_label", cfg.label)
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
-    # Independent, env-gated LLM I/O logging (request/response at raw API boundary)
-    _env_llm_io = (os.environ.get("UNITY_LOG_LLM_IO") or "").strip().lower()
-    log_llm_io = _env_llm_io in ("1", "true", "yes", "on", "full")
+    # Independent, centrally-configured LLM I/O logging flag
+    log_llm_io = bool(LLM_IO_LOGGING)
 
     # File sink for LLM I/O: always a fresh file per process run
     _llm_io_file: str | None = None
