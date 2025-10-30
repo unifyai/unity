@@ -4379,10 +4379,6 @@ class TaskScheduler(BaseTaskScheduler):
         """
         normalized_filter = normalize_filter_expr(filter)
 
-        # Note: Avoid capping limits for task_id filters; tests may expect
-        # multiple instances of the same task_id to be returned (e.g., clones).
-        effective_limit = limit
-
         exclude_fields = [
             name
             for name in self._get_columns().keys()
@@ -4396,7 +4392,7 @@ class TaskScheduler(BaseTaskScheduler):
         rows = self._view.get_entries(
             filter=normalized_filter,
             offset=offset,
-            limit=effective_limit,
+            limit=limit,
             # Avoid an extra backend call here by deriving private fields from the
             # cached schema instead of calling get_fields() again.
             exclude_fields=exclude_fields,
