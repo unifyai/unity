@@ -109,6 +109,18 @@ class TaskBase(BaseModel):
             exclude.add("queue_id")
         return self.model_dump(mode="json", exclude=exclude)
 
+    @property
+    def schedule_next(self) -> Optional[int]:
+        return self.schedule.next_task if self.schedule is not None else None
+
+    @property
+    def schedule_prev(self) -> Optional[int]:
+        return self.schedule.prev_task if self.schedule is not None else None
+
+    @property
+    def schedule_start_at(self) -> Optional[datetime]:
+        return self.schedule.start_at if self.schedule is not None else None
+
 
 class Task(TaskBase):
     task_id: int = Field(description="Unique identifier for the task")
