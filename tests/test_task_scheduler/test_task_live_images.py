@@ -153,3 +153,127 @@ async def test_taskscheduler_ask_live_images_queue_order(first_head: str) -> Non
         "Expected the earliest task to be correctly identified from images and lookups: "
         f"{first_head} should come first."
     )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_taskscheduler_update_live_images_reorder_three_tasks() -> None:
+    ts = TaskScheduler()
+
+    # Seed three tasks and materialize a single queue with a fixed initial order
+    created = ts._create_tasks(
+        tasks=[
+            {
+                "name": "Organize Weekly Rota",
+                "description": (
+                    "Go through all hired admin assistants, look through the spreadsheet containing their weekly availability, "
+                    "and work out the best weekly rota"
+                ),
+            },
+            {
+                "name": "Invitation Emails",
+                "description": "Send out all of the invitation Emails",
+            },
+            {
+                "name": "Image Edits",
+                "description": "Crop all of the images such that they show headshots, cutting from the shoulders down",
+            },
+        ],
+        queue_ordering=[
+            {
+                # Task ids will be 0..2 in the same order as above
+                "order": [0, 1, 2],
+                # Head has a start_at timestamp; followers are chained
+                "queue_head": {"start_at": "2036-06-01T09:00:00+00:00"},
+            },
+        ],
+    )
+
+    assert created["details"]["task_ids"] == [0, 1, 2]
+
+    # Persist three live images with typed refs and minimal annotations that map
+    # to "this", "then this", and "finally this" in the user's message
+    manager = ImageManager()
+    b64_invite = _load_png_b64("invitation_emails.png")
+    b64_rota = _load_png_b64("organize_weekly_rotar.png")
+    b64_photo = _load_png_b64("photo_editing.png")
+    generic_caption = "screenshots captured from the user sharing their screen with us during our live ongoing meet; a more detailed caption is pending..."
+    [img_invite] = manager.add_images(
+        [
+            {"caption": generic_caption, "data": b64_invite},
+        ],
+    )
+    [img_rota] = manager.add_images(
+        [
+            {"caption": generic_caption, "data": b64_rota},
+        ],
+    )
+    [img_photo] = manager.add_images(
+        [
+            {"caption": generic_caption, "data": b64_photo},
+        ],
+    )
+
+    images = ImageRefs(
+        [
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_invite)),
+                annotation="this",
+            ),
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_rota)),
+                annotation="then this",
+            ),
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_photo)),
+                annotation="finally this",
+            ),
+        ],
+    )
+
+    # Ask the scheduler to re-order the three tasks to match the visual order
+    command = (
+        "I'm looking through some of the tasks scheduled for next week, and I've started to explore what is entailed for each. "
+        "I've made a start on each of the tasks, performing the first few steps, and I've got the associated tabs opened right now. "
+        "Please reorder the next week's runnable schedule such that this comes first, then this, and finally this. "
+        "I don't remember the task names, but the correct order should be the same as the visual order of those three tabs, "
+        "where each tab showed my partial progress in *performing* each of the tasks."
+    )
+
+    handle = await ts.update(command, images=images, _return_reasoning_steps=True)
+    _, messages = await handle.result()
+
+    # Expect image-aware behaviour via ask_image or attach_image_raw
+    image_calls = []
+    for m in messages:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = (tc.get("function") or {}).get("name")
+            if fn in ("ask_image", "attach_image_raw"):
+                image_calls.append(tc)
+    assert (
+        image_calls
+    ), "Expected ask_image or attach_image_raw to be used with live images"
+
+    # Verify a tasks lookup occurred (search_tasks or filter_tasks)
+    lookup_calls = []
+    for m in messages:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = (tc.get("function") or {}).get("name")
+            if fn in ("search_tasks", "filter_tasks"):
+                lookup_calls.append(tc)
+    assert lookup_calls, "Expected a tasks lookup (search_tasks or filter_tasks)"
+
+    # After update, verify the queue order is Invitation → Organize → Image Edits
+    row0 = ts._filter_tasks(filter="task_id == 0")[0]
+    qid = row0.get("queue_id")
+    chain = (
+        ts._get_queue(queue_id=qid)
+        if isinstance(qid, int)
+        else ts._get_queue_for_task(task_id=0)
+    )
+    queue = [t.task_id for t in chain]
+    assert queue == [1, 0, 2]
