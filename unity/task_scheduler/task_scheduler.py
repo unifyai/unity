@@ -2218,7 +2218,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         return ordered
 
-    def _walk_queue_from_task(self, *, task_id: int) -> List[TaskBase]:
+    def _walk_queue_from_task(self, *, task_id: int) -> List[Task]:
         """
         Walk the chain that contains `task_id` by following schedule.prev_task to
         the head and then schedule.next_task forward, returning rows as `Task`.
@@ -2236,7 +2236,7 @@ class TaskScheduler(BaseTaskScheduler):
         head = cur_row
         try:
             while head is not None:
-                prev_id = (head.get("schedule") or {}).get("prev_task")
+                prev_id = (head.schedule or Schedule()).prev_task  # TODO: Remove
                 if prev_id is None:
                     break
                 prev_rows = self._filter_tasks(
@@ -2251,11 +2251,11 @@ class TaskScheduler(BaseTaskScheduler):
             return []
 
         # Walk forward using next_task pointers; include terminal rows for context
-        ordered: List[TaskBase] = []
+        ordered: List[Task] = []
         node = head
         seen: set[int] = set()
         while node is not None:
-            tid = node.get("task_id")
+            tid = node.task_id
             try:
                 tid_int = int(tid) if tid is not None else None
             except Exception:
@@ -2266,8 +2266,8 @@ class TaskScheduler(BaseTaskScheduler):
                 seen.add(tid_int)
             # Strip stale activation metadata on non-active rows
             _row = self._sanitize_activation(dict(node))
-            ordered.append(TaskBase(**_row))
-            nxt_id = (node.get("schedule") or {}).get("next_task")
+            ordered.append(Task(**_row))
+            nxt_id = (node.schedule or Schedule()).next_task  # TODO: Remove
             if nxt_id is None:
                 break
             nxt_rows = self._filter_tasks(filter=f"task_id == {int(nxt_id)}", limit=1)
