@@ -300,6 +300,43 @@ async def async_tool_loop_inner(
         except Exception:
             pass
 
+    # Late-stage request logger used by generate_with_preprocess
+    def _log_llm_request(patched_msgs, gen_kwargs, system_message):
+        with suppress(Exception):
+            try:
+                from .utils import try_parse_json as _try_parse_json
+            except Exception:
+                _try_parse_json = lambda v: v
+
+            _msgs_pretty = []
+            for _m in patched_msgs:
+                _mm = copy.deepcopy(_m)
+                try:
+                    if _mm.get("role") == "assistant":
+                        for _tc in _mm.get("tool_calls") or []:
+                            _fn = _tc.get("function", {})
+                            _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
+                    if _mm.get("role") == "tool":
+                        _mm = sanitize_tool_msg_for_logging(_mm)
+                except Exception:
+                    pass
+                _msgs_pretty.append(_mm)
+
+            _req_payload = {
+                "model": getattr(client, "model", None),
+                "messages": _msgs_pretty,
+            }
+            for _k, _v in gen_kwargs.items():
+                _req_payload[_k] = _v
+
+            _sys_block = (
+                f"System message:\n{system_message}\n\n" if system_message else ""
+            )
+            _llm_io_write(
+                "LLM request ➡️:",
+                f"{_sys_block}{_dumps(_req_payload, indent=4)}",
+            )
+
     _img_token = None
     _imglog_token = None
     # Track already-logged image entries to avoid repeated 🖼️ spam
@@ -1424,67 +1461,13 @@ async def async_tool_loop_inner(
                 if max_parallel_tool_calls is not None:
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
-                # Optional: log the full raw request payload right before the API call
-                if llm_io_debug:
-                    with suppress(Exception):
-                        _orig_msgs_ref = client.messages
-                        _msgs_copy = copy.deepcopy(_orig_msgs_ref)
-                        _patched = _msgs_copy
-                        if preprocess_msgs is not None:
-                            try:
-                                _patched = preprocess_msgs(_msgs_copy) or _msgs_copy
-                            except Exception:
-                                _patched = _msgs_copy
-                        # Drop a raw leading system prompt if present (non-context header)
-                        if _patched and isinstance(_patched[0], dict):
-                            _top_p = _patched[0]
-                            if _top_p.get("role") == "system" and not _top_p.get(
-                                "_ctx_header",
-                            ):
-                                _patched = _patched[1:]
-
-                        # Pretty-print messages in-place for logs
-                        try:
-                            from .utils import try_parse_json as _try_parse_json
-                        except Exception:
-                            _try_parse_json = lambda v: v
-
-                        _msgs_pretty = []
-                        for _m in _patched:
-                            _mm = copy.deepcopy(_m)
-                            try:
-                                if _mm.get("role") == "assistant":
-                                    for _tc in _mm.get("tool_calls") or []:
-                                        _fn = _tc.get("function", {})
-                                        _fn["arguments"] = _try_parse_json(
-                                            _fn.get("arguments"),
-                                        )
-                                if _mm.get("role") == "tool":
-                                    _mm = sanitize_tool_msg_for_logging(_mm)
-                            except Exception:
-                                pass
-                            _msgs_pretty.append(_mm)
-
-                        _req_payload = {
-                            "model": getattr(client, "model", None),
-                            # system_message printed separately for readability
-                            "messages": _msgs_pretty,
-                        }
-                        for _k, _v in _gen_kwargs.items():
-                            _req_payload[_k] = _v
-
-                        _sys_txt = getattr(client, "system_message", "") or ""
-                        _sys_block = (
-                            f"System message:\n{_sys_txt}\n\n" if _sys_txt else ""
-                        )
-
-                        _llm_io_write(
-                            "LLM request ➡️:",
-                            f"{_sys_block}{_dumps(_req_payload, indent=4)}",
-                        )
-
                 llm_task = asyncio.create_task(
-                    generate_with_preprocess(client, preprocess_msgs, **_gen_kwargs),
+                    generate_with_preprocess(
+                        client,
+                        preprocess_msgs,
+                        debug_log=_log_llm_request,
+                        **_gen_kwargs,
+                    ),
                     name="LLMGenerate",
                 )
                 interject_w = asyncio.create_task(
@@ -1662,67 +1645,10 @@ async def async_tool_loop_inner(
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
-                    # Optional: log the full raw request payload right before the API call
-                    if llm_io_debug:
-                        with suppress(Exception):
-                            _orig_msgs_ref = client.messages
-                            _msgs_copy = copy.deepcopy(_orig_msgs_ref)
-                            _patched = _msgs_copy
-                            if preprocess_msgs is not None:
-                                try:
-                                    _patched = preprocess_msgs(_msgs_copy) or _msgs_copy
-                                except Exception:
-                                    _patched = _msgs_copy
-                            if _patched and isinstance(_patched[0], dict):
-                                _top_p = _patched[0]
-                                if _top_p.get("role") == "system" and not _top_p.get(
-                                    "_ctx_header",
-                                ):
-                                    _patched = _patched[1:]
-
-                            # Pretty-print messages in-place for logs
-                            try:
-                                from .utils import try_parse_json as _try_parse_json
-                            except Exception:
-                                _try_parse_json = lambda v: v
-
-                            _msgs_pretty = []
-                            for _m in _patched:
-                                _mm = copy.deepcopy(_m)
-                                try:
-                                    if _mm.get("role") == "assistant":
-                                        for _tc in _mm.get("tool_calls") or []:
-                                            _fn = _tc.get("function", {})
-                                            _fn["arguments"] = _try_parse_json(
-                                                _fn.get("arguments"),
-                                            )
-                                    if _mm.get("role") == "tool":
-                                        _mm = sanitize_tool_msg_for_logging(_mm)
-                                except Exception:
-                                    pass
-                                _msgs_pretty.append(_mm)
-
-                            _req_payload = {
-                                "model": getattr(client, "model", None),
-                                # system_message printed separately for readability
-                                "messages": _msgs_pretty,
-                            }
-                            for _k, _v in _gen_kwargs.items():
-                                _req_payload[_k] = _v
-
-                            _sys_txt = getattr(client, "system_message", "") or ""
-                            _sys_block = (
-                                f"System message:\n{_sys_txt}\n\n" if _sys_txt else ""
-                            )
-
-                            _llm_io_write(
-                                "LLM request ➡️:",
-                                f"{_sys_block}{_dumps(_req_payload, indent=4)}",
-                            )
-
                     _result = await generate_with_preprocess(
                         client,
                         preprocess_msgs,
+                        debug_log=_log_llm_request,
                         **_gen_kwargs,
                     )
 
