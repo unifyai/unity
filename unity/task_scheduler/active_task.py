@@ -133,6 +133,7 @@ class ActiveTask(BaseActiveTask):
         task_id: Optional[int] = None,
         instance_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
+        entrypoint_function_id: Optional[int] = None,
     ) -> "ActiveTask":
         """
         Create an ActiveTask by starting work on the provided ``actor``.
@@ -145,6 +146,8 @@ class ActiveTask(BaseActiveTask):
             _parent_chat_context=_parent_chat_context,
             _clarification_up_q=_clarification_up_q,
             _clarification_down_q=_clarification_down_q,
+            entrypoint_function_id=entrypoint_function_id,
+            persist=False, # Scheduler-run plans should complete instead of pausing for interjection
         )
         return cls(
             actor_steerable_handle,  # type: ignore[arg-type]

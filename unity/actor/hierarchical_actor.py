@@ -1764,6 +1764,7 @@ class HierarchicalPlan(BaseActiveTask):
         max_local_retries: Optional[int] = None,
         persist: bool = True,
         images: Optional[dict[str, Any]] = None,
+        entrypoint_function_id: Optional[int] = None,
     ):
         """
         Initializes the Hierarchical Plan active task.
@@ -1778,6 +1779,8 @@ class HierarchicalPlan(BaseActiveTask):
             max_local_retries: Max number of tactical retries for a function.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
             images: Optional mapping of source-scoped keys to ImageHandle objects.
+            entrypoint_function_id: Optional. If provided, bypasses LLM plan generation
+                and directly executes the function from the FunctionManager as the main plan.
         """
         self.actor = actor
         self.goal = goal
@@ -1935,12 +1938,55 @@ class HierarchicalPlan(BaseActiveTask):
                 self._set_state(_HierarchicalPlanState.RUNNING)
 
             if self.plan_source_code is None:
-                self.action_log.append("Generating plan from goal...")
-                self.plan_source_code = await self.actor._generate_initial_plan(
-                    plan=self,
-                    goal=self.goal,
-                )
-                self.action_log.append("Initial plan generated successfully.")
+                if self.entrypoint_function_id is not None:
+                    self.action_log.append(
+                        f"Bypassing LLM generation. Using entrypoint function_id {self.entrypoint_function_id}.",
+                    )
+                    if not self.actor.function_manager:
+                        raise ValueError(
+                            "Entrypoint was provided, but no FunctionManager is available to fetch the function.",
+                        )
+
+                    search_results = self.actor.function_manager.search_functions(
+                        filter=f"function_id == {self.entrypoint_function_id}",
+                        limit=1,
+                    )
+                    if not search_results:
+                        raise ValueError(
+                            f"Entrypoint function_id {self.entrypoint_function_id} not found in FunctionManager.",
+                        )
+
+                    entrypoint_func_data = search_results[0]
+                    entrypoint_code = entrypoint_func_data.get("implementation")
+                    entrypoint_name = entrypoint_func_data.get("name")
+
+                    if not entrypoint_code or not entrypoint_name:
+                        raise ValueError(
+                            f"Invalid function data for entrypoint {self.entrypoint_function_id}.",
+                        )
+
+                    synthetic_main = f"""
+async def main_plan():
+    '''Auto-generated main_plan to run entrypoint function {entrypoint_name}.'''
+    return await {entrypoint_name}()
+"""
+                    base_code = f"{entrypoint_code}\n\n{synthetic_main}"
+
+                    self.action_log.append(
+                        f"Injecting entrypoint '{entrypoint_name}' and its dependencies.",
+                    )
+                    full_code = await self.actor._inject_library_functions(base_code)
+
+                    self.plan_source_code = self.actor._sanitize_code(full_code, self)
+                    self.action_log.append("Entrypoint plan sanitized and ready.")
+
+                else:
+                    self.action_log.append("Generating plan from goal...")
+                    self.plan_source_code = await self.actor._generate_initial_plan(
+                        plan=self,
+                        goal=self.goal,
+                    )
+                    self.action_log.append("Initial plan generated successfully.")
             else:
                 self.action_log.append("Proceeding with existing plan source code.")
 
@@ -2310,8 +2356,12 @@ class HierarchicalPlan(BaseActiveTask):
         await self._completion_event.wait()
         if self._state == _HierarchicalPlanState.ERROR:
             import traceback
+
             raise RuntimeError(f"Plan failed in state ERROR: {traceback.format_exc()}")
-        return self._final_result_str or f"Plan finished in state {self._state.name} without a result."
+        return (
+            self._final_result_str
+            or f"Plan finished in state {self._state.name} without a result."
+        )
 
     def done(self) -> bool:
         """
@@ -4176,6 +4226,7 @@ class HierarchicalActor(BaseActor):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         persist: bool = True,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+        entrypoint_function_id: Optional[int] = None,
         **kwargs,
     ) -> HierarchicalPlan:
         """
@@ -4188,6 +4239,8 @@ class HierarchicalActor(BaseActor):
             clarification_down_q: Queue for receiving clarification answers.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
             images: Optional mapping of source-scoped keys to ImageHandle objects.
+            entrypoint_function_id: Optional. If provided, bypasses LLM plan generation
+                and directly executes the specified function from the FunctionManager.
 
         Returns:
             An active handle to the running HierarchicalPlan.
@@ -4202,6 +4255,7 @@ class HierarchicalActor(BaseActor):
             max_local_retries=self.max_local_retries,
             persist=persist,
             images=images,
+            entrypoint_function_id=entrypoint_function_id,
         )
         self._plan_handles.add(plan_handle)
         return plan_handle

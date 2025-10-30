@@ -744,6 +744,8 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
         _task_desc = task_row.get("description") or task_row.get("name") or ""
+        _entrypoint_fid = task_row.get("entrypoint")
+
         handle = await ActiveTask.create(
             self._actor,
             task_description=_task_desc,
@@ -753,6 +755,7 @@ class TaskScheduler(BaseTaskScheduler):
             task_id=task_id,
             instance_id=task_row["instance_id"],
             scheduler=self,
+            entrypoint_function_id=_entrypoint_fid,
         )
 
         self._active_task = TaskScheduler.ActivePointer(
