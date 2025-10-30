@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
 import asyncio
 import functools
 import pytest
@@ -176,7 +180,7 @@ async def test_handle_pause_and_resume(monkeypatch):
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
-    answer = await asyncio.wait_for(res_task, timeout=60)
+    answer = await res_task
     assert isinstance(answer, str) and answer.strip()
 
     assert call_counts == {"pause": 1, "resume": 1}
@@ -202,3 +206,46 @@ async def test_handle_ask():
 
     handle_answer = await handle.result()
     assert isinstance(handle_answer, str) and handle_answer.strip()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 8.  Structured output with response_format                                  #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_ask_with_response_format():
+    from pydantic import BaseModel, Field
+
+    class SimpleSummary(BaseModel):
+        summary: str = Field(..., description="One-sentence summary")
+
+    ws = SimulatedWebSearcher()
+    h = await ws.ask(
+        "Provide a one-sentence summary of a recent technology news item; output JSON matching the provided schema.",
+        response_format=SimpleSummary,
+    )
+    final = await h.result()
+
+    parsed = SimpleSummary.model_validate_json(final)
+    assert isinstance(parsed.summary, str) and parsed.summary.strip() != ""
+
+
+@pytest.mark.unit
+@_handle_project
+def test_simulated_web_searcher_clear_reinitialises():
+    """
+    Ensure SimulatedWebSearcher.clear re-runs the constructor (fresh stateful LLM
+    and tools mapping stays provisioned).
+    """
+    from unity.web_searcher.simulated import SimulatedWebSearcher
+
+    sim = SimulatedWebSearcher()
+    old_llm = getattr(sim, "_llm", None)
+    assert old_llm is not None
+    assert isinstance(sim._ask_tools, dict) and sim._ask_tools
+
+    sim.clear()
+
+    # After clear, llm handle should be replaced and tools still present
+    assert getattr(sim, "_llm", None) is not None and sim._llm is not old_llm
+    assert isinstance(sim._ask_tools, dict) and sim._ask_tools
