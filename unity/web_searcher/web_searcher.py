@@ -14,7 +14,6 @@ from unity.common.async_tool_loop import (
 from unity.constants import is_readonly_ask_guard_enabled
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.common.llm_helpers import (
-    inject_broader_context,
     methods_to_tool_dict,
     make_request_clarification_tool,
 )
@@ -108,7 +107,6 @@ class WebSearcher(BaseWebSearcher):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            preprocess_msgs=inject_broader_context,
             response_format=response_format,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None

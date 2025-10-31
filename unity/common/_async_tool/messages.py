@@ -87,22 +87,9 @@ async def generate_with_preprocess(
     except Exception:
         pass
 
-    # Compute a system message with {broader_context} injected (if any)
+    # Capture the system message
     sys_txt = getattr(client, "system_message", "") or ""
     sys_patched = sys_txt
-    try:
-        # Local import to avoid any import-time cycles
-        from ..llm_helpers import inject_broader_context as _inject_bc  # type: ignore
-
-        sys_list = _inject_bc(
-            [
-                {"role": "system", "content": sys_txt},
-            ],
-        )
-        if sys_list and isinstance(sys_list[0], dict):
-            sys_patched = sys_list[0].get("content") or sys_txt
-    except Exception:
-        sys_patched = sys_txt
 
     # Late-stage debug log: emit exactly what will be sent to the LLM
     try:

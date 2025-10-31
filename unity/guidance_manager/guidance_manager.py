@@ -16,7 +16,6 @@ from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    inject_broader_context,
     make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
@@ -183,7 +182,6 @@ class GuidanceManager(BaseGuidanceManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_ask_tool_policy,
-            preprocess_msgs=inject_broader_context,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
@@ -275,7 +273,6 @@ class GuidanceManager(BaseGuidanceManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
-            preprocess_msgs=inject_broader_context,
         )
 
         if _return_reasoning_steps:
