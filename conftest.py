@@ -2,12 +2,14 @@ import sys
 import pytest
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 from unity.constants import PYTEST_LOG_TO_FILE
 
 
 _TEE_FILE_HANDLE: Optional[object] = None
 _TEE_ORIG_STREAM: Optional[object] = None
 _TEE_STREAM_ATTR: Optional[str] = None
+_TEE_LOG_PATH: Optional[Path] = None
 
 
 class _TeeStream:
@@ -54,10 +56,34 @@ def pytest_sessionstart(session):
         return
 
     root_path = Path(config.rootpath)
-    log_path = root_path / ".pytest_logs.txt"
+    logs_dir = root_path / ".pytest_logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build a readable, second-precision timestamp (e.g., 2025-10-31_14-05-23)
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Open a unique file using exclusive creation to avoid races across concurrent runs
+    def _open_unique(path_no_suffix: Path):
+        if path_no_suffix.exists():
+            # We still use exclusive open below; the check is just a fast path to pick a suffix
+            pass
+        suffix_index = 0
+        while True:
+            name = f"{path_no_suffix.stem}{'' if suffix_index == 0 else f' ({suffix_index})'}{path_no_suffix.suffix}"
+            candidate = path_no_suffix.with_name(name)
+            try:
+                fh = open(candidate, mode="x", encoding="utf-8")
+                return candidate, fh
+            except FileExistsError:
+                suffix_index += 1
+
+    base_path = logs_dir / f"{ts}.txt"
+    log_path, fh = _open_unique(base_path)
 
     global _TEE_FILE_HANDLE, _TEE_ORIG_STREAM, _TEE_STREAM_ATTR
-    _TEE_FILE_HANDLE = open(log_path, mode="a", encoding="utf-8")
+    _TEE_FILE_HANDLE = fh
+    global _TEE_LOG_PATH
+    _TEE_LOG_PATH = log_path
 
     # Mirror the IDE runner's pre-launch banner into the file (file-only, no terminal dup).
     _TEE_FILE_HANDLE.write(f"Running pytest with args: {sys.argv[1:]}\n")
@@ -84,10 +110,12 @@ def pytest_unconfigure(config):
     """Print the log file path after pytest's own terminal summary has been emitted."""
     if not PYTEST_LOG_TO_FILE:
         return
-    global _TEE_FILE_HANDLE, _TEE_ORIG_STREAM, _TEE_STREAM_ATTR
+    global _TEE_FILE_HANDLE, _TEE_ORIG_STREAM, _TEE_STREAM_ATTR, _TEE_LOG_PATH
     tr = config.pluginmanager.get_plugin("terminalreporter")
     if tr is not None and _TEE_FILE_HANDLE is not None:
-        log_file = (Path(config.rootpath) / ".pytest_logs.txt").resolve()
+        log_file = (
+            _TEE_LOG_PATH or (Path(config.rootpath) / ".pytest_logs" / "unknown.txt")
+        ).resolve()
         tr.write_line(f"Test logs saved here: {log_file}")
     # Append a file-only trailer to match the IDE runner's banner.
     if _TEE_FILE_HANDLE is not None:
@@ -103,6 +131,7 @@ def pytest_unconfigure(config):
             setattr(tr._tw, _TEE_STREAM_ATTR, _TEE_ORIG_STREAM)
         _TEE_ORIG_STREAM = None
         _TEE_STREAM_ATTR = None
+    _TEE_LOG_PATH = None
     # No sys.stdout/sys.stderr monkeypatch remains; nothing to restore here.
 
 
