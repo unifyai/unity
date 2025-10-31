@@ -70,7 +70,7 @@ def test_task_scheduler_ask_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
     print(
         "TaskScheduler ask system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n" + prompt,
+        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
     )
 
 
@@ -124,7 +124,7 @@ def test_task_scheduler_update_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
     print(
         "TaskScheduler update system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n" + prompt,
+        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
     )
 
 
@@ -173,5 +173,5 @@ def test_task_scheduler_execute_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
     print(
         "TaskScheduler execute system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n" + prompt,
+        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
     )

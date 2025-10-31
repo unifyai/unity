@@ -91,5 +91,5 @@ def test_transcript_manager_ask_system_prompt_formatting():
 
     print(
         "TranscriptManager ask system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n" + prompt,
+        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
     )
