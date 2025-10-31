@@ -29,23 +29,27 @@ def log_job_startup(
     try:
         # Resolve liveview URL via comms infra service
         liveview_url = None
+        retries = 3
         comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
         admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
         if comms_url and admin_key and job_name:
-            print("\n\nSetting up liveview URL for job", job_name)
-            svc = f"unity-svc-{job_name}"
-            resp = requests.get(
-                f"{comms_url}/infra/job/service/ip",
-                params={"service_name": svc},
-                headers={"Authorization": f"Bearer {admin_key}"},
-                timeout=20,
-            )
-            print("\n\nDesktop view liveview URL:", resp.json())
-            if resp.ok:
-                data = resp.json() or {}
-                addr = ((data or {}).get("external") or {}).get("address")
-                if isinstance(addr, str) and addr:
-                    liveview_url = f"http://{addr}:6080/vnc.html"
+            for _ in range(retries):
+                if liveview_url:
+                    break
+                print(f"\n\nAttempt {_ + 1} to set up liveview URL for job {job_name}")
+                svc = f"unity-svc-{job_name}"
+                resp = requests.get(
+                    f"{comms_url}/infra/job/service/ip",
+                    params={"service_name": svc},
+                    headers={"Authorization": f"Bearer {admin_key}"},
+                    timeout=20,
+                )
+                print("\n\nDesktop view liveview URL:", resp.json())
+                if resp.ok:
+                    data = resp.json() or {}
+                    addr = ((data or {}).get("external") or {}).get("address")
+                    if isinstance(addr, str) and addr:
+                        liveview_url = f"http://{addr}:6080/vnc.html"
     except Exception as e:
         print(f"Error resolving liveview URL for job {job_name}: {e}")
         traceback.print_exc()
