@@ -31,10 +31,7 @@ def provision_storage(self) -> None:
 
 def get_columns(self) -> Dict[str, str]:
     """Return {column_name: column_type} for the file table."""
-    try:
-        return self._store.get_columns()  # type: ignore[attr-defined]
-    except Exception:
-        return {}
+    return self._store.get_columns()  # type: ignore[attr-defined]
 
 
 def tables_overview(
