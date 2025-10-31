@@ -187,12 +187,20 @@ class EventCapture:
 
 
 @pytest_asyncio.fixture
-async def event_capture(test_redis_client):
-    """EventCapture instance that listens to all conversation manager events."""
-    capture = EventCapture(test_redis_client)
+async def event_capture(redis_server):
+    """
+    EventCapture instance that listens to all conversation manager events.
+
+    Creates its own Redis client to avoid event loop conflicts with
+    module-scoped fixtures.
+    """
+    # Create a dedicated Redis client for this event capture instance
+    client = redis.Redis()
+    capture = EventCapture(client)
     await capture.start_capturing(["app:comms:*", "app:conductor:*", "app:managers:*"])
     yield capture
     await capture.stop()
+    await client.aclose()
 
 
 # ============================================================================
@@ -200,7 +208,7 @@ async def event_capture(test_redis_client):
 # ============================================================================
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope="module")
 async def conversation_manager_process(redis_server):
     """Start the conversation manager as a background process."""
     test_env = os.environ.copy()
@@ -249,17 +257,19 @@ async def conversation_manager_process(redis_server):
 # ============================================================================
 
 
-@pytest_asyncio.fixture
-async def initialized_system(
-    conversation_manager_process,
-    test_redis_client,
-    event_capture,
-):
+@pytest_asyncio.fixture(scope="module", autouse=True)
+async def initialized_conversation_manager(conversation_manager_process, redis_server):
     """
-    Convenience fixture: fully initialized system with startup event published.
+    Initialize the conversation manager with startup and contacts events.
 
-    Returns dict with: redis_client, event_capture, cm_process
+    This fixture is module-scoped and runs automatically (autouse=True) for all
+    tests in this module, so tests don't need to explicitly request it.
+    Uses its own temporary Redis client for the one-time setup.
+
+    Returns: cm_process
     """
+    # Create a temporary Redis client just for initialization
+    temp_client = redis.Redis()
 
     startup = StartupEvent(
         api_key=os.getenv("UNIFY_KEY", "test_key"),
@@ -286,7 +296,7 @@ async def initialized_system(
 
     # Now send startup event
     print("📤 Publishing startup event...")
-    await test_redis_client.publish("app:comms:startup", startup.to_json())
+    await temp_client.publish("app:comms:startup", startup.to_json())
     await asyncio.sleep(1)
 
     # Send contacts list
@@ -309,13 +319,11 @@ async def initialized_system(
             },
         ]
     )
-    await test_redis_client.publish("app:comms:contacts", contacts_event.to_json())
+    await temp_client.publish("app:comms:contacts", contacts_event.to_json())
     await asyncio.sleep(1)  # Let contacts be processed
 
     print("✅ System initialized and ready")
 
-    return {
-        "redis_client": test_redis_client,
-        "event_capture": event_capture,
-        "cm_process": conversation_manager_process,
-    }
+    await temp_client.aclose()
+
+    return conversation_manager_process
