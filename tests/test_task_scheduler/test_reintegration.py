@@ -307,9 +307,8 @@ async def test_reinstate_with_deleted_next_fallback():
     _ = ts._reinstate_task_to_previous_queue(task_id=head_id)
 
     row_x = ts._filter_tasks(filter=f"task_id == {head_id}")[0]
-    sched_x = row_x.get("schedule") or {}
-    assert sched_x.get("prev_task") is None
-    assert "start_at" in sched_x and sched_x.get("start_at")
+    assert row_x.schedule_prev is None
+    assert row_x.schedule_start_at is not None
 
 
 @pytest.mark.asyncio
