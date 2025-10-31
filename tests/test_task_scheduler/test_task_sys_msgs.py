@@ -1,5 +1,12 @@
 import re
 
+from tests.assertion_helpers import (
+    extract_tools_dict,
+    assert_in_order,
+    assert_section_spacing,
+    assert_time_footer,
+)
+
 
 from unity.task_scheduler.prompt_builders import (
     build_ask_prompt,
@@ -61,31 +68,6 @@ def _tools_for_execute():
     }
 
 
-def _assert_section_spacing(prompt: str) -> None:
-    lines = prompt.splitlines()
-    errors: list[str] = []
-    for idx in range(len(lines) - 1):
-        line = lines[idx]
-        next_line = lines[idx + 1]
-        if re.fullmatch(r"-+", next_line.strip()):
-            # Expect a blank line before the section title line
-            if idx == 0 or lines[idx - 1].strip() != "":
-                errors.append(f"Missing blank line before section header: '{line}'")
-    assert not errors, "\n".join(errors) + f"\n\nFull system prompt:\n{prompt}"
-
-
-def _assert_time_footer(prompt: str) -> None:
-    non_empty_lines = [ln for ln in prompt.splitlines() if ln.strip()]
-    assert non_empty_lines, (
-        "Prompt should not be empty\n\nFull system prompt:\n" + prompt
-    )
-    last = non_empty_lines[-1]
-    assert re.fullmatch(
-        r"Current UTC time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\.",
-        last,
-    ), f"Unexpected last line: {last!r}\n\nFull system prompt:\n{prompt}"
-
-
 def test_task_scheduler_ask_system_prompt_formatting():
     prompt = build_ask_prompt(
         tools=_tools_for_ask(),
@@ -93,8 +75,45 @@ def test_task_scheduler_ask_system_prompt_formatting():
         columns={"task_id": "int", "name": "str"},
     )
 
-    _assert_section_spacing(prompt)
-    _assert_time_footer(prompt)
+    # Standardized blocks
+    tools_json = extract_tools_dict(prompt)
+    assert set(tools_json.keys()) == set(_tools_for_ask().keys())
+    assert "Tools (name" in prompt
+    assert re.search(
+        r"There are currently\s+3\s+tasks\s+stored in a table with the following columns:",
+        prompt,
+    )
+    assert "Images-first workflow for ask()" in prompt
+    assert "Images policy (when images are present)" in prompt
+    assert "Images forwarding to nested tools" in prompt
+    assert "Parallelism and single" in prompt
+    assert "Schemas" in prompt and "Task schema = " in prompt
+    # Clarification top sentence (no clarification tool provided → else-policy)
+    assert re.search(
+        r"Do not ask the user questions in your final response\..*sensible defaults",
+        prompt,
+        re.S,
+    )
+
+    # Ordering checks
+    assert_in_order(
+        prompt,
+        [
+            "Do not ask the user questions in your final response",
+            "There are currently 3 tasks stored in a table with the following columns:",
+            "Tools (name",
+            "Examples",
+            "Images policy (when images are present)",
+            "Images forwarding to nested tools",
+            "Images-first workflow for ask()",
+            "Parallelism and single",
+            "Schemas",
+            "Current UTC time is ",
+        ],
+    )
+
+    assert_section_spacing(prompt)
+    assert_time_footer(prompt, "Current UTC time is ")
     print(
         "TaskScheduler ask system message passed formatting checks;\n"
         "The following system message resulted in no assertion errors:\n" + prompt,
@@ -108,8 +127,42 @@ def test_task_scheduler_update_system_prompt_formatting():
         columns={"task_id": {"type": "int"}, "name": {"type": "str"}},
     )
 
-    _assert_section_spacing(prompt)
-    _assert_time_footer(prompt)
+    # Standardized blocks
+    tools_json = extract_tools_dict(prompt)
+    assert set(tools_json.keys()) == set(_tools_for_update().keys())
+    assert re.search(
+        r"There are currently\s+3\s+tasks\s+stored in a table with the following columns:",
+        prompt,
+    )
+    assert "Images policy (when images are present)" in prompt
+    assert "Images forwarding to nested tools" in prompt
+    assert "Parallelism and single" in prompt
+    assert "Schemas" in prompt and "Task schema = " in prompt
+    # Clarification top sentence (no clarification tool provided → else-policy)
+    assert re.search(
+        r"Do not ask the user questions in your final response\..*sensible defaults",
+        prompt,
+        re.S,
+    )
+
+    # Ordering checks
+    assert_in_order(
+        prompt,
+        [
+            "Do not ask the user questions in your final response",
+            "There are currently 3 tasks stored in a table with the following columns:",
+            "Tools (name",
+            "Tool selection",
+            "Images policy (when images are present)",
+            "Images forwarding to nested tools",
+            "Parallelism and single",
+            "Schemas",
+            "Current UTC time is ",
+        ],
+    )
+
+    assert_section_spacing(prompt)
+    assert_time_footer(prompt, "Current UTC time is ")
     print(
         "TaskScheduler update system message passed formatting checks;\n"
         "The following system message resulted in no assertion errors:\n" + prompt,
@@ -119,8 +172,33 @@ def test_task_scheduler_update_system_prompt_formatting():
 def test_task_scheduler_execute_system_prompt_formatting():
     prompt = build_execute_prompt(tools=_tools_for_execute())
 
-    _assert_section_spacing(prompt)
-    _assert_time_footer(prompt)
+    # Standardized blocks
+    tools_json = extract_tools_dict(prompt)
+    assert set(tools_json.keys()) == set(_tools_for_execute().keys())
+    assert "Decision policy (isolation vs chain)" in prompt
+    assert "CLARIFICATION POLICY (always prefer tool over prose)" in prompt
+    assert "Reporting" in prompt
+    assert "Images forwarding to nested tools" in prompt
+    # Not included for execute
+    assert "Parallelism and single" not in prompt
+    assert "Images policy (when images are present)" not in prompt
+
+    # Ordering checks
+    assert_in_order(
+        prompt,
+        [
+            "Do not ask the user questions in your final response",
+            "Decision policy (isolation vs chain)",
+            "CLARIFICATION POLICY (always prefer tool over prose)",
+            "Tools (name",
+            "A. If the request contains a *numeric task_id*:",
+            "Images forwarding to nested tools",
+            "Current UTC time is ",
+        ],
+    )
+
+    assert_section_spacing(prompt)
+    assert_time_footer(prompt, "Current UTC time is ")
     print(
         "TaskScheduler execute system message passed formatting checks;\n"
         "The following system message resulted in no assertion errors:\n" + prompt,
