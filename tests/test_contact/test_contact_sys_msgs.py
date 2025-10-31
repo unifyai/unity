@@ -1,6 +1,5 @@
 import re
 
-import pytest
 
 from unity.contact_manager.prompt_builders import (
     build_ask_prompt,
@@ -71,77 +70,48 @@ def _assert_time_footer_is(prompt: str) -> None:
     ), f"Unexpected last line: {last!r}\n\nFull system prompt:\n{prompt}"
 
 
-@pytest.mark.parametrize(
-    "builder,tools,kwargs,headers",
-    [
-        (
-            build_ask_prompt,
-            _tools_for_ask,
-            {
-                "num_contacts": 3,
-                "columns": [{"name": "first_name", "type": "str"}],
-            },
-            [
-                "Examples",
-                "Special contacts",
-                "Images policy (when images are present)",
-                "Images forwarding to nested tools",
-            ],
-        ),
-        (
-            build_update_prompt,
-            _tools_for_update,
-            {
-                "num_contacts": 3,
-                "columns": [{"name": "first_name", "type": "str"}],
-            },
-            [
-                "Tool selection",
-                "Images policy (when images are present)",
-                "Images forwarding to nested tools",
-            ],
-        ),
-    ],
-)
-def test_contact_manager_system_prompts_formatting(builder, tools, kwargs, headers):
-    prompt = builder(tools=tools(), **kwargs)
-
-    # Selected top-level sections should have a blank line above
-    _assert_selected_headers_have_blank_line(prompt, headers)
-
-    # Footer: last non-empty line is always the UTC time sentence
-    _assert_time_footer_is(prompt)
-
-    # Also print full prompt on success for quick inspection when running with -s
-    print(
-        f"ContactManager {builder.__name__} system message passed formatting checks;\n"
-        f"The following system message resulted in no assertion errors:\n{prompt}",
-    )
-
-
-def test_contact_manager_system_prompts_global_spacing():
-    # ask()
-    ask_prompt = build_ask_prompt(
+def test_contact_manager_ask_system_prompt_formatting():
+    prompt = build_ask_prompt(
         tools=_tools_for_ask(),
         num_contacts=3,
         columns=[{"name": "first_name", "type": "str"}],
     )
-    _assert_section_spacing(ask_prompt)
-    _assert_time_footer_is(ask_prompt)
+
+    _assert_selected_headers_have_blank_line(
+        prompt,
+        [
+            "Examples",
+            "Special contacts",
+            "Images policy (when images are present)",
+            "Images forwarding to nested tools",
+        ],
+    )
+    _assert_section_spacing(prompt)
+    _assert_time_footer_is(prompt)
     print(
-        "ContactManager ask system message passed spacing/footer checks;\n"
-        "The following system message resulted in no assertion errors:\n" + ask_prompt,
+        "ContactManager ask system message passed formatting checks;\n"
+        "The following system message resulted in no assertion errors:\n" + prompt,
     )
 
-    # update()
-    upd_prompt = build_update_prompt(
+
+def test_contact_manager_update_system_prompt_formatting():
+    prompt = build_update_prompt(
         tools=_tools_for_update(),
         num_contacts=3,
         columns=[{"name": "first_name", "type": "str"}],
     )
-    _assert_section_spacing(upd_prompt)
-    _assert_time_footer_is(upd_prompt)
+
+    _assert_selected_headers_have_blank_line(
+        prompt,
+        [
+            "Tool selection",
+            "Images policy (when images are present)",
+            "Images forwarding to nested tools",
+        ],
+    )
+    _assert_section_spacing(prompt)
+    _assert_time_footer_is(prompt)
     print(
-        "ContactManager update system message passed spacing/footer checks;\n"
-        "The following system message resulted in no assertion errors:\n" + upd_prompt,
+        "ContactManager update system message passed formatting checks;\n"
+        "The following system message resulted in no assertion errors:\n" + prompt,
     )
