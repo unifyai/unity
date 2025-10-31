@@ -18,8 +18,6 @@ from unity.file_manager.types import (
     FileSystemCapabilities,
     FileReference,
     FolderReference,
-    OperationAction,
-    OperationPlan,
 )
 
 __all__ = [
@@ -45,6 +43,4 @@ __all__ = [
     "FileSystemCapabilities",
     "FileReference",
     "FolderReference",
-    "OperationAction",
-    "OperationPlan",
 ]

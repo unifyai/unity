@@ -3,8 +3,14 @@ from .filesystem import (
     FileSystemCapabilities,
     FileReference,
     FolderReference,
-    OperationAction,
-    OperationPlan,
+)
+from .config import (
+    FilePipelineConfig,
+    ParseConfig,
+    IngestConfig,
+    EmbeddingsConfig,
+    EmbeddingSpec,
+    PluginsConfig,
 )
 
 __all__ = [
@@ -12,6 +18,10 @@ __all__ = [
     "FileSystemCapabilities",
     "FileReference",
     "FolderReference",
-    "OperationAction",
-    "OperationPlan",
+    "FilePipelineConfig",
+    "ParseConfig",
+    "IngestConfig",
+    "EmbeddingsConfig",
+    "EmbeddingSpec",
+    "PluginsConfig",
 ]

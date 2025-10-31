@@ -716,6 +716,92 @@ class Document(BaseModel):
     def to_flat_records(self) -> List[Dict[str, Any]]:
         return self.to_schema_rows()
 
+    # ---------------------- FileManager result helpers ---------------------- #
+    def to_parse_result(
+        self,
+        filename: str,
+        *,
+        auto_counting: Dict[str, Optional[str]] | None = None,
+        document_index: int | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Build a normalized parse result payload for FileManager consumption.
+
+        This is the single source of truth for the parse result shape used by
+        the FileManager. Keeping it on the Document avoids duplication in the
+        manager and ensures it stays aligned with parser output over time.
+
+        Returns a dict with keys:
+          - file_path, status, error
+          - records, full_text, summary
+          - file_type, file_size, total_records, processing_time
+          - created_at, modified_at
+          - confidence_score, key_topics, named_entities, content_tags
+        """
+        try:
+            records: List[Dict[str, Any]] = self.to_schema_rows(
+                auto_counting=auto_counting,
+                document_index=document_index,
+            )
+        except Exception:
+            # Fallback to best-effort rows to avoid failing the whole call
+            try:
+                records = self.to_flat_records()
+            except Exception:
+                records = []
+
+        try:
+            full_text = self.to_plain_text() or ""
+        except Exception:
+            full_text = ""
+
+        meta = getattr(self, "metadata", None)
+        return {
+            "file_path": filename,
+            "status": "success",
+            "error": None,
+            "records": records,
+            "full_text": full_text,
+            "summary": getattr(self, "summary", None) or "",
+            "file_type": getattr(meta, "file_type", None) if meta else None,
+            "file_size": getattr(meta, "file_size", None) if meta else None,
+            "total_records": len(records),
+            "processing_time": getattr(meta, "processing_time", None) if meta else None,
+            "created_at": getattr(meta, "created_at", None) if meta else None,
+            "modified_at": getattr(meta, "modified_at", None) if meta else None,
+            "confidence_score": (
+                getattr(meta, "confidence_score", None) if meta else None
+            ),
+            "key_topics": getattr(meta, "key_topics", []) if meta else [],
+            "named_entities": getattr(meta, "named_entities", {}) if meta else {},
+            "content_tags": getattr(meta, "content_tags", []) if meta else [],
+        }
+
+    @staticmethod
+    def error_result(filename: str, error: str) -> Dict[str, Any]:
+        """
+        Build a normalized error payload when parsing/exporting fails before a
+        Document exists. Kept alongside to_parse_result for a single API surface.
+        """
+        return {
+            "file_path": filename,
+            "status": "error",
+            "error": error or "Unknown error",
+            "records": [],
+            "full_text": "",
+            "summary": "",
+            "file_type": None,
+            "file_size": None,
+            "total_records": 0,
+            "processing_time": None,
+            "created_at": None,
+            "modified_at": None,
+            "confidence_score": None,
+            "key_topics": [],
+            "named_entities": {},
+            "content_tags": [],
+        }
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Document":
         """Create Document from dictionary with nested Pydantic models."""

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -38,24 +38,3 @@ class FolderReference(BaseModel):
     path: str
     name: str
     extra: Dict[str, Any] = Field(default_factory=dict)
-
-
-OperationType = Literal["rename", "move"]
-
-
-class OperationAction(BaseModel):
-    """A single planned operation (rename/move) with a rationale."""
-
-    operation: OperationType
-    target_id_or_path: str
-    new_name: Optional[str] = None
-    new_parent_path: Optional[str] = None
-    reason: str = ""
-
-
-class OperationPlan(BaseModel):
-    """A set of actions that together satisfy an organizational goal."""
-
-    goal: str
-    actions: List[OperationAction] = Field(default_factory=list)
-    can_execute: bool = False
