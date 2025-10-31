@@ -16,7 +16,7 @@ import os
 
 import unify
 
-from .types.task import TaskBase
+from .types.task import Task
 from .types.status import Status
 from .types.schedule import Schedule
 
@@ -533,7 +533,7 @@ class LocalTaskView:
     def mark_queue_changed(self) -> None:
         self._queue_index_stale = True
 
-    def refresh_queue_index_from_rows(self, rows: List[TaskBase]) -> None:
+    def refresh_queue_index_from_rows(self, rows: List[Task]) -> None:
         """
         Build queue caches from a list of row dicts containing at least:
         task_id, schedule (dict), status, queue_id.
@@ -547,12 +547,12 @@ class LocalTaskView:
                 and r.status not in (Status.completed, Status.cancelled, Status.failed)
             ]
 
-            rows_by_id: Dict[int, TaskBase] = {}
+            rows_by_id: Dict[int, Task] = {}
             for r in runnable:
                 rows_by_id[r.task_id] = r
 
             # Identify heads by prev_task is None and numeric queue_id
-            heads: List[TaskBase] = []
+            heads: List[Task] = []
             for r in runnable:
                 if r.schedule is None:
                     continue
@@ -619,7 +619,7 @@ class LocalTaskView:
             )
         except Exception:
             rows = []
-        self.refresh_queue_index_from_rows([TaskBase(**r) for r in rows])
+        self.refresh_queue_index_from_rows([Task(**r) for r in rows])
 
     def get_member_ids(self, queue_id: int) -> List[int]:
         try:
