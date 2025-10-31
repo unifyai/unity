@@ -14,7 +14,6 @@ from .base import BaseContactManager
 from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    inject_broader_context,
 )
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -227,7 +226,6 @@ class ContactManager(BaseContactManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
-            preprocess_msgs=inject_broader_context,
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
             handle_cls=(
@@ -295,7 +293,6 @@ class ContactManager(BaseContactManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
-            preprocess_msgs=inject_broader_context,
             images=images,
         )
 

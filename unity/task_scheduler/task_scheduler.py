@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    inject_broader_context,
 )
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -959,7 +958,6 @@ class TaskScheduler(BaseTaskScheduler):
             loop_id=f"{self.__class__.__name__}.execute",
             parent_chat_context=parent_chat_context,
             log_steps=True,
-            preprocess_msgs=inject_broader_context,
             handle_cls=ExecuteLoopHandle,
             images=images,
         )
@@ -4187,7 +4185,6 @@ class TaskScheduler(BaseTaskScheduler):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=parent_chat_context,
             log_steps=log_steps,
-            preprocess_msgs=inject_broader_context,
             tool_policy=tool_policy,
             handle_cls=handle_cls,
             images=images,

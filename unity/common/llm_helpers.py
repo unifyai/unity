@@ -509,40 +509,6 @@ def method_to_schema(
     return schema
 
 
-# Shared helpers used across managers
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def inject_broader_context(msgs: list[dict]) -> list[dict]:
-    """Replace {broader_context} placeholders inside system messages.
-
-    Mirrors the per-manager helpers but centralised so both managers share
-    identical behaviour and error handling.
-    """
-    import copy
-
-    try:
-        from unity.memory_manager.memory_manager import (
-            MemoryManager,
-        )  # local import to avoid cycles
-    except Exception:  # pragma: no cover - defensive import guard
-        MemoryManager = None  # type: ignore[assignment]
-
-    patched = copy.deepcopy(msgs)
-
-    try:
-        broader_ctx = MemoryManager.get_rolling_activity() if MemoryManager else ""
-    except Exception:
-        broader_ctx = ""
-
-    for m in patched:
-        content = m.get("content") or ""
-        if m.get("role") == "system" and "{broader_context}" in content:
-            m["content"] = content.replace("{broader_context}", broader_ctx)
-
-    return patched
-
-
 def make_request_clarification_tool(
     up_q: "asyncio.Queue[str]" | None,
     down_q: "asyncio.Queue[str]" | None,

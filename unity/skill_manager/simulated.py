@@ -11,7 +11,6 @@ import unify
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
-    inject_broader_context,
 )
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -163,7 +162,6 @@ class SimulatedSkillManager(BaseSkillManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            preprocess_msgs=inject_broader_context,
         )
 
         if _return_reasoning_steps:
