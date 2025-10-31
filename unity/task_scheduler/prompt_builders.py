@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from typing import Dict, Callable
 
-from .types.task import TaskBase
+from .types.task import Task
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
@@ -201,7 +201,7 @@ def build_ask_prompt(
         "• Avoid confirmatory re‑queries unless new ambiguity arises.",
         "",
         "Task schema:",
-        json.dumps(TaskBase.model_json_schema(), indent=4),
+        json.dumps(Task.model_json_schema(), indent=4),
         "",
         f"Current UTC time is {_now()}.",
         clar_section,
@@ -483,7 +483,7 @@ def build_update_prompt(
         "• Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.",
         "",
         "Task schema:",
-        json.dumps(TaskBase.model_json_schema(), indent=4),
+        json.dumps(Task.model_json_schema(), indent=4),
         "",
         f"Current UTC time is {_now()}.",
         clar_section,
