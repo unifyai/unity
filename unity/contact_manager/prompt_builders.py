@@ -7,16 +7,15 @@ from typing import Dict, Callable, List
 from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
 from ..common.prompt_helpers import (
-    clarification_guidance,
     sig_dict,
     now_utc_str,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
-    parallelism_guidance,
-    images_policy_block,
-    images_forwarding_block,
+    # New standardized composer utilities
+    PromptSpec,
+    compose_system_prompt,
+    special_contacts_block as _special_contacts_block,
 )
-from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -68,7 +67,7 @@ def build_ask_prompt(
     *,
     include_activity: bool = True,
 ) -> str:
-    """Return the system-prompt used by *ask*."""
+    """Return the system-prompt used by *ask* using the shared composer."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     # ------------------------------------------------------------------ #
@@ -163,56 +162,43 @@ Anti‑patterns to avoid
             ],
         )
 
-    # ─ Clarification guidance ─
-    clar_section = clarification_guidance(tools)
+    # Special contacts via shared helper
+    special_block = _special_contacts_block()
 
-    # ─ Special contacts guidance ─
-    special_contacts_block = textwrap.dedent(
-        """
-        Special contacts
-        ----------------
-        • contact_id==0 is the assistant (this agent). Do not include the assistant in suggestions, rankings, or comparisons unless it makes sense from the broader context.
-        • contact_id==1 is the central user (the assistant's supervisor). Many requests originate from this user; do not propose the central user as a candidate unless it makes sense from the broader context.
-        """,
-    ).strip()
+    # Early exit policy for mutation-intent requests reaching ask() is handled by composer toggle
 
-    # High-level execution guidance is provided by common helper
-
-    # Early exit policy for mutation-intent requests reaching ask()
-    mutation_exit_block = read_only_ask_mutation_exit_block()
-
-    return "\n".join(
-        [
-            "You are an assistant specializing in **retrieving contact information**.",
+    # Build spec using standardized composer
+    spec = PromptSpec(
+        manager="ContactManager",
+        method="ask",
+        tools=tools,
+        role_line="You are an assistant specializing in **retrieving contact information**.",
+        global_directives=[
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
-            "",
-            mutation_exit_block,
-            "",
             "You should attempt to answer *any* question as best you can, even if it seems out of scope.",
             "use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
-            "",
-            f"There are currently {num_contacts} contacts are stored in a table with the following colums:",
-            json.dumps(columns, indent=4),
-            "",
-            "Tools (name → argspec):",
-            sig_json,
-            "",
-            special_contacts_block,
-            "",
-            usage_examples,
-            "",
-            images_policy_block(),
-            "",
-            images_forwarding_block(),
-            "",
-            parallelism_guidance(),
-            "",
-            clar_section,
-            "",
-            f"Current UTC time is {_now()}.",
         ],
+        include_read_only_guard=True,
+        positioning_lines=[],
+        counts_entity_plural="contacts",
+        counts_value=num_contacts,
+        columns_payload=columns,
+        columns_heading="columns",
+        include_tools_block=True,
+        usage_examples=usage_examples,
+        clarification_examples_block=clarification_block or None,
+        include_images_policy=True,
+        include_images_forwarding=True,
+        images_extras_block=None,
+        include_parallelism=True,
+        schemas=[],
+        special_blocks=[special_block],
+        include_clarification_footer=True,
+        include_time_footer=True,
     )
+
+    return compose_system_prompt(spec)
 
 
 def build_update_prompt(
@@ -222,7 +208,7 @@ def build_update_prompt(
     *,
     include_activity: bool = True,
 ) -> str:
-    """Return the system-prompt used by *update*."""
+    """Return the system-prompt used by *update* using the shared composer."""
     sig_json = json.dumps(_sig_dict(tools), indent=4)
 
     # Pick out canonical names heuristically (all dynamic)
@@ -348,22 +334,20 @@ Anti‑patterns to avoid
             ],
         )
 
-    # High-level execution guidance is provided by common helper
-    clar_section = clarification_guidance(tools)
+    # Compose using standardized composer
+    special_block = _special_contacts_block()
 
-    # ─ Special contacts guidance ─
-    special_contacts_block = textwrap.dedent(
-        """
-        Special contacts
-        ----------------
-        • contact_id==0 is the assistant (this agent). Do not include the assistant in suggestions, rankings, or comparisons unless it makes sense from the broader context.
-        • contact_id==1 is the central user (the assistant's supervisor). Many requests originate from this user; do not propose the central user as a candidate unless it makes sense from the broader context.
-        """,
-    ).strip()
+    schemas = [
+        ("Contact schema", Contact.model_json_schema()),
+        ("ColumnType schema (for custom columns)", column_type_schema),
+    ]
 
-    return "\n".join(
-        [
-            "You are an assistant in charge of **creating or editing contacts**.",
+    spec = PromptSpec(
+        manager="ContactManager",
+        method="update",
+        tools=tools,
+        role_line="You are an assistant in charge of **creating or editing contacts**.",
+        global_directives=[
             "Choose tools based on the user's intent and the specificity of the target record.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",
             f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect contacts that already exist.",
@@ -374,35 +358,30 @@ Anti‑patterns to avoid
             "When the user describes a contact semantically, resolve the id first by requesting the contact_id from the ask method, then perform the update via the contact_id.",
             "use the `ask` method to see if you can find any missing context *before* you consider asking the user for clarifications.",
             "If the `ask` method is the only available tool, then ask a *read-only question*, mutation-capable tools will be exposed in subsequent turns.",
-            "",
-            "Tools (name → argspec):",
-            sig_json,
-            "",
-            special_contacts_block,
-            "",
-            usage_examples,
-            "",
-            images_policy_block(),
-            "",
-            images_forwarding_block(),
-            "",
-            parallelism_guidance(),
-            "",
-            clar_section,
-            "",
-            "Contact schema:",
-            json.dumps(Contact.model_json_schema(), indent=4),
-            "",
-            f"There are currently {num_contacts} contacts are stored in a table with the following colums:",
-            json.dumps(columns, indent=4),
-            "",
-            "ColumnType schema (for custom columns):",
-            json.dumps(column_type_schema, indent=4),
-            "Do not create new columns if an alias already exists.",
-            f"Current UTC time is {_now()}.",
-            "",
         ],
+        include_read_only_guard=False,
+        positioning_lines=[],
+        counts_entity_plural="contacts",
+        counts_value=num_contacts,
+        columns_payload=columns,
+        columns_heading="columns",
+        include_tools_block=True,
+        usage_examples=usage_examples,
+        clarification_examples_block=clarification_block or None,
+        include_images_policy=True,
+        include_images_forwarding=True,
+        images_extras_block=None,
+        include_parallelism=True,
+        schemas=schemas,
+        special_blocks=[
+            special_block,
+            "Do not create new columns if an alias already exists.",
+        ],
+        include_clarification_footer=True,
+        include_time_footer=True,
     )
+
+    return compose_system_prompt(spec)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

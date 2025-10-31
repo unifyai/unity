@@ -23,11 +23,12 @@ from ..common.prompt_helpers import (
     now_utc_str,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
-    parallelism_guidance,
-    images_policy_block,
-    images_forwarding_block,
+    # New standardized composer utilities
+    PromptSpec,
+    compose_system_prompt,
+    two_table_reasoning_block as _two_table_reasoning_block,
+    images_extras_for_transcripts as _images_extras_for_transcripts,
 )
-from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -223,67 +224,66 @@ def build_ask_prompt(
 
     clar_section = clarification_guidance(tools)
 
-    # Keep clarification guidance single-sourced via clarification_guidance(tools)
+    # Build using standardized composer
+    two_table_block = _two_table_reasoning_block(
+        filter_fname=filter_messages_fname,
+        search_fname=search_messages_fname,
+    )
 
-    # High-level execution guidance provided by common helper
+    positioning_lines = [
+        "Please mention relevant `message_id` and/or `exchange_id` values in your response when possible.",
+        "Use the tools to gather missing context before asking the user for clarifications.",
+        two_table_block,
+    ]
+    positioning_lines = [ln for ln in positioning_lines if ln]
 
-    # Early exit policy for mutation-intent requests reaching ask()
-    mutation_exit_block = read_only_ask_mutation_exit_block()
+    images_extras = _images_extras_for_transcripts(
+        get_imgs_msg_fname=get_imgs_msg_fname,
+        ask_image_fname=ask_image_fname,
+        attach_image_fname=attach_image_fname,
+        attach_msg_imgs_fname=attach_msg_imgs_fname,
+    )
 
-    # Legend for shorthand fields (single source of truth from Message model)
-    shorthand_forward = json.dumps(Message.shorthand_map(), indent=4)
-    shorthand_inverse = json.dumps(Message.shorthand_inverse_map(), indent=4)
+    schemas = [
+        ("Contact", Contact.model_json_schema()),
+        ("Message", Message.model_json_schema()),
+        ("Message field shorthand (full → shorthand)", Message.shorthand_map()),
+        ("Message field shorthand (shorthand → full)", Message.shorthand_inverse_map()),
+    ]
 
-    return "\n".join(
-        [
-            "You are an assistant specialised in **querying and analysing communication transcripts**.",
+    spec = PromptSpec(
+        manager="TranscriptManager",
+        method="ask",
+        tools=tools,
+        role_line="You are an assistant specialised in **querying and analysing communication transcripts**.",
+        global_directives=[
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
-            "",
-            mutation_exit_block,
-            "",
-            "Please mention relevant `message_id` and/or `exchange_id` values in your response when possible.",
-            "Use the tools to gather missing context before asking the user for clarifications.",
-            "",
-            f"There are currently {num_messages} messages stored in the Transcripts table.",
-            "Transcript columns:",
-            json.dumps(transcript_columns, indent=4),
-            "",
-            "Sender contact columns (fields available on the Contacts table for the message sender):",
-            json.dumps(contact_columns, indent=4),
-            "",
-            "Two-table reasoning:",
-            "- Use semantic `{search_messages_fname}` when you need message content and/or sender contact attributes (e.g., `bio`, `first_name`). The tool will internally ensure embeddings and, when needed, join Transcripts with Contacts on `sender_id == contact_id` to rank results by the sum of per-term similarities.",
-            "- Use exact `{filter_messages_fname}` only over transcript fields (ids, mediums, timestamps, content equality/contains). Contact fields are not in scope for filtering.",
-            "",
-            "Tools (name → argspec):",
-            sig_json,
-            "",
-            usage_examples,
-            "",
-            images_policy_block(),
-            "",
-            images_forwarding_block(),
-            "",
-            parallelism_guidance(),
-            "",
-            "Schemas",
-            "-------",
-            f"Contact  = {json.dumps(Contact.model_json_schema(), indent=4)}",
-            "",
-            f"Message  = {json.dumps(Message.model_json_schema(), indent=4)}",
-            "",
-            "Message field shorthand (full → shorthand):",
-            shorthand_forward,
-            "",
-            "Message field shorthand (shorthand → full):",
-            shorthand_inverse,
-            "",
-            f"Current UTC time: {_now()}.",
-            clar_section,
-            "",
         ],
+        include_read_only_guard=True,
+        positioning_lines=positioning_lines,
+        counts_entity_plural="messages",
+        counts_value=num_messages,
+        columns_payload={
+            "Transcript columns": transcript_columns,
+            "Sender contact columns (fields available on the Contacts table for the message sender)": contact_columns,
+        },
+        columns_heading="sections",
+        include_tools_block=True,
+        usage_examples=usage_examples,
+        clarification_examples_block=clarification_block or None,
+        include_images_policy=True,
+        include_images_forwarding=True,
+        images_extras_block=images_extras or None,
+        include_parallelism=True,
+        schemas=schemas,
+        special_blocks=[],
+        include_clarification_footer=True,
+        include_time_footer=True,
+        time_footer_prefix="Current UTC time: ",
     )
+
+    return compose_system_prompt(spec)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
