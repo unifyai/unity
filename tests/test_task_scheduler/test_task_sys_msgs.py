@@ -115,3 +115,9 @@ def test_task_scheduler_system_prompts_formatting(builder, tools, kwargs):
 
     # 2) Footer: last non-empty line is always the UTC time sentence
     _assert_time_footer(prompt)
+
+    # Also print full prompt on success for quick inspection when running with -s
+    print(
+        f"TaskScheduler {builder.__name__} system message passed formatting checks;\n"
+        f"The following system message resulted in no assertion errors:\n{prompt}",
+    )

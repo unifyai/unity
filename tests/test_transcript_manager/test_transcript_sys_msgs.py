@@ -73,6 +73,12 @@ def test_transcript_manager_system_prompt_formatting():
 
     _assert_time_footer_colon(prompt)
 
+    # Also print full prompt on success for quick inspection when running with -s
+    print(
+        "TranscriptManager ask system message passed formatting checks;\n"
+        "The following system message resulted in no assertion errors:\n" + prompt,
+    )
+
 
 def test_transcript_manager_section_spacing_and_footer():
     prompt = build_ask_prompt(
@@ -84,3 +90,7 @@ def test_transcript_manager_section_spacing_and_footer():
 
     _assert_section_spacing(prompt)
     _assert_time_footer_colon(prompt)
+    print(
+        "TranscriptManager ask system message passed spacing/footer checks;\n"
+        "The following system message resulted in no assertion errors:\n" + prompt,
+    )
