@@ -127,8 +127,6 @@ async def test_real_conductor_manages_actor_lifecycle_jit_and_interjection(monke
         connect_now=False,
     )
 
-    # Mock all external I/O on the ActionProvider instance
-    # We are testing the Actor's logic, not the browser.
     real_actor.action_provider.navigate = AsyncMock(return_value=None)
     real_actor.action_provider.act = AsyncMock(return_value=None)
     real_actor.action_provider.observe = AsyncMock(return_value="Mocked Page Heading")
@@ -335,6 +333,17 @@ async def test_real_conductor_manages_actor_lifecycle_jit_and_interjection(monke
     assert (
         "Main plan execution concluded with result: Mocked Page Heading" in actor_log
     ), "Final result did not propagate to plan logs."
+
+    # Conductor reasoning should not re-launch Actor_act or TaskScheduler.execute.
+    requested_tools_all = assistant_requested_tool_names(messages)
+    requested_tools_actor = assistant_requested_tool_names(messages, "Actor")
+    requested_tools_ts = assistant_requested_tool_names(messages, "TaskScheduler")
+
+    assert "TaskScheduler_execute" not in set(requested_tools_ts), "Conductor should not request TaskScheduler_execute during Actor session."
+    assert requested_tools_actor.count("Actor_act") == 1, "Conductor must not start a second Actor_act after interjection."
+
+    interject_helpers = [n for n in requested_tools_all if isinstance(n, str) and n.startswith("interject_")]
+    assert len(interject_helpers) <= 1, f"At most one interject helper expected, saw: {interject_helpers}"
 
     if getattr(plan_handle, "_execution_task", None):
         plan_handle._execution_task.cancel()
