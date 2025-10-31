@@ -44,6 +44,7 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
   - `FileManager.parse` → `KnowledgeManager.update` (to persist structured facts)
 - **Images**
   - Use `ImageManager` only through managers that accept images (e.g., `TranscriptManager`, `GuidanceManager`). Pass image_ids and helpful annotations.
+  - `ScreenShareManager` is a producer of live images. When screen sharing is active, it emits curated, annotated screenshots that `ConversationManager` forwards through `Conductor` via the `images` argument on downstream calls.
 - **Skills vs. Functions**
   - Skills discovery → `SkillManager.ask`
   - Function code/exec is accessed by `SkillManager` (read) and `Actor` (exec). The `Conductor` never calls `FunctionManager` directly.
@@ -72,6 +73,21 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
 - **Connections**:
   - **Steered by**: managers that accept images (e.g., `TranscriptManager`, `GuidanceManager`, `ContactManager`, `TaskScheduler`).
   - **Steers**: — (exposes image records/handles; managers decide when/how to attach or query images).
+
+### ScreenShareManager
+- **Role**: Continuous screen‑share perception and summarization. When a user shares their screen, it selects the most informative frames and produces concise, annotated images that describe what the user is doing, saying, or showing.
+- **Trigger**: Automatically active while screen sharing is on. It runs opportunistically (no manual tool invocation required) and publishes updates as new informative frames are detected.
+- **Scope**: Capture and curate screenshots from the live feed; attach short human‑readable annotations; output typed image references suitable for downstream reasoning. It does not answer questions itself and is not called directly for `ask`/`update`.
+- **Outputs**:
+  - Emits batches of `AnnotatedImageRef` entries (with stable `image_id`s) for the current conversation turn.
+  - Images are persisted via `ImageManager` and delivered to orchestration as `images` for downstream tools.
+- **Integration pattern**:
+  - `ConversationManager` ingests screen‑share updates and forwards them as `images` to `Conductor`.
+  - `Conductor` passes these `images` to whichever manager it routes the request to; managers that support images will expose helpers (e.g., `ask_image`, attach helpers) and inject an overview at the start of their tool‑loops.
+  - Images do not implicitly propagate into nested tool‑loops; callers must pass `images` explicitly when delegating.
+- **Connections**:
+  - **Steered by**: Top‑level UI/controller toggling screen share; `ConversationManager` subscribes to its updates during live conversations.
+  - **Steers**: `ImageManager` (for storage); provides annotated image refs to the rest of the system via `ConversationManager` → `Conductor`.
 
 ### Actor
 - **Role**: Ephemeral, real‑time action (e.g., browser/UI control) within the current chat; always returns a live steerable handle.
