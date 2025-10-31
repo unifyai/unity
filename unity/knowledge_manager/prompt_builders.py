@@ -253,7 +253,6 @@ def build_refactor_prompt(
         """,
     ).strip()
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # Conditional guidance about asking questions in final responses
@@ -281,7 +280,6 @@ def build_refactor_prompt(
 
     return "\n".join(
         [
-            activity_block,
             instructions_block,
             "",
             usage_guidance,
@@ -509,7 +507,6 @@ Anti-patterns to avoid
             ],
         )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # High-level execution guidance: prefer single-call/batched ops and plan parallel steps
@@ -524,7 +521,6 @@ Anti-patterns to avoid
     ).strip()
 
     parts: list[str] = [
-        activity_block,
         instructions_block,
         clar_sentence_upd,
         "Before adding new knowledge or making edits, briefly check whether similar records already exist (via `"
@@ -740,7 +736,6 @@ def build_ask_prompt(
     if case_specific_instructions:
         instructions_block += "\n\n" + case_specific_instructions.strip()
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # Conditional guidance about asking questions in final responses
@@ -780,7 +775,6 @@ def build_ask_prompt(
     mutation_exit_block = read_only_ask_mutation_exit_block()
 
     parts: list[str] = [
-        activity_block,
         instructions_block,
         clar_sentence_ask,
         "",

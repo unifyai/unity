@@ -182,7 +182,6 @@ Anti‑patterns to avoid
             ],
         )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # Conditional guidance about asking questions in final responses
@@ -196,7 +195,6 @@ Anti‑patterns to avoid
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specializing in **retrieving file information and analyzing file contents**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",

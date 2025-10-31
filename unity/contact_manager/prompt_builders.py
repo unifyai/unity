@@ -176,7 +176,6 @@ Anti‑patterns to avoid
         """,
     ).strip()
 
-    activity_block = "{broader_context}" if include_activity else ""
     # High-level execution guidance is provided by common helper
 
     # Early exit policy for mutation-intent requests reaching ask()
@@ -184,7 +183,6 @@ Anti‑patterns to avoid
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specializing in **retrieving contact information**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
@@ -350,7 +348,6 @@ Anti‑patterns to avoid
             ],
         )
 
-    activity_block = "{broader_context}" if include_activity else ""
     # High-level execution guidance is provided by common helper
     clar_section = clarification_guidance(tools)
 
@@ -366,7 +363,6 @@ Anti‑patterns to avoid
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant in charge of **creating or editing contacts**.",
             "Choose tools based on the user's intent and the specificity of the target record.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the request and choose the best approach yourself.",

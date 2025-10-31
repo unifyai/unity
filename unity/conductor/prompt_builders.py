@@ -91,7 +91,6 @@ def build_ask_prompt(
         else ""
     )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # High-level orchestration guidance (do not describe HOW, only orchestrate)
@@ -163,7 +162,6 @@ def build_ask_prompt(
 
     return "\n".join(
         [
-            activity_block,
             *guidance,
             *decomposition_concurrency_ask_lines,
             "",
@@ -237,7 +235,6 @@ def build_request_prompt(
         tools,
     )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     clarification_block = (
@@ -361,7 +358,6 @@ def build_request_prompt(
 
     return "\n".join(
         [
-            activity_block,
             *guidance_lines,
             *decomposition_concurrency_request_lines,
             *update_philosophy_lines,
