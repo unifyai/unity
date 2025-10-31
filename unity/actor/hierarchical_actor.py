@@ -4257,6 +4257,7 @@ class HierarchicalActor(BaseActor):
             images=images,
             entrypoint_function_id=entrypoint_function_id,
         )
+        setattr(plan_handle, "__passthrough__", True)
         self._plan_handles.add(plan_handle)
         return plan_handle
 
