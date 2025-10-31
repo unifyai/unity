@@ -237,7 +237,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         update_tools = mirror_task_scheduler_tools("update")
 
         # Provide placeholder counts/columns for the simulated environment
-        from .types.task import TaskBase as _Task
+        from .types.task import Task as _Task
 
         fake_task_columns = [
             {k: str(v.annotation)} for k, v in _Task.model_fields.items()
@@ -274,7 +274,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         except Exception:
             pass
         # Rebuild and set the system message again to mirror initialisation
-        from .types.task import TaskBase as _Task  # local import to avoid cycles
+        from .types.task import Task as _Task  # local import to avoid cycles
 
         fake_task_columns = [
             {k: str(v.annotation)} for k, v in _Task.model_fields.items()
