@@ -9,36 +9,33 @@ from tests.assertion_helpers import (
 )
 
 from unity.transcript_manager.prompt_builders import build_ask_prompt
-
-
-def _dummy(*args, **kwargs):
-    pass
-
-
-def _tools_for_ask():
-    # Intentionally omit clarification and image tools to keep the footer last
-    return {
-        "filter_messages": _dummy,
-        "search_messages": _dummy,
-    }
+from unity.transcript_manager.transcript_manager import TranscriptManager
 
 
 def test_transcript_manager_ask_system_prompt_formatting():
+    tm = TranscriptManager()
+    tools = dict(tm.get_tools("ask"))
+
     prompt = build_ask_prompt(
-        tools=_tools_for_ask(),
-        num_messages=2,
-        transcript_columns={"message_id": "int", "content": "str"},
-        contact_columns={"contact_id": "int", "first_name": "str"},
+        tools=tools,
+        num_messages=tm._num_messages(),
+        transcript_columns=tm._list_columns(),
+        contact_columns=tm._contact_manager._list_columns(),
     )
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
-    assert set(tools_json.keys()) == set(_tools_for_ask().keys())
+    assert set(tools_json.keys()) == set(tools.keys())
     assert "Tools (name" in prompt
-    assert re.search(
-        r"There are currently\s+2\s+messages\s+stored in a table with the following sections:",
+
+    # Counts line should reflect the real number of messages
+    m = re.search(
+        r"There are currently\s+(\d+)\s+messages\s+stored in a table with the following sections:",
         prompt,
     )
+    assert m, "Missing counts/sections line"
+    assert int(m.group(1)) == tm._num_messages()
+
     assert "Transcript columns" in prompt
     assert (
         "Sender contact columns (fields available on the Contacts table for the message sender)"
@@ -60,13 +57,14 @@ def test_transcript_manager_ask_system_prompt_formatting():
     assert "Message field shorthand (full → shorthand)" in prompt
     assert "Message field shorthand (shorthand → full)" in prompt
 
-    # Ordering checks
+    # Ordering checks (build the dynamic counts line fragment)
+    counts_line = f"There are currently {tm._num_messages()} messages stored in a table with the following sections:"
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
             "Two-table reasoning:",
-            "There are currently 2 messages stored in a table with the following sections:",
+            counts_line,
             "Tools (name",
             "Examples",
             "Images policy (when images are present)",
