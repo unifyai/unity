@@ -78,7 +78,7 @@ def test_contact_manager_ask_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
     print(
         "ContactManager ask system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n" + prompt,
+        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
     )
 
 
@@ -145,5 +145,5 @@ def test_contact_manager_update_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
     print(
         "ContactManager update system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n" + prompt,
+        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
     )

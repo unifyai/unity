@@ -111,11 +111,11 @@ def assert_in_order(prompt: str, markers: List[str]) -> None:
         if i == -1:
             missing.append(m)
             continue
-        assert i > pos, f"Marker out of order: {m!r}\n\nFull system prompt:\n{prompt}"
+        assert i > pos, f"Marker out of order: {m!r}\n\nFull system prompt:\n\n{prompt}"
         pos = i
     assert (
         not missing
-    ), f"Missing markers (order check): {missing}\n\nFull system prompt:\n{prompt}"
+    ), f"Missing markers (order check): {missing}\n\nFull system prompt:\n\n{prompt}"
 
 
 def assert_section_spacing(prompt: str) -> None:
@@ -128,7 +128,7 @@ def assert_section_spacing(prompt: str) -> None:
         if re.fullmatch(r"-+", next_line.strip()):
             if idx == 0 or lines[idx - 1].strip() != "":
                 errors.append(f"Missing blank line before section header: '{line}'")
-    assert not errors, "\n".join(errors) + f"\n\nFull system prompt:\n{prompt}"
+    assert not errors, "\n".join(errors) + f"\n\nFull system prompt:\n\n{prompt}"
 
 
 def assert_selected_headers_have_blank_line(prompt: str, titles: List[str]) -> None:
@@ -142,7 +142,7 @@ def assert_selected_headers_have_blank_line(prompt: str, titles: List[str]) -> N
                 missing.append(title)
     assert (
         not missing
-    ), f"Missing blank line before: {missing}\n\nFull system prompt:\n{prompt}"
+    ), f"Missing blank line before: {missing}\n\nFull system prompt:\n\n{prompt}"
 
 
 def assert_time_footer(prompt: str, prefix: str) -> None:
@@ -153,7 +153,7 @@ def assert_time_footer(prompt: str, prefix: str) -> None:
     """
     non_empty_lines = [ln for ln in prompt.splitlines() if ln.strip()]
     assert non_empty_lines, (
-        "Prompt should not be empty\n\nFull system prompt:\n" + prompt
+        "Prompt should not be empty\n\nFull system prompt:\n\n" + prompt
     )
     last = non_empty_lines[-1]
     pattern = re.compile(
@@ -161,4 +161,4 @@ def assert_time_footer(prompt: str, prefix: str) -> None:
     )
     assert pattern.fullmatch(
         last,
-    ), f"Unexpected last line: {last!r}\n\nFull system prompt:\n{prompt}"
+    ), f"Unexpected last line: {last!r}\n\nFull system prompt:\n\n{prompt}"
