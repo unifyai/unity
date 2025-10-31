@@ -308,10 +308,13 @@ class ConversationManager:
                         action["surname"],
                         phone_number=action["phone_number"],
                     )
-                    res = await _send_sms_message_via_number(
-                        contact.phone_number,
-                        action["message"],
-                    )
+                    if not os.getenv("TEST"):
+                        res = await _send_sms_message_via_number(
+                            contact.phone_number,
+                            action["message"],
+                        )
+                    else:
+                        res = {"success": True}
                     if not res["success"]:
                         # self.state.push_notif("comms", f"Attempted to send an SMS to an invalid number {contact.number}", datetime.now())
                         await self.event_broker.publish(
@@ -339,12 +342,15 @@ class ConversationManager:
                         action["surname"],
                         email_address=action["email_address"],
                     )
-                    await _send_email_via_address(
-                        contact.email_address,
-                        action["subject"],
-                        action["body"],
-                        action.get("messge_id"),
-                    )
+                    if not os.getenv("TEST"):
+                        res = await _send_email_via_address(
+                            contact.email_address,
+                            action["subject"],
+                            action["body"],
+                            action.get("messge_id"),
+                        )
+                    else:
+                        res = {"success": True}
                     event = EmailSent(
                         contact=contact.email_address,
                         subject=action["subject"],
@@ -374,10 +380,13 @@ class ConversationManager:
                             error.to_json(),
                         )
                     else:
-                        res = await _start_call(
-                            self.state.assistant_number,
-                            contact.phone_number,
-                        )
+                        if not os.getenv("TEST"):
+                            res = await _start_call(
+                                self.state.assistant_number,
+                                contact.phone_number,
+                            )
+                        else:
+                            res = {"success": True}
                         if not res["success"]:
                             await self.event_broker.publish(
                                 "app:comms:error",
