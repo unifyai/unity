@@ -3,6 +3,7 @@ import unify
 import json
 import inspect
 import os
+from pathlib import Path
 import copy
 from datetime import datetime
 
@@ -276,12 +277,15 @@ async def async_tool_loop_inner(
     # Independent, centrally-configured LLM I/O logging flag
     llm_io_debug = bool(LLM_IO_DEBUG)
 
-    # File sink for LLM I/O: always a fresh file per process run
+    # File sink for LLM I/O: per-run file under hidden folder with readable timestamp
     _llm_io_file: str | None = None
     if llm_io_debug:
         with suppress(Exception):
-            ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-            _llm_io_file = os.path.join(os.getcwd(), f".unity_llm_io_{ts}.txt")
+            root = Path(os.getcwd())
+            logs_dir = root / ".llm_io_debug"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            _llm_io_file = str(logs_dir / f"{ts}.txt")
 
     def _llm_io_write(header: str, body: str) -> None:
         if not llm_io_debug or _llm_io_file is None:
