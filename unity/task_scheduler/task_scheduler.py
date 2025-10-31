@@ -4473,7 +4473,8 @@ class TaskScheduler(BaseTaskScheduler):
         if self._num_tasks_cached is None:
             try:
                 self._num_tasks_cached = int(
-                    self._view.get_metric_count(key="task_id"),
+                    # self._view.get_metric_count(key="task_id"),
+                    self._view.get_metric_max(key="task_id"),
                 )
             except Exception:
                 # Defensive fallback; a failed metric read should not crash tools
