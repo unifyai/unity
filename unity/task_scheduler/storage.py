@@ -211,20 +211,7 @@ class TasksStore:
                 raise AssertionError(
                     f"Expected exactly 1 row for task_id {original_id}, but found {len(logs)}.",
                 )
-        # Opportunistically memoize task_id -> log_id mappings
-        try:
-            for lg in logs or []:
-                try:
-                    e = getattr(lg, "entries", {}) or {}
-                    tid = e.get("task_id")
-                    lid = getattr(lg, "id", None)
-                    if isinstance(tid, int) and isinstance(lid, int):
-                        # This method is on TasksStore; LocalTaskView handles memoization
-                        pass
-                except Exception:
-                    continue
-        except Exception:
-            pass
+
         return logs
 
     # ------------------------------- Writes --------------------------------
