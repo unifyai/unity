@@ -20,7 +20,11 @@ from pathlib import Path
 from typing import List, Type
 import redis.asyncio as redis
 
-from unity.conversation_manager_2.new_events import Event, StartupEvent
+from unity.conversation_manager_2.new_events import (
+    Event,
+    GetContactsResponse,
+    StartupEvent,
+)
 
 
 # ============================================================================
@@ -276,8 +280,39 @@ async def initialized_system(
         voice_id="test_voice",
     )
 
+    # Wait for CM to be ready and subscribed to channels
+    print("⏳ Waiting for conversation manager to subscribe to Redis channels...")
+    await asyncio.sleep(5)  # Give CM time to fully initialize and subscribe
+
+    # Now send startup event
+    print("📤 Publishing startup event...")
     await test_redis_client.publish("app:comms:startup", startup.to_json())
-    await asyncio.sleep(1)  # Let it initialize
+    await asyncio.sleep(1)
+
+    # Send contacts list
+    print("📤 Publishing contacts...")
+    contacts_event = GetContactsResponse(
+        contacts=[
+            {
+                "contact_id": 0,
+                "first_name": "Test",
+                "surname": "Assistant",
+                "email_address": "assistant@test.com",
+                "phone_number": "+15555551234",
+            },
+            {
+                "contact_id": 1,
+                "first_name": "Test",
+                "surname": "Contact",
+                "email_address": "test@contact.com",
+                "phone_number": "+15555551111",
+            },
+        ]
+    )
+    await test_redis_client.publish("app:comms:contacts", contacts_event.to_json())
+    await asyncio.sleep(1)  # Let contacts be processed
+
+    print("✅ System initialized and ready")
 
     return {
         "redis_client": test_redis_client,
