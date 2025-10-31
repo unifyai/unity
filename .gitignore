@@ -7,6 +7,7 @@ implementations.py
 log.txt
 .logs.txt
 logs.txt
+.pytest_logs.txt
 test.py
 .env.latest
 .env.old

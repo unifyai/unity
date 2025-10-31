@@ -33,6 +33,13 @@ LLM_IO_DEBUG = os.getenv("LLM_IO_DEBUG", "false").lower() in {
     "on",
 }
 
+PYTEST_LOG_TO_FILE = os.getenv("PYTEST_LOG_TO_FILE", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 
 def is_semantic_cache_enabled() -> bool:
     """
