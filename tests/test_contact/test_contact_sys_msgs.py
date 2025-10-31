@@ -13,49 +13,28 @@ from unity.contact_manager.prompt_builders import (
     build_ask_prompt,
     build_update_prompt,
 )
-
-
-def _dummy(*args, **kwargs):
-    pass
-
-
-def _tools_for_ask():
-    # Intentionally omit clarification tool so the time footer is last
-    return {
-        "filter_contacts": _dummy,
-        "search_contacts": _dummy,
-        "list_columns": _dummy,
-    }
-
-
-def _tools_for_update():
-    # Intentionally omit clarification tool so the time footer is last
-    return {
-        "create_contact": _dummy,
-        "update_contact": _dummy,
-        "delete_contact": _dummy,
-        "merge_contacts": _dummy,
-        "create_custom_column": _dummy,
-        "delete_custom_column": _dummy,
-        "ask": _dummy,
-    }
+from unity.contact_manager.contact_manager import ContactManager
 
 
 def test_contact_manager_ask_system_prompt_formatting():
+    cm = ContactManager()
+    tools = dict(cm.get_tools("ask"))
     prompt = build_ask_prompt(
-        tools=_tools_for_ask(),
-        num_contacts=3,
-        columns=[{"name": "first_name", "type": "str"}],
+        tools=tools,
+        num_contacts=cm._num_contacts(),
+        columns=cm._list_columns(),
     )
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
-    assert set(tools_json.keys()) == set(_tools_for_ask().keys())
+    assert set(tools_json.keys()) == set(tools.keys())
     assert "Tools (name" in prompt
-    assert re.search(
-        r"There are currently\s+3\s+contacts\s+stored in a table with the following columns:",
+    m = re.search(
+        r"There are currently\s+(\d+)\s+contacts\s+stored in a table with the following columns:",
         prompt,
     )
+    assert m, "Missing counts/columns line"
+    assert int(m.group(1)) == cm._num_contacts()
     assert "Special contacts" in prompt
     assert "contact_id==0 is the assistant" in prompt
     assert "contact_id==1 is the central user" in prompt
@@ -70,11 +49,12 @@ def test_contact_manager_ask_system_prompt_formatting():
     )
 
     # Ordering checks
+    counts_line = f"There are currently {cm._num_contacts()} contacts stored in a table with the following columns:"
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
-            "There are currently 3 contacts stored in a table with the following columns:",
+            counts_line,
             "Tools (name",
             "Examples",
             "Images policy (when images are present)",
@@ -103,19 +83,23 @@ def test_contact_manager_ask_system_prompt_formatting():
 
 
 def test_contact_manager_update_system_prompt_formatting():
+    cm = ContactManager()
+    tools = dict(cm.get_tools("update"))
     prompt = build_update_prompt(
-        tools=_tools_for_update(),
-        num_contacts=3,
-        columns=[{"name": "first_name", "type": "str"}],
+        tools=tools,
+        num_contacts=cm._num_contacts(),
+        columns=cm._list_columns(),
     )
 
     # Standardized blocks
     tools_json = extract_tools_dict(prompt)
-    assert set(tools_json.keys()) == set(_tools_for_update().keys())
-    assert re.search(
-        r"There are currently\s+3\s+contacts\s+stored in a table with the following columns:",
+    assert set(tools_json.keys()) == set(tools.keys())
+    m = re.search(
+        r"There are currently\s+(\d+)\s+contacts\s+stored in a table with the following columns:",
         prompt,
     )
+    assert m, "Missing counts/columns line"
+    assert int(m.group(1)) == cm._num_contacts()
     assert "Schemas" in prompt
     assert "Contact schema = " in prompt
     assert "ColumnType schema (for custom columns) = " in prompt
@@ -131,11 +115,12 @@ def test_contact_manager_update_system_prompt_formatting():
     )
 
     # Ordering checks
+    counts_line = f"There are currently {cm._num_contacts()} contacts stored in a table with the following columns:"
     assert_in_order(
         prompt,
         [
             "Do not ask the user questions in your final response",
-            "There are currently 3 contacts stored in a table with the following columns:",
+            counts_line,
             "Tools (name",
             "Tool selection",
             "Images policy (when images are present)",
