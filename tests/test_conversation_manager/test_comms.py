@@ -18,7 +18,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_sms_to_sms(initialized_system):
+async def test_sms_to_sms(test_redis_client, event_capture):
     """
     Test basic SMS flow: send an incoming SMS and receive a response.
 
@@ -28,9 +28,6 @@ async def test_sms_to_sms(initialized_system):
     3. CM publishes SMSSent event with response
     4. We capture and verify the response
     """
-    redis_client = initialized_system["redis_client"]
-    event_capture = initialized_system["event_capture"]
-
     # Clear any events from initialization
     event_capture.clear()
 
@@ -38,11 +35,11 @@ async def test_sms_to_sms(initialized_system):
     contact_number = "+15555551111"
     incoming_sms = SMSRecieved(
         contact=contact_number,
-        content="What is the capital of France?",
+        content="Tell me a joke",
     )
 
     print(f"\n📱 Sending SMS from {contact_number}")
-    await redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
+    await test_redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
 
     # Wait for the assistant's response
     print("⏳ Waiting for SMS response (timeout: 60s)...")
@@ -63,7 +60,45 @@ async def test_sms_to_sms(initialized_system):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_email_to_email(initialized_system):
+async def test_sms_to_email(test_redis_client, event_capture):
+    """
+    Test SMS to email flow: send an incoming SMS and receive a response.
+    """
+    # Clear any events from initialization
+    event_capture.clear()
+
+    contact_number = "+15555551111"
+    email_address = "test@contact.com"
+
+    # Send incoming SMS
+    incoming_sms = SMSRecieved(
+        contact=contact_number,
+        content="Tell me a joke via email",
+    )
+
+    print(f"\n📱 Sending SMS from {contact_number}")
+    await test_redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
+
+    # Wait for the assistant's response
+    print("⏳ Waiting for email response (timeout: 60s)...")
+    response = await event_capture.wait_for_event(
+        EmailSent,
+        timeout=60.0,
+        contact=email_address,
+    )
+
+    # Verify response
+    assert isinstance(response, EmailSent)
+    assert response.contact == email_address
+    assert len(response.body) > 0
+
+    print(f"✅ Got email response: {response.body[:100]}...")
+    print(f"   Full response length: {len(response.body)} characters")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_email_to_email(test_redis_client, event_capture):
     """
     Test basic email flow: send an incoming email and receive a response.
 
@@ -73,9 +108,6 @@ async def test_email_to_email(initialized_system):
     3. CM publishes EmailSent event with response
     4. We capture and verify the response
     """
-    redis_client = initialized_system["redis_client"]
-    event_capture = initialized_system["event_capture"]
-
     # Clear any events from initialization
     event_capture.clear()
 
@@ -83,13 +115,15 @@ async def test_email_to_email(initialized_system):
     contact_email = "test@contact.com"
     incoming_email = EmailRecieved(
         contact=contact_email,
-        body="What is the capital of France?",
+        body="Tell me a joke",
         subject="Test Subject",
         message_id="test_message_id",
     )
 
     print(f"\n📧 Sending email from {contact_email}")
-    await redis_client.publish("app:comms:email_received", incoming_email.to_json())
+    await test_redis_client.publish(
+        "app:comms:email_received", incoming_email.to_json()
+    )
 
     # Wait for the assistant's response
     print("⏳ Waiting for email response (timeout: 60s)...")
