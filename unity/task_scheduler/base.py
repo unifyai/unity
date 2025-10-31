@@ -113,6 +113,14 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         question in natural language and allow this `ask` method to determine
         the best method to answer it.
 
+        Visual inputs policy
+        --------------------
+        • When relevant images are available, pass them via the ``images`` argument.
+        • When delegating to another tool that declares an ``images`` parameter, forward the
+          relevant images and rewrite/augment their annotations so they align with the delegated
+          question or action (not the original user phrasing). Prefer AnnotatedImageRefs; preserve
+          user‑referenced ordering when it matters.
+
         Task schema (reference)
         -----------------------
         {task_schema}
@@ -198,6 +206,13 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         conversational sessions. It should be used to create or modify durable
         Tasks and their scheduling/ordering.
 
+        Visual inputs policy
+        --------------------
+        • When relevant images are available, pass them via the ``images`` argument.
+        • When delegating to another tool that declares an ``images`` parameter (e.g., a read‑only ask),
+          forward the relevant images and rewrite/augment their annotations so they align with the delegated
+          request. Prefer AnnotatedImageRefs; preserve user‑referenced ordering when it matters.
+
         Please always be explicit about the *ordering* of tasks.
         If the order *doesn't* matter please say so explicitly.
         If the order *does* matter, and the tasks are given in the correct number order,
@@ -266,6 +281,13 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         Implementations MUST return a *live* steerable handle whose public
         methods (pause, resume, interject, stop, result, …) continue to work
         throughout execution.
+
+        Visual inputs policy
+        --------------------
+        • When relevant images are available, pass them via the ``images`` argument.
+        • When this method calls other tools that declare an ``images`` parameter (e.g., a read‑only ask),
+          forward the relevant images and rewrite/augment their annotations so they align with the delegated
+          question or action. Prefer AnnotatedImageRefs; preserve user‑referenced ordering when it matters.
 
         Parameters
         ----------

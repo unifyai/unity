@@ -8,6 +8,7 @@ __all__ = [
     "require_tools",
     "parallelism_guidance",
     "images_policy_block",
+    "images_forwarding_block",
 ]
 
 
@@ -102,10 +103,40 @@ def images_policy_block() -> str:
     return (
         "Images policy (when images are present)\n"
         "--------------------------------------\n"
-        "- Treat images as freeform user-provided visuals (screenshots, photos, attachments, UI snippets).\n"
-        "- Do not assume assistant-specific identifiers (task_id, contact_id, queue_id) are visible, they almost *never* will be.\n"
-        "- When information is needed from a single image in an isolation manner, then call `ask_image` with a narrowly scoped question to extract concrete, observable details.\n"
-        "- If the caption is vague or absent, then start with something *very* simple like 'what is in this image?' Do *not* overcomplicat the first question until we know *what is in the image*.\n"
-        "- Use any extracted cues no matter how vague (e.g., what is *in the image*, what is being *done* if it's a screenshot from a screen share).\n"
-        "- Attach images (`attach_image_raw`) when persistent visual context is helpful for follow-up turns; otherwise prefer targeted ask_image calls to minimize noise."
+        "- Treat images as freeform user-provided visuals (screenshots, photos, UI, attachments).\n"
+        "- Do not assume system-specific identifiers or structured record fields (e.g., ids, names, statuses, queue/thread references,\n"
+        "  timestamps, due/deadline dates) are visible unless they are clearly shown. This applies across managers (e.g., tasks,\n"
+        "  contacts, transcripts).\n"
+        "- Default-first question: if the caption is vague or absent, start with a very simple descriptive question such as\n"
+        "  'What is shown in this image? What activity appears to be in progress? Which app/page is visible?' Extract salient,\n"
+        "  observable elements (apps, UI sections, headings, steps, key text snippets) — not database fields.\n"
+        "- If the caption already clearly describes the scene and intent, you may skip the broad question and proceed directly\n"
+        "  to a targeted question about a specific on-screen detail.\n"
+        "- When information is needed from a single image, prefer `ask_image` with a narrowly scoped question to extract concrete,\n"
+        "  observable details — never invent system-specific fields that may not be present on-screen.\n"
+        "- Use any extracted cues (e.g., what is in the image, what appears to be done if this is a screen-share) to guide downstream\n"
+        "  tool choices (e.g., semantic searches guided by inferred activity or content).\n"
+        "- Forwarding rule: when delegating to another tool that declares an `images` parameter, forward the relevant images and\n"
+        "  rewrite/augment their annotations so they align with the delegated question or action (not the original user phrasing).\n"
+        "  Prefer AnnotatedImageRefs; include a curated subset and preserve user-referenced ordering when it matters.\n"
+        "- Anti-patterns to avoid:\n"
+        "  • Asking for system-specific identifiers or structured record fields in the first question unless those are clearly visible.\n"
+        "  • Assuming the screenshot is a structured record view from a specific manager.\n"
+        "  • Re-asking a broad description when the caption already provides that description.\n"
+        "- Attach images (`attach_image_raw`) when persistent visual context is helpful for follow-up turns; otherwise prefer targeted `ask_image` calls."
+    )
+
+
+def images_forwarding_block() -> str:
+    """General guidance for forwarding images into nested tools.
+
+    Manager‑agnostic: safe to include in any prompt where nested tool calls may occur.
+    """
+    return (
+        "Images forwarding to nested tools\n"
+        "----------------------------------\n"
+        "• When delegating to another tool that declares an `images` parameter, forward the relevant images.\n"
+        "• Rewrite or augment image annotations so they align with the delegated question/action (not the original phrasing).\n"
+        "• Prefer AnnotatedImageRefs; include a curated subset and preserve user‑referenced ordering when it matters.\n"
+        "• If no images are relevant, omit them rather than attaching unrelated visuals."
     )

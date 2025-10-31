@@ -72,7 +72,8 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
         managers_worker._event_broker = create_event_broker()
         asyncio.run(managers_worker.wait_for_events())
 
-    asyncio.create_task(asyncio.to_thread(run_managers_worker))
+    if not os.getenv("TEST"):
+        asyncio.create_task(asyncio.to_thread(run_managers_worker))
 
     # directly talks with the user
     conversation_manager = ConversationManager(
@@ -102,7 +103,8 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
 
     asyncio.create_task(conversation_manager.wait_for_events())
     asyncio.create_task(conversation_manager.check_inactivity())
-    asyncio.create_task(comms_manager.start())
+    if not os.getenv("TEST"):
+        asyncio.create_task(comms_manager.start())
 
     print("Server is Running...")
     await stop.wait()

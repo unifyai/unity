@@ -247,7 +247,8 @@ class ConversationManager:
             else:
                 topic = "app:comms:phone_utterance"
                 event = AssistantPhoneUtterance(
-                    self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
+                    self.state.phone_contact.phone_number,
+                    parsed_out["phone_utterance"],
                 )
             await self.event_broker.publish(topic, event.to_json())
 
@@ -269,7 +270,8 @@ class ConversationManager:
                         event = ConductorHandleRequest(
                             handle_id=action["handle_id"],
                             action_name=action["action_name"].replace(
-                                "conductor_handle_", ""
+                                "conductor_handle_",
+                                "",
                             ),
                             query=parsed_out["thoughts"],
                             parent_chat_context=self.state.chat_history,
@@ -291,13 +293,13 @@ class ConversationManager:
                         self.event_broker.publish(
                             "app:conductor:input_events",
                             event.to_json(),
-                        )
+                        ),
                     )
                     asyncio.create_task(
                         self.event_broker.publish(
                             "app:managers:input",
                             event.to_json(),
-                        )
+                        ),
                     )
                 elif action["action_name"] == "send_sms":
                     contact = self.state.update_or_create_new_contact(
@@ -306,10 +308,13 @@ class ConversationManager:
                         action["surname"],
                         phone_number=action["phone_number"],
                     )
-                    res = await _send_sms_message_via_number(
-                        contact.phone_number,
-                        action["message"],
-                    )
+                    if not os.getenv("TEST"):
+                        res = await _send_sms_message_via_number(
+                            contact.phone_number,
+                            action["message"],
+                        )
+                    else:
+                        res = {"success": True}
                     if not res["success"]:
                         # self.state.push_notif("comms", f"Attempted to send an SMS to an invalid number {contact.number}", datetime.now())
                         await self.event_broker.publish(
@@ -337,12 +342,15 @@ class ConversationManager:
                         action["surname"],
                         email_address=action["email_address"],
                     )
-                    await _send_email_via_address(
-                        contact.email_address,
-                        action["subject"],
-                        action["body"],
-                        action.get("messge_id"),
-                    )
+                    if not os.getenv("TEST"):
+                        res = await _send_email_via_address(
+                            contact.email_address,
+                            action["subject"],
+                            action["body"],
+                            action.get("messge_id"),
+                        )
+                    else:
+                        res = {"success": True}
                     event = EmailSent(
                         contact=contact.email_address,
                         subject=action["subject"],
@@ -372,10 +380,13 @@ class ConversationManager:
                             error.to_json(),
                         )
                     else:
-                        res = await _start_call(
-                            self.state.assistant_number,
-                            contact.phone_number,
-                        )
+                        if not os.getenv("TEST"):
+                            res = await _start_call(
+                                self.state.assistant_number,
+                                contact.phone_number,
+                            )
+                        else:
+                            res = {"success": True}
                         if not res["success"]:
                             await self.event_broker.publish(
                                 "app:comms:error",
@@ -389,7 +400,7 @@ class ConversationManager:
                 elif action["action_name"] == "send_unify_message":
                     # Boss-only chat; contact id is always 1
                     content = action["message"]
-                    event = UnifyMessageSent(contact="1", content=content)
+                    event = UnifyMessageSent(contact=1, content=content)
                     await self.event_broker.publish(
                         "app:comms:unify_message_sent",
                         event.to_json(),
@@ -636,7 +647,9 @@ class ConversationManager:
             return
 
         # Get contact - pass to all params and let get_contact find the match
-        if event.contact.isnumeric():
+        if isinstance(event.contact, int):
+            contact = self.state.get_contact(contact_id=event.contact)
+        elif event.contact.isnumeric():
             contact = self.state.get_contact(contact_id=int(event.contact))
         elif event.contact:
             contact = self.state.get_contact(
@@ -785,19 +798,6 @@ class ConversationManager:
                 **self.state.get_details(),
             }
 
-            # For unify_message/unify_call assume boss contact; create to avoid errors
-            if "unify" in payload["medium"]:
-                self.state.update_or_create_new_contact(
-                    1,
-                    payload["user_name"].split(" ")[0],
-                    (
-                        payload["user_name"].split(" ")[1]
-                        if len(payload["user_name"].split(" ")) > 1
-                        else ""
-                    ),
-                    email_address=payload["user_email"],
-                )
-
             await self.publish_startup()
             asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
 
@@ -806,7 +806,7 @@ class ConversationManager:
                 self.state.inverted_contacts_map[0].model_dump(),
             )
             await self.publish_contact_update(
-                self.state.inverted_contacts_map[1].model_dump()
+                self.state.inverted_contacts_map[1].model_dump(),
             )
 
         elif isinstance(

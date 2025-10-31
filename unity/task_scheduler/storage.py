@@ -54,16 +54,20 @@ class TasksStore:
                 description=description,
             )
             unify.create_fields(fields, context=self._ctx)
-            # Prime the local fields cache to avoid an immediate second get_fields call.
+            # Refresh the local fields cache from the backend using the
+            # canonical 'data_type' representation.
             try:
-                primed = {
+                existing = unify.get_fields(context=self._ctx) or {}
+            except Exception:
+                existing = {}
+            try:
+                normalised = {
                     k: (v.get("data_type") if isinstance(v, dict) else str(v))
-                    for k, v in (fields or {}).items()
+                    for k, v in existing.items()
                 }
             except Exception:
-                primed = {k: str(v) for k, v in (fields or {}).items()}
-            # cached_property can be pre-populated by writing into __dict__
-            self.__dict__["fields"] = primed
+                normalised = {k: str(v) for k, v in existing.items()}
+            self.__dict__["fields"] = normalised
             return
 
         try:
@@ -73,22 +77,19 @@ class TasksStore:
         missing = {k: v for k, v in fields.items() if k not in existing}
         if missing:
             unify.create_fields(missing, context=self._ctx)
-        # Prime/refresh the local fields cache with a normalised view combining existing + newly created
+        # Refresh the local fields cache from the backend so we only ever
+        # read the canonical 'data_type' representation.
+        try:
+            updated = unify.get_fields(context=self._ctx) or {}
+        except Exception:
+            updated = existing
         try:
             normalised = {
                 k: (v.get("data_type") if isinstance(v, dict) else str(v))
-                for k, v in existing.items()
+                for k, v in updated.items()
             }
         except Exception:
-            normalised = {k: str(v) for k, v in existing.items()}
-        for k, v in (missing or {}).items():
-            if k not in normalised:
-                try:
-                    normalised[k] = (
-                        v.get("data_type") if isinstance(v, dict) else str(v)
-                    )
-                except Exception:
-                    normalised[k] = str(v)
+            normalised = {k: str(v) for k, v in updated.items()}
         self.__dict__["fields"] = normalised
 
     # ------------------------------- Reads ---------------------------------
@@ -104,7 +105,8 @@ class TasksStore:
             return {}
 
     def get_metric_count(self, *, key: str) -> int:
-        ret = unify.get_logs_metric(metric="count", key=key, context=self._ctx)
+        # ret = unify.get_logs_metric(metric="count", key=key, context=self._ctx)
+        ret = len(unify.get_logs(context=self._ctx, return_ids_only=True))
         return 0 if ret is None else int(ret)
 
     def get_metric_max(self, *, key: str) -> int:

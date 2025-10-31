@@ -1,0 +1,6 @@
+---
+description: No Try Except Blocks
+globs: ["**/*"]
+alwaysApply: true
+---
+You have a tendancy to write **very** defensive code, where most changes are conversatively made inside a try except block, such that the change does not break a production system. This is **not** how you should code. This code is thoroughly tested, and nothing reaches production unless all tests are passing. Creating silent failures via excessive try-except blocks makes things much harder to debug, so please do not add **any** defensive fallbacks or try except blocks unless this is explicitly needed in order to fulfil the needs of an explicitly requested feature.

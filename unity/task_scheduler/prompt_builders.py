@@ -21,6 +21,7 @@ from ..common.prompt_helpers import (
     tool_name,
     require_tools,
     images_policy_block,
+    images_forwarding_block,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
@@ -183,6 +184,16 @@ def build_ask_prompt(
         "",
         images_policy_block(),
         "",
+        images_forwarding_block(),
+        "",
+        # Images-first workflow (nuanced)
+        "Images-first workflow for ask()",
+        "--------------------------------",
+        "• When images are present, first interpret the visuals before mapping them to tasks.",
+        "• If captions are vague, call ask_image with a broad, descriptive question (e.g., 'What is shown in this image? What activity appears to be in progress? Which app/page is visible?').",
+        "• If captions already describe the scene and intent clearly, you may skip the broad question and either ask a targeted image question or proceed to a semantic tasks lookup guided by the inferred activity.",
+        "• Only ask the image for structured values when they are visibly present on-screen; never assume task metadata (task_id, queue_id, due dates) is visible in generic screenshots.",
+        "",
         "Parallelism and single‑call preference",
         "-------------------------------------",
         "• Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.",
@@ -270,9 +281,6 @@ def build_update_prompt(
         "--------------",
         f"• Prefer `{update_task_fname}` with the exact `task_id` when editing tasks.",
         f'• When the user describes an EXISTING task semantically (e.g., "the kickoff email task"), first call `{ask_fname}` to identify the correct `task_id`, then call `{update_task_fname}` with the appropriate fields.',
-        "",
-        "Queues and batches (multi-queue)",
-        "--------------------------------",
     ]
 
     # Encourage batched creation when creating several tasks
@@ -466,6 +474,8 @@ def build_update_prompt(
         "",
         images_policy_block(),
         "",
+        images_forwarding_block(),
+        "",
         "Parallelism and single‑call preference",
         "-------------------------------------",
         "• Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.",
@@ -559,6 +569,8 @@ def build_execute_prompt(
             if request_clar_fname
             else "• If no clarification tool is available, do not ask questions in your final response; proceed using sensible defaults/best‑guess values and state assumptions explicitly."
         ),
+        "",
+        images_forwarding_block(),
         "",
         "A. If the request contains a *numeric task_id*:",
         "   • Isolation is preferred when the user intent is 'start now'.",

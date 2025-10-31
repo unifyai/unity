@@ -2,7 +2,9 @@ import asyncio
 import unify
 import json
 import inspect
+import os
 import copy
+from datetime import datetime
 
 from typing import (
     Dict,
@@ -18,7 +20,7 @@ from typing import (
 from contextlib import suppress
 from pydantic import BaseModel
 
-from ...constants import LOGGER
+from ...constants import LOGGER, LLM_IO_DEBUG
 from ..tool_spec import ToolSpec, normalise_tools
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
@@ -39,7 +41,10 @@ from .images import (
     append_image_refs_with_source,
     get_image_log_entries,
     has_live_images_context,
+    LIVE_IMAGES_REGISTRY,
+    LIVE_IMAGES_LOG,
 )
+from .formatting import sanitize_tool_msg_for_logging
 from ..llm_helpers import method_to_schema, _dumps, short_id
 from .loop_config import (
     LoopConfig,
@@ -268,6 +273,70 @@ async def async_tool_loop_inner(
             setattr(outer_handle_container[0], "_log_label", cfg.label)
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
+    # Independent, centrally-configured LLM I/O logging flag
+    llm_io_debug = bool(LLM_IO_DEBUG)
+
+    # File sink for LLM I/O: always a fresh file per process run
+    _llm_io_file: str | None = None
+    if llm_io_debug:
+        with suppress(Exception):
+            ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            _llm_io_file = os.path.join(os.getcwd(), f".unity_llm_io_{ts}.txt")
+
+    def _llm_io_write(header: str, body: str) -> None:
+        if not llm_io_debug or _llm_io_file is None:
+            return
+        try:
+            with open(_llm_io_file, "a", encoding="utf-8") as _f:
+                _f.write(f"🔄 [{logger.log_label}] {header}\n")
+                _f.write(body.rstrip())
+                _f.write("\n\n")
+            # Emit a concise terminal notice with the destination file
+            try:
+                kind = "request" if "request" in header.lower() else "response"
+                logger.info(f"LLM {kind} written to {_llm_io_file}", prefix="📝")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    # Late-stage request logger used by generate_with_preprocess
+    def _log_llm_request(patched_msgs, gen_kwargs, system_message):
+        with suppress(Exception):
+            try:
+                from .utils import try_parse_json as _try_parse_json
+            except Exception:
+                _try_parse_json = lambda v: v
+
+            _msgs_pretty = []
+            for _m in patched_msgs:
+                _mm = copy.deepcopy(_m)
+                try:
+                    if _mm.get("role") == "assistant":
+                        for _tc in _mm.get("tool_calls") or []:
+                            _fn = _tc.get("function", {})
+                            _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
+                    if _mm.get("role") == "tool":
+                        _mm = sanitize_tool_msg_for_logging(_mm)
+                except Exception:
+                    pass
+                _msgs_pretty.append(_mm)
+
+            _req_payload = {
+                "model": getattr(client, "model", None),
+                "messages": _msgs_pretty,
+            }
+            for _k, _v in gen_kwargs.items():
+                _req_payload[_k] = _v
+
+            _sys_block = (
+                f"System message:\n{system_message}\n\n" if system_message else ""
+            )
+            _llm_io_write(
+                "LLM request ➡️:",
+                f"{_sys_block}{_dumps(_req_payload, indent=4)}",
+            )
+
     _img_token = None
     _imglog_token = None
     # Track already-logged image entries to avoid repeated 🖼️ spam
@@ -292,13 +361,24 @@ async def async_tool_loop_inner(
                 pass
         return False
 
-    # If live images are provided, set the registry for this loop's scope
+    # If explicit images are provided, seed them; otherwise, isolate this loop
+    # from any parent images by setting an empty images context.
+    _img_token, _imglog_token = None, None
     try:
-        if images:
-            _img_token, _imglog_token = set_live_images_context(
-                images,
-                message,
-            )
+        if images is not None:
+            if images:
+                _img_token, _imglog_token = set_live_images_context(
+                    images,
+                    message,
+                )
+            else:
+                # Explicitly provided empty images → isolate
+                _img_token = LIVE_IMAGES_REGISTRY.set({})
+                _imglog_token = LIVE_IMAGES_LOG.set([])
+        else:
+            # No images provided → do not inherit parent loop images
+            _img_token = LIVE_IMAGES_REGISTRY.set({})
+            _imglog_token = LIVE_IMAGES_LOG.set([])
     except Exception:
         _img_token = None
         _imglog_token = None
@@ -570,7 +650,9 @@ async def async_tool_loop_inner(
                 "images": _AnnotatedImageRefs.model_validate(annotated_list),
                 "images_meta": images_meta,
                 "hint": (
-                    "Copy any items from 'images' directly into future tools' 'images' argument (AnnotatedImageRefs)."
+                    "Forward these images into future tools that declare an 'images' argument (prefer AnnotatedImageRefs). "
+                    "Rewrite or augment annotations so they align with the delegated question/action (not the original phrasing), "
+                    "and preserve user-referenced ordering when it matters."
                 ),
             }
 
@@ -1380,7 +1462,12 @@ async def async_tool_loop_inner(
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
                 llm_task = asyncio.create_task(
-                    generate_with_preprocess(client, preprocess_msgs, **_gen_kwargs),
+                    generate_with_preprocess(
+                        client,
+                        preprocess_msgs,
+                        debug_log=_log_llm_request,
+                        **_gen_kwargs,
+                    ),
                     name="LLMGenerate",
                 )
                 interject_w = asyncio.create_task(
@@ -1537,6 +1624,15 @@ async def async_tool_loop_inner(
                             await _handle_notification(notif_waiters2[pw], pw.result())
                         llm_turn_required = True
 
+                # If the LLM completed successfully, log the raw response object
+                if llm_io_debug and not llm_task.exception():
+                    with suppress(Exception):
+                        _raw_resp = llm_task.result()
+                        _llm_io_write(
+                            "LLM response ⬅️:",
+                            _dumps(_raw_resp, indent=4),
+                        )
+
             else:
                 # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
                 try:
@@ -1549,11 +1645,19 @@ async def async_tool_loop_inner(
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
-                    await generate_with_preprocess(
+                    _result = await generate_with_preprocess(
                         client,
                         preprocess_msgs,
+                        debug_log=_log_llm_request,
                         **_gen_kwargs,
                     )
+
+                    if llm_io_debug:
+                        with suppress(Exception):
+                            _llm_io_write(
+                                "LLM response ⬅️:",
+                                _dumps(_result, indent=4),
+                            )
                 except Exception:
                     raise Exception(
                         f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",

@@ -67,6 +67,10 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
           with short annotations (e.g., "contact card") to guide interpretation.
         • Prefer a curated subset aligned to the question; if curation is unclear,
           include all potentially relevant images rather than none.
+        • When delegating to another tool that declares an ``images`` parameter, forward the
+          relevant images and rewrite/augment their annotations so they align with the delegated
+          question or action (not the original user phrasing). Prefer AnnotatedImageRefs; preserve
+          user‑referenced ordering when it matters.
 
         Examples
         --------
@@ -137,6 +141,10 @@ class BaseContactManager(BaseStateManager, metaclass=SingletonABCMeta):
           with short annotations (e.g., "contact card") to guide interpretation.
         • Prefer a curated subset aligned to the request; if curation is unclear,
           include all potentially relevant images rather than none.
+        • When delegating to another tool that declares an ``images`` parameter, forward the
+          relevant images and rewrite/augment their annotations so they align with the delegated
+          request (not the original user phrasing). Prefer AnnotatedImageRefs; preserve
+          user‑referenced ordering when it matters.
 
         Parameters
         ----------

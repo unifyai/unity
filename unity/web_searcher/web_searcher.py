@@ -2,7 +2,8 @@ import os
 import json
 from tavily import TavilyClient
 import functools
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Type
+from pydantic import BaseModel
 import asyncio
 import unify
 from unity.common.async_tool_loop import (
@@ -49,6 +50,7 @@ class WebSearcher(BaseWebSearcher):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -107,6 +109,7 @@ class WebSearcher(BaseWebSearcher):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             preprocess_msgs=inject_broader_context,
+            response_format=response_format,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
