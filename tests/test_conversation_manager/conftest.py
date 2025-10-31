@@ -53,6 +53,7 @@ def redis_server():
         try:
             # Use sync Redis client for the health check
             import redis as redis_sync
+
             test_client = redis_sync.Redis(decode_responses=False)
             test_client.ping()
             test_client.close()
