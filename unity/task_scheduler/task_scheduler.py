@@ -783,12 +783,13 @@ class TaskScheduler(BaseTaskScheduler):
         if activated_by is not None:
             reason = activated_by
         else:
-            sched = task_row.schedule or Schedule()  # TODO: Remove
             if task_row.trigger is not None:
                 reason = ActivatedBy.trigger
-            elif (sched.prev_task is None) and (sched.start_at is not None):
+            elif (task_row.schedule_prev is None) and (
+                task_row.schedule_start_at is not None
+            ):
                 reason = ActivatedBy.schedule
-            elif sched.prev_task is not None:
+            elif task_row.schedule_prev is not None:
                 reason = ActivatedBy.queue
             else:
                 reason = ActivatedBy.explicit
@@ -2012,9 +2013,10 @@ class TaskScheduler(BaseTaskScheduler):
             if qid is None:
                 continue
 
-            sched = h.schedule or Schedule()  # TODO: Remove
             start_at = (
-                sched.start_at.isoformat() if sched.start_at is not None else None
+                h.schedule_start_at.isoformat()
+                if h.schedule_start_at is not None
+                else None
             )
             # Compute chain size purely in-memory to avoid extra backend reads
             size = 0
@@ -2033,7 +2035,7 @@ class TaskScheduler(BaseTaskScheduler):
                     seen.add(tid_int)
                     size += 1
                     order_for_q.append(tid_int)
-                nxt = (cur.schedule or Schedule()).next_task  # TODO: Remove
+                nxt = cur.schedule_next
                 if nxt is None:
                     break
                 try:
@@ -2211,7 +2213,7 @@ class TaskScheduler(BaseTaskScheduler):
         head = cur_row
         try:
             while head is not None:
-                prev_id = (head.schedule or Schedule()).prev_task  # TODO: Remove
+                prev_id = head.schedule_prev
                 if prev_id is None:
                     break
                 prev_rows = self._filter_tasks(
@@ -2242,7 +2244,7 @@ class TaskScheduler(BaseTaskScheduler):
             # Strip stale activation metadata on non-active rows
             _row = self._sanitize_activation(dict(node))
             ordered.append(Task(**_row))
-            nxt_id = (node.schedule or Schedule()).next_task  # TODO: Remove
+            nxt_id = node.schedule_next
             if nxt_id is None:
                 break
             nxt_rows = self._filter_tasks(filter=f"task_id == {int(nxt_id)}", limit=1)
@@ -2725,9 +2727,8 @@ class TaskScheduler(BaseTaskScheduler):
             if queue_start_at is None and existing_head_start is None:
                 try:
                     for r in rows_in_queue:
-                        _sched = r.schedule or Schedule()  # TODO: Remove
-                        if _sched.prev_task is None:
-                            existing_head_start = _sched.start_at
+                        if r.schedule_prev is None:
+                            existing_head_start = r.schedule_start_at
                             break
                 except Exception:
                     pass
@@ -2739,9 +2740,11 @@ class TaskScheduler(BaseTaskScheduler):
                     _row = rows_by_id.get(int(_tid))
                     if not _row:
                         continue
-                    _sched = _row.schedule or Schedule()  # TODO: Remove
-                    if _sched.start_at is not None and _sched.prev_task is None:
-                        existing_head_start = _sched.start_at
+                    if (
+                        _row.schedule_start_at is not None
+                        and _row.schedule_prev is None
+                    ):
+                        existing_head_start = _row.schedule_start_at
                         break
             except Exception:
                 pass
@@ -2823,13 +2826,12 @@ class TaskScheduler(BaseTaskScheduler):
 
             # Skip no-op writes when the current row already matches the desired state
             try:
-                cur_sched = row.schedule or Schedule()  # TODO: Remove
                 cur_qid = row.queue_id
                 cur_status = row.status
                 same_sched = (
-                    cur_sched.prev_task == sched.prev_task
-                    and cur_sched.next_task == sched.next_task
-                    and (cur_sched.start_at == sched.get("start_at"))
+                    row.schedule_prev == sched.prev_task
+                    and row.schedule_next == sched.next_task
+                    and (row.schedule_start_at == sched.get("start_at"))
                 )
                 same_qid = cur_qid == target_qid
                 if "status" in write_entries:
@@ -4003,7 +4005,7 @@ class TaskScheduler(BaseTaskScheduler):
                         head_row = self._get_single_row_or_raise(head_tid)
                         sched = head_row.schedule or Schedule(
                             start_at=start_at,
-                        )  # TODO: Remove
+                        )
                         self._validated_write(
                             task_id=head_tid,
                             entries={"schedule": sched, "status": Status.scheduled},

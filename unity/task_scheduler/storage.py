@@ -18,7 +18,6 @@ import unify
 
 from .types.task import Task
 from .types.status import Status
-from .types.schedule import Schedule
 
 
 class TasksStore:
@@ -571,7 +570,7 @@ class LocalTaskView:
                         break
                     seen.add(tid)
                     order.append(tid)
-                    nxt = (cur.schedule or Schedule()).next_task  # TODO: Remove
+                    nxt = cur.schedule_next
                     if nxt is None:
                         break
                     try:
