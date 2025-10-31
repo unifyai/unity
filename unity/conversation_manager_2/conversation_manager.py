@@ -400,7 +400,7 @@ class ConversationManager:
                 elif action["action_name"] == "send_unify_message":
                     # Boss-only chat; contact id is always 1
                     content = action["message"]
-                    event = UnifyMessageSent(contact="1", content=content)
+                    event = UnifyMessageSent(contact=1, content=content)
                     await self.event_broker.publish(
                         "app:comms:unify_message_sent",
                         event.to_json(),
