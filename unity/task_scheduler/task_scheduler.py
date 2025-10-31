@@ -1048,7 +1048,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         return result
 
-    def _clone_task_instance(self, task_row: Dict[str, Any]) -> None:
+    def _clone_task_instance(self, task_row: TaskBase) -> None:
         """
         Create a fresh row for the next instance of a triggerable or recurring task.
 
@@ -1059,9 +1059,12 @@ class TaskScheduler(BaseTaskScheduler):
             keeps the same ``task_id``, omits ``instance_id`` so the backend auto‑increments it,
             and preserves the existing status (``triggerable`` or ``scheduled``).
         """
+        # TODO: Skip model_dump() when filtering
         allowed = set(TaskBase.model_json_schema()["properties"].keys())
         clone_payload = {
-            k: v for k, v in task_row.items() if k in allowed and k != "instance_id"
+            k: v
+            for k, v in task_row.model_dump().items()
+            if k in allowed and k != "instance_id"
         }
         # Do not carry over activation metadata to a fresh instance
         clone_payload.pop("activated_by", None)
