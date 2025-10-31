@@ -38,7 +38,6 @@ def _build_verification_static_prefix() -> str:
         - **Is the outcome definitively correct and does it advance the goal?**
           - The **Agent Trace** shows sound reasoning, the **Screenshot** confirms the final state, and the **Return Value** is correct.
           - Choose **`ok`**.
-          - **CRITICAL: Even for 'ok' status, analyze for inefficiencies.** Look at the **Interactions Log**. Did the function try one action, fail or go back, then try a different action that succeeded? If yes, you MUST provide a `refinement` to prevent this inefficient path in future runs. A good refinement updates a child function's docstring or implementation to provide clearer guidance.
 
         - **Is the outcome definitively wrong?**
           - The **Agent Trace** shows the agent made a mistake (e.g., clicked the wrong button, extracted wrong text). The **Screenshot** or **Return Value** confirms the error.
@@ -131,50 +130,8 @@ def _build_verification_static_prefix() -> str:
 
         ---
 
-        **Example 4: Success with Self-Improvement Refinement (`ok` + `refinements`)**
-        - **Goal**: "Add a red t-shirt to cart"
-        - **Function**: `select_product_by_color(color: str)`
-        - **Function Source**:
-        ```python
-        async def select_product_by_color(color: str):
-            \"\"\"Selects a product from the product grid based on the specified color.\"\"\"
-            # First tries to find the color in the main options
-            result = await try_primary_color_filter(color)
-            if not result:
-                result = await try_expanded_color_options(color)
-            return result
-        ```
-        - **Agent Trace**:
-        - `◆ [act] Select the red color filter from the available options.`
-        - `REASONING: I need to find and click the red color filter. Looking at the page, I see a row of color options. I'll try clicking on the red color filter.`
-        - `⊙ click 'Red' color filter button`
-        - `✗ Element not found. The red color is not in the currently visible color options.`
-        - `REASONING: The red color isn't in the main filter options. I notice there's a 'Show More Colors' button. I should click that to expand the color choices.`
-        - `⊙ click 'Show More Colors' button`
-        - `✓ done`
-        - `REASONING: Now I can see additional color options including red. I'll click on the red color filter.`
-        - `⊙ click 'Red' color filter button`
-        - `✓ done`
-        - **Return Value**: `"Product selected successfully"`
-        - **Screenshot**: Shows the shopping cart with a red t-shirt added.
-        - **Correct Assessment**:
-        ```json
-        {{
-            "status": "ok",
-            "reason": "The function successfully added the red t-shirt to the cart. The Screenshot confirms the product is in the cart, and the Return Value indicates success.",
-            "refinements": [
-                {{
-                    "function_name": "try_primary_color_filter",
-                    "new_code": "async def try_primary_color_filter(color: str):\\n    \\\"\\\"\\\"Attempts to find a product using the primary color filters.\\n    \\n    NOTE: Only handles basic colors (black, white, blue, gray). For other colors like red, green, or yellow, use try_expanded_color_options() instead.\\n    \\\"\\\"\\\"\\n    basic_colors = ['black', 'white', 'blue', 'gray']\\n    if color.lower() not in basic_colors:\\n        return None\\n    return await action_provider.act(f'Click the {{color}} color filter')"
-                }}
-            ]
-        }}
-        ```
-        **Explanation**: The Agent Trace reveals an inefficient path: the function first tried to click the red color filter directly, got an "Element not found" error, then clicked "Show More Colors" to expand the options, and finally succeeded. The refinement adds explicit guidance to `try_primary_color_filter()` docstring and implementation to check if the color is in the basic set first, so future executions will skip directly to the expanded options for colors like red.
 
-        ---
-
-        **Example 5: A Strategic Failure - Parent's Mistake (`replan_parent`)**
+        **Example 4: A Strategic Failure - Parent's Mistake (`replan_parent`)**
         - **Goal**: "Find a laptop under $500 and add it to cart"
         - **Function Under Review**: `apply_price_filter(max_price: int)`
         - **Function Source (including parent context from Scoped Plan Analysis)**:
