@@ -306,10 +306,10 @@ class VerificationAssessment(BaseModel):
         None,
         description="The specific question to ask the user if status is 'request_clarification'.",
     )
-    refinements: Optional[List["FunctionPatch"]] = Field(
-        None,
-        description="Optional list of functions (self or children) to refine. Use this to suggest improvements to docstrings or implementation based on an inefficient execution trajectory, even if the overall status is 'ok'.",
-    )
+    # refinements: Optional[List["FunctionPatch"]] = Field(
+    #     None,
+    #     description="Optional list of functions (self or children) to refine. Use this to suggest improvements to docstrings or implementation based on an inefficient execution trajectory, even if the overall status is 'ok'.",
+    # )
 
 
 # TODO: DEPRECATED
@@ -1788,6 +1788,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.persist = persist
+        self.entrypoint_function_id = entrypoint_function_id
 
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
@@ -2452,20 +2453,21 @@ async def main_plan():
                 else:
                     await self._on_verification_failure(item, assessment)
 
-                if assessment.refinements:
-                    logger.info(
-                        f"Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
-                    )
-                    self.action_log.append(
-                        f"SELF-IMPROVEMENT: Applying {len(assessment.refinements)} refinement(s) to child functions.",
-                    )
+                #TODO: DEPRECATED - Remove this if we no longer use it
+                # if assessment.refinements:
+                #     logger.info(
+                #         f"Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
+                #     )
+                #     self.action_log.append(
+                #         f"SELF-IMPROVEMENT: Applying {len(assessment.refinements)} refinement(s) to child functions.",
+                #     )
 
-                    async with self._interject_lock:
-                        for patch in assessment.refinements:
-                            self._update_plan_with_new_code(
-                                patch.function_name,
-                                patch.new_code,
-                            )
+                #     async with self._interject_lock:
+                #         for patch in assessment.refinements:
+                #             self._update_plan_with_new_code(
+                #                 patch.function_name,
+                #                 patch.new_code,
+                #             )
 
             except asyncio.CancelledError:
                 logger.warning(
@@ -4563,9 +4565,9 @@ class HierarchicalActor(BaseActor):
     ) -> None:
         """Spawns a new CodeActActor instance as a sub-agent to perform state recovery."""
         logger.info(
-            f"[COURSE_CORRECTION] Starting course correction agent. Trajectory has {len(trajectory)} steps.",
+            f"[COURSE_CORRECTION] Starting course correction agent.",
         )
-
+        logger.debug(f"[COURSE_CORRECTION] Trajectory: {trajectory}")
         from .code_act_actor import CodeActActor
         from unity.image_manager.image_manager import ImageManager
 
