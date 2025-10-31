@@ -85,3 +85,94 @@ def test_metrics_count_matches_rows_and_resets_on_context_delete():
             unify.delete_context(ctx)
         except Exception:
             pass
+
+
+@pytest.mark.unit
+def test_metrics_max_matches_row_ids_and_resets_on_context_delete():
+    """
+    Fundamental check for the "max" metric on an auto-increment field.
+
+    Steps:
+      1) Create a fresh context with auto-incrementing "row_id".
+      2) Verify initial max metric is 0 (empty context).
+      3) Insert three rows; read back the rows and compute max(row_id) from entries.
+      4) Verify get_logs_metric("max", key="row_id") equals that computed max.
+      5) Delete the context and recreate; verify max resets to 0.
+    """
+
+    ctx = f"tests/local_storage/metrics_max/{uuid.uuid4().hex}"
+
+    def _as_int0(v):
+        return 0 if v is None else int(v)
+
+    def _create_ctx():
+        unify.create_context(
+            ctx,
+            unique_keys={"row_id": "int"},
+            auto_counting={"row_id": None},
+            description="Metrics test context (max)",
+        )
+        unify.create_fields(
+            {
+                "row_id": {"type": "int"},
+                "name": {"type": "str"},
+            },
+            context=ctx,
+        )
+
+    try:
+        _create_ctx()
+
+        initial_max = unify.get_logs_metric(metric="max", key="row_id", context=ctx)
+        assert (
+            _as_int0(initial_max) == 0
+        ), f"Expected initial max 0 for fresh context, got {initial_max} (context={ctx})"
+
+        # Insert three rows; backend assigns row_id automatically
+        unify.log(context=ctx, new=True, name="A")
+        unify.log(context=ctx, new=True, name="B")
+        unify.log(context=ctx, new=True, name="C")
+
+        logs = unify.get_logs(context=ctx, return_ids_only=False)
+        # Extract row_id values from returned logs
+        row_ids = []
+        for lg in logs:
+            try:
+                entries = getattr(lg, "entries", lg)
+            except Exception:
+                entries = lg
+            rid = entries.get("row_id")
+            if isinstance(rid, int):
+                row_ids.append(rid)
+
+        assert (
+            len(row_ids) == 3
+        ), f"Expected 3 row_id values after inserts, got {len(row_ids)} (context={ctx})"
+
+        computed_max = max(row_ids) if row_ids else 0
+        metric_max_after = unify.get_logs_metric(
+            metric="max",
+            key="row_id",
+            context=ctx,
+        )
+        assert (
+            _as_int0(metric_max_after) == computed_max
+        ), f"Metric max mismatch in context={ctx}: metric={_as_int0(metric_max_after)}, rows_max={computed_max}, rows={sorted(row_ids)}"
+
+        # Delete context and recreate; metric must reset to 0
+        unify.delete_context(ctx)
+        _create_ctx()
+        metric_max_reset = unify.get_logs_metric(
+            metric="max",
+            key="row_id",
+            context=ctx,
+        )
+        assert (
+            _as_int0(metric_max_reset) == 0
+        ), f"Expected max metric to reset to 0 after context deletion, got {_as_int0(metric_max_reset)} (context={ctx})"
+
+    finally:
+        try:
+            unify.delete_context(ctx)
+        except Exception:
+            pass
