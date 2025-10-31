@@ -71,7 +71,8 @@ class TableStore:
         """Return {column_name: column_type} for this context.
 
         If the backend returns 404 (missing context), run ``ensure_context``
-        once and retry with a tiny backoff.
+        once and retry with a tiny backoff. Normalises to a single string
+        label per field, preferring 'data_type' then 'type'.
         """
         data = unify.get_fields(project=self._project, context=self._ctx)
         return {k: v["data_type"] for k, v in data.items()}
