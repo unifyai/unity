@@ -370,6 +370,7 @@ class SimulatedActor(BaseActor):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        **kwargs,
     ) -> SimulatedActorHandle:
         # Pass the original TaskScheduler-provided description unchanged.
         return SimulatedActorHandle(

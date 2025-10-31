@@ -352,7 +352,6 @@ def build_action_prompt(
 
     # Assemble the ask prompt
     lines = [
-        "{broader_context}" if include_activity else "",
         "Tools (name → argspec):",
         sig_json,
         "",

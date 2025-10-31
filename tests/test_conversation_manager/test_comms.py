@@ -263,7 +263,8 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_message_to_unify_message(test_redis_client, event_capture):
     """
-    Test unify message to unify message flow: send an incoming unify message and receive a response.
+    Test unify message to unify message flow: send an incoming unify message and
+    receive a response.
     """
     # Clear any events from initialization
     event_capture.clear()
@@ -300,7 +301,8 @@ async def test_unify_message_to_unify_message(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_message_to_sms(test_redis_client, event_capture):
     """
-    Test unify message to unify call flow: send an incoming unify message and receive a response.
+    Test unify message to unify call flow: send an incoming unify message and receive
+    a response.
     """
     # Clear any events from initialization
     event_capture.clear()
@@ -338,7 +340,8 @@ async def test_unify_message_to_sms(test_redis_client, event_capture):
 @_handle_project
 async def test_unify_message_to_email(test_redis_client, event_capture):
     """
-    Test unify message to email flow: send an incoming unify message and receive a response.
+    Test unify message to email flow: send an incoming unify message and receive a
+    response.
     """
     # Clear any events from initialization
     event_capture.clear()

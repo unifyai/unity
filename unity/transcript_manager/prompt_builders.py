@@ -221,7 +221,6 @@ def build_ask_prompt(
             ],
         )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # Keep clarification guidance single-sourced via clarification_guidance(tools)
@@ -237,7 +236,6 @@ def build_ask_prompt(
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specialised in **querying and analysing communication transcripts**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",

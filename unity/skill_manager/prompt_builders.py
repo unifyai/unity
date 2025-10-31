@@ -106,7 +106,6 @@ def build_ask_prompt(
         """,
     ).strip()
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_sentence = (
         f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
         if request_clar_fname
@@ -148,7 +147,6 @@ def build_ask_prompt(
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specialised in describing the assistant's high‑level skills.",
             "Work strictly through the tools provided to discover skills and their details.",
             clar_sentence,

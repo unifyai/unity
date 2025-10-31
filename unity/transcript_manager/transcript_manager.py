@@ -13,7 +13,6 @@ from .types.message import Message, UNASSIGNED
 from ..contact_manager.types.contact import Contact
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    inject_broader_context,
 )
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
@@ -250,7 +249,6 @@ class TranscriptManager(BaseTranscriptManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            preprocess_msgs=inject_broader_context,
             tool_policy=effective_tool_policy,
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",

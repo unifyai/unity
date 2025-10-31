@@ -149,7 +149,6 @@ def build_ask_prompt(
             ],
         )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # Conditional guidance about asking questions in final responses
@@ -165,7 +164,6 @@ def build_ask_prompt(
     mutation_exit_block = read_only_ask_mutation_exit_block()
 
     parts: list[str] = [
-        activity_block,
         "You are an assistant specialising in **answering questions about the task list**.",
         "Work strictly through the tools provided.",
         "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
@@ -439,7 +437,6 @@ def build_update_prompt(
 
     usage_examples = "\n".join(usage_examples_lines)
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # Conditional guidance about asking questions in final responses
@@ -452,7 +449,6 @@ def build_update_prompt(
     )
 
     parts: list[str] = [
-        activity_block,
         "You are an assistant responsible for **creating and updating tasks**.",
         "Choose tools based on the user's intent and the specificity of the target record.",
         f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect tasks that already exist. For human clarifications about new tasks or missing creation details, call `{request_clar_fname}` when available.",

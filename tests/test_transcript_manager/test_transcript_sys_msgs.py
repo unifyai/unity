@@ -52,7 +52,7 @@ def _assert_time_footer_colon(prompt: str) -> None:
     ), f"Unexpected last line: {last!r}\n\nFull system prompt:\n{prompt}"
 
 
-def test_transcript_manager_system_prompt_formatting():
+def test_transcript_manager_ask_system_prompt_formatting():
     prompt = build_ask_prompt(
         tools=_tools_for_ask(),
         num_messages=2,
@@ -71,16 +71,10 @@ def test_transcript_manager_system_prompt_formatting():
         ],
     )
 
-    _assert_time_footer_colon(prompt)
-
-
-def test_transcript_manager_section_spacing_and_footer():
-    prompt = build_ask_prompt(
-        tools=_tools_for_ask(),
-        num_messages=2,
-        transcript_columns={"message_id": "int", "content": "str"},
-        contact_columns={"contact_id": "int", "first_name": "str"},
-    )
-
     _assert_section_spacing(prompt)
     _assert_time_footer_colon(prompt)
+
+    print(
+        "TranscriptManager ask system message passed formatting checks;\n"
+        "The following system message resulted in no assertion errors:\n" + prompt,
+    )

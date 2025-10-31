@@ -1,6 +1,5 @@
 import re
 
-import pytest
 
 from unity.task_scheduler.prompt_builders import (
     build_ask_prompt,
@@ -87,31 +86,42 @@ def _assert_time_footer(prompt: str) -> None:
     ), f"Unexpected last line: {last!r}\n\nFull system prompt:\n{prompt}"
 
 
-@pytest.mark.parametrize(
-    "builder,tools,kwargs",
-    [
-        (
-            build_ask_prompt,
-            _tools_for_ask,
-            {"num_tasks": 3, "columns": {"task_id": "int", "name": "str"}},
-        ),
-        (
-            build_update_prompt,
-            _tools_for_update,
-            {
-                "num_tasks": 3,
-                "columns": {"task_id": {"type": "int"}, "name": {"type": "str"}},
-            },
-        ),
-        (build_execute_prompt, _tools_for_execute, {}),
-    ],
-)
-def test_task_scheduler_system_prompts_formatting(builder, tools, kwargs):
-    tools_dict = tools()
-    prompt = builder(tools=tools_dict, **kwargs)
+def test_task_scheduler_ask_system_prompt_formatting():
+    prompt = build_ask_prompt(
+        tools=_tools_for_ask(),
+        num_tasks=3,
+        columns={"task_id": "int", "name": "str"},
+    )
 
-    # 1) Section spacing: every underlined section has a blank line above
     _assert_section_spacing(prompt)
-
-    # 2) Footer: last non-empty line is always the UTC time sentence
     _assert_time_footer(prompt)
+    print(
+        "TaskScheduler ask system message passed formatting checks;\n"
+        "The following system message resulted in no assertion errors:\n" + prompt,
+    )
+
+
+def test_task_scheduler_update_system_prompt_formatting():
+    prompt = build_update_prompt(
+        tools=_tools_for_update(),
+        num_tasks=3,
+        columns={"task_id": {"type": "int"}, "name": {"type": "str"}},
+    )
+
+    _assert_section_spacing(prompt)
+    _assert_time_footer(prompt)
+    print(
+        "TaskScheduler update system message passed formatting checks;\n"
+        "The following system message resulted in no assertion errors:\n" + prompt,
+    )
+
+
+def test_task_scheduler_execute_system_prompt_formatting():
+    prompt = build_execute_prompt(tools=_tools_for_execute())
+
+    _assert_section_spacing(prompt)
+    _assert_time_footer(prompt)
+    print(
+        "TaskScheduler execute system message passed formatting checks;\n"
+        "The following system message resulted in no assertion errors:\n" + prompt,
+    )

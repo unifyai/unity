@@ -16,7 +16,6 @@ import unify
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    inject_broader_context,
     make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
@@ -906,7 +905,6 @@ class FileManager(BaseFileManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=lambda i, t: ("required", t) if i < 1 else ("auto", t),
-            preprocess_msgs=inject_broader_context,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),

@@ -170,7 +170,5 @@ async def test_ask_with_rolling_summary(supported_file_examples: dict):
                 rolling_summary_in_prompts=True,
             )
 
-            # Verify system message includes broader_context placeholder
+            # Verify system message is set
             mock_client.set_system_message.assert_called_once()
-            system_msg = mock_client.set_system_message.call_args[0][0]
-            assert "{broader_context}" in system_msg
