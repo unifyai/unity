@@ -108,12 +108,13 @@ async def test_sms_to_unify_message(test_redis_client, event_capture):
     event_capture.clear()
 
     # Send incoming SMS
+    contact_number = "+15555551111"
     incoming_sms = SMSRecieved(
-        contact=1,
+        contact=contact_number,
         content="Tell me a joke via unify message",
     )
 
-    print(f"\n📱 Sending SMS from 1")
+    print(f"\n📱 Sending SMS from {contact_number}")
     await test_redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
 
     # Wait for the assistant's response
@@ -228,11 +229,7 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
     event_capture.clear()
 
     # Send incoming email
-
-    contact_number = "+15555551111"
     email_address = "test@contact.com"
-
-    # Send incoming email
     incoming_email = EmailRecieved(
         contact=email_address,
         body="Tell me a joke via unify message",
@@ -259,43 +256,6 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
     assert len(response.content) > 0
 
     print(f"✅ Got unify message response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_message_to_sms(test_redis_client, event_capture):
-    """
-    Test unify message to SMS flow: send an incoming unify message and receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify message
-    incoming_unify_message = UnifyMessageRecieved(
-        contact=1,
-        content="Tell me a joke via SMS",
-    )
-
-    print(f"\n📧 Sending unify message from 1")
-    await test_redis_client.publish(
-        "app:comms:unify_message_received", incoming_unify_message.to_json()
-    )
-
-    # Wait for the assistant's response
-    print("⏳ Waiting for SMS response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        SMSSent,
-        timeout=60.0,
-        contact=1,
-    )
-
-    # Verify response
-    assert isinstance(response, SMSSent)
-    assert response.contact == 1
-    assert len(response.content) > 0
-
-    print(f"✅ Got SMS response: {response.content[:100]}...")
     print(f"   Full response length: {len(response.content)} characters")
 
 
@@ -357,16 +317,17 @@ async def test_unify_message_to_sms(test_redis_client, event_capture):
     )
 
     # Wait for the assistant's response
+    contact_number = "+15555551111"
     print("⏳ Waiting for SMS response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
         SMSSent,
         timeout=60.0,
-        contact=1,
+        contact=contact_number,
     )
 
     # Verify response
     assert isinstance(response, SMSSent)
-    assert response.contact == 1
+    assert response.contact == contact_number
     assert len(response.content) > 0
 
     print(f"✅ Got unify call started response: {response.content[:100]}...")
@@ -394,16 +355,17 @@ async def test_unify_message_to_email(test_redis_client, event_capture):
     )
 
     # Wait for the assistant's response
+    email_address = "test@contact.com"
     print("⏳ Waiting for email response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
         EmailSent,
         timeout=60.0,
-        contact="test@contact.com",
+        contact=email_address,
     )
 
     # Verify response
     assert isinstance(response, EmailSent)
-    assert response.contact == "test@contact.com"
+    assert response.contact == email_address
     assert len(response.body) > 0
 
     print(f"✅ Got email response: {response.body[:100]}...")
