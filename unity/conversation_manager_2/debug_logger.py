@@ -38,9 +38,9 @@ def log_job_startup(
                 f"{comms_url}/infra/job/service/ip",
                 params={"service_name": svc},
                 headers={"Authorization": f"Bearer {admin_key}"},
-                timeout=10,
+                timeout=20,
             )
-            print("\n\nDesktop view logging:", resp.json())
+            print("\n\nDesktop view liveview URL:", resp.json())
             if resp.ok:
                 data = resp.json() or {}
                 addr = ((data or {}).get("external") or {}).get("address")
