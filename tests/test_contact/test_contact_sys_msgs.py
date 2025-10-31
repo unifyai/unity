@@ -43,7 +43,7 @@ def _assert_section_spacing(prompt: str) -> None:
         if re.fullmatch(r"-+", next_line.strip()):
             if idx == 0 or lines[idx - 1].strip() != "":
                 errors.append(f"Missing blank line before section header: '{line}'")
-    assert not errors, "\n".join(errors)
+    assert not errors, "\n".join(errors) + f"\n\nFull system prompt:\n{prompt}"
 
 
 def _assert_selected_headers_have_blank_line(prompt: str, titles: list[str]) -> None:
@@ -54,17 +54,21 @@ def _assert_selected_headers_have_blank_line(prompt: str, titles: list[str]) -> 
         if title in titles:
             if i == 0 or lines[i - 1].strip() != "":
                 missing.append(title)
-    assert not missing, f"Missing blank line before: {missing}"
+    assert (
+        not missing
+    ), f"Missing blank line before: {missing}\n\nFull system prompt:\n{prompt}"
 
 
 def _assert_time_footer_is(prompt: str) -> None:
     non_empty_lines = [ln for ln in prompt.splitlines() if ln.strip()]
-    assert non_empty_lines, "Prompt should not be empty"
+    assert non_empty_lines, (
+        "Prompt should not be empty\n\nFull system prompt:\n" + prompt
+    )
     last = non_empty_lines[-1]
     assert re.fullmatch(
         r"Current UTC time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\.",
         last,
-    ), f"Unexpected last line: {last!r}"
+    ), f"Unexpected last line: {last!r}\n\nFull system prompt:\n{prompt}"
 
 
 @pytest.mark.parametrize(
