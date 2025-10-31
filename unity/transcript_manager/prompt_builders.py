@@ -280,7 +280,6 @@ def build_ask_prompt(
         special_blocks=[],
         include_clarification_footer=True,
         include_time_footer=True,
-        time_footer_prefix="Current UTC time: ",
     )
 
     return compose_system_prompt(spec)
