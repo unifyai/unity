@@ -11,13 +11,8 @@ from typing import Optional, Dict, Any, TYPE_CHECKING
 
 import unify
 
-from .queue_utils import (
-    sched_prev as _q_prev,
-    sched_next as _q_next,
-)
 from .types.reintegration_plan import ReintegrationPlan
 from .types.task import Task
-from .types.schedule import Schedule
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -69,10 +64,9 @@ def detach_from_queue_for_activation(
         key=lambda r: r.instance_id,
     )[0]
 
-    sched = task_row.schedule or Schedule()
-    prev_tid = _q_prev(sched)
-    next_tid = _q_next(sched)
-    start_at = sched.start_at
+    prev_tid = task_row.schedule_prev
+    next_tid = task_row.schedule_next
+    start_at = task_row.schedule_start_at
 
     # Derive the current head's start_at so downstream tasks can be reinstated as
     # head-scheduled later if their original predecessor becomes terminal.
@@ -84,7 +78,7 @@ def detach_from_queue_for_activation(
     # Fast path: when current task is the head, reuse its own start_at.
     head_start_at: Optional[str] = None
     if prev_tid is None:
-        head_start_at = start_at
+        head_start_at = start_at.isoformat() if start_at is not None else None
     else:
         # Prefer LocalTaskView for a single-step head start_at resolution.
         try:
@@ -100,13 +94,15 @@ def detach_from_queue_for_activation(
         if head_start_at is None:
             # Fallback: walk prev pointers (rare case when queue_id is absent)
             cur_head = _get_row(task_id)
-            while cur_head is not None and _q_prev(cur_head.schedule) is not None:
-                cur_head = _get_row(_q_prev(cur_head.schedule))
+            while cur_head is not None and cur_head.schedule_prev is not None:
+                cur_head = _get_row(cur_head.schedule_prev)
             if cur_head is not None:
                 if cur_head.schedule is not None:
-                    head_start_at = cur_head.schedule_start_at
-
-    head_start_at = head_start_at.isoformat() if head_start_at is not None else None
+                    head_start_at = (
+                        cur_head.schedule_start_at.isoformat()
+                        if cur_head.schedule_start_at is not None
+                        else None
+                    )
 
     # Batch-fetch log objects for all relevant task_ids in one backend call (reuse scheduler helper)
     needed_ids: list[int] = []
