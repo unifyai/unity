@@ -281,9 +281,6 @@ def build_update_prompt(
         "--------------",
         f"• Prefer `{update_task_fname}` with the exact `task_id` when editing tasks.",
         f'• When the user describes an EXISTING task semantically (e.g., "the kickoff email task"), first call `{ask_fname}` to identify the correct `task_id`, then call `{update_task_fname}` with the appropriate fields.',
-        "",
-        "Queues and batches (multi-queue)",
-        "--------------------------------",
     ]
 
     # Encourage batched creation when creating several tasks
