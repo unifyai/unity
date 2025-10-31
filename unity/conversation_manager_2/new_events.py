@@ -149,7 +149,7 @@ class SMSRecieved(Event):
 
 @dataclass
 class UnifyMessageRecieved(Event):
-    contact: str
+    contact: int
     content: str
 
 
@@ -189,7 +189,7 @@ class SMSSent(Event):
 
 @dataclass
 class UnifyMessageSent(Event):
-    contact: str
+    contact: int
     content: str
 
 
