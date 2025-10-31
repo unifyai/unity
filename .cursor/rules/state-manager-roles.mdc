@@ -1,0 +1,145 @@
+---
+description: State Manager Roles and Boundaries (Routing Guide)
+globs: ["**/*"]
+alwaysApply: true
+---
+
+Use this to decide which manager to call, what each owns, and where its jurisdiction ends. Keep manager docstrings implementation‑agnostic; this guide is only for high‑level routing and composition.
+
+### ConversationManager
+- **Role**: Live chat orchestrator. Chooses which manager/tool to invoke and wires steering (pause/resume/interject/stop) during a conversation through via the `Conductor`, which acts as the "brains".
+- **Scope**: Conversation‑level control and message flow; returns/relays steerable handles from inner tools.
+- **Out of scope**: Storing domain data, durable task queues, schema changes, direct web I/O.
+- **Edge**: For “do it now” interactive work, prefer `Actor`; for durable work, prefer `TaskScheduler`.
+- **Connections**:
+  - **Steered by**: `Conductor` (via conversation handle tools: `ask`, `interject`, `get_full_transcript`) when higher-level orchestration needs to surface clarifications/interjections; top-level UI/controller (outside managers).
+  - **Steers**: `Conductor` (`ask`/`request` entry points); relays in‑flight handles from `Actor.act` and `TaskScheduler.execute` (passthrough steering of pause/resume/interject/stop).
+
+### Conductor
+- **Role**: Top‑level cross‑domain orchestrator that unifies **all** other public-facing state managers `tasks`, `contacts`, `transcripts`, `knowledge` etc. with two entry points: `ask` and `request`.
+- **Scope**: `ask` (read‑only across managers), `request` (mutations via the appropriate managers). Wires in‑flight handles (e.g., `Actor.act`) to `ConversationManager` for real‑time steering passthrough.
+- **Connections**:
+  - **Steered by**: `ConversationManager` (primary caller of `ask`/`request`).
+  - **Steers**: `ContactManager`, `TranscriptManager`, `KnowledgeManager`, `GuidanceManager`, `SecretManager`, `SkillManager`, `TaskScheduler`, `WebSearcher`, `Actor` and the `ConversationManager` handle (`ask`/`interject`/`get_full_transcript`). Does not call `FunctionManager` or `FileManager` directly.
+
+### Actor
+- **Role**: Ephemeral, real‑time action (e.g., browser/UI control) within the current chat; always returns a live steerable handle.
+- **Scope**: Short, interactive sessions; step‑by‑step control; no durable task records.
+- **Out of scope**: Task lists, scheduling, long‑running background jobs, permanent data writes.
+- **Edge**: If the user wants a tracked/durable run, use `TaskScheduler.execute` instead of `Actor`.
+- **Connections**:
+  - **Steered by**: `Conductor.request`; `TaskScheduler.execute` (uses an injected `Actor` for execution); passthrough‑steered by `ConversationManager` during live sessions.
+  - **Steers**: `FunctionManager` (loads/searches/executes user functions to implement actions).
+
+### TaskScheduler
+- **Role**: Owner of durable tasks and their execution.
+- **Scope**: ask (read‑only about tasks), update (create/edit/delete/reorder tasks), execute (start tasks; returns live handle).
+- **Out of scope**: Ad‑hoc interactive UI control (`Actor`), domain knowledge storage (`KnowledgeManager`).
+- **Edge**: Never use `update` to “start” work; always start via `execute` (after any needed updates).
+- **Connections**:
+  - **Steered by**: `Conductor.ask`/`Conductor.request`.
+  - **Steers**: `Actor` (to run tasks via `execute`); exposes a live `ActiveTask` handle that is wired back through `Conductor` to the `ConversationManager` for passthrough steering.
+
+### KnowledgeManager
+- **Role**: Source of truth for domain knowledge.
+- **Scope**: ask (read‑only facts), update (create/change facts), refactor (schema restructuring across knowledge tables).
+- **Out of scope**: Raw file parsing (`FileManager`), contact/message stores, secrets.
+- **Edge**: Parse with `FileManager`, then persist extracted facts with `KnowledgeManager.update`.
+- **Connections**:
+  - **Steered by**: `Conductor.ask`/`Conductor.request`.
+  - **Steers**: `FileManager` (for document parsing/ingestion in update/refactor flows); may read from the root `Contacts` table for joins (no direct `ContactManager` calls).
+
+### ContactManager
+- **Role**: Source of truth for people/contact records.
+- **Scope**: ask (read‑only), update (create/edit/delete/merge contacts). Supports image references when helpful.
+- **Out of scope**: Message content and threads (`TranscriptManager`), general domain knowledge (`KnowledgeManager`).
+- **Edge**: Use `ContactManager` for bios/rolling summaries on contacts; not for transcript text.
+- **Connections**:
+  - **Steered by**: `Conductor.ask`/`Conductor.request`; read‑only usage by `TranscriptManager.ask` (to resolve/compare contacts during transcript queries).
+  - **Steers**: —
+
+### TranscriptManager
+- **Role**: Store and retrieval surface for message transcripts.
+- **Scope**: ask (read‑only retrieval, filtering, analysis); may expose summarization in implementations.
+- **Out of scope**: Editing contacts (`ContactManager`), storing general facts (`KnowledgeManager`).
+- **Edge**: Summarize conversations here; write long‑term distilled facts to `KnowledgeManager` if needed.
+- **Connections**:
+  - **Steered by**: `Conductor.ask` (read‑only queries).
+  - **Steers**: `ContactManager.ask` (for participant lookup/attributes in transcript answers); `ImageManager` (image query/attachment helpers for messages).
+
+### FileManager
+- **Role**: Read‑only registry and parsing for received/downloaded files.
+- **Scope**: exists/list, parse, ask about a specific file (read‑only tool loop).
+- **Out of scope**: Persisting extracted facts (`KnowledgeManager`), image storage (`ImageManager`).
+- **Edge**: Pipeline: `FileManager.parse` → `KnowledgeManager.update` to persist structured knowledge.
+- **Connections**:
+  - **Steered by**: `KnowledgeManager` (for parse/ingest in update/refactor flows).
+  - **Steers**: —
+
+### WebSearcher
+- **Role**: External/web research orchestration.
+- **Scope**: ask (source selection, search, extraction, aggregation); returns live handle.
+- **Out of scope**: Persisting results (`KnowledgeManager`), secrets, internal tables.
+- **Edge**: Time‑sensitive queries (“today/latest/now”) should use `WebSearcher`; persist only if explicitly requested via `KnowledgeManager.update`.
+- **Connections**:
+  - **Steered by**: `Conductor.ask` (and available under `request`).
+  - **Steers**: — (results may subsequently be persisted via `KnowledgeManager.update` when requested).
+
+### SecretManager
+- **Role**: Owner of secrets.
+- **Scope**: ask (metadata/placeholder answers only), update (create/edit/delete secrets).
+- **Out of scope**: Exposing raw secret values to the LLM; domain knowledge, files.
+- **Edge**: Use placeholders like ${NAME} in LLM‑visible text; never echo raw values.
+- **Connections**:
+  - **Steered by**: `Conductor.ask`/`Conductor.request`.
+  - **Steers**: —
+
+### ImageManager
+- **Role**: Low‑level image store and retrieval.
+- **Scope**: filter/search images, get image handles, add/update images.
+- **Out of scope**: Natural‑language ask/update loops; knowledge/contact storage.
+- **Edge**: Other managers may accept an images argument; obtain image_ids/handles here and pass through.
+- **Connections**:
+  - **Steered by**: `TranscriptManager` (message image helpers), `GuidanceManager` (guidance image helpers).
+  - **Steers**: —
+
+### FunctionManager
+- **Role**: Catalogue of user‑supplied Python functions and metadata.
+- **Scope**: add/list/get_precondition/delete/search/search_by_similarity over functions.
+- **Out of scope**: High‑level “what can you do?” UX (`SkillManager`), durable task execution (`TaskScheduler`).
+- **Edge**: Treat as the system of record for function definitions that skills reference.
+- **Connections**:
+  - **Steered by**: `SkillManager` (read‑only listing/search); `Actor` (loads/executes functions during actions). `GuidanceManager` reads function rows via the shared "Functions" context (no direct API calls).
+  - **Steers**: —
+
+### SkillManager
+- **Role**: Human‑friendly catalogue of assistant capabilities (“skills”).
+- **Scope**: ask (discover skills, how to invoke them, and their mapping to functions); read‑only over the catalogue.
+- **Out of scope**: Mutating the function store (FunctionManager), executing tasks.
+- **Edge**: Use for discovery and explanation; execution is delegated to the appropriate manager/tool.
+- **Connections**:
+  - **Steered by**: `Conductor.ask` (and visible under `request`).
+  - **Steers**: `FunctionManager` (lists/searches/preconditions to answer skills questions).
+
+### GuidanceManager
+- **Role**: Owner of internal guidance/policies/instructions.
+- **Scope**: ask (read‑only queries over guidance), update (create/edit/delete guidance entries).
+- **Out of scope**: Domain facts (`KnowledgeManager`), user secrets, transcripts.
+- **Edge**: Use for operational/policy guidance that informs behavior, not for factual KB entries.
+- **Connections**:
+  - **Steered by**: `Conductor.ask`/`Conductor.request`.
+  - **Steers**: `ImageManager` (image attach/ask for guidance rows); reads functions from the shared "Functions" context to surface linked functions.
+
+### MemoryManager
+- **Role**: Offline memory maintenance (periodic, non‑interactive).
+- **Scope**: One‑shot methods that return strings (no live handles), e.g., updating contacts/knowledge from transcripts.
+- **Out of scope**: Live conversational orchestration, direct user interaction, tool loops.
+- **Edge**: Writes flow through `ContactManager`/`KnowledgeManager`; do not route user requests here.
+- **Connections**:
+  - **Steered by**: Offline scheduler/controller (outside live chat orchestration).
+  - **Steers**: `ContactManager.update`, `KnowledgeManager.update` (to persist distilled facts from transcripts).
+
+### Precedence and source of truth
+- **Code is canonical**: This guide is descriptive. If the implementation ever contradicts these descriptions or relationships, the current code takes precedence.
+- **Keep in sync**: As managers evolve, update this document alongside changes to cross‑manager wiring, public surfaces, or prompt composition so it remains accurate.
+- **Where to update**: Prefer updating manager base docstrings (public API contracts) and prompt builders for tool composition guidance, and reflect those changes here.
