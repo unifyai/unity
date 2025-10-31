@@ -73,7 +73,7 @@ def test_transcript_manager_ask_system_prompt_formatting():
             "Images forwarding to nested tools",
             "Parallelism and single",
             "Schemas",
-            "Current UTC time: ",
+            "Current UTC time is ",
         ],
     )
 
@@ -89,7 +89,7 @@ def test_transcript_manager_ask_system_prompt_formatting():
     )
 
     assert_section_spacing(prompt)
-    assert_time_footer(prompt, "Current UTC time: ")
+    assert_time_footer(prompt, "Current UTC time is ")
 
     print(
         "TranscriptManager ask system message passed formatting checks;\n"
