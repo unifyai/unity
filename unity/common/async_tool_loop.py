@@ -736,6 +736,21 @@ class AsyncToolLoopHandle(SteerableToolHandle):
           tool calls will need to be re‑scheduled by a future deserialization.
         - Nested tool loops are not supported and will raise ValueError.
         """
+        # Guard: nested tool loops are out of scope for v1.
+        # Check BEFORE attempting to stop/cancel, to avoid racing with teardown
+        # that might clear task bookkeeping.
+        try:
+            task_info = getattr(self._task, "task_info", {})
+        except Exception:
+            task_info = {}
+
+        if isinstance(task_info, dict):
+            for _t, _inf in task_info.items():
+                if getattr(_inf, "handle", None) is not None:
+                    raise ValueError(
+                        "Nested tool loops are not supported by v1 snapshot",
+                    )
+
         # Best-effort quiesce: cancel the outer loop if still running. We do not
         # await completion here (serialize is synchronous); inner loop will abort
         # promptly and no further tool results should be appended.
@@ -745,15 +760,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 self.stop(reason="serialize snapshot")
         except Exception:
             pass
-        # Guard: nested tool loops are out of scope for v1
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-            if isinstance(task_info, dict):
-                for _t, _inf in task_info.items():
-                    if getattr(_inf, "handle", None) is not None:
-                        raise ValueError(
-                            "Nested tool loops are not supported by v1 snapshot",
-                        )
 
         # Resolve entrypoint from loop_id label (e.g., "ContactManager.ask" or
         # "ContactManager.ask(x2ab)")
