@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal, Union
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -17,6 +17,32 @@ class EntryPointManagerMethod(BaseModel):
     method_name: str
 
 
+class ToolRef(BaseModel):
+    """Reference to a tool by import path and flags.
+
+    - module: the Python module path (e.g. "mypkg.module").
+    - qualname: the qualified name within the module (e.g. "func" or "Cls.method").
+    - read_only / manager_tool: optional flags mirroring the decorators used in the
+      tool registry; when provided, they will be re-applied on deserialization.
+    """
+
+    name: str
+    module: str
+    qualname: str
+    read_only: Optional[bool] = None
+    manager_tool: Optional[bool] = None
+
+
+class EntryPointInlineTools(BaseModel):
+    """Entry point describing an inline tools registry to resume.
+
+    This supports non-manager loops by listing tools as importable functions.
+    """
+
+    type: Literal["inline_tools"] = "inline_tools"
+    tools: List[ToolRef]
+
+
 class LoopSnapshot(BaseModel):
     """Versioned snapshot schema for resuming a tool loop (v1).
 
@@ -28,7 +54,10 @@ class LoopSnapshot(BaseModel):
     """
 
     version: int = Field(default=1, ge=1)
-    entrypoint: EntryPointManagerMethod
+    # Discriminated union of entrypoint types
+    entrypoint: Union[EntryPointManagerMethod, EntryPointInlineTools] = Field(
+        discriminator="type",
+    )
 
     # Optional loop identity and prompt header
     loop_id: Optional[str] = None
@@ -65,14 +94,22 @@ def validate_snapshot(snapshot: Dict[str, Any]) -> LoopSnapshot:
     if snap.version != 1:
         raise ValueError(f"Unsupported snapshot version: {snap.version}")
 
-    if snap.entrypoint.type != "manager_method":
-        raise ValueError("Unsupported entrypoint type for v1")
+    # Allow both manager and inline-tools entrypoints in v1.
+    if snap.entrypoint.type == "inline_tools":
+        # Minimal sanity checks for inline tools
+        if not snap.entrypoint.tools:
+            raise ValueError("Inline tools entrypoint must include at least one tool")
+        for t in snap.entrypoint.tools:
+            if not t.name or not t.module or not t.qualname:
+                raise ValueError("Inline tool refs must include name, module, qualname")
 
     return snap
 
 
 __all__ = (
     "EntryPointManagerMethod",
+    "EntryPointInlineTools",
+    "ToolRef",
     "LoopSnapshot",
     "validate_snapshot",
 )
