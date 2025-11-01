@@ -165,7 +165,12 @@ class SteerableToolHandle(SteerableHandle):
         raise NotImplementedError("serialize() is not implemented yet")
 
     @classmethod
-    def deserialize(cls, snapshot: dict) -> "SteerableToolHandle":
+    def deserialize(
+        cls,
+        snapshot: dict,
+        *,
+        loader: Optional[Callable[[str], dict]] = None,
+    ) -> "SteerableToolHandle":
         """Recreate a handle from a serialized snapshot (stub).
 
         This classmethod is a stub in v1 and will be implemented incrementally.
@@ -731,7 +736,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 await down_q.put(answer)
 
     # --- snapshotting v1: read-only capture (flat only) ---------------------
-    def serialize(self, recursive: bool = False) -> dict:  # type: ignore[override]
+    def serialize(
+        self,
+        recursive: bool = False,
+        *,
+        store: Optional[Callable[[dict], str]] = None,
+    ) -> dict:  # type: ignore[override]
         """Return a v1 snapshot of this handle's current state (flat only).
 
         Behaviour (v1):
@@ -1108,18 +1118,27 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 child_snapshot = None
                 if state == "in_flight":
                     try:
-                        child_snapshot = child.serialize(recursive=True)
+                        child_snapshot = child.serialize(recursive=True, store=store)
                     except Exception:
                         child_snapshot = None
-                children.append(
-                    {
-                        "call_id": getattr(_inf, "call_id", None),
-                        "tool_name": getattr(_inf, "name", None),
-                        "is_passthrough": bool(getattr(_inf, "is_passthrough", False)),
-                        "state": state,
-                        "snapshot": child_snapshot,
-                    },
-                )
+                entry = {
+                    "call_id": getattr(_inf, "call_id", None),
+                    "tool_name": getattr(_inf, "name", None),
+                    "is_passthrough": bool(getattr(_inf, "is_passthrough", False)),
+                    "state": state,
+                }
+                if isinstance(child_snapshot, dict):
+                    ref_path = None
+                    try:
+                        if store is not None:
+                            ref_path = store(child_snapshot)
+                    except Exception:
+                        ref_path = None
+                    if ref_path:
+                        entry["ref"] = {"path": ref_path}
+                    else:
+                        entry["snapshot"] = child_snapshot
+                children.append(entry)
             try:
                 if children:
                     # Ensure meta exists before augmenting
@@ -1134,7 +1153,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
     # --- snapshotting v1: deserialization (manager entrypoints only) ---------
     @classmethod
-    def deserialize(cls, snapshot: dict) -> "SteerableToolHandle":  # type: ignore[override]
+    def deserialize(
+        cls,
+        snapshot: dict,
+        *,
+        loader: Optional[Callable[[str], dict]] = None,
+    ) -> "SteerableToolHandle":  # type: ignore[override]
         """Recreate a running handle from a v1 snapshot (flat only).
 
         Behaviour (v1):
@@ -1388,8 +1412,23 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             continue
                         child_snap = rec.get("snapshot")
                         if not isinstance(child_snap, dict):
+                            # Try resolve by reference using loader callback
+                            try:
+                                ref = rec.get("ref") or {}
+                                path = (
+                                    ref.get("path") if isinstance(ref, dict) else None
+                                )
+                                if (
+                                    loader is not None
+                                    and isinstance(path, str)
+                                    and path
+                                ):
+                                    child_snap = loader(path)
+                            except Exception:
+                                child_snap = None
+                        if not isinstance(child_snap, dict):
                             continue
-                        child_handle = cls.deserialize(child_snap)
+                        child_handle = cls.deserialize(child_snap, loader=loader)
                         _resume_children_payload.append(
                             {
                                 "call_id": rec.get("call_id"),
