@@ -731,7 +731,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 await down_q.put(answer)
 
     # --- snapshotting v1: read-only capture (flat only) ---------------------
-    def serialize(self) -> dict:  # type: ignore[override]
+    def serialize(self, recursive: bool = False) -> dict:  # type: ignore[override]
         """Return a v1 snapshot of this handle's current state (flat only).
 
         Behaviour (v1):
@@ -740,15 +740,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
           tool calls will need to be re‑scheduled by a future deserialization.
         - Nested tool loops are not supported and will raise ValueError.
         """
-        # Guard: nested tool loops are out of scope for v1.
-        # Check BEFORE attempting to stop/cancel, to avoid racing with teardown
-        # that might clear task bookkeeping.
+        # Guard / discovery for nested tool loops. When recursive=False (default),
+        # nested handles are not supported and will raise a ValueError. When
+        # recursive=True, we will attempt to serialize in-flight children as well.
         try:
             task_info = getattr(self._task, "task_info", {})
         except Exception:
             task_info = {}
 
-        if isinstance(task_info, dict):
+        if not recursive and isinstance(task_info, dict):
             for _t, _inf in task_info.items():
                 if getattr(_inf, "handle", None) is not None:
                     raise ValueError(
@@ -1093,6 +1093,42 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         ).model_dump()
 
         # Enforce v1 shape
+        # If recursive capture was requested, attach a children manifest under meta.
+        if recursive and isinstance(task_info, dict):
+            children: list[dict] = []
+            for _t, _inf in task_info.items():
+                child = getattr(_inf, "handle", None)
+                if child is None:
+                    continue
+                state = "done"
+                try:
+                    state = "in_flight" if not bool(child.done()) else "done"
+                except Exception:
+                    pass
+                child_snapshot = None
+                if state == "in_flight":
+                    try:
+                        child_snapshot = child.serialize(recursive=True)
+                    except Exception:
+                        child_snapshot = None
+                children.append(
+                    {
+                        "call_id": getattr(_inf, "call_id", None),
+                        "tool_name": getattr(_inf, "name", None),
+                        "is_passthrough": bool(getattr(_inf, "is_passthrough", False)),
+                        "state": state,
+                        "snapshot": child_snapshot,
+                    },
+                )
+            try:
+                if children:
+                    # Ensure meta exists before augmenting
+                    if snap.get("meta") is None:
+                        snap["meta"] = {}
+                    snap["meta"]["children"] = children
+            except Exception:
+                pass
+
         _validate_snapshot(snap)
         return snap
 
