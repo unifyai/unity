@@ -94,6 +94,13 @@ class LoopSnapshot(BaseModel):
     # Snapshot of live images context (list of {image_id, annotation})
     images: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Optional: full raw client.messages dump at snapshot time for debugging
+    # This is not used by deserialization logic; it is provided to aid
+    # diagnostics and post-mortem analysis when resumes do not behave as
+    # expected. The structure mirrors the LLM client transcript and may
+    # include assistant/tool/system entries exactly as recorded.
+    full_messages: Optional[List[Dict[str, Any]]] = None
+
     # Reserved extension points for future versions
     options: Optional[Dict[str, Any]] = None
     env: Optional[Dict[str, Any]] = None
