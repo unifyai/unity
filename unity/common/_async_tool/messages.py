@@ -481,6 +481,24 @@ async def ensure_placeholders_for_pending(
             continue
         if assistant_msg is not None and _inf.assistant_msg is not assistant_msg:
             continue
+        # Reuse any existing tool reply message in the transcript for this call_id
+        try:
+            if _inf.tool_reply_msg is None:
+                existing = None
+                msgs = client.messages or []
+                for m in msgs:
+                    try:
+                        if m.get("role") == "tool" and str(
+                            m.get("tool_call_id"),
+                        ) == str(_inf.call_id):
+                            existing = m
+                            break
+                    except Exception:
+                        continue
+                if existing is not None:
+                    _inf.tool_reply_msg = existing
+        except Exception:
+            pass
         if _inf.tool_reply_msg or _inf.clarify_placeholder:
             continue
 
