@@ -377,6 +377,100 @@ async def async_tool_loop_inner(
                 pass
         return False
 
+    # Helper: build a synthetic assistant→tool pair for the live images overview
+    def _build_live_images_overview_msgs(reason: str = "") -> tuple[dict, dict]:
+        from .images import LIVE_IMAGES_REGISTRY, LIVE_IMAGES_LOG  # local import
+        from ...image_manager.types.annotated_image_ref import (
+            AnnotatedImageRef as _AnnotatedImageRef,
+        )
+        from ...image_manager.types.raw_image_ref import (
+            RawImageRef as _RawImageRef,
+        )
+        from ...image_manager.types.image_refs import (
+            AnnotatedImageRefs as _AnnotatedImageRefs,
+        )
+
+        reg = LIVE_IMAGES_REGISTRY.get() or {}
+        logs = LIVE_IMAGES_LOG.get() or []
+
+        # Compute last annotation per image_id
+        last_ann: dict[int, str] = {}
+        for rec in logs:
+            try:
+                _iid = int(rec.get("image_id"))
+            except Exception:
+                continue
+            ann = rec.get("annotation")
+            last_ann[_iid] = str(ann) if ann is not None else ""
+
+        annotated_list: list[_AnnotatedImageRef] = []
+        images_meta: list[dict] = []
+        for _iid, _h in getattr(reg, "items", lambda: [])():
+            try:
+                iid = int(_iid)
+            except Exception:
+                continue
+            ann_txt = last_ann.get(iid) or str(getattr(_h, "annotation", "") or "")
+            try:
+                annotated_list.append(
+                    _AnnotatedImageRef(
+                        raw_image_ref=_RawImageRef(image_id=iid),
+                        annotation=ann_txt or "",
+                    ),
+                )
+            except Exception:
+                # Best-effort: skip malformed entries
+                continue
+            # Enrich with optional metadata
+            try:
+                images_meta.append(
+                    {
+                        "image_id": iid,
+                        "caption": getattr(_h, "caption", None),
+                        "timestamp": getattr(
+                            getattr(_h, "timestamp", None),
+                            "isoformat",
+                            lambda: "",
+                        )(),
+                    },
+                )
+            except Exception:
+                pass
+
+        payload = {
+            "status": "ok",
+            "reason": reason,
+            "images": _AnnotatedImageRefs.model_validate(annotated_list),
+            "images_meta": images_meta,
+            "hint": (
+                "Forward these images into future tools that declare an 'images' argument (prefer AnnotatedImageRefs). "
+                "Rewrite or augment annotations so they align with the delegated question/action (not the original phrasing), "
+                "and preserve user-referenced ordering when it matters."
+            ),
+        }
+
+        call_id = short_id(8)
+        asst_msg = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": "live_images_overview",
+                        "arguments": "{}",
+                    },
+                },
+            ],
+        }
+        tool_msg = create_tool_call_message(
+            name="live_images_overview",
+            call_id=call_id,
+            content=_dumps(payload, indent=4),
+        )
+        return asst_msg, tool_msg
+
     # If explicit images are provided, seed them; otherwise, isolate this loop
     # from any parent images by setting an empty images context.
     _img_token, _imglog_token = None, None
@@ -487,10 +581,20 @@ async def async_tool_loop_inner(
                 for m in message
             ]
         await _msg_dispatcher.append_msgs(seeded_batch)
-        # Inject an initial snapshot of live images (if any)
+        # Inject an initial snapshot of live images (if any) immediately by
+        # appending assistant→tool messages directly to the client transcript.
         try:
             if has_live_images_context():
-                await _inject_live_images_overview("initial_images")
+                asst_msg, tool_msg = _build_live_images_overview_msgs("initial_images")
+                try:
+                    client.append_messages([asst_msg, tool_msg])
+                    try:
+                        await to_event_bus(asst_msg, cfg)
+                        await to_event_bus(tool_msg, cfg)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -571,6 +675,8 @@ async def async_tool_loop_inner(
                 tools_data.clarification_channels,
             )
 
+    # (Initial live-images overview already injected directly when seeding messages.)
+
     # Ensure we forward stop to nested handles at most once, even if multiple
     # branches detect cancellation/stop around the same time.
     _stop_forwarded_once: bool = False
@@ -600,94 +706,7 @@ async def async_tool_loop_inner(
     # set of live images persists in the transcript (independent of tool policy).
     async def _inject_live_images_overview(reason: str = "") -> None:
         try:
-            # Build AnnotatedImageRefs payload from current registry/log
-            from .images import LIVE_IMAGES_REGISTRY, LIVE_IMAGES_LOG  # local import
-            from ...image_manager.types.annotated_image_ref import (
-                AnnotatedImageRef as _AnnotatedImageRef,
-            )
-            from ...image_manager.types.raw_image_ref import (
-                RawImageRef as _RawImageRef,
-            )
-            from ...image_manager.types.image_refs import (
-                AnnotatedImageRefs as _AnnotatedImageRefs,
-            )
-
-            reg = LIVE_IMAGES_REGISTRY.get() or {}
-            logs = LIVE_IMAGES_LOG.get() or []
-
-            # Compute last annotation per image_id
-            last_ann: dict[int, str] = {}
-            for rec in logs:
-                try:
-                    _iid = int(rec.get("image_id"))
-                except Exception:
-                    continue
-                ann = rec.get("annotation")
-                last_ann[_iid] = str(ann) if ann is not None else ""
-
-            annotated_list: list[_AnnotatedImageRef] = []
-            images_meta: list[dict] = []
-            for _iid, _h in getattr(reg, "items", lambda: [])():
-                try:
-                    iid = int(_iid)
-                except Exception:
-                    continue
-                ann_txt = last_ann.get(iid) or str(getattr(_h, "annotation", "") or "")
-                try:
-                    annotated_list.append(
-                        _AnnotatedImageRef(
-                            raw_image_ref=_RawImageRef(image_id=iid),
-                            annotation=ann_txt or "",
-                        ),
-                    )
-                except Exception:
-                    # Best-effort: skip malformed entries
-                    continue
-                # Enrich with optional metadata for ease of use by the LLM
-                try:
-                    images_meta.append(
-                        {
-                            "image_id": iid,
-                            "caption": getattr(_h, "caption", None),
-                            "timestamp": getattr(
-                                getattr(_h, "timestamp", None),
-                                "isoformat",
-                                lambda: "",
-                            )(),
-                        },
-                    )
-                except Exception:
-                    pass
-
-            # Compose payload with full AnnotatedImageRefs
-            payload = {
-                "status": "ok",
-                "reason": reason,
-                "images": _AnnotatedImageRefs.model_validate(annotated_list),
-                "images_meta": images_meta,
-                "hint": (
-                    "Forward these images into future tools that declare an 'images' argument (prefer AnnotatedImageRefs). "
-                    "Rewrite or augment annotations so they align with the delegated question/action (not the original phrasing), "
-                    "and preserve user-referenced ordering when it matters."
-                ),
-            }
-
-            # Synthetic assistant tool call followed by its tool result
-            call_id = short_id(8)
-            asst_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": "live_images_overview",
-                            "arguments": "{}",
-                        },
-                    },
-                ],
-            }
+            asst_msg, tool_msg = _build_live_images_overview_msgs(reason)
 
             await _msg_dispatcher.append_msgs([asst_msg])
             try:
@@ -697,12 +716,6 @@ async def async_tool_loop_inner(
 
             # Ensure assistant_meta bookkeeping before inserting tool result
             assistant_meta[id(asst_msg)] = {"results_count": 0}
-
-            tool_msg = create_tool_call_message(
-                name="live_images_overview",
-                call_id=call_id,
-                content=_dumps(payload, indent=4),
-            )
             await insert_tool_message_after_assistant(
                 assistant_meta,
                 asst_msg,

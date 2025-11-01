@@ -1014,6 +1014,39 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             # Non-fatal – notifications are best-effort
             pass
 
+        # Capture current live images (ids and annotations) for resume
+        images_list: list[dict] = []
+        try:
+            from ._async_tool.images import (
+                get_image_log_entries as _get_img_entries,
+            )  # local import
+
+            for iid, ann in _get_img_entries() or []:
+                try:
+                    images_list.append({"image_id": int(iid), "annotation": ann})
+                except Exception:
+                    continue
+        except Exception:
+            images_list = []
+        # Fallback to any seed images captured at start time if the inner loop
+        # hasn't yet initialised the image context
+        if not images_list:
+            try:
+                for rec in getattr(self, "_seed_images_snapshot", []) or []:
+                    if (
+                        isinstance(rec, dict)
+                        and "image_id" in rec
+                        and isinstance(rec["image_id"], int)
+                    ):
+                        images_list.append(
+                            {
+                                "image_id": int(rec["image_id"]),
+                                "annotation": rec.get("annotation"),
+                            },
+                        )
+            except Exception:
+                pass
+
         # Finalise entrypoint selection
         if use_inline_entrypoint:
             entry_field = _EntryPointInlineTools(
@@ -1038,6 +1071,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             interjections_indices=interjections_indices,
             clarifications=clarifications,
             notifications=notifications,
+            images=images_list,
         ).model_dump()
 
         # Enforce v1 shape
@@ -1107,19 +1141,27 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     mgr_cls = c
                     break
             if mgr_cls is None:
-                raise ValueError(
-                    f"Manager class not found: {snap.entrypoint.class_name}",
-                )
-
-            manager = mgr_cls()
-            method_name = snap.entrypoint.method_name
-            tools = dict(manager.get_tools(method_name, include_sub_tools=True))
-            if not tools:
-                raise ValueError(
-                    f"No tools registered for {snap.entrypoint.class_name}.{method_name}",
-                )
-            if not loop_label:
-                loop_label = f"{snap.entrypoint.class_name}.{method_name}"
+                # Fallback: flat non-manager loop created via start_async_tool_loop
+                # with no manager context (our serializer encodes this as
+                # ToolLoop.run). In this case, resume with empty inline tools.
+                if str(snap.entrypoint.class_name) == "ToolLoop":
+                    tools = {}
+                    if not loop_label:
+                        loop_label = "InlineTools"
+                else:
+                    raise ValueError(
+                        f"Manager class not found: {snap.entrypoint.class_name}",
+                    )
+            else:
+                manager = mgr_cls()
+                method_name = snap.entrypoint.method_name
+                tools = dict(manager.get_tools(method_name, include_sub_tools=True))
+                if not tools:
+                    raise ValueError(
+                        f"No tools registered for {snap.entrypoint.class_name}.{method_name}",
+                    )
+                if not loop_label:
+                    loop_label = f"{snap.entrypoint.class_name}.{method_name}"
 
         else:  # inline tools
             # Resolve each tool by import path and apply flags
@@ -1242,6 +1284,41 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             # Any remaining tool results (rare): append at the end; backfill ignores them.
             msgs.extend(by_call_id.values())
 
+        # If snapshot carried images, rebuild ImageRefs for resume
+        images_param = None
+        try:
+            imgs = list(snap.images or [])
+            if imgs:
+                from unity.image_manager.types import (  # local import to avoid cycles
+                    RawImageRef as _RawImageRef,
+                    AnnotatedImageRef as _AnnotatedImageRef,
+                    ImageRefs as _ImageRefs,
+                )
+
+                refs_list = []
+                for rec in imgs:
+                    try:
+                        iid = int(rec.get("image_id"))
+                    except Exception:
+                        continue
+                    ann = rec.get("annotation")
+                    if ann is None or ann == "":
+                        refs_list.append(_RawImageRef(image_id=iid))
+                    else:
+                        refs_list.append(
+                            _AnnotatedImageRef(
+                                raw_image_ref=_RawImageRef(image_id=iid),
+                                annotation=str(ann),
+                            ),
+                        )
+                if refs_list:
+                    try:
+                        images_param = _ImageRefs.model_validate(refs_list)
+                    except Exception:
+                        images_param = refs_list
+        except Exception:
+            images_param = None
+
         # Launch a new loop seeded with the reconstructed transcript.
         handle = start_async_tool_loop(
             client,
@@ -1249,6 +1326,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             tools,
             loop_id=loop_label,
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
+            images=images_param,
         )
 
         # If the last interjection occurred *after* the last assistant message,
@@ -1439,6 +1517,38 @@ def start_async_tool_loop(
 
     try:
         setattr(handle, "_inline_tools_registry", _build_inline_tools_registry(tools))
+    except Exception:
+        pass
+
+    # Capture any seed images provided so serialize() can include them even if
+    # the inner loop hasn't yet initialised the live image context.
+    try:
+        seed_images_list: list[dict] = []
+        if images:
+            # Support ImageRefs and plain lists via duck typing on `root`
+            try:
+                from ..image_manager.types import (
+                    RawImageRef as _RawImageRef,
+                    AnnotatedImageRef as _AnnotatedImageRef,
+                )  # local import to avoid cycles
+
+                _items = list(getattr(images, "root", images) or [])
+                for ref in _items:
+                    try:
+                        if isinstance(ref, _AnnotatedImageRef):
+                            iid = int(ref.raw_image_ref.image_id)
+                            ann = str(ref.annotation)
+                        elif isinstance(ref, _RawImageRef):
+                            iid = int(ref.image_id)
+                            ann = None
+                        else:
+                            continue
+                        seed_images_list.append({"image_id": iid, "annotation": ann})
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+        setattr(handle, "_seed_images_snapshot", seed_images_list)
     except Exception:
         pass
 
