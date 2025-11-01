@@ -730,9 +730,21 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def serialize(self) -> dict:  # type: ignore[override]
         """Return a v1 snapshot of this handle's current state (flat only).
 
-        - Does not kill in-flight work (read-only capture).
-        - Nested tool loops are not supported in v1 and will raise ValueError.
+        Behaviour (v1):
+        - Proactively cancels the running loop to quiesce any in‑flight LLM/tool work.
+        - Snapshot is built from the current transcript; any previously pending
+          tool calls will need to be re‑scheduled by a future deserialization.
+        - Nested tool loops are not supported and will raise ValueError.
         """
+        # Best-effort quiesce: cancel the outer loop if still running. We do not
+        # await completion here (serialize is synchronous); inner loop will abort
+        # promptly and no further tool results should be appended.
+        try:
+            if not self.done():
+                # Leverage standard stop semantics (sets cancel_event and cancels task)
+                self.stop(reason="serialize snapshot")
+        except Exception:
+            pass
         # Guard: nested tool loops are out of scope for v1
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
@@ -748,10 +760,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         raw_label = str(getattr(self, "_log_label", None) or self._loop_id or "")
         base = raw_label.split("(", 1)[0]
         if "." not in base or not base:
-            raise ValueError(
-                "Unable to derive entrypoint from loop_id; v1 supports manager_method only",
-            )
-        cls_name, meth_name = base.split(".", 1)
+            # Fallback for generic tool loops started without a manager label
+            cls_name, meth_name = "ToolLoop", "run"
+        else:
+            cls_name, meth_name = base.split(".", 1)
         entry = _EntryPointManagerMethod(class_name=cls_name, method_name=meth_name)
 
         # Gather transcript fragments
