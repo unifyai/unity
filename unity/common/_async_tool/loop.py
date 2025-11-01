@@ -5,7 +5,7 @@ import inspect
 import os
 from pathlib import Path
 import copy
-from datetime import datetime
+import re
 
 from typing import (
     Dict,
@@ -21,7 +21,7 @@ from typing import (
 from contextlib import suppress
 from pydantic import BaseModel
 
-from ...constants import LOGGER, LLM_IO_DEBUG
+from ...constants import LOGGER, LLM_IO_DEBUG, SESSION_ID
 from ..tool_spec import ToolSpec, normalise_tools
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
@@ -63,6 +63,9 @@ from .messages import (
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
 from . import semantic_cache as sc
+
+# Single per-run LLM I/O debug file path (set on first use)
+_LLM_IO_FILE_PATH: str | None = None
 
 if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
@@ -277,15 +280,24 @@ async def async_tool_loop_inner(
     # Independent, centrally-configured LLM I/O logging flag
     llm_io_debug = bool(LLM_IO_DEBUG)
 
-    # File sink for LLM I/O: per-run file under hidden folder with readable timestamp
+    # File sink for LLM I/O: single per-run file under hidden folder, named by SESSION_ID
     _llm_io_file: str | None = None
     if llm_io_debug:
         with suppress(Exception):
-            root = Path(os.getcwd())
-            logs_dir = root / ".llm_io_debug"
-            logs_dir.mkdir(parents=True, exist_ok=True)
-            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            _llm_io_file = str(logs_dir / f"{ts}.txt")
+            global _LLM_IO_FILE_PATH
+            if _LLM_IO_FILE_PATH is None:
+                root = Path(os.getcwd())
+                logs_dir = root / ".llm_io_debug"
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                # Sanitize SESSION_ID for filesystem safety
+                try:
+                    session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", SESSION_ID)
+                except Exception:
+                    session_safe = (
+                        SESSION_ID.replace(":", "-").replace("+", "-").replace("/", "-")
+                    )
+                _LLM_IO_FILE_PATH = str(logs_dir / f"{session_safe}.txt")
+            _llm_io_file = _LLM_IO_FILE_PATH
 
     def _llm_io_write(header: str, body: str) -> None:
         if not llm_io_debug or _llm_io_file is None:
