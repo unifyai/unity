@@ -33,6 +33,7 @@ from .messages import (
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
     create_tool_call_message,
+    ToolCallMetadata,
 )
 from .images import (
     set_live_images_context,
@@ -705,8 +706,8 @@ async def async_tool_loop_inner(
     # Adopt any nested children provided for resume (after backfill so placeholders exist)
     try:
         if resume_children:
-            from .tools_utils import ToolCallMetadata  # local import to avoid cycles
-            from ..llm_helpers import method_to_schema as _method_to_schema
+            # ToolCallMetadata is imported at module level; avoid local import to prevent
+            # function-scope shadowing that leads to UnboundLocalError on other paths.
 
             # Build index: call_id -> (assistant_msg, tool_call, tool_idx)
             call_index: dict[str, tuple[dict, dict, int]] = {}
@@ -738,7 +739,7 @@ async def async_tool_loop_inner(
                     try:
                         spec = tools_data.normalized.get(tool_name)
                         if spec is not None:
-                            schema = _method_to_schema(spec.fn, tool_name)
+                            schema = method_to_schema(spec.fn, tool_name)
                     except Exception:
                         schema = {}
 
