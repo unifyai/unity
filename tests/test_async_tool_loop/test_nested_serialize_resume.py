@@ -1,4 +1,6 @@
 import asyncio
+import json
+import os
 
 import pytest
 import unify
@@ -100,3 +102,73 @@ async def test_nested_serialize_inline_resume():
         m for m in msgs if m.get("role") == "tool" and m.get("name") == "outer_tool"
     ]
     assert len(tool_msgs) == 1
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_nested_serialize_byref_resume(tmp_path):
+    global INNER_GATE
+    INNER_GATE = asyncio.Event()
+
+    client = _outer_client()
+    handle = start_async_tool_loop(
+        client,
+        "begin",
+        tools={"outer_tool": outer_tool},
+        timeout=240,
+    )
+
+    await _wait_for_tool_request(client, "outer_tool")
+    await _wait_for_tool_message_prefix(client, "outer_tool", timeout=120.0)
+
+    def store(snapshot: dict) -> str:
+        # Write child to a unique file
+        p = tmp_path / f"child_{len(list(tmp_path.iterdir()))}.json"
+        p.write_text(json.dumps(snapshot))
+        return str(p)
+
+    def loader(path: str) -> dict:
+        return json.loads((tmp_path / os.path.basename(path)).read_text())
+
+    snap = handle.serialize(recursive=True, store=store)
+    # Ensure at least one child ref is by-path
+    children = (snap.get("meta", {}) or {}).get("children", [])
+    assert any(isinstance(c.get("ref", {}).get("path"), str) for c in children)
+
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap, loader=loader)
+
+    INNER_GATE.set()
+    out = await resumed.result()
+    assert out.strip().lower() == "all done"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_nested_resume_missing_call_id_ignored():
+    global INNER_GATE
+    INNER_GATE = asyncio.Event()
+
+    client = _outer_client()
+    handle = start_async_tool_loop(
+        client,
+        "begin",
+        tools={"outer_tool": outer_tool},
+        timeout=240,
+    )
+
+    await _wait_for_tool_request(client, "outer_tool")
+    await _wait_for_tool_message_prefix(client, "outer_tool", timeout=120.0)
+
+    snap = handle.serialize(recursive=True)
+    # Corrupt the child call_id so adoption is skipped gracefully
+    try:
+        for ch in snap.get("meta", {}).get("children", []) or []:
+            if isinstance(ch, dict):
+                ch["call_id"] = "nonexistent_call_id"
+    except Exception:
+        pass
+
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+    INNER_GATE.set()
+    out = await resumed.result()
+    assert out.strip().lower() == "all done"
