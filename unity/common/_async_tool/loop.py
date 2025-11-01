@@ -769,6 +769,13 @@ async def async_tool_loop_inner(
                         assistant_meta=assistant_meta,
                         outer_handle_container=outer_handle_container,
                     )
+                    try:
+                        logger.info(
+                            f"Adopted child handle for call_id={cid} tool={tool_name}",
+                            prefix="🔗",
+                        )
+                    except Exception:
+                        pass
                 except Exception:
                     continue
     except Exception:
