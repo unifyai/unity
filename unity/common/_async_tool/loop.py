@@ -709,11 +709,22 @@ async def async_tool_loop_inner(
             # ToolCallMetadata is imported at module level; avoid local import to prevent
             # function-scope shadowing that leads to UnboundLocalError on other paths.
 
-            # Build index: call_id -> (assistant_msg, tool_call, tool_idx)
+            # Build indices:
+            #  - call_index: call_id -> (assistant_msg, tool_call, tool_idx)
+            #  - reply_index: call_id -> existing tool reply message (if any)
             call_index: dict[str, tuple[dict, dict, int]] = {}
+            reply_index: dict[str, dict] = {}
             for m in client.messages:
                 try:
                     if m.get("role") != "assistant":
+                        # capture existing tool reply messages
+                        if m.get("role") == "tool":
+                            try:
+                                cid = m.get("tool_call_id")
+                                if isinstance(cid, str):
+                                    reply_index[cid] = m
+                            except Exception:
+                                pass
                         continue
                     for i, tc in enumerate(m.get("tool_calls") or []):
                         cid = tc.get("id")
@@ -749,6 +760,9 @@ async def async_tool_loop_inner(
                     except Exception:
                         raw_args = "{}"
 
+                    # Reuse existing placeholder tool message if present to avoid duplicates
+                    existing_tool_msg = reply_index.get(str(cid))
+
                     info = ToolCallMetadata(
                         name=tool_name,
                         call_id=str(cid),
@@ -761,6 +775,7 @@ async def async_tool_loop_inner(
                         llm_arguments={},
                         raw_arguments_json=str(raw_args),
                         is_passthrough=bool(child.get("is_passthrough", False)),
+                        tool_reply_msg=existing_tool_msg,
                     )
 
                     await tools_data.adopt_nested(
