@@ -24,6 +24,8 @@ from ._async_tool.loop import async_tool_loop_inner
 from .loop_snapshot import (
     LoopSnapshot as _LoopSnapshot,
     EntryPointManagerMethod as _EntryPointManagerMethod,
+    EntryPointInlineTools as _EntryPointInlineTools,
+    ToolRef as _ToolRef,
     validate_snapshot as _validate_snapshot,
 )
 
@@ -761,16 +763,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except Exception:
             pass
 
-        # Resolve entrypoint from loop_id label (e.g., "ContactManager.ask" or
+        # Resolve entrypoint candidate from loop_id label (e.g., "ContactManager.ask" or
         # "ContactManager.ask(x2ab)")
         raw_label = str(getattr(self, "_log_label", None) or self._loop_id or "")
         base = raw_label.split("(", 1)[0]
         if "." not in base or not base:
-            # Fallback for generic tool loops started without a manager label
+            # Fallback placeholder for generic tool loops; may be replaced by inline_tools entrypoint below
             cls_name, meth_name = "ToolLoop", "run"
         else:
             cls_name, meth_name = base.split(".", 1)
-        entry = _EntryPointManagerMethod(class_name=cls_name, method_name=meth_name)
 
         # Gather transcript fragments
         msgs = []
@@ -779,19 +780,165 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except Exception:
             msgs = []
 
-        assistant_steps = []
-        tool_results = []
+        # Build pruning context (allowed base tools for this manager method).
+        # Best-effort: resolve manager class and its tools; if not found, fall back
+        # to simple structural pruning (drop synthetic check_status_* calls).
+        allowed_tool_names: set[str] | None = None
+        mgr_cls = None
+        try:
+            from .state_managers import (
+                BaseStateManager as _BaseStateManager,
+            )  # noqa: WPS433
+            from importlib import import_module as _import_module  # noqa: WPS433
+
+            # Ensure common managers are imported so __subclasses__ is populated
+            for _m in (
+                "unity.contact_manager.contact_manager",
+                "unity.transcript_manager.transcript_manager",
+                "unity.knowledge_manager.knowledge_manager",
+                "unity.guidance_manager.guidance_manager",
+                "unity.secret_manager.secret_manager",
+                "unity.skill_manager.skill_manager",
+                "unity.task_scheduler.task_scheduler",
+                "unity.file_manager.file_manager",
+                "unity.image_manager.image_manager",
+                "unity.web_searcher.web_searcher",
+                "unity.conductor.conductor",
+            ):
+                try:
+                    _import_module(_m)
+                except Exception:
+                    pass
+
+            def _all_subclasses(cls_):
+                out = set()
+                for sub in cls_.__subclasses__():
+                    out.add(sub)
+                    out.update(_all_subclasses(sub))
+                return out
+
+            for c in _all_subclasses(_BaseStateManager):
+                if getattr(c, "__name__", "") == cls_name:
+                    mgr_cls = c
+                    break
+            if mgr_cls is not None:
+                try:
+                    manager = mgr_cls()
+                    _tools_dict = manager.get_tools(meth_name, include_sub_tools=True)
+                    if isinstance(_tools_dict, dict) and _tools_dict:
+                        allowed_tool_names = set(_tools_dict.keys())
+                except Exception:
+                    allowed_tool_names = None
+        except Exception:
+            allowed_tool_names = None
+
+        # Determine if this looks like a non-manager loop with inline tools
+        inline_registry = []
+        with suppress(Exception):
+            inline_registry = list(getattr(self, "_inline_tools_registry", []) or [])
+        use_inline_entrypoint = mgr_cls is None and bool(inline_registry)
+        if use_inline_entrypoint and allowed_tool_names is None:
+            try:
+                allowed_tool_names = set(
+                    [
+                        t.get("name")
+                        for t in inline_registry
+                        if isinstance(t, dict) and t.get("name")
+                    ],
+                )
+            except Exception:
+                allowed_tool_names = None
+
+        # Helper: filter assistant tool_calls against allowed names, dropping synthetic status calls
+        def _prune_assistant_msg(msg: dict) -> dict | None:
+            if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                return None
+            tool_calls = msg.get("tool_calls") or []
+            if not isinstance(tool_calls, list) or not tool_calls:
+                return None
+            kept: list = []
+            for tc in tool_calls:
+                try:
+                    fn = tc.get("function", {})
+                    name = fn.get("name")
+                except Exception:
+                    name = None
+                if not isinstance(name, str) or not name:
+                    continue
+                # Drop synthetic completion/status helpers
+                if name.startswith("check_status_"):
+                    continue
+                # If we know the allowed tool set, enforce it
+                if allowed_tool_names is not None and name not in allowed_tool_names:
+                    continue
+                kept.append(tc)
+            if not kept:
+                return None
+            pruned = dict(msg)
+            pruned["tool_calls"] = kept
+            return pruned
+
+        assistant_steps_raw: list[dict] = []
+        tool_results_raw: list[dict] = []
         for m in msgs:
             try:
                 role = m.get("role")
             except Exception:
                 continue
             if role == "assistant":
-                tc = m.get("tool_calls")
-                if isinstance(tc, list) and len(tc) > 0:
-                    assistant_steps.append(m)
+                pruned = _prune_assistant_msg(m)
+                if pruned is not None:
+                    assistant_steps_raw.append(pruned)
             elif role == "tool":
-                tool_results.append(m)
+                tool_results_raw.append(m)
+
+        # Build the set of referenced call_ids from pruned assistant steps
+        referenced_call_ids: set[str] = set()
+        for am in assistant_steps_raw:
+            for tc in am.get("tool_calls", []) or []:
+                try:
+                    _cid = tc.get("id")
+                    if isinstance(_cid, str) and _cid:
+                        referenced_call_ids.add(_cid)
+                except Exception:
+                    continue
+
+        # Prune tool_result messages:
+        #  - keep only those whose name is allowed (when known)
+        #  - keep only those whose tool_call_id is in referenced_call_ids
+        #  - deduplicate by tool_call_id keeping the last occurrence, but preserve
+        #    original chronological order for the survivors
+        last_index_by_call_id: dict[str, int] = {}
+        for idx, tm in enumerate(tool_results_raw):
+            try:
+                name = tm.get("name")
+                call_id = tm.get("tool_call_id")
+            except Exception:
+                continue
+            if not isinstance(call_id, str) or not call_id:
+                continue
+            if call_id not in referenced_call_ids:
+                continue
+            if allowed_tool_names is not None:
+                if not isinstance(name, str) or name not in allowed_tool_names:
+                    continue
+            # mark last index
+            last_index_by_call_id[call_id] = idx
+
+        tool_results: list[dict] = []
+        for idx, tm in enumerate(tool_results_raw):
+            try:
+                call_id = tm.get("tool_call_id")
+            except Exception:
+                call_id = None
+            if (
+                isinstance(call_id, str)
+                and call_id in last_index_by_call_id
+                and last_index_by_call_id[call_id] == idx
+            ):
+                tool_results.append(tm)
+
+        assistant_steps = assistant_steps_raw
 
         # Extract initial user message as recorded for the handle
         initial_user_message = None
@@ -805,8 +952,19 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         with suppress(Exception):
             system_message = getattr(self._client, "system_message", None)
 
+        # Finalise entrypoint selection
+        if use_inline_entrypoint:
+            entry_field = _EntryPointInlineTools(
+                tools=[_ToolRef(**t) for t in inline_registry if isinstance(t, dict)],
+            )
+        else:
+            entry_field = _EntryPointManagerMethod(
+                class_name=cls_name,
+                method_name=meth_name,
+            )
+
         snap = _LoopSnapshot(
-            entrypoint=entry,
+            entrypoint=entry_field,
             loop_id=str(self._loop_id or ""),
             system_message=system_message,
             initial_user_message=initial_user_message,
@@ -834,63 +992,92 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         """
         snap = _validate_snapshot(snapshot)
 
-        # Resolve manager class by name.
-        from .state_managers import (
-            BaseStateManager as _BaseStateManager,
-        )  # noqa: WPS433
         from importlib import import_module as _import_module  # noqa: WPS433
         from .llm_client import (
             new_llm_client as _new_llm_client,
         )  # noqa: WPS433
 
-        # Best-effort: import common manager modules so subclasses are registered
-        # before we traverse __subclasses__(). This keeps wiring local and avoids
-        # hard dependencies at module import time.
-        _maybe_modules = (
-            "unity.contact_manager.contact_manager",
-            "unity.transcript_manager.transcript_manager",
-            "unity.knowledge_manager.knowledge_manager",
-            "unity.guidance_manager.guidance_manager",
-            "unity.secret_manager.secret_manager",
-            "unity.skill_manager.skill_manager",
-            "unity.task_scheduler.task_scheduler",
-            "unity.file_manager.file_manager",
-            "unity.image_manager.image_manager",
-            "unity.web_searcher.web_searcher",
-            "unity.conductor.conductor",
-        )
-        for _m in _maybe_modules:
-            try:
-                _import_module(_m)
-            except Exception:
-                # Non-fatal: module may not exist in this build/profile
-                pass
+        # Build tools mapping depending on entrypoint type
+        tools: Dict[str, Callable] = {}
+        loop_label: str = snap.loop_id or ""
 
-        def _all_subclasses(cls_):
-            out = set()
-            for sub in cls_.__subclasses__():
-                out.add(sub)
-                out.update(_all_subclasses(sub))
-            return out
+        if snap.entrypoint.type == "manager_method":
+            # Resolve manager class by name and collect tools
+            from .state_managers import (
+                BaseStateManager as _BaseStateManager,
+            )  # noqa: WPS433
 
-        mgr_cls = None
-        for c in _all_subclasses(_BaseStateManager):
-            if getattr(c, "__name__", "") == snap.entrypoint.class_name:
-                mgr_cls = c
-                break
-        if mgr_cls is None:
-            raise ValueError(
-                f"Manager class not found: {snap.entrypoint.class_name}",
+            _maybe_modules = (
+                "unity.contact_manager.contact_manager",
+                "unity.transcript_manager.transcript_manager",
+                "unity.knowledge_manager.knowledge_manager",
+                "unity.guidance_manager.guidance_manager",
+                "unity.secret_manager.secret_manager",
+                "unity.skill_manager.skill_manager",
+                "unity.task_scheduler.task_scheduler",
+                "unity.file_manager.file_manager",
+                "unity.image_manager.image_manager",
+                "unity.web_searcher.web_searcher",
+                "unity.conductor.conductor",
             )
+            for _m in _maybe_modules:
+                try:
+                    _import_module(_m)
+                except Exception:
+                    pass
 
-        # Instantiate manager and build tools for the target method.
-        manager = mgr_cls()
-        method_name = snap.entrypoint.method_name
-        tools = dict(manager.get_tools(method_name, include_sub_tools=True))
-        if not tools:
-            raise ValueError(
-                f"No tools registered for {snap.entrypoint.class_name}.{method_name}",
-            )
+            def _all_subclasses(cls_):
+                out = set()
+                for sub in cls_.__subclasses__():
+                    out.add(sub)
+                    out.update(_all_subclasses(sub))
+                return out
+
+            mgr_cls = None
+            for c in _all_subclasses(_BaseStateManager):
+                if getattr(c, "__name__", "") == snap.entrypoint.class_name:
+                    mgr_cls = c
+                    break
+            if mgr_cls is None:
+                raise ValueError(
+                    f"Manager class not found: {snap.entrypoint.class_name}",
+                )
+
+            manager = mgr_cls()
+            method_name = snap.entrypoint.method_name
+            tools = dict(manager.get_tools(method_name, include_sub_tools=True))
+            if not tools:
+                raise ValueError(
+                    f"No tools registered for {snap.entrypoint.class_name}.{method_name}",
+                )
+            if not loop_label:
+                loop_label = f"{snap.entrypoint.class_name}.{method_name}"
+
+        else:  # inline tools
+            # Resolve each tool by import path and apply flags
+            for t in snap.entrypoint.tools:
+                mod = _import_module(t.module)
+                obj = mod
+                try:
+                    for part in str(t.qualname).split("."):
+                        obj = getattr(obj, part)
+                except Exception as exc:
+                    raise ValueError(
+                        f"Failed to resolve tool {t.name} at {t.module}.{t.qualname}",
+                    ) from exc
+                # Apply flags expected by normalise_tools()
+                try:
+                    if t.read_only is True:
+                        setattr(obj, "_tool_spec_read_only", True)
+                    if t.manager_tool is True:
+                        setattr(obj, "_tool_spec_manager_tool", True)
+                except Exception:
+                    pass
+                tools[t.name] = obj
+            if not tools:
+                raise ValueError("Inline tools entrypoint contains no resolvable tools")
+            if not loop_label:
+                loop_label = "InlineTools"
 
         # Build a fresh LLM client and restore system header.
         client = _new_llm_client()
@@ -932,7 +1119,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         msgs.extend(by_call_id.values())
 
         # Launch a new loop seeded with the reconstructed transcript.
-        loop_label = snap.loop_id or f"{snap.entrypoint.class_name}.{method_name}"
         handle = start_async_tool_loop(
             client,
             msgs if msgs else (init or ""),
@@ -1071,6 +1257,40 @@ def start_async_tool_loop(
         loop_id=loop_id,
         initial_user_message=init_content,
     )
+
+    # Capture an inline tools registry snapshot for potential serialization
+    # of non-manager loops. We record import paths and flags for resolvable
+    # top-level functions only (ignore closures and lambdas).
+    def _build_inline_tools_registry(raw_tools: Dict[str, Callable]) -> list[dict]:
+        out: list[dict] = []
+        for _name, _fn in (raw_tools or {}).items():
+            try:
+                mod = getattr(_fn, "__module__", None)
+                qn = getattr(_fn, "__qualname__", None)
+                if not isinstance(mod, str) or not isinstance(qn, str):
+                    continue
+                # Skip closures/local defs – not importable by qualname
+                if "<locals>" in qn:
+                    continue
+                ro = getattr(_fn, "_tool_spec_read_only", None)
+                mt = getattr(_fn, "_tool_spec_manager_tool", None)
+                out.append(
+                    {
+                        "name": _name,
+                        "module": mod,
+                        "qualname": qn,
+                        "read_only": bool(ro) if ro is not None else None,
+                        "manager_tool": bool(mt) if mt is not None else None,
+                    },
+                )
+            except Exception:
+                continue
+        return out
+
+    try:
+        setattr(handle, "_inline_tools_registry", _build_inline_tools_registry(tools))
+    except Exception:
+        pass
 
     # Attach lineage to handle for optional external inspection
     with suppress(Exception):
