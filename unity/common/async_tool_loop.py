@@ -835,11 +835,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         snap = _validate_snapshot(snapshot)
 
         # Resolve manager class by name.
-        from ..common.state_managers import (
+        from .state_managers import (
             BaseStateManager as _BaseStateManager,
         )  # noqa: WPS433
         from importlib import import_module as _import_module  # noqa: WPS433
-        from ..common.llm_client import (
+        from .llm_client import (
             new_llm_client as _new_llm_client,
         )  # noqa: WPS433
 
