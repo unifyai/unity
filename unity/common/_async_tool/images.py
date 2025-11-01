@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from contextlib import suppress
 from typing import Any, List, Optional
+import inspect
 
 # New typed container for image references
 from unity.image_manager.types.image_refs import ImageRefs
@@ -336,10 +337,15 @@ def build_live_image_tools(
                 except Exception:
                     ctx_repr = parent_chat_context or []
 
-                return await ih.ask(
-                    question,
-                    parent_chat_context_cont=ctx_repr,
-                )
+                # Pass parent context only when the handle supports it
+                fn = getattr(ih, "ask")
+                params = inspect.signature(fn).parameters
+                if "parent_chat_context_cont" in params:
+                    return await ih.ask(
+                        question,
+                        parent_chat_context_cont=ctx_repr,
+                    )
+                return await ih.ask(question)
 
             # Fallback: no propagation
             return await ih.ask(question)
