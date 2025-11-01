@@ -1060,7 +1060,7 @@ class TaskScheduler(BaseTaskScheduler):
             and preserves the existing status (``triggerable`` or ``scheduled``).
         """
         # TODO: Skip model_dump() when filtering
-        allowed = set(TaskBase.model_json_schema()["properties"].keys())
+        allowed = set(Task.model_json_schema()["properties"].keys())
         clone_payload = {
             k: v
             for k, v in task_row.model_dump().items()
