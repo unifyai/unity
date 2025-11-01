@@ -812,6 +812,131 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _validate_snapshot(snap)
         return snap
 
+    # --- snapshotting v1: deserialization (manager entrypoints only) ---------
+    @classmethod
+    def deserialize(cls, snapshot: dict) -> "SteerableToolHandle":  # type: ignore[override]
+        """Recreate a running handle from a v1 snapshot (flat only).
+
+        Behaviour (v1):
+        - Supports only manager entrypoints (ClassName.method).
+        - Rebuilds the manager instance and its tool registry for the method.
+        - Restores the system message and a curated transcript containing the
+          original user turn (when available), assistant tool-calls, and any
+          matching tool results placed immediately after their requesting
+          assistant message. Missing results are scheduled via preflight backfill.
+        - Returns a fresh handle whose loop resumes execution.
+        """
+        snap = _validate_snapshot(snapshot)
+
+        # Resolve manager class by name.
+        from ..common.state_managers import (
+            BaseStateManager as _BaseStateManager,
+        )  # noqa: WPS433
+        from importlib import import_module as _import_module  # noqa: WPS433
+        from ..common.llm_client import (
+            new_llm_client as _new_llm_client,
+        )  # noqa: WPS433
+
+        # Best-effort: import common manager modules so subclasses are registered
+        # before we traverse __subclasses__(). This keeps wiring local and avoids
+        # hard dependencies at module import time.
+        _maybe_modules = (
+            "unity.contact_manager.contact_manager",
+            "unity.transcript_manager.transcript_manager",
+            "unity.knowledge_manager.knowledge_manager",
+            "unity.guidance_manager.guidance_manager",
+            "unity.secret_manager.secret_manager",
+            "unity.skill_manager.skill_manager",
+            "unity.task_scheduler.task_scheduler",
+            "unity.file_manager.file_manager",
+            "unity.image_manager.image_manager",
+            "unity.web_searcher.web_searcher",
+            "unity.conductor.conductor",
+        )
+        for _m in _maybe_modules:
+            try:
+                _import_module(_m)
+            except Exception:
+                # Non-fatal: module may not exist in this build/profile
+                pass
+
+        def _all_subclasses(cls_):
+            out = set()
+            for sub in cls_.__subclasses__():
+                out.add(sub)
+                out.update(_all_subclasses(sub))
+            return out
+
+        mgr_cls = None
+        for c in _all_subclasses(_BaseStateManager):
+            if getattr(c, "__name__", "") == snap.entrypoint.class_name:
+                mgr_cls = c
+                break
+        if mgr_cls is None:
+            raise ValueError(
+                f"Manager class not found: {snap.entrypoint.class_name}",
+            )
+
+        # Instantiate manager and build tools for the target method.
+        manager = mgr_cls()
+        method_name = snap.entrypoint.method_name
+        tools = dict(manager.get_tools(method_name, include_sub_tools=True))
+        if not tools:
+            raise ValueError(
+                f"No tools registered for {snap.entrypoint.class_name}.{method_name}",
+            )
+
+        # Build a fresh LLM client and restore system header.
+        client = _new_llm_client()
+        if snap.system_message:
+            client.set_system_message(snap.system_message)
+
+        # Reconstruct minimal transcript:
+        # - optional initial user message
+        # - assistant tool-calls interleaved with any known results for those call_ids
+        msgs: list[dict] = []
+
+        init = snap.initial_user_message
+        if init is not None:
+            if isinstance(init, dict):
+                msgs.append({"role": "user", "content": init})
+            else:
+                msgs.append({"role": "user", "content": init})
+
+        # Map the last-seen tool message by call_id for quick lookup
+        by_call_id: dict[str, dict] = {}
+        for tm in snap.tool_results or []:
+            tcid = tm.get("tool_call_id")
+            if isinstance(tcid, str) and tcid:
+                by_call_id[tcid] = tm
+
+        for amsg in snap.assistant_steps or []:
+            if not isinstance(amsg, dict) or amsg.get("role") != "assistant":
+                continue
+            msgs.append(amsg)
+            for tc in amsg.get("tool_calls") or []:
+                try:
+                    tcid = tc.get("id")
+                except Exception:
+                    tcid = None
+                if isinstance(tcid, str) and tcid in by_call_id:
+                    msgs.append(by_call_id.pop(tcid))
+
+        # Any remaining tool results (rare): append at the end; backfill ignores them.
+        msgs.extend(by_call_id.values())
+
+        # Launch a new loop seeded with the reconstructed transcript.
+        loop_label = snap.loop_id or f"{snap.entrypoint.class_name}.{method_name}"
+        handle = start_async_tool_loop(
+            client,
+            msgs if msgs else (init or ""),
+            tools,
+            loop_id=loop_label,
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
+        )
+
+        return handle
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3.  A convenience wrapper that *starts* the loop and returns the handle
