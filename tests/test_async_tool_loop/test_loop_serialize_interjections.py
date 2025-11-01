@@ -180,3 +180,36 @@ async def test_interjection_between_tool_calls_preserves_ordering():
     assert asst_idx + 1 < len(msgs)
     nxt = msgs[asst_idx + 1]
     assert nxt.get("role") == "tool" and nxt.get("name") == "slow_tool"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_snapshot_includes_full_messages_dump():
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=True,
+    )
+    client.set_system_message(
+        "Always call the slow_tool exactly once and then respond with 'OK' (no extra words).",
+    )
+    # Gate the tool so it remains pending while we snapshot
+    globals()["SLOW_GATE"] = asyncio.Event()
+    handle = start_async_tool_loop(
+        client,
+        "begin",
+        tools={"slow_tool": slow_tool},
+    )
+
+    # Ensure an assistant tool-call and placeholder exist before snapshot
+    await _wait_for_tool_request(client, "slow_tool")
+    await _wait_for_tool_message_prefix(client, "slow_tool", timeout=120.0)
+
+    snap = handle.serialize()
+    assert isinstance(snap, dict)
+    assert "full_messages" in snap, "Snapshot should include full_messages dump"
+    assert isinstance(snap["full_messages"], list)
+
+    # The dump should structurally equal the current client messages at snapshot time
+    assert snap["full_messages"] == client.messages

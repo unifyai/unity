@@ -1074,6 +1074,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             clarifications=clarifications,
             notifications=notifications,
             images=images_list,
+            full_messages=msgs,
             meta={
                 "run_id": SESSION_ID,
                 "loop_created_at": str(getattr(self, "_created_at_iso", "") or ""),
