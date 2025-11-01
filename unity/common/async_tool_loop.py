@@ -3,6 +3,7 @@ import unify
 import os
 import functools
 import json
+from datetime import datetime, timezone
 from contextlib import suppress
 from typing import (
     Optional,
@@ -16,7 +17,7 @@ from typing import (
     TYPE_CHECKING,
     Literal,
 )
-from ..constants import LOGGER
+from ..constants import LOGGER, SESSION_ID
 from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
@@ -27,6 +28,7 @@ from .loop_snapshot import (
     EntryPointInlineTools as _EntryPointInlineTools,
     ToolRef as _ToolRef,
     validate_snapshot as _validate_snapshot,
+    migrate_snapshot as _migrate_snapshot,
 )
 
 if TYPE_CHECKING:
@@ -1072,6 +1074,21 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             clarifications=clarifications,
             notifications=notifications,
             images=images_list,
+            meta={
+                "run_id": SESSION_ID,
+                "loop_created_at": str(getattr(self, "_created_at_iso", "") or ""),
+                "snapshot_at": datetime.now(timezone.utc).isoformat(),
+                "assistant_context": (
+                    lambda ctx: {"read": ctx.get("read"), "write": ctx.get("write")}
+                )(
+                    unify.get_active_context() or {},
+                ),
+                "semantic_cache_namespace": getattr(
+                    self,
+                    "_semantic_cache_namespace",
+                    None,
+                ),
+            },
         ).model_dump()
 
         # Enforce v1 shape
@@ -1092,7 +1109,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
           assistant message. Missing results are scheduled via preflight backfill.
         - Returns a fresh handle whose loop resumes execution.
         """
-        snap = _validate_snapshot(snapshot)
+        snap = _validate_snapshot(_migrate_snapshot(snapshot))
 
         from importlib import import_module as _import_module  # noqa: WPS433
         from .llm_client import (
@@ -1485,6 +1502,16 @@ def start_async_tool_loop(
         loop_id=loop_id,
         initial_user_message=init_content,
     )
+
+    # Record loop creation timestamp and semantic cache namespace for diagnostics
+    try:
+        setattr(handle, "_created_at_iso", datetime.now(timezone.utc).isoformat())
+    except Exception:
+        pass
+    try:
+        setattr(handle, "_semantic_cache_namespace", semantic_cache_namespace)
+    except Exception:
+        pass
 
     # Capture an inline tools registry snapshot for potential serialization
     # of non-manager loops. We record import paths and flags for resolvable
