@@ -1145,6 +1145,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     if snap.get("meta") is None:
                         snap["meta"] = {}
                     snap["meta"]["children"] = children
+                    try:
+                        LOGGER.info(
+                            f"🧩 Snapshot captured {len(children)} in-flight child loop(s)",
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -1453,6 +1459,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             images=images_param,
             resume_children=_resume_children_payload or None,
         )
+
+        # Diagnostics: log adopted children count
+        try:
+            if _resume_children_payload:
+                LOGGER.info(
+                    f"🔁 Resuming with {len(_resume_children_payload)} in-flight child loop(s)",
+                )
+        except Exception:
+            pass
 
         # If the last interjection occurred *after* the last assistant message,
         # request an immediate LLM turn without duplicating the interjection message.
