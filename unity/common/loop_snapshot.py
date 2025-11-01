@@ -76,6 +76,12 @@ class LoopSnapshot(BaseModel):
     # Each entry captures the call_id, the base tool name and the question text
     clarifications: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Optional: pending notifications at snapshot time (flat replay only)
+    # Each entry mirrors the user-facing event payload placed on the handle's
+    # notification queue, typically including keys: {"type": "notification",
+    # "tool_name": str, "call_id": str, ...additional fields...}
+    notifications: List[Dict[str, Any]] = Field(default_factory=list)
+
     # Reserved extension points for future versions
     options: Optional[Dict[str, Any]] = None
     env: Optional[Dict[str, Any]] = None
