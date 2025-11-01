@@ -91,6 +91,9 @@ class LoopSnapshot(BaseModel):
     # "tool_name": str, "call_id": str, ...additional fields...}
     notifications: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Snapshot of live images context (list of {image_id, annotation})
+    images: List[Dict[str, Any]] = Field(default_factory=list)
+
     # Reserved extension points for future versions
     options: Optional[Dict[str, Any]] = None
     env: Optional[Dict[str, Any]] = None
