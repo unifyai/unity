@@ -742,13 +742,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         *,
         store: Optional[Callable[[dict], str]] = None,
     ) -> dict:  # type: ignore[override]
-        """Return a v1 snapshot of this handle's current state (flat only).
+        """Return a v1 snapshot of this handle's current state.
 
         Behaviour (v1):
         - Proactively cancels the running loop to quiesce any in‑flight LLM/tool work.
-        - Snapshot is built from the current transcript; any previously pending
-          tool calls will need to be re‑scheduled by a future deserialization.
-        - Nested tool loops are not supported and will raise ValueError.
+        - Builds the snapshot from the current transcript; any previously pending
+          tool calls will be re‑scheduled by deserialization via preflight backfill.
+        - When ``recursive=False`` (default), nested tool loops are not supported
+          and a ``ValueError`` is raised if any are detected.
+        - When ``recursive=True``, in‑flight nested child handles are captured into
+          ``meta.children``. For each child, an inline ``snapshot`` is embedded or a
+          ``ref.path`` is written using the optional ``store`` callback.
         """
         # Guard / discovery for nested tool loops. When recursive=False (default),
         # nested handles are not supported and will raise a ValueError. When
