@@ -398,3 +398,105 @@ async def test_nested_serialize_inline_resume_three_levels():
         m for m in msgs if m.get("role") == "tool" and m.get("name") == "spawn_middle"
     ]
     assert len(outer_tool_msgs) == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Clarification inside nested child – answer via parent handle
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+async def inner_needs_clar(*, _clarification_up_q=None, _clarification_down_q=None):
+    assert _clarification_up_q is not None and _clarification_down_q is not None
+    await _clarification_up_q.put("What colour should we use?")
+    ans = await _clarification_down_q.get()
+    return f"ACK: {ans}"
+
+
+async def outer_clar_tool() -> AsyncToolLoopHandle:
+    """Spawn an inner loop that requests a clarification and returns its result only."""
+    inner_client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=True,
+    )
+    inner_client.set_system_message(
+        "You are in a nested clarification test.\n"
+        "Call `inner_needs_clar` exactly once and then reply with the result only.",
+    )
+    return start_async_tool_loop(
+        inner_client,
+        "start",
+        tools={"inner_needs_clar": inner_needs_clar},
+        timeout=180,
+    )
+
+
+def _outer_client_clar():
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=True,
+    )
+    client.set_system_message(
+        "You are the outer loop.\n"
+        "1) Call `outer_clar_tool`.\n"
+        "2) Continue running it until finished.\n"
+        "3) Respond exactly 'all done'.",
+    )
+    return client
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_nested_child_clarification_serialize_resume_and_answer():
+    """Child asks for clarification; snapshot recursively; resume and answer via parent handle."""
+
+    client = _outer_client_clar()
+    handle = start_async_tool_loop(
+        client,
+        "begin",
+        tools={"outer_clar_tool": outer_clar_tool},
+        timeout=300,
+    )
+
+    # Ensure the outer tool is requested and placeholder exists
+    await _wait_for_tool_request(client, "outer_clar_tool")
+    await _wait_for_tool_message_prefix(client, "outer_clar_tool", timeout=180.0)
+
+    # Ensure the inner loop has already requested the clarification tool
+    await _wait_for_assistant_tool_calls(["inner_needs_clar"], timeout=180.0)
+
+    # Snapshot recursively so the child's clarifications are captured inline
+    snap = handle.serialize(recursive=True)
+    meta = snap.get("meta") or {}
+    children = meta.get("children") or []
+    assert isinstance(children, list) and len(children) >= 1
+
+    # The in‑flight child should include a clarifications summary in its snapshot
+    child = children[0]
+    assert isinstance(child, dict)
+    outer_call_id = child.get("call_id")
+    assert isinstance(outer_call_id, str) and len(outer_call_id) > 0
+    ch_snap = child.get("snapshot") or {}
+    if isinstance(ch_snap, dict):
+        clars = ch_snap.get("clarifications") or []
+        assert isinstance(clars, list) and len(clars) >= 1
+
+    # Resume and answer the clarification via the parent handle using the OUTER call_id
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+    await resumed.answer_clarification(outer_call_id, "Blue")
+    out = await resumed.result()
+    assert out.strip().lower() == "all done"
+
+    # Ensure the outer tool result reflects the clarified answer (and appears once)
+    msgs = resumed.get_history()
+    outer_msgs = [
+        m
+        for m in msgs
+        if m.get("role") == "tool" and m.get("name") == "outer_clar_tool"
+    ]
+    assert (
+        len(outer_msgs) == 1 and "blue" in str(outer_msgs[0].get("content", "")).lower()
+    )
