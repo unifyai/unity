@@ -769,15 +769,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "Nested tool loops are not supported by v1 snapshot",
                     )
 
-        # Best-effort quiesce: cancel the outer loop if still running. We do not
-        # await completion here (serialize is synchronous); inner loop will abort
-        # promptly and no further tool results should be appended.
-        try:
-            if not self.done():
-                # Leverage standard stop semantics (sets cancel_event and cancels task)
-                self.stop(reason="serialize snapshot")
-        except Exception:
-            pass
+        # NOTE: We intentionally defer quiescing (stop) until AFTER we've captured
+        # the current transcript and, when recursive=True, gathered child snapshots.
+        # Stopping too early can cancel nested handles before they are recorded.
 
         # Resolve entrypoint candidate from loop_id label (e.g., "ContactManager.ask" or
         # "ContactManager.ask(x2ab)")
@@ -1157,6 +1151,13 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         pass
             except Exception:
                 pass
+
+        # Best-effort quiesce: cancel the loop after snapshotting to avoid races on resume.
+        try:
+            if not self.done():
+                self.stop(reason="serialize snapshot")
+        except Exception:
+            pass
 
         _validate_snapshot(snap)
         return snap
