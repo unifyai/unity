@@ -21,6 +21,11 @@ from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.loop import async_tool_loop_inner
+from .loop_snapshot import (
+    LoopSnapshot as _LoopSnapshot,
+    EntryPointManagerMethod as _EntryPointManagerMethod,
+    validate_snapshot as _validate_snapshot,
+)
 
 if TYPE_CHECKING:
     from ..image_manager.types.image_refs import ImageRefs
@@ -144,6 +149,24 @@ class SteerableToolHandle(SteerableHandle):
         This looks up the down-queue for the given call and pushes the answer.
         Falls through silently if the mapping is missing (tool may have finished).
         """
+
+    # --- snapshotting (skeleton; non-abstract stubs in v1) -----------------
+    def serialize(self) -> dict:
+        """Return a serializable snapshot of this handle's state (stub).
+
+        This is a non-abstract stub in v1 to avoid breaking existing subclasses.
+        A concrete implementation will be provided for the main async tool loop
+        handle in a subsequent step.
+        """
+        raise NotImplementedError("serialize() is not implemented yet")
+
+    @classmethod
+    def deserialize(cls, snapshot: dict) -> "SteerableToolHandle":
+        """Recreate a handle from a serialized snapshot (stub).
+
+        This classmethod is a stub in v1 and will be implemented incrementally.
+        """
+        raise NotImplementedError("deserialize() is not implemented yet")
 
     def get_history(self) -> list[dict]:
         """Returns the conversational history of the loop.
@@ -702,6 +725,80 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         with suppress(Exception):
             if down_q is not None:
                 await down_q.put(answer)
+
+    # --- snapshotting v1: read-only capture (flat only) ---------------------
+    def serialize(self) -> dict:  # type: ignore[override]
+        """Return a v1 snapshot of this handle's current state (flat only).
+
+        - Does not kill in-flight work (read-only capture).
+        - Nested tool loops are not supported in v1 and will raise ValueError.
+        """
+        # Guard: nested tool loops are out of scope for v1
+        with suppress(Exception):
+            task_info = getattr(self._task, "task_info", {})
+            if isinstance(task_info, dict):
+                for _t, _inf in task_info.items():
+                    if getattr(_inf, "handle", None) is not None:
+                        raise ValueError(
+                            "Nested tool loops are not supported by v1 snapshot",
+                        )
+
+        # Resolve entrypoint from loop_id label (e.g., "ContactManager.ask" or
+        # "ContactManager.ask(x2ab)")
+        raw_label = str(getattr(self, "_log_label", None) or self._loop_id or "")
+        base = raw_label.split("(", 1)[0]
+        if "." not in base or not base:
+            raise ValueError(
+                "Unable to derive entrypoint from loop_id; v1 supports manager_method only",
+            )
+        cls_name, meth_name = base.split(".", 1)
+        entry = _EntryPointManagerMethod(class_name=cls_name, method_name=meth_name)
+
+        # Gather transcript fragments
+        msgs = []
+        try:
+            msgs = list(getattr(self._client, "messages", []) or [])
+        except Exception:
+            msgs = []
+
+        assistant_steps = []
+        tool_results = []
+        for m in msgs:
+            try:
+                role = m.get("role")
+            except Exception:
+                continue
+            if role == "assistant":
+                tc = m.get("tool_calls")
+                if isinstance(tc, list) and len(tc) > 0:
+                    assistant_steps.append(m)
+            elif role == "tool":
+                tool_results.append(m)
+
+        # Extract initial user message as recorded for the handle
+        initial_user_message = None
+        with suppress(Exception):
+            if self._user_visible_history:
+                first = self._user_visible_history[0]
+                if first.get("role") == "user":
+                    initial_user_message = first.get("content")
+
+        system_message = None
+        with suppress(Exception):
+            system_message = getattr(self._client, "system_message", None)
+
+        snap = _LoopSnapshot(
+            entrypoint=entry,
+            loop_id=str(self._loop_id or ""),
+            system_message=system_message,
+            initial_user_message=initial_user_message,
+            assistant_steps=assistant_steps,
+            tool_results=tool_results,
+        ).model_dump()
+
+        # Enforce v1 shape
+        _validate_snapshot(snap)
+        return snap
 
 
 # ─────────────────────────────────────────────────────────────────────────────
