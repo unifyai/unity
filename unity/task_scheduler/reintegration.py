@@ -14,6 +14,8 @@ from typing import Any, Dict, Optional, Callable
 
 import unify
 
+from unity.common.tool_outcome import ToolOutcome
+
 from .types.status import Status
 from typing import TYPE_CHECKING
 
@@ -49,7 +51,7 @@ class ReintegrationManager:
             return False
         return self._s._to_status(rows[0].status) not in self._s._TERMINAL_STATUSES
 
-    def apply(self, *, task_id: int, allow_active: bool = False) -> Dict[str, str]:
+    def apply(self, *, task_id: int, allow_active: bool = False) -> ToolOutcome:
         # Locate plan (prefer non-terminal instance)
         rows = self._s._filter_tasks(filter=f"task_id == {task_id}", limit=10)
         live = [

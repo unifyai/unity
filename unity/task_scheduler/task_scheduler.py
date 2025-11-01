@@ -1985,8 +1985,7 @@ class TaskScheduler(BaseTaskScheduler):
         rows = [
             r
             for r in self._filter_tasks()
-            if r.schedule is not None
-            and self._to_status(r.status) not in self._TERMINAL_STATUSES
+            if r.schedule is not None and r.status not in self._TERMINAL_STATUSES
         ]
 
         # Single-pass index for constant-time next lookups within this tool call
@@ -2337,7 +2336,7 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             member_ids = []
 
-        in_queue_rows: list[TaskBase] | None = None
+        in_queue_rows: list[Task] | None = None
         if not member_ids:
             # Single filtered read of runnable rows in this queue
             if isinstance(queue_id, int):
@@ -2359,7 +2358,7 @@ class TaskScheduler(BaseTaskScheduler):
                     for r in all_rows
                     if r.schedule is not None
                     and r.queue_id == queue_id
-                    and self._to_status(r.status) not in self._TERMINAL_STATUSES
+                    and r.status not in self._TERMINAL_STATUSES
                 ]
             member_ids = [int(r.task_id) for r in (in_queue_rows or [])]
 
@@ -2953,16 +2952,17 @@ class TaskScheduler(BaseTaskScheduler):
 
         # 2) Single read for all target rows
         rows = self._filter_tasks(filter=f"task_id in {list(by_id.keys())}")
-        ids_found = {r.get("task_id") for r in rows}
+        ids_found = {r.task_id for r in rows}
         missing = [tid for tid in by_id.keys() if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
         for r in rows:
-            st = self._to_status(r.get("status"))
-            assert st not in self._TERMINAL_STATUSES, f"Task {r['task_id']} is terminal"
+            assert (
+                r.status not in self._TERMINAL_STATUSES
+            ), f"Task {r.task_id} is terminal"
         self._ensure_not_active_task(list(by_id.keys()))
 
         # Local map for quick access to current rows
-        rows_by_id: Dict[int, Dict[str, Any]] = {int(r.get("task_id")): r for r in rows}
+        rows_by_id: Dict[int, Task] = {r.task_id: r for r in rows}
 
         # 3) Precompute any top-level queue_id provided in the payload (once)
         provided_qid: Dict[int, Optional[int]] = {}
@@ -2990,10 +2990,7 @@ class TaskScheduler(BaseTaskScheduler):
                 filter=f"task_id in {list(external_neighbours)}",
             )
             for r in ext_rows:
-                try:
-                    rows_by_id[int(r.get("task_id"))] = r
-                except Exception:
-                    continue
+                rows_by_id[r.task_id] = r
 
         # 5) Build a queue_id lookup covering targets + any external neighbours
         qid_for_tid: Dict[int, Optional[int]] = {}
@@ -3002,7 +2999,7 @@ class TaskScheduler(BaseTaskScheduler):
                 qid_for_tid[tid] = provided_qid.get(tid)
             else:
                 row = rows_by_id.get(tid)
-                qid_for_tid[tid] = row.get("queue_id") if row else None
+                qid_for_tid[tid] = row.queue_id if row else None
 
         # 6) Cross-queue guard using only the prefetched state
         graph: Dict[int, List[int]] = {tid: [] for tid in by_id.keys()}
@@ -3050,7 +3047,7 @@ class TaskScheduler(BaseTaskScheduler):
             head_has_start_at = sch.get("start_at") is not None
 
             row = rows_by_id.get(int(tid))
-            existing_status = row.get("status") if row else Status.queued
+            existing_status = row.status if row else Status.queued
             desired_status = derive_status_after_queue_edit(
                 existing_status=existing_status,
                 is_head=is_head,
@@ -3062,7 +3059,7 @@ class TaskScheduler(BaseTaskScheduler):
 
             top_qid = provided_qid.get(int(tid))
             if top_qid is None:
-                top_qid = row.get("queue_id") if row else None
+                top_qid = row.queue_id if row else None
 
             entries = {
                 "schedule": sch,
@@ -3406,7 +3403,7 @@ class TaskScheduler(BaseTaskScheduler):
 
                 # Batch-resolve neighbour queue ids in a single read
                 neighbour_ids = [int(t) for t in (prev_tid, next_tid) if t is not None]
-                rows_by_id: Dict[int, Dict[str, Any]] = {}
+                rows_by_id: Dict[int, Task] = {}
                 if neighbour_ids:
                     try:
                         rows = self._filter_tasks(
@@ -3415,10 +3412,7 @@ class TaskScheduler(BaseTaskScheduler):
                     except Exception:
                         rows = []
                     for r in rows:
-                        try:
-                            rows_by_id[int(r.task_id)] = r
-                        except Exception:
-                            continue
+                        rows_by_id[r.task_id] = r
 
                 # Only enforce when linkage exists
                 for _nbr, _tid in (("prev_task", prev_tid), ("next_task", next_tid)):
@@ -3530,7 +3524,7 @@ class TaskScheduler(BaseTaskScheduler):
         rows = self._filter_tasks(filter=f"task_id == {task_id}", limit=1)
         row = rows[0] if rows else None
         # Only cache when the referenced row is actually in 'primed' state
-        if row is not None and self._to_status(row.status) == Status.primed:
+        if row is not None and row.status == Status.primed:
             self._primed_task = row
         else:
             self._primed_task = None
