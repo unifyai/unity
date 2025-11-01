@@ -4359,10 +4359,6 @@ class TaskScheduler(BaseTaskScheduler):
             if isinstance(name, str) and name.startswith("_")
         ]
 
-        exclude_fields.append(
-            "activated_by",
-        )  # TODO: Temporary fix, activated_by should be supported with any status.
-
         rows = self._view.get_entries(
             filter=normalized_filter,
             offset=offset,

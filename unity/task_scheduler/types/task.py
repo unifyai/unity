@@ -95,10 +95,10 @@ class TaskBase(BaseModel):
 
         # `activated_by` may only be present once the task is actually active
         # TODO: activated_by should be supported with any status. This should be removed.
-        if self.status != Status.active and self.activated_by is not None:
-            raise ValueError(
-                "`activated_by` may only be set when status is 'active'",
-            )
+        # if self.status != Status.active and self.activated_by is not None:
+        #     raise ValueError(
+        #         "`activated_by` may only be set when status is 'active'",
+        #     )
 
         return self
 
