@@ -21,6 +21,7 @@ from ..constants import LOGGER, SESSION_ID
 from .llm_helpers import short_id
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
+from ._async_tool.messages import is_non_final_tool_reply as _is_non_final_tool_reply
 from ._async_tool.loop import async_tool_loop_inner
 from .loop_snapshot import (
     LoopSnapshot as _LoopSnapshot,
@@ -1288,6 +1289,45 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # - assistant tool-calls interleaved with any known results for those call_ids
         msgs: list[dict] = []
 
+        # Detect pending base-tool call_ids from snapshot so we can strip non-final placeholders
+        # and let preflight backfill re-schedule them after resume.
+
+        assistant_call_ids: set[str] = set()
+        try:
+            for am in snap.assistant_steps or []:
+                for tc in am.get("tool_calls", []) or []:
+                    try:
+                        _cid = tc.get("id")
+                        if isinstance(_cid, str) and _cid:
+                            assistant_call_ids.add(_cid)
+                    except Exception:
+                        continue
+        except Exception:
+            assistant_call_ids = set()
+
+        final_call_ids: set[str] = set()
+        try:
+            for tm in snap.tool_results or []:
+                try:
+                    _cid = tm.get("tool_call_id")
+                except Exception:
+                    _cid = None
+                if not isinstance(_cid, str) or not _cid:
+                    continue
+                if _cid not in assistant_call_ids:
+                    continue
+                # Only treat as final when not a placeholder/progress/clarification wrapper
+                if not _is_non_final_tool_reply(tm):
+                    final_call_ids.add(_cid)
+        except Exception:
+            final_call_ids = set()
+
+        pending_call_ids: set[str] = set()
+        try:
+            pending_call_ids = assistant_call_ids - final_call_ids
+        except Exception:
+            pending_call_ids = set()
+
         init = snap.initial_user_message
         if init is not None:
             if isinstance(init, dict):
@@ -1312,7 +1352,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         combined.append((int(idx_val), amsg))
             except Exception:
                 pass
-            # Tool results with indices (skip clarification wrappers)
+            # Tool results with indices (skip clarification wrappers and any pending placeholders)
             try:
                 for idx_val, tmsg in zip(
                     snap.tool_results_indices or [],
@@ -1320,8 +1360,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 ):
                     try:
                         nm = tmsg.get("name")
+                        tcid = tmsg.get("tool_call_id")
                     except Exception:
-                        nm = None
+                        nm, tcid = None, None
+                    # Skip if this tool result corresponds to a pending base call
+                    if isinstance(tcid, str) and tcid in pending_call_ids:
+                        continue
                     if isinstance(nm, str) and nm.startswith("clarification_request_"):
                         continue
                     combined.append((int(idx_val), tmsg))
@@ -1354,6 +1398,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 if isinstance(name_val, str) and name_val.startswith(
                     "clarification_request_",
                 ):
+                    continue
+                # Skip non-final placeholders for pending calls
+                if isinstance(tcid, str) and tcid in pending_call_ids:
                     continue
                 if isinstance(tcid, str) and tcid:
                     by_call_id[tcid] = tm
