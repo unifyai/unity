@@ -32,7 +32,6 @@ from .messages import (
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
-    ToolCallMetadata,
     create_tool_call_message,
 )
 from .images import (
@@ -159,6 +158,7 @@ async def async_tool_loop_inner(
     semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
     images: "ImageRefs | None" = None,
+    resume_children: Optional[list[dict]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -701,6 +701,78 @@ async def async_tool_loop_inner(
                     client=client,
                     msg_dispatcher=_msg_dispatcher,
                 )
+
+    # Adopt any nested children provided for resume (after backfill so placeholders exist)
+    try:
+        if resume_children:
+            from .tools_utils import ToolCallMetadata  # local import to avoid cycles
+            from ..llm_helpers import method_to_schema as _method_to_schema
+
+            # Build index: call_id -> (assistant_msg, tool_call, tool_idx)
+            call_index: dict[str, tuple[dict, dict, int]] = {}
+            for m in client.messages:
+                try:
+                    if m.get("role") != "assistant":
+                        continue
+                    for i, tc in enumerate(m.get("tool_calls") or []):
+                        cid = tc.get("id")
+                        if isinstance(cid, str):
+                            call_index[cid] = (m, tc, i)
+                except Exception:
+                    continue
+
+            for child in resume_children:
+                try:
+                    cid = child.get("call_id")
+                    tool_name = str(child.get("tool_name") or "")
+                    ch = child.get("handle")
+                    if not cid or not tool_name or ch is None:
+                        continue
+                    tup = call_index.get(cid)
+                    if not tup:
+                        continue
+                    amsg, tc, idx = tup
+
+                    # Compute tool schema if available
+                    schema = {}
+                    try:
+                        spec = tools_data.normalized.get(tool_name)
+                        if spec is not None:
+                            schema = _method_to_schema(spec.fn, tool_name)
+                    except Exception:
+                        schema = {}
+
+                    raw_args = "{}"
+                    try:
+                        raw_args = tc.get("function", {}).get("arguments", "{}")
+                    except Exception:
+                        raw_args = "{}"
+
+                    info = ToolCallMetadata(
+                        name=tool_name,
+                        call_id=str(cid),
+                        call_dict=tc,
+                        call_idx=int(idx),
+                        chat_context=None,
+                        assistant_msg=amsg,
+                        is_interjectable=hasattr(ch, "interject"),
+                        tool_schema=schema,
+                        llm_arguments={},
+                        raw_arguments_json=str(raw_args),
+                        is_passthrough=bool(child.get("is_passthrough", False)),
+                    )
+
+                    await tools_data.adopt_nested(
+                        info,
+                        ch,
+                        msg_dispatcher=_msg_dispatcher,
+                        assistant_meta=assistant_meta,
+                        outer_handle_container=outer_handle_container,
+                    )
+                except Exception:
+                    continue
+    except Exception:
+        pass
 
     # Helper: inject a synthetic image-overview tool call/result so the full
     # set of live images persists in the transcript (independent of tool policy).

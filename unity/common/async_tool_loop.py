@@ -1374,6 +1374,37 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             images_param = None
 
         # Launch a new loop seeded with the reconstructed transcript.
+        # Prepare resume_children payloads (if any) to adopt nested handles in-flight.
+        _resume_children_payload: list[dict] = []
+        try:
+            meta = getattr(snap, "meta", None) or {}
+            ch_list = meta.get("children") if isinstance(meta, dict) else None
+            if isinstance(ch_list, list):
+                for rec in ch_list:
+                    try:
+                        if not isinstance(rec, dict):
+                            continue
+                        if rec.get("state") != "in_flight":
+                            continue
+                        child_snap = rec.get("snapshot")
+                        if not isinstance(child_snap, dict):
+                            continue
+                        child_handle = cls.deserialize(child_snap)
+                        _resume_children_payload.append(
+                            {
+                                "call_id": rec.get("call_id"),
+                                "tool_name": rec.get("tool_name"),
+                                "is_passthrough": bool(
+                                    rec.get("is_passthrough", False),
+                                ),
+                                "handle": child_handle,
+                            },
+                        )
+                    except Exception:
+                        continue
+        except Exception:
+            _resume_children_payload = []
+
         handle = start_async_tool_loop(
             client,
             msgs if msgs else (init or ""),
@@ -1381,6 +1412,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             loop_id=loop_label,
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             images=images_param,
+            resume_children=_resume_children_payload or None,
         )
 
         # If the last interjection occurred *after* the last assistant message,
@@ -1443,6 +1475,7 @@ def start_async_tool_loop(
     semantic_cache_namespace: Optional[str] = None,
     images: Optional["ImageRefs"] = None,
     evented: Optional[bool] = None,
+    resume_children: Optional[list[dict]] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -1507,6 +1540,7 @@ def start_async_tool_loop(
                 semantic_cache=semantic_cache,
                 semantic_cache_namespace=semantic_cache_namespace,
                 images=images,
+                resume_children=resume_children,
             )
         except asyncio.CancelledError:
             raise
