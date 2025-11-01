@@ -72,6 +72,15 @@ class LoopSnapshot(BaseModel):
     assistant_steps: List[Dict[str, Any]] = Field(default_factory=list)
     tool_results: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Optional message-order indices (relative to the original client.messages)
+    # When present, these allow exact interleaving with other message types.
+    assistant_indices: List[int] = Field(default_factory=list)
+    tool_results_indices: List[int] = Field(default_factory=list)
+
+    # Interjections (system messages beyond index 0) and their original indices
+    interjections: List[Dict[str, Any]] = Field(default_factory=list)
+    interjections_indices: List[int] = Field(default_factory=list)
+
     # Optional: outstanding clarifications at snapshot time
     # Each entry captures the call_id, the base tool name and the question text
     clarifications: List[Dict[str, Any]] = Field(default_factory=list)

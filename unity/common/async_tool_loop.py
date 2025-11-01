@@ -881,8 +881,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             return pruned
 
         assistant_steps_raw: list[dict] = []
+        assistant_indices_raw: list[int] = []
         tool_results_raw: list[dict] = []
-        for m in msgs:
+        tool_results_raw_indices: list[int] = []
+        interjections: list[dict] = []
+        interjections_indices: list[int] = []
+        for i, m in enumerate(msgs):
             try:
                 role = m.get("role")
             except Exception:
@@ -891,8 +895,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 pruned = _prune_assistant_msg(m)
                 if pruned is not None:
                     assistant_steps_raw.append(pruned)
+                    assistant_indices_raw.append(i)
             elif role == "tool":
                 tool_results_raw.append(m)
+                tool_results_raw_indices.append(i)
+            elif role == "system" and i > 0:
+                # Treat any non-leading system message as an interjection
+                interjections.append(m)
+                interjections_indices.append(i)
 
         # Build the set of referenced call_ids from pruned assistant steps
         referenced_call_ids: set[str] = set()
@@ -932,6 +942,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             last_index_by_call_id[call_id] = idx
 
         tool_results: list[dict] = []
+        tool_results_indices: list[int] = []
         for idx, tm in enumerate(tool_results_raw):
             try:
                 call_id = tm.get("tool_call_id")
@@ -943,6 +954,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 and last_index_by_call_id[call_id] == idx
             ):
                 tool_results.append(tm)
+                try:
+                    tool_results_indices.append(tool_results_raw_indices[idx])
+                except Exception:
+                    tool_results_indices.append(-1)
 
         assistant_steps = assistant_steps_raw
 
@@ -1017,6 +1032,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             initial_user_message=initial_user_message,
             assistant_steps=assistant_steps,
             tool_results=tool_results,
+            assistant_indices=assistant_indices_raw,
+            tool_results_indices=tool_results_indices,
+            interjections=interjections,
+            interjections_indices=interjections_indices,
             clarifications=clarifications,
             notifications=notifications,
         ).model_dump()
@@ -1145,38 +1164,83 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             else:
                 msgs.append({"role": "user", "content": init})
 
-        # Map the last-seen tool message by call_id for quick lookup, but DO NOT
-        # treat clarification_request_* messages as replies for the base call.
-        # This ensures preflight backfill still schedules the original tool call.
-        by_call_id: dict[str, dict] = {}
-        for tm in snap.tool_results or []:
+        # If indices are present, reconstruct exact ordering across assistants, tools, and interjections.
+        if (
+            snap.assistant_indices
+            or snap.tool_results_indices
+            or snap.interjections_indices
+        ):
+            combined: list[tuple[int, dict]] = []
+            # Assistant messages with indices
             try:
-                name_val = tm.get("name")
-                tcid = tm.get("tool_call_id")
+                for idx_val, amsg in zip(
+                    snap.assistant_indices or [],
+                    snap.assistant_steps or [],
+                ):
+                    if isinstance(amsg, dict) and amsg.get("role") == "assistant":
+                        combined.append((int(idx_val), amsg))
             except Exception:
-                name_val, tcid = None, None
-            # Skip clarification-request wrappers
-            if isinstance(name_val, str) and name_val.startswith(
-                "clarification_request_",
-            ):
-                continue
-            if isinstance(tcid, str) and tcid:
-                by_call_id[tcid] = tm
+                pass
+            # Tool results with indices (skip clarification wrappers)
+            try:
+                for idx_val, tmsg in zip(
+                    snap.tool_results_indices or [],
+                    snap.tool_results or [],
+                ):
+                    try:
+                        nm = tmsg.get("name")
+                    except Exception:
+                        nm = None
+                    if isinstance(nm, str) and nm.startswith("clarification_request_"):
+                        continue
+                    combined.append((int(idx_val), tmsg))
+            except Exception:
+                pass
+            # Interjections with indices
+            try:
+                for idx_val, imsg in zip(
+                    snap.interjections_indices or [],
+                    snap.interjections or [],
+                ):
+                    if isinstance(imsg, dict) and imsg.get("role") == "system":
+                        combined.append((int(idx_val), imsg))
+            except Exception:
+                pass
 
-        for amsg in snap.assistant_steps or []:
-            if not isinstance(amsg, dict) or amsg.get("role") != "assistant":
-                continue
-            msgs.append(amsg)
-            for tc in amsg.get("tool_calls") or []:
+            # Sort by original index and append in order
+            for _, m in sorted(combined, key=lambda x: x[0]):
+                msgs.append(m)
+        else:
+            # Backward-compat path: pair tool results by call_id after each assistant
+            by_call_id: dict[str, dict] = {}
+            for tm in snap.tool_results or []:
                 try:
-                    tcid = tc.get("id")
+                    name_val = tm.get("name")
+                    tcid = tm.get("tool_call_id")
                 except Exception:
-                    tcid = None
-                if isinstance(tcid, str) and tcid in by_call_id:
-                    msgs.append(by_call_id.pop(tcid))
+                    name_val, tcid = None, None
+                # Skip clarification-request wrappers
+                if isinstance(name_val, str) and name_val.startswith(
+                    "clarification_request_",
+                ):
+                    continue
+                if isinstance(tcid, str) and tcid:
+                    by_call_id[tcid] = tm
 
-        # Any remaining tool results (rare): append at the end; backfill ignores them.
-        msgs.extend(by_call_id.values())
+            for amsg in snap.assistant_steps or []:
+                if not isinstance(amsg, dict) or amsg.get("role") != "assistant":
+                    continue
+                msgs.append(amsg)
+                for tc in amsg.get("tool_calls") or []:
+                    try:
+                        tcid = tc.get("id")
+                    except Exception:
+                        tcid = None
+                    if isinstance(tcid, str) and tcid in by_call_id:
+                        msgs.append(by_call_id.pop(tcid))
+
+            # Any remaining tool results (rare): append at the end; backfill ignores them.
+            msgs.extend(by_call_id.values())
 
         # Launch a new loop seeded with the reconstructed transcript.
         handle = start_async_tool_loop(
@@ -1186,6 +1250,21 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             loop_id=loop_label,
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
         )
+
+        # If the last interjection occurred *after* the last assistant message,
+        # request an immediate LLM turn without duplicating the interjection message.
+        try:
+            ai = snap.assistant_indices or []
+            ii = snap.interjections_indices or []
+            if ai or ii:
+                last_asst = max(ai) if ai else -1
+                last_intr = max(ii) if ii else -1
+                if last_intr > last_asst:
+                    # Queue a sentinel for the inner loop to set llm_turn_required
+                    with suppress(Exception):
+                        handle._queue.put_nowait({"_replay": True})  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         # Re-inject any pending notifications captured at snapshot time so
         # callers can consume them immediately after resume.

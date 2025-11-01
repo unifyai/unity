@@ -1068,6 +1068,14 @@ async def async_tool_loop_inner(
                     break
 
                 llm_turn_required = True
+                # Special sentinel: request immediate LLM turn without creating a new system message
+                try:
+                    if isinstance(extra, dict) and extra.get("_replay"):
+                        # Do not append any message; just grant the next LLM turn
+                        # and proceed. This preserves transcript fidelity after resume.
+                        continue
+                except Exception:
+                    pass
                 # Build system message based on the user-visible history stored on the outer handle.
                 history_lines: list[str] = []
                 try:

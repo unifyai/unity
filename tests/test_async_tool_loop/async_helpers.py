@@ -1,6 +1,6 @@
-import asyncio
 from typing import List
 import unify
+import asyncio
 
 # --------------------------------------------------------------------------- #
 #  ASYNC TOOL LOOP – TEST HELPERS                                             #
@@ -279,3 +279,47 @@ def first_tool_message_by_name(msgs: List[dict], name: str) -> dict:
         if m.get("role") == "tool" and m.get("name") == name:
             return m
     raise AssertionError(f"No tool message found with name: {name}")
+
+
+# --------------------------------------------------------------------------- #
+#  EVENT-BASED WAIT HELPERS (no polling)                                       #
+# --------------------------------------------------------------------------- #
+
+
+@unify.traced
+async def _wait_for_system_interjection_event(
+    *,
+    contains: str | None = None,
+    timeout: float = 300.0,
+):
+    """Await the next ToolLoop event whose message is a non-leading system interjection.
+
+    We subscribe to the EventBus and trigger on the first matching event after registration.
+    """
+    from unity.events.event_bus import EVENT_BUS
+
+    done: asyncio.Event = asyncio.Event()
+
+    # Build a safe filter expression evaluated against evt.model_dump() namespace
+    # Payload shape published by LoopMessageDispatcher.to_event_bus: {"message": <dict>, ...}
+    base = "(payload['message'].get('role') == 'system')"
+    if contains is not None:
+        # substring match in content without relying on builtins
+        sub = contains.replace("'", "\\'")
+        base += f" and ('{sub}' in (payload['message'].get('content') or ''))"
+
+    async def _cb(_events):  # noqa: D401 – small event marker
+        try:
+            done.set()
+        except Exception:
+            pass
+
+    # Register a count-based trigger so only the next matching event fires
+    await EVENT_BUS.register_callback(
+        event_type="ToolLoop",
+        callback=_cb,
+        filter=base,
+        every_n=1,
+    )
+
+    await asyncio.wait_for(done.wait(), timeout=timeout)
