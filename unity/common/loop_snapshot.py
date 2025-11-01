@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Literal, Union
 
 from pydantic import BaseModel, Field, ValidationError
+from pydantic import model_validator
 
 
 class EntryPointManagerMethod(BaseModel):
@@ -41,6 +42,68 @@ class EntryPointInlineTools(BaseModel):
 
     type: Literal["inline_tools"] = "inline_tools"
     tools: List[ToolRef]
+
+
+class ChildSnapshot(BaseModel):
+    """Schema for a nested child loop snapshot reference (v1).
+
+    Fields
+    ------
+    call_id : str
+        The assistant tool_call id for the child tool invocation.
+    tool_name : str
+        The base tool name as exposed in the parent loop's tool registry.
+    is_passthrough : bool
+        Whether the child handle should be wired for passthrough steering.
+    state : Literal["in_flight", "done"]
+        Indicates whether the child was still running at snapshot time.
+    snapshot : dict | None
+        Inline child snapshot (required when state=="in_flight" if no ref is provided).
+    ref : {"path": str} | None
+        By-reference child snapshot location (required when state=="in_flight" if no inline snapshot is provided).
+    """
+
+    call_id: str
+    tool_name: str
+    is_passthrough: bool = False
+    state: Literal["in_flight", "done"]
+    snapshot: Optional[Dict[str, Any]] = None
+    ref: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _validate_child(self):  # type: ignore[override]
+        # Required identifiers
+        if not isinstance(self.call_id, str) or not self.call_id:
+            raise ValueError("child.call_id must be a non-empty string")
+        if not isinstance(self.tool_name, str) or not self.tool_name:
+            raise ValueError("child.tool_name must be a non-empty string")
+
+        # State-dependent payload rules
+        if self.state == "in_flight":
+            has_inline = isinstance(self.snapshot, dict) and len(self.snapshot) >= 1
+            has_ref = (
+                isinstance(self.ref, dict)
+                and isinstance(
+                    self.ref.get("path"),
+                    str,
+                )
+                and bool(self.ref.get("path"))
+            )
+            if has_inline and has_ref:
+                raise ValueError(
+                    "child(in_flight) must provide either inline snapshot or ref.path, not both",
+                )
+            if not (has_inline or has_ref):
+                raise ValueError(
+                    "child(in_flight) requires inline snapshot or ref.path",
+                )
+        elif self.state == "done":
+            if self.snapshot is not None or self.ref is not None:
+                raise ValueError(
+                    "child(done) must not provide snapshot or ref",
+                )
+
+        return self
 
 
 class LoopSnapshot(BaseModel):
@@ -135,6 +198,24 @@ def validate_snapshot(snapshot: Dict[str, Any]) -> LoopSnapshot:
             if not t.name or not t.module or not t.qualname:
                 raise ValueError("Inline tool refs must include name, module, qualname")
 
+    # Validate nested children manifest (when provided under meta.children)
+    try:
+        meta = snap.meta or {}
+        children = meta.get("children") if isinstance(meta, dict) else None
+        if children is not None:
+            if not isinstance(children, list):
+                raise ValueError("meta.children must be a list when provided")
+            for idx, child in enumerate(children):
+                try:
+                    ChildSnapshot.model_validate(child)
+                except ValidationError as exc:
+                    raise ValueError(
+                        f"Invalid child snapshot at index {idx}",
+                    ) from exc
+    except Exception:
+        # Re-raise ValueErrors from our checks; ignore others defensively
+        raise
+
     return snap
 
 
@@ -177,6 +258,7 @@ __all__ = (
     "EntryPointManagerMethod",
     "EntryPointInlineTools",
     "ToolRef",
+    "ChildSnapshot",
     "LoopSnapshot",
     "validate_snapshot",
     "migrate_snapshot",
