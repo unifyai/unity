@@ -18,6 +18,43 @@ from .images import append_image_refs_with_source
 
 # Helper: scan transcript for assistant messages that have tool_calls with
 # missing tool replies (before the next assistant message).
+PENDING_PLACEHOLDER_TEXT = "Pending… tool call accepted. Working on it."
+
+
+def is_non_final_tool_reply(msg: dict) -> bool:
+    """Return True when a tool message looks like a placeholder/progress, not a final result.
+
+    Heuristics:
+    - Clarification wrappers (name startswith "clarification_request_") are non-final.
+    - Exact pending placeholder content ("Pending… tool call accepted. Working on it.") is non-final.
+    - Progress/notification placeholders produced via serialize_tool_content(is_final=False)
+      are JSON strings that contain a top-level key named "tool" – treat these as non-final.
+    """
+    try:
+        if msg.get("role") != "tool":
+            return False
+        name = str(msg.get("name") or "")
+        if name.startswith("clarification_request_"):
+            return True
+        content = msg.get("content")
+        # Pending acknowledgement placeholder inserted on schedule
+        if isinstance(content, str) and content.strip() == PENDING_PLACEHOLDER_TEXT:
+            return True
+        # Progress/notification placeholder: JSON string with a top-level {"tool": ...}
+        if isinstance(content, str):
+            try:
+                import json as _json
+
+                parsed = _json.loads(content)
+                if isinstance(parsed, dict) and "tool" in parsed:
+                    return True
+            except Exception:
+                pass
+    except Exception:
+        return False
+    return False
+
+
 def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
     findings: list[dict] = []
     try:
@@ -39,7 +76,8 @@ def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
                 mm = client.messages[j]
                 if mm.get("role") == "tool":
                     tcid = mm.get("tool_call_id")
-                    if tcid in ids:
+                    # Count as responded only when the tool reply looks **final**.
+                    if tcid in ids and not is_non_final_tool_reply(mm):
                         responded.add(tcid)
                 j += 1
             missing = [c for c in ids if c not in responded]
@@ -470,11 +508,7 @@ async def ensure_placeholders_for_pending(
     msg_dispatcher,
 ) -> list[str]:
     created: list[str] = []
-    placeholder_content = (
-        content
-        if content is not None
-        else "Pending… tool call accepted. Working on it."
-    )
+    placeholder_content = content if content is not None else PENDING_PLACEHOLDER_TEXT
     for task in list(tools_data.pending):
         _inf = tools_data.info.get(task)
         if not _inf:

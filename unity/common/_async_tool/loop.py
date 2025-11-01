@@ -29,6 +29,7 @@ from .messages import (
     find_unreplied_assistant_entries,
     chat_context_repr,
     generate_with_preprocess,
+    PENDING_PLACEHOLDER_TEXT,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -684,6 +685,20 @@ async def async_tool_loop_inner(
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
+        # If resuming with children, do not re-schedule those call_ids; they'll be adopted below
+        resume_children_call_ids: set[str] = set()
+        try:
+            if resume_children:
+                for _rec in resume_children:
+                    try:
+                        _cid = _rec.get("call_id")
+                        if isinstance(_cid, str) and _cid:
+                            resume_children_call_ids.add(_cid)
+                    except Exception:
+                        continue
+        except Exception:
+            resume_children_call_ids = set()
+
         unreplied = find_unreplied_assistant_entries(client)
         if unreplied:
             # backfill for all such assistant messages (oldest → newest)
@@ -691,7 +706,10 @@ async def async_tool_loop_inner(
                 amsg = entry["assistant_msg"]
                 # Before scheduling, drop any over-quota tool calls in this message
                 tools_data.prune_over_quota_tool_calls(amsg)
-                missing_ids = set(entry["missing"])
+                # Exclude any call_ids that will be adopted as resume_children
+                missing_ids = set(entry["missing"]) - resume_children_call_ids
+                if not missing_ids:
+                    continue
                 await schedule_missing_for_message(
                     amsg,
                     missing_ids,
@@ -2397,7 +2415,7 @@ async def async_tool_loop_inner(
                 try:
                     await ensure_placeholders_for_pending(
                         assistant_msg=msg,
-                        content="Pending… tool call accepted. Working on it.",
+                        content=PENDING_PLACEHOLDER_TEXT,
                         tools_data=tools_data,
                         assistant_meta=assistant_meta,
                         client=client,
