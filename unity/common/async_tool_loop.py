@@ -870,7 +870,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     continue
                 # If we know the allowed tool set, enforce it
                 if allowed_tool_names is not None and name not in allowed_tool_names:
-                    continue
+                    # Exception: persist clarification helpers even if not part of base registry
+                    if name != "request_clarification":
+                        continue
                 kept.append(tc)
             if not kept:
                 return None
@@ -920,7 +922,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             if call_id not in referenced_call_ids:
                 continue
             if allowed_tool_names is not None:
-                if not isinstance(name, str) or name not in allowed_tool_names:
+                if not isinstance(name, str) or (
+                    name not in allowed_tool_names
+                    and not str(name).startswith("clarification_request_")
+                    and name != "request_clarification"
+                ):
                     continue
             # mark last index
             last_index_by_call_id[call_id] = idx
@@ -939,6 +945,34 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 tool_results.append(tm)
 
         assistant_steps = assistant_steps_raw
+
+        # Build a clarifications summary from clarification_request_* tool messages
+        # Map call_id -> base tool name from assistant_steps for readability
+        callid_to_base_name: dict[str, str] = {}
+        for am in assistant_steps_raw:
+            for tc in am.get("tool_calls", []) or []:
+                with suppress(Exception):
+                    _cid = tc.get("id")
+                    _nm = tc.get("function", {}).get("name")
+                    if isinstance(_cid, str) and _cid and isinstance(_nm, str) and _nm:
+                        callid_to_base_name[_cid] = _nm
+
+        clarifications: list[dict] = []
+        for tm in tool_results:
+            try:
+                _nm = str(tm.get("name"))
+                _cid = str(tm.get("tool_call_id"))
+                _content = tm.get("content")
+            except Exception:
+                continue
+            if isinstance(_nm, str) and _nm.startswith("clarification_request_"):
+                clarifications.append(
+                    {
+                        "call_id": _cid,
+                        "tool_name": callid_to_base_name.get(_cid, ""),
+                        "question": _content,
+                    },
+                )
 
         # Extract initial user message as recorded for the handle
         initial_user_message = None
@@ -970,6 +1004,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             initial_user_message=initial_user_message,
             assistant_steps=assistant_steps,
             tool_results=tool_results,
+            clarifications=clarifications,
         ).model_dump()
 
         # Enforce v1 shape
@@ -1096,10 +1131,21 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             else:
                 msgs.append({"role": "user", "content": init})
 
-        # Map the last-seen tool message by call_id for quick lookup
+        # Map the last-seen tool message by call_id for quick lookup, but DO NOT
+        # treat clarification_request_* messages as replies for the base call.
+        # This ensures preflight backfill still schedules the original tool call.
         by_call_id: dict[str, dict] = {}
         for tm in snap.tool_results or []:
-            tcid = tm.get("tool_call_id")
+            try:
+                name_val = tm.get("name")
+                tcid = tm.get("tool_call_id")
+            except Exception:
+                name_val, tcid = None, None
+            # Skip clarification-request wrappers
+            if isinstance(name_val, str) and name_val.startswith(
+                "clarification_request_",
+            ):
+                continue
             if isinstance(tcid, str) and tcid:
                 by_call_id[tcid] = tm
 

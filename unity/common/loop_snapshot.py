@@ -72,6 +72,10 @@ class LoopSnapshot(BaseModel):
     assistant_steps: List[Dict[str, Any]] = Field(default_factory=list)
     tool_results: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Optional: outstanding clarifications at snapshot time
+    # Each entry captures the call_id, the base tool name and the question text
+    clarifications: List[Dict[str, Any]] = Field(default_factory=list)
+
     # Reserved extension points for future versions
     options: Optional[Dict[str, Any]] = None
     env: Optional[Dict[str, Any]] = None
