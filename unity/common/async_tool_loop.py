@@ -986,6 +986,19 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         with suppress(Exception):
             system_message = getattr(self._client, "system_message", None)
 
+        # Drain any pending notification events so they can be replayed post-deserialize
+        notifications: list[dict] = []
+        try:
+            while True:
+                evt = self._notification_q.get_nowait()
+                if isinstance(evt, dict):
+                    notifications.append(evt)
+        except asyncio.QueueEmpty:
+            pass
+        except Exception:
+            # Non-fatal – notifications are best-effort
+            pass
+
         # Finalise entrypoint selection
         if use_inline_entrypoint:
             entry_field = _EntryPointInlineTools(
@@ -1005,6 +1018,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             assistant_steps=assistant_steps,
             tool_results=tool_results,
             clarifications=clarifications,
+            notifications=notifications,
         ).model_dump()
 
         # Enforce v1 shape
@@ -1172,6 +1186,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             loop_id=loop_label,
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
         )
+
+        # Re-inject any pending notifications captured at snapshot time so
+        # callers can consume them immediately after resume.
+        try:
+            for evt in snap.notifications or []:
+                try:
+                    handle._notification_q.put_nowait(evt)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         return handle
 
