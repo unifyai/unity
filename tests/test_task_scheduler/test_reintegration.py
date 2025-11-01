@@ -175,9 +175,6 @@ async def test_starting_middle_detaches_and_links_neighbors():
     sa2 = row_a2.schedule
     sb2 = row_b2.schedule
     sc2 = row_c2.schedule
-    assert sa2 is not None
-    assert sb2 is not None
-    assert sc2 is not None
 
     # Head A remains head with same start_at and points to C
     assert sa2.prev_task is None
