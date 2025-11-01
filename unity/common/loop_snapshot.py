@@ -109,11 +109,13 @@ class ChildSnapshot(BaseModel):
 class LoopSnapshot(BaseModel):
     """Versioned snapshot schema for resuming a tool loop (v1).
 
-    Scope in v1 (flat-only):
+    Scope in v1:
     - Captures the minimal information needed to reconstruct the tool registry
       and re-schedule any assistant-declared tool calls that lack results.
-    - Nested handles, images, clarifications, and notifications are out of scope
-      in v1 and may be added by later versions.
+    - Optionally carries a nested children manifest under ``meta.children`` for
+      in‑flight child loops (each child may be embedded inline or referenced by
+      path). Other metadata fields (e.g., images, clarifications, notifications)
+      are supported for convenience but may be ignored by deserializers.
     """
 
     version: int = Field(default=1, ge=1)
