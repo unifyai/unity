@@ -59,8 +59,9 @@ def serialize_tool_content(
             context={"prune_empty": True, "shorthand": True},
         )
     else:
-        # Fallback: preserve plain string results exactly as returned
-        text_repr = payload
+        # Fallback: always provide a string for non-structured payloads
+        # (e.g., numbers, booleans). Preserve plain strings as-is.
+        text_repr = payload if isinstance(payload, str) else str(payload)
 
     if images:
         content_blocks: list = []
