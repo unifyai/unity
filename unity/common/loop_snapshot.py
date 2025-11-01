@@ -98,6 +98,9 @@ class LoopSnapshot(BaseModel):
     options: Optional[Dict[str, Any]] = None
     env: Optional[Dict[str, Any]] = None
 
+    # Diagnostics/metadata (v1.1+): run identifiers, timestamps, context
+    meta: Optional[Dict[str, Any]] = None
+
 
 def validate_snapshot(snapshot: Dict[str, Any]) -> LoopSnapshot:
     """Validate a loop snapshot dict and enforce v1 constraints.
@@ -128,10 +131,46 @@ def validate_snapshot(snapshot: Dict[str, Any]) -> LoopSnapshot:
     return snap
 
 
+def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a shallowly normalised snapshot dict compatible with v1.
+
+    Behaviour:
+    - If version is missing, assume 1.
+    - If entrypoint lacks a discriminant ``type`` but has ``class_name`` or
+      ``tools``, infer the appropriate type.
+    - Leave unknown fields untouched for forward-compatibility.
+    """
+
+    if not isinstance(snapshot, dict):
+        return snapshot
+
+    out = dict(snapshot)
+
+    # Default version to 1 when absent
+    if "version" not in out:
+        out["version"] = 1
+
+    # Normalise entrypoint discriminant
+    try:
+        ep = out.get("entrypoint")
+        if isinstance(ep, dict) and "type" not in ep:
+            if "class_name" in ep and "method_name" in ep:
+                ep = {"type": "manager_method", **ep}
+            elif "tools" in ep:
+                ep = {"type": "inline_tools", **ep}
+            out["entrypoint"] = ep
+    except Exception:
+        pass
+
+    # Nothing else required for v1 – meta/options/env remain optional.
+    return out
+
+
 __all__ = (
     "EntryPointManagerMethod",
     "EntryPointInlineTools",
     "ToolRef",
     "LoopSnapshot",
     "validate_snapshot",
+    "migrate_snapshot",
 )
