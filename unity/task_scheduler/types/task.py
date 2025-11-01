@@ -83,18 +83,19 @@ class TaskBase(BaseModel):
         if self.schedule is not None and self.trigger is not None:
             raise ValueError("A task cannot have both *schedule* and *trigger*.")
 
-        if self.trigger is not None and self.status != Status.triggerable:
-            raise ValueError(
-                "When *trigger* is set the status must be 'triggerable'.",
-            )
+        # TODO: These rules are a bit constraining and hide information
+        # and not necessarily replicating the backend state.
+        # if self.trigger is not None and self.status != Status.triggerable:
+        #     raise ValueError(
+        #         "When *trigger* is set the status must be 'triggerable'.",
+        #     )
 
-        if self.status == Status.triggerable and self.trigger is None:
-            raise ValueError(
-                "Status 'triggerable' requires a non-null *trigger* definition.",
-            )
+        # if self.status == Status.triggerable and self.trigger is None:
+        #     raise ValueError(
+        #         "Status 'triggerable' requires a non-null *trigger* definition.",
+        #     )
 
         # `activated_by` may only be present once the task is actually active
-        # TODO: activated_by should be supported with any status. This should be removed.
         # if self.status != Status.active and self.activated_by is not None:
         #     raise ValueError(
         #         "`activated_by` may only be set when status is 'active'",
