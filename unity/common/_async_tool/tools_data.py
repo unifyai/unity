@@ -421,118 +421,13 @@ class ToolsData:
             from unity.common.async_tool_loop import SteerableToolHandle
 
             if isinstance(raw, SteerableToolHandle):
-                # Passthrough: do NOT hand over control to the nested handle.
-                # Keep the outer loop alive. We still want to forward early
-                # interjections and synchronise pause/stop state with the
-                # newly created handle, but without adopting it as a delegate.
-                if (
-                    getattr(raw, "__passthrough__", False)
-                    and outer_handle_container
-                    and outer_handle_container[0] is not None
-                ):
-                    try:
-                        _outer = outer_handle_container[0]
-                        # Wire pause/stop state with the new handle; outer loop keeps running.
-                        # Forward any early interjections that were queued before
-                        # this passthrough handle existed. Do NOT consume the outer
-                        # buffer so that subsequent passthrough handles also receive them.
-                        _early = list(getattr(_outer, "_early_interjects", []))
-                        for _msg in _early:
-                            try:
-                                if isinstance(_msg, dict):
-                                    maybe_coro = raw.interject(  # type: ignore[attr-defined]
-                                        _msg.get("message", ""),
-                                        parent_chat_context_cont=_msg.get(
-                                            "parent_chat_context_continuted",
-                                        ),
-                                    )
-                                else:
-                                    maybe_coro = raw.interject(_msg)  # type: ignore[attr-defined]
-                                if asyncio.iscoroutine(maybe_coro):
-                                    await maybe_coro
-                            except Exception as _exc:
-                                pass
-                        # Synchronise pause/cancel signals with the new handle
-                        try:
-                            if not getattr(
-                                _outer,
-                                "_pause_event",
-                                None,
-                            ).is_set() and hasattr(raw, "pause"):
-                                raw.pause()  # type: ignore[attr-defined]
-                        except Exception:
-                            pass
-                        try:
-                            if getattr(
-                                _outer,
-                                "_cancel_event",
-                                None,
-                            ).is_set() and hasattr(raw, "stop"):
-                                maybe = raw.stop()  # type: ignore[attr-defined]
-                                if asyncio.iscoroutine(maybe):
-                                    asyncio.create_task(maybe)
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-
-                # ── upgrade interject / clarification flags from handle ─────
-                if hasattr(raw, "interject"):
-                    info.is_interjectable = True
-
-                h_up_q = getattr(raw, "clarification_up_q", info.clar_up_queue)
-                h_down_q = getattr(raw, "clarification_down_q", info.clar_down_queue)
-
-                if (h_up_q is not None) ^ (h_down_q is not None):
-                    raise AttributeError(
-                        f"Handle returned by tool {info.name!r} exposes only "
-                        "one of 'clarification_up_q' / 'clarification_down_q'. "
-                        "Both queues are required (or neither).",
-                    )
-
-                # 1️⃣ spawn the nested waiter (passthrough/non-passthrough nested handle)
-                if inspect.iscoroutinefunction(raw.result):
-                    nested_coro = raw.result()  # already a coroutine
-                else:
-                    nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
-
-                nested_task = asyncio.create_task(nested_coro)
-
-                # 2️⃣ insert / update a single placeholder
-                ph = info.tool_reply_msg
-                if ph is None:
-                    ph = create_tool_call_message(
-                        name=info.name,
-                        call_id=call_id,
-                        content="Nested async tool loop started… waiting for result.",
-                    )
-                    await insert_tool_message_after_assistant(
-                        assistant_meta,
-                        info.assistant_msg,
-                        ph,
-                        self._client,
-                        msg_dispatcher,
-                    )
-                    info.tool_reply_msg = ph  # remember on *parent*
-                else:
-                    ph["content"] = (
-                        "Nested async tool loop started… waiting for result."
-                    )
-
-                # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
-                metadata = dataclasses.replace(
+                await self.adopt_nested(
                     info,
-                    handle=raw,
-                    is_interjectable=hasattr(raw, "interject"),
-                    tool_reply_msg=ph,
-                    clar_up_queue=h_up_q,
-                    clar_down_queue=h_down_q,
-                    notification_queue=info.notification_queue,
-                    is_passthrough=getattr(raw, "__passthrough__", False),
+                    raw,
+                    msg_dispatcher=msg_dispatcher,
+                    assistant_meta=assistant_meta,
+                    outer_handle_container=outer_handle_container,
                 )
-                self.save_task(nested_task, metadata)
-                if h_up_q is not None:
-                    self.clarification_channels[call_id] = (h_up_q, h_down_q)
                 return False  # ⬅️  no LLM turn required
 
             # ───────────────────────────────────────────────────────────────
@@ -646,3 +541,118 @@ class ToolsData:
 
         # successful (or failed) *final* result → LLM may need to react
         return True
+
+    # ── Helper: adopt a nested SteerableToolHandle into the current loop -----
+    async def adopt_nested(
+        self,
+        info: "ToolCallMetadata",
+        child_handle,
+        *,
+        msg_dispatcher,
+        assistant_meta,
+        outer_handle_container,
+    ) -> None:
+        """Adopt a child SteerableToolHandle returned by a tool into this loop.
+
+        Creates/updates a single placeholder tool message, schedules the child's
+        result as a nested task with inherited metadata, wires clarification
+        channels, and synchronises passthrough interjections/pause/stop with the
+        outer handle when applicable.
+        """
+        # Passthrough wiring: replay early interjections and sync pause/stop
+        try:
+            if (
+                getattr(child_handle, "__passthrough__", False)
+                and outer_handle_container
+                and outer_handle_container[0] is not None
+            ):
+                _outer = outer_handle_container[0]
+                _early = list(getattr(_outer, "_early_interjects", []))
+                for _msg in _early:
+                    try:
+                        if isinstance(_msg, dict):
+                            maybe_coro = child_handle.interject(  # type: ignore[attr-defined]
+                                _msg.get("message", ""),
+                                parent_chat_context_cont=_msg.get(
+                                    "parent_chat_context_continuted",
+                                ),
+                            )
+                        else:
+                            maybe_coro = child_handle.interject(_msg)  # type: ignore[attr-defined]
+                        if asyncio.iscoroutine(maybe_coro):
+                            await maybe_coro
+                    except Exception:
+                        pass
+                try:
+                    if not getattr(_outer, "_pause_event", None).is_set() and hasattr(
+                        child_handle,
+                        "pause",
+                    ):
+                        child_handle.pause()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                try:
+                    if getattr(_outer, "_cancel_event", None).is_set() and hasattr(
+                        child_handle,
+                        "stop",
+                    ):
+                        maybe = child_handle.stop()  # type: ignore[attr-defined]
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Upgrade interject flag based on child capability
+        if hasattr(child_handle, "interject"):
+            info.is_interjectable = True
+
+        h_up_q = getattr(child_handle, "clarification_up_q", info.clar_up_queue)
+        h_down_q = getattr(child_handle, "clarification_down_q", info.clar_down_queue)
+        if (h_up_q is not None) ^ (h_down_q is not None):
+            raise AttributeError(
+                f"Handle returned by tool {info.name!r} exposes only one of "
+                "'clarification_up_q' / 'clarification_down_q'. Both are required (or neither).",
+            )
+
+        # Schedule child's result as nested task
+        if inspect.iscoroutinefunction(child_handle.result):
+            nested_coro = child_handle.result()
+        else:
+            nested_coro = asyncio.to_thread(child_handle.result)
+        nested_task = asyncio.create_task(nested_coro)
+
+        # Insert/update single placeholder for this call_id
+        ph = info.tool_reply_msg
+        if ph is None:
+            ph = create_tool_call_message(
+                name=info.name,
+                call_id=info.call_id,
+                content="Nested async tool loop started… waiting for result.",
+            )
+            await insert_tool_message_after_assistant(
+                assistant_meta,
+                info.assistant_msg,
+                ph,
+                self._client,
+                msg_dispatcher,
+            )
+            info.tool_reply_msg = ph
+        else:
+            ph["content"] = "Nested async tool loop started… waiting for result."
+
+        # Book-keeping for the new task (inherit, share placeholder)
+        metadata = dataclasses.replace(
+            info,
+            handle=child_handle,
+            is_interjectable=hasattr(child_handle, "interject"),
+            tool_reply_msg=ph,
+            clar_up_queue=h_up_q,
+            clar_down_queue=h_down_q,
+            notification_queue=info.notification_queue,
+            is_passthrough=getattr(child_handle, "__passthrough__", False),
+        )
+        self.save_task(nested_task, metadata)
+        if h_up_q is not None:
+            self.clarification_channels[info.call_id] = (h_up_q, h_down_q)
