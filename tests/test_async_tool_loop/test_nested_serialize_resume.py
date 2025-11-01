@@ -9,6 +9,7 @@ from tests.helpers import _handle_project
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_message_prefix,
+    _wait_for_system_interjection_event,
     _wait_for_assistant_tool_calls,
 )
 from unity.common.async_tool_loop import start_async_tool_loop, AsyncToolLoopHandle
@@ -46,6 +47,29 @@ async def outer_tool() -> AsyncToolLoopHandle:
         tools={"inner_tool": inner_tool},
         timeout=120,
     )
+    return h
+
+
+async def outer_passthrough_tool() -> AsyncToolLoopHandle:
+    """Spawn an inner loop and return its handle with passthrough enabled."""
+    inner_client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=True,
+    )
+    inner_client.set_system_message(
+        "You are in a nested test.\n"
+        "Always call `inner_tool` exactly once and then reply 'done'.",
+    )
+    h = start_async_tool_loop(
+        inner_client,
+        "start",
+        tools={"inner_tool": inner_tool},
+        timeout=120,
+    )
+    # Enable passthrough so outer interjections are forwarded to the child
+    setattr(h, "__passthrough__", True)
     return h
 
 
@@ -141,6 +165,72 @@ async def test_nested_serialize_byref_resume(tmp_path):
     INNER_GATE.set()
     out = await resumed.result()
     assert out.strip().lower() == "all done"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_nested_serialize_passthrough_interjection():
+    """Interjection is forwarded to a passthrough child and appears exactly once after resume."""
+
+    # Gate inner so it remains pending while we snapshot
+    global INNER_GATE
+    INNER_GATE = asyncio.Event()
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=True,
+    )
+    client.set_system_message(
+        "You are the outer loop.\n"
+        "1) Call `outer_passthrough_tool`.\n"
+        "2) Continue running it until finished.\n"
+        "3) Respond exactly 'all done'.",
+    )
+
+    handle = start_async_tool_loop(
+        client,
+        "begin",
+        tools={"outer_passthrough_tool": outer_passthrough_tool},
+        timeout=240,
+    )
+
+    # Ensure tool is requested and placeholder exists
+    await _wait_for_tool_request(client, "outer_passthrough_tool")
+    await _wait_for_tool_message_prefix(client, "outer_passthrough_tool", timeout=120.0)
+
+    # Interject before snapshot; register watcher first to avoid races
+    interjection_text = "Prefer compact layout"
+    wait_evt = asyncio.create_task(
+        _wait_for_system_interjection_event(contains=interjection_text, timeout=120.0),
+    )
+    await handle.interject(interjection_text)
+    await wait_evt
+
+    snap = handle.serialize(recursive=True)
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+
+    INNER_GATE.set()
+    out = await resumed.result()
+    assert out.strip().lower() == "all done"
+
+    # Interjection should be present exactly once in the outer transcript
+    msgs = resumed.get_history()
+    seen = [
+        m
+        for m in msgs
+        if m.get("role") == "system" and interjection_text in str(m.get("content", ""))
+    ]
+    assert len(seen) == 1
+
+    # No duplicate tool replies for the passthrough tool
+    tool_msgs = [
+        m
+        for m in msgs
+        if m.get("role") == "tool" and m.get("name") == "outer_passthrough_tool"
+    ]
+    assert len(tool_msgs) == 1
 
 
 @pytest.mark.asyncio
