@@ -392,6 +392,43 @@ async def _wait_for_any_tool_message_by_name(
 
 
 @unify.traced
+async def _wait_for_any_tool_message_prefix(
+    prefix: str,
+    *,
+    timeout: float = 300.0,
+):
+    """Await the next tool message whose name startswith ``prefix`` across all loops (event-based).
+
+    Uses the EventBus to subscribe to ToolLoop events and triggers on the next
+    tool message that satisfies the prefix condition.
+    """
+    from unity.events.event_bus import EVENT_BUS
+
+    done: asyncio.Event = asyncio.Event()
+
+    async def _cb(events):
+        try:
+            for evt in events or []:
+                payload = getattr(evt, "payload", {})
+                msg = payload.get("message") if isinstance(payload, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "tool":
+                    continue
+                name = msg.get("name")
+                if isinstance(name, str) and name.startswith(prefix):
+                    done.set()
+                    return
+        except Exception:
+            pass
+
+    await EVENT_BUS.register_callback(
+        event_type="ToolLoop",
+        callback=_cb,
+        every_n=1,
+    )
+    await asyncio.wait_for(done.wait(), timeout=timeout)
+
+
+@unify.traced
 async def _wait_for_assistant_tool_calls(
     tool_names: list[str],
     *,
