@@ -696,7 +696,7 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
         (
             m.get("role") == "tool"
             and m.get("name") == "delegating_tool_regression"
-            and '"DONE"' in (m.get("content") or "")
+            and "DONE" in (m.get("content") or "")
         )
         for m in seen_second
     ), "Expected outer transcript to include inner final result before second LLM call"
