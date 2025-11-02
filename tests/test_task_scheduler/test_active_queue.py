@@ -9,7 +9,9 @@ import pytest
 
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.task_scheduler.types.task import Task
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
+from unity.task_scheduler.types.status import Status
 
 
 async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
@@ -133,9 +135,15 @@ async def test_execute_queue_by_numeric_id_forwards_and_runs_followers(monkeypat
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
     # After full queue, we expect all instances to be completed or terminal
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_a)
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_b)
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_c)
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_a
+    )
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_b
+    )
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_c
+    )
 
 
 @pytest.mark.asyncio
@@ -170,19 +178,19 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
     a, b, c = await _make_ordered_queue(ts, ["S_A", "S_B", "S_C"])  # type: ignore[misc]
 
     # Snapshot original schedules and queue_ids
-    def _row(tid: int) -> Dict:
+    def _row(tid: int) -> Task:
         return ts._filter_tasks(filter=f"task_id == {tid}")[0]
 
     ra0 = _row(a)
     rb0 = _row(b)
     rc0 = _row(c)
 
-    sched_a0 = dict(ra0.get("schedule") or {})
-    sched_b0 = dict(rb0.get("schedule") or {})
-    sched_c0 = dict(rc0.get("schedule") or {})
-    qid_a0 = ra0.get("queue_id")
-    qid_b0 = rb0.get("queue_id")
-    qid_c0 = rc0.get("queue_id")
+    sched_a0 = ra0.schedule
+    sched_b0 = rb0.schedule
+    sched_c0 = rc0.schedule
+    qid_a0 = ra0.queue_id
+    qid_b0 = rb0.queue_id
+    qid_c0 = rc0.queue_id
 
     # Execute starting at head (queue/chained semantics)
     h = await ts.execute(text=str(a))
@@ -193,13 +201,13 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
     rb1 = _row(b)
     rc1 = _row(c)
 
-    assert dict(ra1.get("schedule") or {}) == sched_a0
-    assert dict(rb1.get("schedule") or {}) == sched_b0
-    assert dict(rc1.get("schedule") or {}) == sched_c0
+    assert ra1.schedule == sched_a0
+    assert rb1.schedule == sched_b0
+    assert rc1.schedule == sched_c0
 
-    assert ra1.get("queue_id") == qid_a0
-    assert rb1.get("queue_id") == qid_b0
-    assert rc1.get("queue_id") == qid_c0
+    assert ra1.queue_id == qid_a0
+    assert rb1.queue_id == qid_b0
+    assert rc1.queue_id == qid_c0
 
 
 @pytest.mark.asyncio
@@ -276,12 +284,14 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
 
     # B should be reinstated as head with original start_at; C queued after
     row_b = ts._filter_tasks(filter=f"task_id == {b}")[0]
-    sched_b = row_b.get("schedule") or {}
-    assert sched_b.get("prev_task") is None
-    assert row_b["status"] in ("scheduled", "queued", "primed")
+    sched_b = row_b.schedule
+    assert sched_b is not None
+    assert sched_b.prev_task is None
+    assert row_b.status in (Status.scheduled, Status.queued, Status.primed)
     row_c = ts._filter_tasks(filter=f"task_id == {c}")[0]
-    sched_c = row_c.get("schedule") or {}
-    assert sched_c.get("prev_task") == b
+    sched_c = row_c.schedule
+    assert sched_c is not None
+    assert sched_c.prev_task == b
 
 
 @pytest.mark.asyncio
@@ -312,8 +322,12 @@ async def test_execute_queue_by_numeric_id_completes_all(monkeypatch):
 
     rows_x = ts._filter_tasks(filter=f"task_id == {x}")
     rows_y = ts._filter_tasks(filter=f"task_id == {y}")
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_x)
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_y)
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_x
+    )
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_y
+    )
 
 
 @pytest.mark.asyncio
@@ -527,9 +541,9 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
     rows_a = ts._filter_tasks(filter=f"task_id == {a_id}")
     rows_b = ts._filter_tasks(filter=f"task_id == {b_id}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c_id}")
-    a_desc = rows_a[0]["description"]
-    b_desc = rows_b[0]["description"]
-    c_desc = rows_c[0]["description"]
+    a_desc = rows_a[0].description
+    b_desc = rows_b[0].description
+    c_desc = rows_c[0].description
 
     expected = [
         (a_desc, "GLOBAL_OK"),
@@ -788,15 +802,16 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     rows_c = ts._filter_tasks(filter=f"task_id == {c_id}")
     rows_d = ts._filter_tasks(filter=f"task_id == {d_id}")
 
-    def _is_terminal(row):
-        return row.get("status") in ("completed", "cancelled", "failed")
+    def _is_terminal(row: Task):
+        return row.status in (Status.completed, Status.cancelled, Status.failed)
 
     assert any(_is_terminal(r) for r in rows_a)
     assert any(_is_terminal(r) for r in rows_b)
     assert any(_is_terminal(r) for r in rows_d)
     # C was removed from the queue before activation; ensure it is not terminal/active
     assert all(
-        r.get("status") not in ("completed", "cancelled", "failed", "active")
+        r.status
+        not in (Status.completed, Status.cancelled, Status.failed, Status.active)
         for r in rows_c
     )
 

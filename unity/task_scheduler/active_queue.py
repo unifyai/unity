@@ -513,10 +513,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 )
                 if not rows:
                     return None
-                sched = (
-                    (rows[0].get("schedule") or {}) if isinstance(rows[0], dict) else {}
-                )
-                nxt = sched.get("next_task") if isinstance(sched, dict) else None
+                nxt = rows[0].schedule_next
                 try:
                     nxt_int = int(nxt) if nxt is not None else None
                 except Exception:
@@ -558,9 +555,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                         )
                         if rows:
                             name = (
-                                rows[0].get("name")
-                                or rows[0].get("description")
-                                or "(unnamed task)"
+                                rows[0].name or rows[0].description or "(unnamed task)"
                             )
                             # Emit a standardized completion notification
                             try:
@@ -568,8 +563,8 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                                     "type": "queue.task.completed",
                                     "task_id": int(self._current_task_id),
                                     "name": str(name),
-                                    "instance_id": rows[0].get("instance_id"),
-                                    "queue_id": rows[0].get("queue_id"),
+                                    "instance_id": rows[0].instance_id,
+                                    "queue_id": rows[0].queue_id,
                                     "result": text,
                                 }
                                 self._emit_notification(evt_completed)
@@ -655,20 +650,14 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                         filter=f"task_id == {int(next_tid)}",
                         limit=1,
                     )
-                    _nm = (
-                        _rows[0].get("name")
-                        if _rows and _rows[0].get("name") is not None
-                        else None
-                    )
+                    _nm = _rows[0].name if _rows and _rows[0].name is not None else None
                     self._emit_notification(
                         {
                             "type": "queue.task.started",
                             "task_id": int(next_tid),
                             "name": _nm,
-                            "queue_id": (_rows[0].get("queue_id") if _rows else None),
-                            "instance_id": (
-                                _rows[0].get("instance_id") if _rows else None
-                            ),
+                            "queue_id": (_rows[0].queue_id if _rows else None),
+                            "instance_id": (_rows[0].instance_id if _rows else None),
                         },
                     )
                 except Exception:

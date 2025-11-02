@@ -102,8 +102,8 @@ async def test_summary_on_natural_completion(monkeypatch):
         final_rows
     ), f"Could not find final row for task_id {task_id}, instance_id {instance_id}"
     final_row = final_rows[0]
-    assert final_row["status"] == Status.completed.value
-    assert final_row["info"] == MOCK_SUMMARY
+    assert final_row.status == Status.completed.value
+    assert final_row.info == MOCK_SUMMARY
 
 
 @pytest.mark.asyncio
@@ -229,14 +229,14 @@ async def test_summary_on_stop_defer(monkeypatch):
     ), f"Could not find final row for task_id {task_id}, instance_id {instance_id}"
     final_row = final_rows[0]
 
-    assert final_row["info"] == MOCK_SUMMARY
+    assert final_row.info == MOCK_SUMMARY
     # Final status check
-    assert final_row["status"] not in [
-        Status.active.value,
-        Status.completed.value,
-        Status.cancelled.value,
-        Status.failed.value,
-    ], f"Final status was {final_row['status']}, expected a non-terminal, non-active status after defer."
+    assert final_row.status not in [
+        Status.active,
+        Status.completed,
+        Status.cancelled,
+        Status.failed,
+    ], f"Final status was {final_row.status}, expected a non-terminal, non-active status after defer."
 
 
 @pytest.mark.asyncio
@@ -332,8 +332,8 @@ async def test_summary_on_stop_cancel(monkeypatch):
     ), f"Could not find final row for task_id {task_id}, instance_id {instance_id}"
     final_row = final_rows[0]
     # In the cancel=True case, the final status *should* be 'cancelled'
-    assert final_row["status"] == Status.cancelled.value
-    assert final_row["info"] == MOCK_SUMMARY
+    assert final_row.status == Status.cancelled.value
+    assert final_row.info == MOCK_SUMMARY
 
 
 @pytest.mark.asyncio
@@ -448,8 +448,8 @@ async def test_summary_on_execution_error(monkeypatch):
     ), f"Could not find final row for task_id {task_id}, instance_id {instance_id}"
     final_row = final_rows[0]
     # The final status should be 'failed'
-    assert final_row["status"] == Status.failed.value
-    assert final_row["info"] == MOCK_SUMMARY
+    assert final_row.status == Status.failed.value
+    assert final_row.info == MOCK_SUMMARY
 
 
 @pytest.mark.asyncio
@@ -569,7 +569,7 @@ async def test_summary_targets_correct_instance_for_recurring(monkeypatch):
     await asyncio.sleep(0.1)
     cloned_tasks = ts._filter_tasks(filter=f"task_id == {task_id} and instance_id == 1")
     assert cloned_tasks, f"Did not find cloned task instance 1 for task_id {task_id}"
-    instance_id_1 = cloned_tasks[0]["instance_id"]
+    instance_id_1 = cloned_tasks[0].instance_id
     assert instance_id_1 == 1
 
     # Manually set instance 1 to primed using the original method
@@ -647,7 +647,7 @@ async def test_summary_targets_correct_instance_for_recurring(monkeypatch):
         filter=f"task_id == {task_id} and instance_id == {instance_id_1}",
     )
     # Asserts remain the same
-    assert final_rows_0 and final_rows_0[0]["status"] == Status.completed
-    assert final_rows_0 and final_rows_0[0]["info"] == MOCK_SUMMARY
-    assert final_rows_1 and final_rows_1[0]["status"] == Status.completed
-    assert final_rows_1 and final_rows_1[0]["info"] == EXPECTED_SUMMARY_1
+    assert final_rows_0 and final_rows_0[0].status == Status.completed
+    assert final_rows_0 and final_rows_0[0].info == MOCK_SUMMARY
+    assert final_rows_1 and final_rows_1[0].status == Status.completed
+    assert final_rows_1 and final_rows_1[0].info == EXPECTED_SUMMARY_1
