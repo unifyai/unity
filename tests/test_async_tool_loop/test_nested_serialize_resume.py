@@ -13,8 +13,8 @@ from tests.test_async_tool_loop.async_helpers import (
     _wait_for_assistant_tool_calls,
 )
 from unity.common.async_tool_loop import start_async_tool_loop, AsyncToolLoopHandle
-from unity.constants import LOGGER
-from tests.test_async_tool_loop.async_helpers import _wait_for_any_tool_message_prefix
+
+from unity.events.event_bus import EVENT_BUS
 
 
 # Module‑level gate so the resumed inner loop sees the same event
@@ -478,18 +478,12 @@ async def test_nested_child_clarification_serialize_resume_and_answer():
     await _wait_for_tool_request(client, "outer_clar_tool")
     await _wait_for_tool_message_prefix(client, "outer_clar_tool", timeout=180.0)
 
-    # Wait for the clarification placeholder with a firm timeout; then release the gate
-    try:
-        await _wait_for_any_tool_message_prefix("clarification_request_", timeout=15.0)
-    except Exception:
-        pass
+    # Do not wait for the inner assistant call here – it occurs in the child loop and
+    # may have already happened before we subscribe. Proceed to release the gate and snapshot.
     # Release the child gate BEFORE snapshot to avoid deadlocks during serialize
-    try:
-        gate = globals().get("CLAR_SNAPSHOT_GATE")
-        if isinstance(gate, asyncio.Event):
-            gate.set()
-    except Exception:
-        pass
+    gate = globals().get("CLAR_SNAPSHOT_GATE")
+    if isinstance(gate, asyncio.Event):
+        gate.set()
 
     # Proceed to snapshot once clarification placeholder observed or timeout elapsed
 
@@ -528,6 +522,25 @@ async def test_nested_child_clarification_serialize_resume_and_answer():
     assert len(outer_msgs) >= 1
     assert any("blue" in str(tm.get("content", "")).lower() for tm in outer_msgs)
 
+    # Explicit cleanup to avoid dangling asyncio tasks after test completes
+    try:
+        handle.stop(reason="test cleanup")
+    except Exception:
+        pass
+    try:
+        resumed.stop(reason="test cleanup")
+    except Exception:
+        pass
+    try:
+        globals()["CLAR_SNAPSHOT_GATE"] = None
+    except Exception:
+        pass
+    try:
+        EVENT_BUS.join_callbacks()
+        EVENT_BUS.join_published()
+    except Exception:
+        pass
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Notifications from a sibling tool while a child loop runs
@@ -544,30 +557,19 @@ async def progress_tool(*, _notification_up_q=None):  # type: ignore[unused-argu
     The notification payloads are dicts to exercise pretty-printing and forwarding
     via the outer handle's next_notification() stream.
     """
-    try:
-        LOGGER.info("[TEST-DEBUG] progress_tool: invoked (begin)")
-    except Exception:
-        pass
+    # begin
     # Emit a couple of progress updates up-front so snapshot can capture placeholders
     try:
         if _notification_up_q is not None:
-            LOGGER.info("[TEST-DEBUG] progress_tool: emitting progress step=1")
             await _notification_up_q.put({"step": 1, "message": "starting"})
-            LOGGER.info("[TEST-DEBUG] progress_tool: emitting progress step=2")
             await _notification_up_q.put({"step": 2, "message": "halfway"})
     except Exception:
         pass
 
     # Block until explicitly released by the test
     gate = globals().get("PROG_GATE")
-    LOGGER.info(
-        "[TEST-DEBUG] progress_tool: waiting on PROG_GATE (is_event=%s)",
-        isinstance(gate, asyncio.Event),
-    )
     if isinstance(gate, asyncio.Event):
         await gate.wait()
-
-    LOGGER.info("[TEST-DEBUG] progress_tool: finishing and returning result")
     return "progress_done"
 
 
@@ -600,7 +602,6 @@ async def test_nested_serialize_notifications_and_child():
     globals()["INNER_GATE"] = asyncio.Event()
     globals()["PROG_GATE"] = asyncio.Event()
 
-    LOGGER.info("[TEST-DEBUG] notifications_test: creating outer client")
     client = _outer_client_with_progress()
     handle = start_async_tool_loop(
         client,
@@ -610,77 +611,28 @@ async def test_nested_serialize_notifications_and_child():
     )
 
     # Wait until the assistant has called BOTH tools and placeholders exist
-    LOGGER.info(
-        "[TEST-DEBUG] notifications_test: waiting for assistant to call both tools",
-    )
     await _wait_for_assistant_tool_calls(["outer_tool", "progress_tool"], timeout=240.0)
-    LOGGER.info(
-        "[TEST-DEBUG] notifications_test: assistant called both tools; waiting for placeholders",
-    )
     await _wait_for_tool_message_prefix(client, "outer_tool", timeout=180.0)
     await _wait_for_tool_message_prefix(client, "progress_tool", timeout=180.0)
 
     # Snapshot recursively; the child handle should be captured; progress placeholders present
-    LOGGER.info("[TEST-DEBUG] notifications_test: serializing (recursive=True)")
     snap = handle.serialize(recursive=True)
     assert isinstance(snap, dict)
 
     # Resume, then immediately release gates so both tools can complete and notifications flush
-    LOGGER.info("[TEST-DEBUG] notifications_test: deserializing snapshot and resuming")
     resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
-    LOGGER.info(
-        "[TEST-DEBUG] notifications_test: releasing PROG_GATE and INNER_GATE (before awaiting notifications)",
-    )
     globals()["PROG_GATE"].set()  # type: ignore[attr-defined]
     globals()["INNER_GATE"].set()  # type: ignore[attr-defined]
 
-    # Attempt to receive a notification; if none arrives soon, log and proceed
-    LOGGER.info(
-        "[TEST-DEBUG] notifications_test: awaiting either next_notification() or completion",
-    )
-    try:
-        notif_task = asyncio.create_task(resumed.next_notification())
-        done, pending = await asyncio.wait({notif_task}, timeout=30.0)
-        if notif_task in done:
-            notif = notif_task.result()
-            LOGGER.info(
-                "[TEST-DEBUG] notifications_test: received notification = %s",
-                notif,
-            )
-            assert isinstance(notif, dict) and notif.get("type") == "notification"
-            assert notif.get("tool_name") == "progress_tool"
-        else:
-            LOGGER.info(
-                "[TEST-DEBUG] notifications_test: no notification within 30s; proceeding to await result",
-            )
-            for t in pending:
-                try:
-                    t.cancel()
-                except Exception:
-                    pass
-    except Exception as e:
-        LOGGER.info(
-            "[TEST-DEBUG] notifications_test: exception while waiting for notification: %s",
-            e,
-        )
-
-    LOGGER.info("[TEST-DEBUG] notifications_test: awaiting resumed.result()")
+    # Receive a notification after resume (replayed or live) and assert shape
+    notif = await asyncio.wait_for(resumed.next_notification(), timeout=60.0)
+    assert isinstance(notif, dict) and notif.get("type") == "notification"
+    assert notif.get("tool_name") == "progress_tool"
     out = await asyncio.wait_for(resumed.result(), timeout=240.0)
-    LOGGER.info("[TEST-DEBUG] notifications_test: final result = %s", out)
     assert out.strip().lower() == "all done"
 
     # Ensure exactly one final tool message for each tool (no duplicates)
-    LOGGER.info(
-        "[TEST-DEBUG] notifications_test: inspecting transcript for duplicate tool messages",
-    )
     msgs = resumed.get_history()
-    try:
-        LOGGER.info(
-            "[TEST-DEBUG] notifications_test: transcript tail (last 5 msgs) = %s",
-            msgs[-5:],
-        )
-    except Exception:
-        pass
     outer_msgs = [
         m for m in msgs if m.get("role") == "tool" and m.get("name") == "outer_tool"
     ]
@@ -689,3 +641,23 @@ async def test_nested_serialize_notifications_and_child():
     ]
     assert len(outer_msgs) == 1
     assert len(prog_msgs) == 1
+
+    # Explicit cleanup to avoid dangling asyncio tasks after test completes
+    try:
+        handle.stop(reason="test cleanup")
+    except Exception:
+        pass
+    try:
+        resumed.stop(reason="test cleanup")
+    except Exception:
+        pass
+    try:
+        globals()["PROG_GATE"] = None
+        globals()["INNER_GATE"] = None
+    except Exception:
+        pass
+    try:
+        EVENT_BUS.join_callbacks()
+        EVENT_BUS.join_published()
+    except Exception:
+        pass
