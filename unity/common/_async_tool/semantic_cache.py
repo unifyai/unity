@@ -19,6 +19,10 @@ from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
 from ..llm_helpers import _dumps
 from .transcript_ops import (
+    extract_assistant_and_tool_steps as _extract_assistant_and_tool_steps,
+    extract_clarifications as _extract_clarifications,
+)
+from .transcript_ops import (
     build_clean_tool_trajectory as _build_clean_tool_trajectory,
 )
 
@@ -152,24 +156,74 @@ class _SemanticCacheSaver:
         else:
             history = messages_history
 
-        _user_clarifications = {}
-        for msg in full_messages_history:
-            if msg.get("role") == "tool" and msg.get("name").startswith(
-                "request_clarification",
-            ):
-                _user_clarifications[msg["tool_call_id"]] = {
-                    "assistant_question": "",
-                    "user_answer": msg["content"],
-                }
+        # Build Clarifications using shared transcript helpers
+        extracted = _extract_assistant_and_tool_steps(
+            full_messages_history or [],
+            allowed_tools=None,
+        )
+        clar_list = []
+        try:
+            clar_summ = _extract_clarifications(
+                extracted.get("assistant_steps") or [],
+                extracted.get("tool_results") or [],
+                callid_to_tool_name=extracted.get("callid_to_tool_name", {}),
+            )
+            # Map to the shape expected by the prompt
+            for c in clar_summ:
+                q = c.get("question")
+                if q is not None:
+                    clar_list.append(
+                        {"assistant_question": q, "user_answer": ""},
+                    )
+        except Exception:
+            clar_list = []
 
-        for msg in full_messages_history:
-            if msg.get("role") == "assistant" and msg.get("tool_calls") is not None:
-                for tool_call in msg.get("tool_calls"):
-                    if (id := tool_call["id"]) in _user_clarifications.keys():
-                        args = json.loads(tool_call["function"]["arguments"])
-                        _user_clarifications[id]["assistant_question"] = args[
-                            "question"
-                        ]
+        # Additionally pair explicit request_clarification calls with their answers
+        try:
+            # Map tool_call_id -> answer for request_clarification results
+            answers_by_cid = {}
+            for tm in extracted.get("tool_results") or []:
+                try:
+                    if (
+                        tm.get("role") == "tool"
+                        and tm.get("name") == "request_clarification"
+                    ):
+                        cid = tm.get("tool_call_id")
+                        if isinstance(cid, str) and cid:
+                            answers_by_cid[cid] = tm.get("content")
+                except Exception:
+                    continue
+
+            # Walk assistant tool_calls to find request_clarification questions
+            for am in extracted.get("assistant_steps") or []:
+                try:
+                    for tc in am.get("tool_calls") or []:
+                        fn = tc.get("function") or {}
+                        if fn.get("name") != "request_clarification":
+                            continue
+                        cid = tc.get("id")
+                        args_json = fn.get("arguments", "{}")
+                        try:
+                            args = (
+                                json.loads(args_json)
+                                if isinstance(args_json, str)
+                                else (args_json or {})
+                            )
+                        except Exception:
+                            args = {}
+                        q = args.get("question")
+                        if q is None:
+                            continue
+                        ans = (
+                            answers_by_cid.get(cid, "") if isinstance(cid, str) else ""
+                        )
+                        clar_list.append(
+                            {"assistant_question": q, "user_answer": ans},
+                        )
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
         CLEAN_USER_MESSAGE_PROMPT = """
     You are a specialist assistant that extracts the user's final intended message from a conversation.
@@ -221,13 +275,16 @@ class _SemanticCacheSaver:
         global _CONFIG
         # Fast path: if there were no interjections and no clarifications, keep the
         # original initial message verbatim to preserve exact-match behaviour for cache keys.
-        if (not messages_history) and not _user_clarifications:
+        if (not messages_history) and not clar_list:
             result = init_user_message
         else:
             client = _CONFIG.get_client()
             client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
             result = client.generate(
-                user_message=f"Messages: {json.dumps(history)}\nClarifications: {json.dumps([v for _, v in _user_clarifications.items()])}",
+                user_message=(
+                    f"Messages: {json.dumps(history)}\n"
+                    f"Clarifications: {json.dumps(clar_list)}"
+                ),
             )
         return result
 
