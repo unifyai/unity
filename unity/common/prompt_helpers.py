@@ -63,22 +63,25 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return {name: str(inspect.signature(fn)) for name, fn in tools.items()}
 
 
-def now(time_only: bool = False) -> str:
-    """Return current UTC timestamp as a compact human-readable string.
+def now(time_only: bool = False, tz: str = "UTC") -> str:
+    """Return the current timestamp in the specified timezone.
 
     Parameters
     ----------
     time_only : bool, default False
-        When True, return only the time component (HH:MM:SS UTC); otherwise return
-        full date and time (YYYY-MM-DD HH:MM:SS UTC).
+        When True, return only the time component ("HH:MM:SS <TZ>"); otherwise return
+        the full date and time ("YYYY-MM-DD HH:MM:SS <TZ>").
+    tz : str, default "UTC"
+        IANA timezone name (e.g., "UTC", "America/Los_Angeles", "Europe/London").
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
 
-    now = datetime.now(timezone.utc)
+    dt = datetime.now(ZoneInfo(tz))
     return (
-        now.strftime("%H:%M:%S UTC")
+        dt.strftime("%H:%M:%S ") + tz
         if time_only
-        else now.strftime("%Y-%m-%d %H:%M:%S UTC")
+        else dt.strftime("%Y-%m-%d %H:%M:%S ") + tz
     )
 
 
