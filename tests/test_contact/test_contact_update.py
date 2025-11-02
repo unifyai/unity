@@ -314,3 +314,36 @@ async def test_update_add_bio(
         bob_id,
         {"bio": "Long-time customer"},
     )
+
+
+@_handle_project
+@pytest.mark.slow
+@pytest.mark.eval
+@pytest.mark.asyncio
+async def test_update_set_timezone_from_location_hint(
+    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+):
+    """Ensure the assistant can set utc_offset_hours based on a location hint.
+
+    We use a stable, non-DST example (Mumbai, India → UTC+5:30) to avoid ambiguity.
+    """
+    cm, _ = contact_manager_scenario
+
+    # Find Diana Prince
+    rows = cm.filter_contacts(filter="email_address == 'diana@themyscira.com'")[
+        "contacts"
+    ]
+    assert rows, "Diana Prince must exist for this test"
+    diana_id = rows[0].contact_id
+
+    # Ask the assistant to ensure the timezone is logged correctly
+    request_text = (
+        "Diana Prince lives in Mumbai (UTC+5:30). Can you make sure we've logged "
+        "her timezone correctly?"
+    )
+    handle = await cm.update(request_text)
+    await handle.result()
+
+    # Verify utc_offset_hours has been set to +5.5
+    updated = cm.filter_contacts(filter=f"contact_id == {diana_id}")["contacts"][0]
+    assert updated.utc_offset_hours == 5.5
