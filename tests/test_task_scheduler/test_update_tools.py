@@ -19,7 +19,7 @@ def test_update_task_name():
         description="Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager.",
     )
     task_list = task_scheduler._filter_tasks()
-    assert task_list[0]["name"] == "Promote Jeff Smith"
+    assert task_list[0].name == "Promote Jeff Smith"
 
     # rename
     task_scheduler._update_task(
@@ -27,7 +27,7 @@ def test_update_task_name():
         name="Give Jeff Smith a promotion",
     )
     task_list = task_scheduler._filter_tasks()
-    assert task_list[0]["name"] == "Give Jeff Smith a promotion"
+    assert task_list[0].name == "Give Jeff Smith a promotion"
 
 
 @_handle_project
@@ -42,7 +42,7 @@ def test_update_task_description():
     )
     task_list = task_scheduler._filter_tasks()
     assert (
-        task_list[0]["description"]
+        task_list[0].description
         == "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
     )
 
@@ -53,7 +53,7 @@ def test_update_task_description():
     )
     task_list = task_scheduler._filter_tasks()
     assert (
-        task_list[0]["description"]
+        task_list[0].description
         == "Call Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
     )
 
@@ -70,7 +70,7 @@ def test_update_task_status():
     )
     task_list = task_scheduler._filter_tasks()
     assert (
-        task_list[0]["description"]
+        task_list[0].description
         == "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
     )
 
@@ -80,7 +80,7 @@ def test_update_task_status():
         status=Status.cancelled,
     )
     task_list = task_scheduler._filter_tasks()
-    assert task_list[0]["status"] == "cancelled"
+    assert task_list[0].status == Status.cancelled
 
 
 @_handle_project
@@ -103,7 +103,7 @@ def test_head_of_queue_scheduled_cannot_be_queued():
 
     # Sanity: the task should have been stored as 'scheduled'
     task_row = ts._filter_tasks(filter=f"task_id == {tid}", limit=1)[0]
-    assert task_row["status"] == "scheduled"
+    assert task_row.status == Status.scheduled
 
     # Attempting to mark it as 'queued' must fail
     with pytest.raises(ValueError):
@@ -120,11 +120,12 @@ def test_update_task_start_at():
         description="Email Q2 customer-satisfaction survey.",
     )
 
-    start = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    start = datetime.now(timezone.utc) + timedelta(days=1)
     ts._update_task(task_id=0, start_at=start)
 
     task_list = ts._filter_tasks()
-    assert task_list[0]["schedule"]["start_at"] == start
+    assert task_list[0].schedule is not None
+    assert task_list[0].schedule.start_at == start
 
 
 @_handle_project
@@ -137,11 +138,11 @@ def test_update_task_deadline():
         description="Prepare documents for accounting.",
     )
 
-    deadline = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    deadline = datetime.now(timezone.utc) + timedelta(days=30)
     ts._update_task(task_id=0, deadline=deadline)
 
     task_list = ts._filter_tasks()
-    assert task_list[0]["deadline"] == deadline
+    assert task_list[0].deadline == deadline
 
 
 @_handle_project
@@ -158,8 +159,7 @@ def test_update_task_repetition():
     ts._update_task(task_id=0, repeat=[rule])
 
     task_list = ts._filter_tasks()
-    # The manager stores *.model_dump()* (a plain dict) so compare like-for-like
-    assert task_list[0]["repeat"] == [rule.model_dump()]
+    assert task_list[0].repeat[0] == rule
 
 
 @_handle_project
@@ -175,4 +175,4 @@ def test_update_task_priority():
     ts._update_task(task_id=0, priority=Priority.high)
 
     task_list = ts._filter_tasks()
-    assert task_list[0]["priority"] == Priority.high
+    assert task_list[0].priority == Priority.high
