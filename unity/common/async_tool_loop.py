@@ -23,6 +23,10 @@ from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.messages import is_non_final_tool_reply as _is_non_final_tool_reply
 from ._async_tool.loop import async_tool_loop_inner
+from ._async_tool.inline_tools import (
+    capture_inline_tools_registry as _capture_inline_tools_registry,
+    resolve_inline_tools as _resolve_inline_tools,
+)
 from .loop_snapshot import (
     LoopSnapshot as _LoopSnapshot,
     EntryPointManagerMethod as _EntryPointManagerMethod,
@@ -30,6 +34,12 @@ from .loop_snapshot import (
     ToolRef as _ToolRef,
     validate_snapshot as _validate_snapshot,
     migrate_snapshot as _migrate_snapshot,
+)
+from ._async_tool.transcript_ops import (
+    extract_assistant_and_tool_steps as _extract_assistant_and_tool_steps,
+    extract_interjections as _extract_interjections,
+    extract_clarifications as _extract_clarifications,
+    initial_user_from_user_visible_history as _initial_user_from_user_visible_history,
 )
 
 if TYPE_CHECKING:
@@ -860,153 +870,25 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             except Exception:
                 allowed_tool_names = None
 
-        # Helper: filter assistant tool_calls against allowed names, dropping synthetic status calls
-        def _prune_assistant_msg(msg: dict) -> dict | None:
-            if not isinstance(msg, dict) or msg.get("role") != "assistant":
-                return None
-            tool_calls = msg.get("tool_calls") or []
-            if not isinstance(tool_calls, list) or not tool_calls:
-                return None
-            kept: list = []
-            for tc in tool_calls:
-                try:
-                    fn = tc.get("function", {})
-                    name = fn.get("name")
-                except Exception:
-                    name = None
-                if not isinstance(name, str) or not name:
-                    continue
-                # Drop synthetic completion/status helpers
-                if name.startswith("check_status_"):
-                    continue
-                # If we know the allowed tool set, enforce it
-                if allowed_tool_names is not None and name not in allowed_tool_names:
-                    # Exception: persist clarification helpers even if not part of base registry
-                    if name != "request_clarification":
-                        continue
-                kept.append(tc)
-            if not kept:
-                return None
-            pruned = dict(msg)
-            pruned["tool_calls"] = kept
-            return pruned
-
-        assistant_steps_raw: list[dict] = []
-        assistant_indices_raw: list[int] = []
-        tool_results_raw: list[dict] = []
-        tool_results_raw_indices: list[int] = []
-        interjections: list[dict] = []
-        interjections_indices: list[int] = []
-        for i, m in enumerate(msgs):
-            try:
-                role = m.get("role")
-            except Exception:
-                continue
-            if role == "assistant":
-                pruned = _prune_assistant_msg(m)
-                if pruned is not None:
-                    assistant_steps_raw.append(pruned)
-                    assistant_indices_raw.append(i)
-            elif role == "tool":
-                tool_results_raw.append(m)
-                tool_results_raw_indices.append(i)
-            elif role == "system" and i > 0:
-                # Treat any non-leading system message as an interjection
-                interjections.append(m)
-                interjections_indices.append(i)
-
-        # Build the set of referenced call_ids from pruned assistant steps
-        referenced_call_ids: set[str] = set()
-        for am in assistant_steps_raw:
-            for tc in am.get("tool_calls", []) or []:
-                try:
-                    _cid = tc.get("id")
-                    if isinstance(_cid, str) and _cid:
-                        referenced_call_ids.add(_cid)
-                except Exception:
-                    continue
-
-        # Prune tool_result messages:
-        #  - keep only those whose name is allowed (when known)
-        #  - keep only those whose tool_call_id is in referenced_call_ids
-        #  - deduplicate by tool_call_id keeping the last occurrence, but preserve
-        #    original chronological order for the survivors
-        last_index_by_call_id: dict[str, int] = {}
-        for idx, tm in enumerate(tool_results_raw):
-            try:
-                name = tm.get("name")
-                call_id = tm.get("tool_call_id")
-            except Exception:
-                continue
-            if not isinstance(call_id, str) or not call_id:
-                continue
-            if call_id not in referenced_call_ids:
-                continue
-            if allowed_tool_names is not None:
-                if not isinstance(name, str) or (
-                    name not in allowed_tool_names
-                    and not str(name).startswith("clarification_request_")
-                    and name != "request_clarification"
-                ):
-                    continue
-            # mark last index
-            last_index_by_call_id[call_id] = idx
-
-        tool_results: list[dict] = []
-        tool_results_indices: list[int] = []
-        for idx, tm in enumerate(tool_results_raw):
-            try:
-                call_id = tm.get("tool_call_id")
-            except Exception:
-                call_id = None
-            if (
-                isinstance(call_id, str)
-                and call_id in last_index_by_call_id
-                and last_index_by_call_id[call_id] == idx
-            ):
-                tool_results.append(tm)
-                try:
-                    tool_results_indices.append(tool_results_raw_indices[idx])
-                except Exception:
-                    tool_results_indices.append(-1)
-
-        assistant_steps = assistant_steps_raw
-
-        # Build a clarifications summary from clarification_request_* tool messages
-        # Map call_id -> base tool name from assistant_steps for readability
-        callid_to_base_name: dict[str, str] = {}
-        for am in assistant_steps_raw:
-            for tc in am.get("tool_calls", []) or []:
-                with suppress(Exception):
-                    _cid = tc.get("id")
-                    _nm = tc.get("function", {}).get("name")
-                    if isinstance(_cid, str) and _cid and isinstance(_nm, str) and _nm:
-                        callid_to_base_name[_cid] = _nm
-
-        clarifications: list[dict] = []
-        for tm in tool_results:
-            try:
-                _nm = str(tm.get("name"))
-                _cid = str(tm.get("tool_call_id"))
-                _content = tm.get("content")
-            except Exception:
-                continue
-            if isinstance(_nm, str) and _nm.startswith("clarification_request_"):
-                clarifications.append(
-                    {
-                        "call_id": _cid,
-                        "tool_name": callid_to_base_name.get(_cid, ""),
-                        "question": _content,
-                    },
-                )
-
-        # Extract initial user message as recorded for the handle
-        initial_user_message = None
-        with suppress(Exception):
-            if self._user_visible_history:
-                first = self._user_visible_history[0]
-                if first.get("role") == "user":
-                    initial_user_message = first.get("content")
+        # Use shared transcript helpers to extract assistant/tool steps, interjections,
+        # clarifications and the initial user-visible message.
+        extracted = _extract_assistant_and_tool_steps(
+            msgs,
+            allowed_tools=allowed_tool_names,
+        )
+        assistant_steps = extracted["assistant_steps"]
+        assistant_indices_raw = extracted["assistant_indices"]
+        tool_results = extracted["tool_results"]
+        tool_results_indices = extracted["tool_results_indices"]
+        interjections, interjections_indices = _extract_interjections(msgs)
+        clarifications = _extract_clarifications(
+            assistant_steps,
+            tool_results,
+            callid_to_tool_name=extracted.get("callid_to_tool_name", {}),
+        )
+        initial_user_message = _initial_user_from_user_visible_history(
+            getattr(self, "_user_visible_history", []) or [],
+        )
 
         system_message = None
         with suppress(Exception):
@@ -1254,26 +1136,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     loop_label = f"{snap.entrypoint.class_name}.{method_name}"
 
         else:  # inline tools
-            # Resolve each tool by import path and apply flags
-            for t in snap.entrypoint.tools:
-                mod = _import_module(t.module)
-                obj = mod
-                try:
-                    for part in str(t.qualname).split("."):
-                        obj = getattr(obj, part)
-                except Exception as exc:
-                    raise ValueError(
-                        f"Failed to resolve tool {t.name} at {t.module}.{t.qualname}",
-                    ) from exc
-                # Apply flags expected by normalise_tools()
-                try:
-                    if t.read_only is True:
-                        setattr(obj, "_tool_spec_read_only", True)
-                    if t.manager_tool is True:
-                        setattr(obj, "_tool_spec_manager_tool", True)
-                except Exception:
-                    pass
-                tools[t.name] = obj
+            tools = _resolve_inline_tools(snap.entrypoint.tools)
             if not tools:
                 raise ValueError("Inline tools entrypoint contains no resolvable tools")
             if not loop_label:
@@ -1690,37 +1553,8 @@ def start_async_tool_loop(
     except Exception:
         pass
 
-    # Capture an inline tools registry snapshot for potential serialization
-    # of non-manager loops. We record import paths and flags for resolvable
-    # top-level functions only (ignore closures and lambdas).
-    def _build_inline_tools_registry(raw_tools: Dict[str, Callable]) -> list[dict]:
-        out: list[dict] = []
-        for _name, _fn in (raw_tools or {}).items():
-            try:
-                mod = getattr(_fn, "__module__", None)
-                qn = getattr(_fn, "__qualname__", None)
-                if not isinstance(mod, str) or not isinstance(qn, str):
-                    continue
-                # Skip closures/local defs – not importable by qualname
-                if "<locals>" in qn:
-                    continue
-                ro = getattr(_fn, "_tool_spec_read_only", None)
-                mt = getattr(_fn, "_tool_spec_manager_tool", None)
-                out.append(
-                    {
-                        "name": _name,
-                        "module": mod,
-                        "qualname": qn,
-                        "read_only": bool(ro) if ro is not None else None,
-                        "manager_tool": bool(mt) if mt is not None else None,
-                    },
-                )
-            except Exception:
-                continue
-        return out
-
     try:
-        setattr(handle, "_inline_tools_registry", _build_inline_tools_registry(tools))
+        setattr(handle, "_inline_tools_registry", _capture_inline_tools_registry(tools))
     except Exception:
         pass
 
