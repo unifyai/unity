@@ -27,6 +27,7 @@ class Contact(BaseModel):
         "rolling_summary": "rs",
         "respond_to": "resp",
         "response_policy": "policy",
+        "utc_offset_hours": "tz",
     }
 
     # Dynamic aliases for custom columns (full → shorthand); managers can
@@ -81,6 +82,14 @@ class Contact(BaseModel):
         description="Policy dictating how the assistant should respond to this contact.",
     )
 
+    # Optional numeric timezone offset from UTC, in hours (supports .5 increments)
+    utc_offset_hours: Optional[float] = Field(
+        default=None,
+        description=(
+            "UTC offset in hours (e.g., -5.0, +5.5). Range [-14.0, +14.0]; 0.5 increments only."
+        ),
+    )
+
     @model_validator(mode="before")
     @classmethod
     def _inject_sentinel(cls, data: dict) -> dict:
@@ -128,6 +137,30 @@ class Contact(BaseModel):
         if v is not None and isinstance(v, str) and v.strip() == "":
             return None
         return v
+
+    @field_validator("utc_offset_hours", mode="before")
+    @classmethod
+    def _validate_utc_offset_hours(cls, v):
+        # Treat blank strings as missing
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            return None
+        try:
+            x = float(v)
+        except Exception:
+            raise ValueError(
+                "utc_offset_hours must be a number of hours relative to UTC (e.g., -5.0, +5.5).",
+            )
+        if x < -14.0 or x > 14.0:
+            raise ValueError("utc_offset_hours must be between -14.0 and +14.0.")
+        # enforce 0.5 hour increments
+        try:
+            if (x * 2) % 1 != 0:
+                raise ValueError
+        except Exception:
+            raise ValueError(
+                "utc_offset_hours must be in 0.5 increments (…, -1.0, -0.5, 0.0, 0.5, 1.0, …).",
+            )
+        return x
 
     model_config = {"extra": "allow"}
 
