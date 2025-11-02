@@ -122,9 +122,10 @@ def stub_controller_deps(monkeypatch):
     )
 
     # --- DateTime stub for prompts (centralized) -----------------------------------
-    def _static_now():
+    def _static_now(time_only: bool = False):
         """Return a fixed timestamp for consistent test caching."""
-        return "2025-06-13 12:00:00 UTC"  # Friday, June 13, 2025 at noon UTC
+        # Friday, June 13, 2025 at noon UTC
+        return "12:00:00 UTC" if time_only else "2025-06-13 12:00:00 UTC"
 
     # Patch the central helper once so all prompts inherit a stable timestamp
     monkeypatch.setattr("unity.common.prompt_helpers.now_utc_str", _static_now)

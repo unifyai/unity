@@ -63,11 +63,23 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return {name: str(inspect.signature(fn)) for name, fn in tools.items()}
 
 
-def now_utc_str() -> str:
-    """Return current UTC timestamp as a compact human-readable string."""
+def now_utc_str(time_only: bool = False) -> str:
+    """Return current UTC timestamp as a compact human-readable string.
+
+    Parameters
+    ----------
+    time_only : bool, default False
+        When True, return only the time component (HH:MM:SS UTC); otherwise return
+        full date and time (YYYY-MM-DD HH:MM:SS UTC).
+    """
     from datetime import datetime, timezone
 
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    now = datetime.now(timezone.utc)
+    return (
+        now.strftime("%H:%M:%S UTC")
+        if time_only
+        else now.strftime("%Y-%m-%d %H:%M:%S UTC")
+    )
 
 
 def tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
