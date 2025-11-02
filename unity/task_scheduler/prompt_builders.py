@@ -17,7 +17,7 @@ from .types.task import Task
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
-    now_utc_str,
+    now,
     tool_name,
     require_tools,
     images_policy_block,

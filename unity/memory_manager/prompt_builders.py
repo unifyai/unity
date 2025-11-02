@@ -6,7 +6,7 @@ import inspect
 from typing import Callable, Dict, Optional
 
 from .broader_context import get_broader_context
-from ..common.prompt_helpers import now_utc_str
+from ..common.prompt_helpers import now
 
 
 # ── utils ───────────────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ def build_contact_update_prompt(
         "",
         "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure whether a new person should actually be treated as a contact.",
         "",
-        "Current UTC time: " + now_utc_str(),
+        "Current UTC time: " + now(),
     ]
     return _with_guidance(lines, guidance)
 
@@ -167,7 +167,7 @@ def build_bio_prompt(
         "",
         "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure what should be updated in the bio (if anything).",
         "",
-        "Current UTC time: " + now_utc_str(),
+        "Current UTC time: " + now(),
     ]
     return _with_guidance(lines, guidance)
 
@@ -234,7 +234,7 @@ def build_rolling_prompt(
         "",
         "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure what should be updated in the summary (if anything).",
         "",
-        "Current UTC time: " + now_utc_str(),
+        "Current UTC time: " + now(),
     ]
     return _with_guidance(lines, guidance)
 
@@ -300,7 +300,7 @@ def build_response_policy_prompt(
             "",
             "Read through the broader context of your role and recent activity for orientation.",
             "",
-            "Current UTC time: " + now_utc_str(),
+            "Current UTC time: " + now(),
         ],
     )
 
@@ -337,7 +337,7 @@ def build_knowledge_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
-        "Current UTC time: " + now_utc_str(),
+        "Current UTC time: " + now(),
     ]
     return _with_guidance(lines, guidance)
 
@@ -371,6 +371,6 @@ def build_task_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
-        "Current UTC time: " + now_utc_str(),
+        "Current UTC time: " + now(),
     ]
     return _with_guidance(lines, guidance)

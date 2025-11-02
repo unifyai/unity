@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from ..common.prompt_helpers import now_utc_str
+from ..common.prompt_helpers import now
 
 
 import textwrap
@@ -42,5 +42,5 @@ def build_image_ask_prompt(*, caption: str | None, timestamp: datetime | None) -
         """,
     ).strip()
     # Append current time for reproducibility
-    msg = f"{msg}\n\nCurrent UTC time is {now_utc_str()}."
+    msg = f"{msg}\n\nCurrent UTC time is {now()}."
     return msg

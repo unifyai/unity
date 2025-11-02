@@ -1,7 +1,7 @@
 import json
 from typing import List, Deque, Optional, Dict
 from unity.screen_share_manager.types import KeyEvent
-from ..common.prompt_helpers import now_utc_str
+from ..common.prompt_helpers import now
 
 
 def build_detection_prompt(
@@ -153,7 +153,7 @@ CRITICAL RULES:
 Example of a GOOD response:
 The user has clicked on the 'Context' dropdown menu, revealing a list of available options including 'Sandbox' and 'Default'.
 """
-    return prompt + f"\n\nCurrent UTC time is {now_utc_str()}."
+    return prompt + f"\n\nCurrent UTC time is {now()}."
 
 
 def build_summary_update_prompt(
@@ -183,4 +183,4 @@ YOUR TASK:
 - Do not simply append the new events. Re-write the summary to naturally include them.
 - Your response must be ONLY the new summary text, with no preamble or other text.
 """
-    return prompt + f"\n\nCurrent UTC time is {now_utc_str()}."
+    return prompt + f"\n\nCurrent UTC time is {now()}."

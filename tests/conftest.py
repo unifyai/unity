@@ -128,7 +128,7 @@ def stub_controller_deps(monkeypatch):
         return "12:00:00 UTC" if time_only else "2025-06-13 12:00:00 UTC"
 
     # Patch the central helper once so all prompts inherit a stable timestamp
-    monkeypatch.setattr("unity.common.prompt_helpers.now_utc_str", _static_now)
+    monkeypatch.setattr("unity.common.prompt_helpers.now", _static_now)
 
 
 # --------------------------------------------------------------------------- #

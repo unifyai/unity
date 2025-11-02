@@ -9,7 +9,7 @@ from ..memory_manager.broader_context import get_broader_context
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
-    now_utc_str,
+    now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
@@ -280,7 +280,7 @@ def build_refactor_prompt(
             "",
             usage_guidance,
             "",
-            f"Current UTC time: {now_utc_str()}.",
+            f"Current UTC time: {now()}.",
             clar_sentence,
             clar_section,
             clarification_block,
@@ -542,7 +542,7 @@ Anti-patterns to avoid
         "---------------------",
         table_schemas_json,
         "",
-        f"Current UTC time: {now_utc_str()}.",
+        f"Current UTC time: {now()}.",
         "",
     ]
 
@@ -793,7 +793,7 @@ def build_ask_prompt(
         "---------------------",
         table_schemas_json,
         "",
-        f"Current UTC time: {now_utc_str()}.",
+        f"Current UTC time: {now()}.",
     ]
 
     if clarification_block:
