@@ -131,3 +131,145 @@ async def test_pause_actor_propagates_immediately_task_scheduler_path(monkeypatc
 
     handle.stop("done")
     await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
+    """
+    Actor-first path: explicitly pause via nested_steer (not pause_actor), then
+    call resume_actor and assert SimulatedActor resumes immediately.
+    """
+
+    scheduled_evt = asyncio.Event()
+    paused_evt = asyncio.Event()
+    resumed_evt = asyncio.Event()
+
+    _orig_act = SimulatedActor.act
+
+    @functools.wraps(_orig_act)
+    async def _wrapped_act(self: SimulatedActor, *a, **kw):
+        handle = await _orig_act(self, *a, **kw)
+        scheduled_evt.set()
+        return handle
+
+    monkeypatch.setattr(SimulatedActor, "act", _wrapped_act, raising=True)
+
+    _orig_pause = SimulatedActorHandle.pause
+    _orig_resume = SimulatedActorHandle.resume
+
+    def _wrapped_pause(self: SimulatedActorHandle, *a, **kw):
+        try:
+            paused_evt.set()
+        finally:
+            return _orig_pause(self, *a, **kw)
+
+    def _wrapped_resume(self: SimulatedActorHandle, *a, **kw):
+        try:
+            resumed_evt.set()
+        finally:
+            return _orig_resume(self, *a, **kw)
+
+    monkeypatch.setattr(SimulatedActorHandle, "pause", _wrapped_pause, raising=True)
+    monkeypatch.setattr(SimulatedActorHandle, "resume", _wrapped_resume, raising=True)
+
+    actor = SimulatedActor(steps=None, duration=20)
+    cond = SimulatedConductor(actor=actor)
+    handle = await cond.request(
+        "Open a browser window so we can walk through the setup together.",
+    )
+
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=30)
+    await asyncio.sleep(0.2)
+
+    # Explicitly pause using nested_steer (independent of pause_actor)
+    pause_spec = {
+        "method": "interject",
+        "args": "<Pausing actor for resume tests>",
+        "children": {
+            "TaskScheduler.execute": {"method": "pause"},
+            "Actor.act": {"method": "pause"},
+        },
+    }
+    await handle.nested_steer(pause_spec)
+
+    await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
+
+    # Now resume via the high-level helper; should be immediate
+    await handle.resume_actor("test-resume")
+    await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
+
+    handle.stop("done")
+    await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch):
+    """
+    TaskScheduler path: explicitly pause via nested_steer (not pause_actor), then
+    call resume_actor and assert SimulatedActor resumes immediately.
+    """
+
+    scheduled_evt = asyncio.Event()
+    paused_evt = asyncio.Event()
+    resumed_evt = asyncio.Event()
+
+    _orig_act = SimulatedActor.act
+
+    @functools.wraps(_orig_act)
+    async def _wrapped_act(self: SimulatedActor, *a, **kw):
+        handle = await _orig_act(self, *a, **kw)
+        scheduled_evt.set()
+        return handle
+
+    monkeypatch.setattr(SimulatedActor, "act", _wrapped_act, raising=True)
+
+    _orig_pause = SimulatedActorHandle.pause
+    _orig_resume = SimulatedActorHandle.resume
+
+    def _wrapped_pause(self: SimulatedActorHandle, *a, **kw):
+        try:
+            paused_evt.set()
+        finally:
+            return _orig_pause(self, *a, **kw)
+
+    def _wrapped_resume(self: SimulatedActorHandle, *a, **kw):
+        try:
+            resumed_evt.set()
+        finally:
+            return _orig_resume(self, *a, **kw)
+
+    monkeypatch.setattr(SimulatedActorHandle, "pause", _wrapped_pause, raising=True)
+    monkeypatch.setattr(SimulatedActorHandle, "resume", _wrapped_resume, raising=True)
+
+    actor = SimulatedActor(steps=None, duration=20)
+    ts = TaskScheduler(actor=actor)
+    name = "Prepare the monthly analytics dashboard"
+    ts._create_task(name=name, description=name)
+
+    cond = SimulatedConductor(task_scheduler=ts, actor=actor)
+    handle = await cond.request(f"Run the task named '{name}' now.")
+
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=120)
+    await asyncio.sleep(0.4)
+
+    # Explicitly pause using nested_steer (independent of pause_actor)
+    pause_spec = {
+        "method": "interject",
+        "args": "<Pausing actor for resume tests>",
+        "children": {
+            "TaskScheduler.execute": {"method": "pause"},
+            "Actor.act": {"method": "pause"},
+        },
+    }
+    await handle.nested_steer(pause_spec)
+
+    await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
+
+    # Now resume via the high-level helper; should be immediate
+    await handle.resume_actor("maintenance-resume")
+    await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
+
+    handle.stop("done")
+    await handle.result()
