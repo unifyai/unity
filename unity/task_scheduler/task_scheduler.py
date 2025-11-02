@@ -1989,7 +1989,7 @@ class TaskScheduler(BaseTaskScheduler):
         ]
 
         # Single-pass index for constant-time next lookups within this tool call
-        rows_by_id: Dict[int, TaskBase] = {}
+        rows_by_id: Dict[int, Task] = {}
         for r in rows:
             try:
                 tid = r.task_id
@@ -1999,7 +1999,7 @@ class TaskScheduler(BaseTaskScheduler):
                 pass
 
         # Heads are rows with prev_task == None
-        heads: list[TaskBase] = [
+        heads: list[Task] = [
             r for r in rows if r.schedule is not None and r.schedule.prev_task is None
         ]
 
