@@ -25,10 +25,6 @@ def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return sig_dict(tools)
 
 
-def _now() -> str:  # UTC timestamp helper
-    return now_utc_str()
-
-
 def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     """Delegate to shared tool name resolver."""
     return _shared_tool_name(tools, needle)
@@ -284,7 +280,7 @@ def build_refactor_prompt(
             "",
             usage_guidance,
             "",
-            f"Current UTC time: {_now()}.",
+            f"Current UTC time: {now_utc_str()}.",
             clar_sentence,
             clar_section,
             clarification_block,
@@ -546,7 +542,7 @@ Anti-patterns to avoid
         "---------------------",
         table_schemas_json,
         "",
-        f"Current UTC time: {_now()}.",
+        f"Current UTC time: {now_utc_str()}.",
         "",
     ]
 
@@ -797,7 +793,7 @@ def build_ask_prompt(
         "---------------------",
         table_schemas_json,
         "",
-        f"Current UTC time: {_now()}.",
+        f"Current UTC time: {now_utc_str()}.",
     ]
 
     if clarification_block:

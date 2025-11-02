@@ -34,12 +34,6 @@ from ..common.prompt_helpers import (
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-def _now() -> str:
-    """Current UTC timestamp in a compact, human-readable form."""
-    return now_utc_str()
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Public builders
 # ─────────────────────────────────────────────────────────────────────────────

@@ -11,10 +11,6 @@ from ..common.prompt_helpers import (
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 
-def _now() -> str:
-    return now_utc_str()
-
-
 def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     """Return the system prompt used by SecretManager.ask.
 
@@ -50,7 +46,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     # Clarification guidance (only shown when request_clarification is present)
     lines += ["", clarification_guidance(tools)]
 
-    lines += ["", f"Current UTC time is {_now()}."]
+    lines += ["", f"Current UTC time is {now_utc_str()}."]
     return "\n".join(lines)
 
 
@@ -101,5 +97,5 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
     # Clarification guidance (only shown when request_clarification is present)
     lines += ["", clarification_guidance(tools)]
 
-    lines += ["", f"Current UTC time is {_now()}."]
+    lines += ["", f"Current UTC time is {now_utc_str()}."]
     return "\n".join(lines)

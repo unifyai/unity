@@ -20,11 +20,6 @@ def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return sig_dict(tools)
 
 
-def _now() -> str:
-    """Current UTC timestamp in a friendly format."""
-    return now_utc_str()
-
-
 def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     """Delegate to shared tool name resolver (case-insensitive substring)."""
     return _shared_tool_name(tools, needle)
@@ -173,7 +168,7 @@ def build_ask_prompt(
             "",
             read_only_ask_mutation_exit_block(),
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now_utc_str()}.",
             clar_section,
             "",
             clarification_block,
@@ -367,7 +362,7 @@ def build_request_prompt(
             "",
             usage_examples,
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now_utc_str()}.",
             clar_section,
             "",
             clarification_block,

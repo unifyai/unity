@@ -26,10 +26,6 @@ def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> 
     _shared_require_tools(pairs, tools)
 
 
-def _now() -> str:
-    return now_utc_str()
-
-
 def build_ask_prompt(
     tools: Dict[str, Callable],
     *,
@@ -164,6 +160,6 @@ def build_ask_prompt(
             "",
             read_only_ask_mutation_exit_block(),
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now_utc_str()}.",
         ],
     )

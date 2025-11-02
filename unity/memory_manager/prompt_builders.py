@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import json
 import inspect
-from datetime import datetime, timezone
 from typing import Callable, Dict, Optional
 
 from .broader_context import get_broader_context
+from ..common.prompt_helpers import now_utc_str
 
 
 # ── utils ───────────────────────────────────────────────────────────────
@@ -14,8 +14,7 @@ def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return {n: str(inspect.signature(fn)) for n, fn in tools.items()}
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+## Centralized time helper used directly from prompt_helpers.now_utc_str()
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +109,7 @@ def build_contact_update_prompt(
         "",
         "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure whether a new person should actually be treated as a contact.",
         "",
-        "Current UTC time: " + _now(),
+        "Current UTC time: " + now_utc_str(),
     ]
     return _with_guidance(lines, guidance)
 
@@ -168,7 +167,7 @@ def build_bio_prompt(
         "",
         "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure what should be updated in the bio (if anything).",
         "",
-        "Current UTC time: " + _now(),
+        "Current UTC time: " + now_utc_str(),
     ]
     return _with_guidance(lines, guidance)
 
@@ -235,7 +234,7 @@ def build_rolling_prompt(
         "",
         "Read through the broader context of your role and recent activity for orientation, especially in cases where you're not sure what should be updated in the summary (if anything).",
         "",
-        "Current UTC time: " + _now(),
+        "Current UTC time: " + now_utc_str(),
     ]
     return _with_guidance(lines, guidance)
 
@@ -301,7 +300,7 @@ def build_response_policy_prompt(
             "",
             "Read through the broader context of your role and recent activity for orientation.",
             "",
-            "Current UTC time: " + _now(),
+            "Current UTC time: " + now_utc_str(),
         ],
     )
 
@@ -338,7 +337,7 @@ def build_knowledge_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
-        "Current UTC time: " + _now(),
+        "Current UTC time: " + now_utc_str(),
     ]
     return _with_guidance(lines, guidance)
 
@@ -372,6 +371,6 @@ def build_task_prompt(
         "Tools (name → argspec):",
         json.dumps(_sig_dict(tools), indent=4),
         "",
-        "Current UTC time: " + _now(),
+        "Current UTC time: " + now_utc_str(),
     ]
     return _with_guidance(lines, guidance)

@@ -19,10 +19,6 @@ def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return sig_dict(tools)
 
 
-def _now() -> str:
-    return now_utc_str()
-
-
 def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     return _shared_tool_name(tools, needle)
 
@@ -202,7 +198,7 @@ def build_ask_prompt(
             "",
             clar_section,
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now_utc_str()}.",
         ],
     )
 
@@ -298,7 +294,7 @@ Create / Update / Delete
             f"There are currently {num_items} guidance entries stored with the following columns:",
             json.dumps(columns, indent=4),
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now_utc_str()}.",
             clar_section,
             "",
         ],

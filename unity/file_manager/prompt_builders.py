@@ -22,11 +22,6 @@ def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return sig_dict(tools)
 
 
-def _now() -> str:
-    """Current UTC timestamp in a compact, human-readable form."""
-    return now_utc_str()
-
-
 def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     """Delegate to shared tool name resolver."""
     return _shared_tool_name(tools, needle)
@@ -216,7 +211,7 @@ Anti‑patterns to avoid
             "",
             clar_section,
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now_utc_str()}.",
         ],
     )
 
