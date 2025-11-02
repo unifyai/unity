@@ -23,6 +23,7 @@ from ..common.llm_helpers import (
 )
 from ..common.async_tool_loop import start_async_tool_loop
 from ..common.async_tool_loop import AsyncToolLoopHandle
+from .request_handle import ConductorRequestHandle
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from .types import StateManager
@@ -570,6 +571,7 @@ class Conductor(BaseConductor):
             log_steps=_log_tool_steps,
             # Hide Actor.act and TaskScheduler.execute while a session is active
             tool_policy=self._mask_act_execute_policy(),
+            handle_cls=ConductorRequestHandle,
         )
 
         if should_log and call_id is not None:
