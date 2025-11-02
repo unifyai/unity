@@ -755,176 +755,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         return await nested_steer_on(self, spec)
 
-
-# --- module-level generic helper ----------------------------------------------
-async def nested_steer_on(handle: Any, spec: dict) -> dict:
-    """Apply a nested steering spec to any compatible handle without LLM calls.
-
-    Node schema (keys optional; omitted treated as None):
-      - method: str – method name to invoke on the current handle (e.g., "pause", "resume", "interject", "stop", "ask").
-      - args: any – convenience single argument; mapped to a common content key if not otherwise provided in kwargs.
-      - kwargs: dict – keyword arguments to pass to the method.
-      - children: dict[str, dict] – mapping of selector → child node, where selector
-        is matched against in-flight tool names at this level (from task_info metadata).
-
-    Behaviour:
-      - Apply the local method first (when present), using robust forwarding.
-      - Discover loop-children via _task.task_info and recurse into matched child handles.
-      - If no loop-children matched, fall back to common wrapper attributes ("_actor_handle",
-        "_current_handle") when exactly one child node is provided.
-      - Unknown selectors are ignored; traversal stops naturally when no child is found.
-
-    Selector matching rules (case-insensitive):
-      - Accept exact tool name matches (e.g., "TaskScheduler_execute").
-      - Accept dotted form (e.g., "TaskScheduler.execute") matching underscore names.
-      - Accept method-only suffix (e.g., "execute" matches "TaskScheduler_execute").
-    """
-
-    # Best-effort label for diagnostics
-    try:
-        label = (
-            getattr(handle, "_log_label", None)
-            or getattr(handle, "_loop_id", None)
-            or getattr(getattr(handle, "__class__", object), "__name__", "handle")
-        )
-    except Exception:
-        label = "handle"
-
-    try:
-        root_method = None
-        children_count = 0
-        try:
-            if isinstance(spec, dict):
-                root_method = spec.get("method")
-                children = spec.get("children") or {}
-                if isinstance(children, dict):
-                    children_count = len(children)
-        except Exception:
-            root_method, children_count = None, 0
-        LOGGER.info(
-            f"🎯 [{label}] Nested steer requested – method={root_method or '-'} children={children_count}",
-        )
-    except Exception:
-        pass
-
-    results: dict = {"applied": []}
-
-    def _norm(s: str) -> str:
-        try:
-            return str(s).replace(".", "_").strip().lower()
-        except Exception:
-            return str(s).lower()
-
-    def _selector_matches(selector: str, candidate_name: str) -> bool:
-        """Return True when selector matches candidate_name under relaxed rules.
-
-        Rules:
-        - Case-insensitive exact match on underscore-normalised strings.
-        - Method-only suffix match: selector == part after first underscore.
-        - Dotted-vs-underscore tolerance handled by normalisation.
-        """
-        sel = _norm(selector)
-        cand = _norm(candidate_name)
-        if not sel or not cand:
-            return False
-        if sel == cand:
-            return True
-        # Suffix match: allow targeting by bare method name
-        try:
-            suffix = cand.split("_", 1)[1]
-        except Exception:
-            suffix = cand
-        return sel == suffix
-
-    async def _apply(h, node: dict | None, path: list[str]) -> None:
-        node = node or {}
-        method = node.get("method")
-        args = node.get("args")
-        kwargs = node.get("kwargs") or {}
-
-        # 1) Apply local method if requested
-        if isinstance(method, str) and method:
-            call_kwargs = dict(kwargs)
-            if args is not None and not any(
-                k in call_kwargs for k in ("content", "message", "question", "reason")
-            ):
-                call_kwargs["content"] = args
-            try:
-                await forward_handle_call(
-                    h,
-                    method,
-                    call_kwargs,
-                    fallback_positional_keys=(
-                        "content",
-                        "message",
-                        "question",
-                        "reason",
-                    ),
-                )
-                try:
-                    results["applied"].append({"path": list(path), "method": method})
-                except Exception:
-                    pass
-                try:
-                    _p = "/".join(str(p) for p in path)
-                    LOGGER.debug(f"✅ [{label}] Applied method '{method}' at path {_p}")
-                except Exception:
-                    pass
-            except Exception:
-                # Steering failures are best-effort; continue traversal
-                try:
-                    _p = "/".join(str(p) for p in path)
-                    LOGGER.debug(
-                        f"⚠️  [{label}] Failed to apply '{method}' at path {_p}",
-                    )
-                except Exception:
-                    pass
-
-        # 2) Recurse into matched children
-        children = node.get("children") or {}
-        if not children:
-            return
-
-        # Discover loop children via task_info when available
-        task_info = {}
-        with suppress(Exception):
-            task_info = getattr(getattr(h, "_task", None), "task_info", {}) or {}
-
-        matched_any = False
-        if isinstance(task_info, dict) and task_info:
-            for sel, child_node in children.items():
-                for _t, _inf in list(task_info.items()):
-                    try:
-                        _name = getattr(_inf, "name", None)
-                        _child = getattr(_inf, "handle", None)
-                    except Exception:
-                        _name, _child = None, None
-                    if _name and _child is not None and _selector_matches(sel, _name):
-                        matched_any = True
-                        try:
-                            _p = "/".join(str(p) for p in path)
-                            LOGGER.debug(
-                                f"↘️ [{label}] Descend: selector {sel!r} matched child {_name!r} at {_p}",
-                            )
-                        except Exception:
-                            pass
-                        await _apply(_child, child_node, path + [str(_name)])
-            if matched_any:
-                return
-
-        # Wrapper fallback: when no explicit loop children matched, try common wrappers
-        # Only when exactly one child node is provided (unambiguous)
-        if len(children) == 1:
-            child_node = next(iter(children.values()))
-            for attr in ("_actor_handle", "_current_handle"):
-                inner = getattr(h, attr, None)
-                if inner is not None:
-                    await _apply(inner, child_node, path + [attr])
-                    break
-
-    await _apply(handle, spec, [str(label)])
-    return results
-
     # --- snapshotting v1: read-only capture (flat only) ---------------------
     def serialize(
         self,
@@ -1590,6 +1420,176 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
             pass
 
         return handle
+
+
+# --- module-level generic helper ----------------------------------------------
+async def nested_steer_on(handle: Any, spec: dict) -> dict:
+    """Apply a nested steering spec to any compatible handle without LLM calls.
+
+    Node schema (keys optional; omitted treated as None):
+      - method: str – method name to invoke on the current handle (e.g., "pause", "resume", "interject", "stop", "ask").
+      - args: any – convenience single argument; mapped to a common content key if not otherwise provided in kwargs.
+      - kwargs: dict – keyword arguments to pass to the method.
+      - children: dict[str, dict] – mapping of selector → child node, where selector
+        is matched against in-flight tool names at this level (from task_info metadata).
+
+    Behaviour:
+      - Apply the local method first (when present), using robust forwarding.
+      - Discover loop-children via _task.task_info and recurse into matched child handles.
+      - If no loop-children matched, fall back to common wrapper attributes ("_actor_handle",
+        "_current_handle") when exactly one child node is provided.
+      - Unknown selectors are ignored; traversal stops naturally when no child is found.
+
+    Selector matching rules (case-insensitive):
+      - Accept exact tool name matches (e.g., "TaskScheduler_execute").
+      - Accept dotted form (e.g., "TaskScheduler.execute") matching underscore names.
+      - Accept method-only suffix (e.g., "execute" matches "TaskScheduler_execute").
+    """
+
+    # Best-effort label for diagnostics
+    try:
+        label = (
+            getattr(handle, "_log_label", None)
+            or getattr(handle, "_loop_id", None)
+            or getattr(getattr(handle, "__class__", object), "__name__", "handle")
+        )
+    except Exception:
+        label = "handle"
+
+    try:
+        root_method = None
+        children_count = 0
+        try:
+            if isinstance(spec, dict):
+                root_method = spec.get("method")
+                children = spec.get("children") or {}
+                if isinstance(children, dict):
+                    children_count = len(children)
+        except Exception:
+            root_method, children_count = None, 0
+        LOGGER.info(
+            f"🎯 [{label}] Nested steer requested – method={root_method or '-'} children={children_count}",
+        )
+    except Exception:
+        pass
+
+    results: dict = {"applied": []}
+
+    def _norm(s: str) -> str:
+        try:
+            return str(s).replace(".", "_").strip().lower()
+        except Exception:
+            return str(s).lower()
+
+    def _selector_matches(selector: str, candidate_name: str) -> bool:
+        """Return True when selector matches candidate_name under relaxed rules.
+
+        Rules:
+        - Case-insensitive exact match on underscore-normalised strings.
+        - Method-only suffix match: selector == part after first underscore.
+        - Dotted-vs-underscore tolerance handled by normalisation.
+        """
+        sel = _norm(selector)
+        cand = _norm(candidate_name)
+        if not sel or not cand:
+            return False
+        if sel == cand:
+            return True
+        # Suffix match: allow targeting by bare method name
+        try:
+            suffix = cand.split("_", 1)[1]
+        except Exception:
+            suffix = cand
+        return sel == suffix
+
+    async def _apply(h, node: dict | None, path: list[str]) -> None:
+        node = node or {}
+        method = node.get("method")
+        args = node.get("args")
+        kwargs = node.get("kwargs") or {}
+
+        # 1) Apply local method if requested
+        if isinstance(method, str) and method:
+            call_kwargs = dict(kwargs)
+            if args is not None and not any(
+                k in call_kwargs for k in ("content", "message", "question", "reason")
+            ):
+                call_kwargs["content"] = args
+            try:
+                await forward_handle_call(
+                    h,
+                    method,
+                    call_kwargs,
+                    fallback_positional_keys=(
+                        "content",
+                        "message",
+                        "question",
+                        "reason",
+                    ),
+                )
+                try:
+                    results["applied"].append({"path": list(path), "method": method})
+                except Exception:
+                    pass
+                try:
+                    _p = "/".join(str(p) for p in path)
+                    LOGGER.debug(f"✅ [{label}] Applied method '{method}' at path {_p}")
+                except Exception:
+                    pass
+            except Exception:
+                # Steering failures are best-effort; continue traversal
+                try:
+                    _p = "/".join(str(p) for p in path)
+                    LOGGER.debug(
+                        f"⚠️  [{label}] Failed to apply '{method}' at path {_p}",
+                    )
+                except Exception:
+                    pass
+
+        # 2) Recurse into matched children
+        children = node.get("children") or {}
+        if not children:
+            return
+
+        # Discover loop children via task_info when available
+        task_info = {}
+        with suppress(Exception):
+            task_info = getattr(getattr(h, "_task", None), "task_info", {}) or {}
+
+        matched_any = False
+        if isinstance(task_info, dict) and task_info:
+            for sel, child_node in children.items():
+                for _t, _inf in list(task_info.items()):
+                    try:
+                        _name = getattr(_inf, "name", None)
+                        _child = getattr(_inf, "handle", None)
+                    except Exception:
+                        _name, _child = None, None
+                    if _name and _child is not None and _selector_matches(sel, _name):
+                        matched_any = True
+                        try:
+                            _p = "/".join(str(p) for p in path)
+                            LOGGER.debug(
+                                f"↘️ [{label}] Descend: selector {sel!r} matched child {_name!r} at {_p}",
+                            )
+                        except Exception:
+                            pass
+                        await _apply(_child, child_node, path + [str(_name)])
+            if matched_any:
+                return
+
+        # Wrapper fallback: when no explicit loop children matched, try common wrappers
+        # Only when exactly one child node is provided (unambiguous)
+        if len(children) == 1:
+            child_node = next(iter(children.values()))
+            for attr in ("_actor_handle", "_current_handle"):
+                inner = getattr(h, attr, None)
+                if inner is not None:
+                    await _apply(inner, child_node, path + [attr])
+                    break
+
+    await _apply(handle, spec, [str(label)])
+    return results
 
 
 # ─────────────────────────────────────────────────────────────────────────────
