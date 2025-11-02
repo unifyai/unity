@@ -19,8 +19,10 @@ from ..conversation_manager_2.event_broker import get_event_broker
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     ToolSpec,
+    short_id,
 )
 from ..common.async_tool_loop import start_async_tool_loop
+from ..common.async_tool_loop import AsyncToolLoopHandle
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from .types import StateManager
@@ -387,6 +389,74 @@ class Conductor(BaseConductor):
             handle.result = _wrapped_result
 
         return handle
+
+    # ------------------------------------------------------------------ #
+    #  start_from_task – auto-start request loop to execute a task       #
+    # ------------------------------------------------------------------ #
+
+    async def start_from_task(self, task_id: int, trigger_reason: str):
+        """
+        Return a steerable `Conductor.request` handle that immediately executes
+        `TaskScheduler.execute` for the provided `task_id` without an initial LLM turn.
+
+        Behaviour
+        ---------
+        - Seeds a minimal snapshot for the `Conductor.request` entrypoint with a
+          single assistant tool_call targeting the exposed `TaskScheduler.execute` tool.
+        - Deserialization triggers preflight backfill which schedules the tool call
+          immediately (no LLM thinking step). The returned ActiveQueue handle is
+          adopted with passthrough, so interject/pause/resume/stop/notifications
+          work as usual via the returned handle.
+        """
+
+        # Resolve the exact tool name as exposed on the Conductor.request surface
+        tools: Dict[str, Callable] = dict(self.get_tools("request"))
+        exec_tool_name = next(
+            (n for n in tools.keys() if "taskscheduler_execute" in n.lower()),
+            None,
+        )
+        if exec_tool_name is None:
+            raise ValueError(
+                "TaskScheduler.execute tool is not available on request surface",
+            )
+
+        # Build a minimal v1 snapshot that instructs Conductor.request to call execute
+        call_id = f"tc_{short_id(8)}"
+        try:
+            task_id_int = int(task_id)
+        except Exception:
+            # Be strict to avoid ambiguous execution routing
+            raise ValueError("task_id must be an integer")
+
+        snapshot = {
+            "version": 1,
+            "entrypoint": {"class_name": "Conductor", "method_name": "request"},
+            "loop_id": f"{self.__class__.__name__}.request",
+            "initial_user_message": (
+                f"<This task has been *automatically* triggered due to {str(trigger_reason).strip()}>."
+            ),
+            "assistant_steps": [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": exec_tool_name,
+                                "arguments": json.dumps({"text": str(task_id_int)}),
+                            },
+                        },
+                    ],
+                },
+            ],
+            # No tool_results present – preflight backfill will schedule the call
+            "tool_results": [],
+        }
+
+        # Deserialize into a live handle; preflight backfill will run the execute call immediately
+        return AsyncToolLoopHandle.deserialize(snapshot)
 
     # ------------------------------------------------------------------ #
     #  clear – irreversible state wipe for a selected manager            #
