@@ -63,25 +63,60 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return {name: str(inspect.signature(fn)) for name, fn in tools.items()}
 
 
-def now(time_only: bool = False, tz: str = "UTC") -> str:
-    """Return the current timestamp in the specified timezone.
+def now(time_only: bool = False) -> str:
+    """Return the current timestamp in the assistant's timezone.
 
-    Parameters
-    ----------
-    time_only : bool, default False
-        When True, return only the time component ("HH:MM:SS <TZ>"); otherwise return
-        the full date and time ("YYYY-MM-DD HH:MM:SS <TZ>").
-    tz : str, default "UTC"
-        IANA timezone name (e.g., "UTC", "America/Los_Angeles", "Europe/London").
+    The assistant is the system contact with ``contact_id == 0`` in the
+    Contacts table. We derive its ``utc_offset_hours`` and apply that offset
+    relative to UTC. The timezone label is rendered as ``UTC`` or
+    ``UTC±HH:MM`` for non-zero offsets.
     """
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
+    from datetime import datetime, timezone, timedelta
+    import unify as _unify
 
-    dt = datetime.now(ZoneInfo(tz))
+    # Resolve Contacts context for the active project
+    try:
+        _ctxs = _unify.get_active_context()
+        _read_ctx = _ctxs.get("read")
+    except Exception:
+        _read_ctx = None
+    _contacts_ctx = f"{_read_ctx}/Contacts" if _read_ctx else "Contacts"
+
+    # Default to UTC if assistant row/field is unavailable
+    offset_hours: float = 0.0
+    try:
+        rows = _unify.get_logs(
+            context=_contacts_ctx,
+            filter="contact_id == 0",
+            limit=1,
+            from_fields=["utc_offset_hours"],
+        )
+        if rows:
+            val = rows[0].entries.get("utc_offset_hours")
+            if isinstance(val, (int, float)):
+                offset_hours = float(val)
+    except Exception:
+        # Best-effort only; fall back to UTC
+        offset_hours = 0.0
+
+    # Compute local time from UTC and prepare a stable label
+    utc_now = datetime.now(timezone.utc)
+    local_dt = utc_now + timedelta(minutes=int(round(offset_hours * 60)))
+
+    total_minutes = int(round(offset_hours * 60))
+    if total_minutes == 0:
+        label = "UTC"
+    else:
+        sign = "+" if total_minutes >= 0 else "-"
+        mm_abs = abs(total_minutes)
+        hh = mm_abs // 60
+        mm = mm_abs % 60
+        label = f"UTC{sign}{hh:02d}:{mm:02d}"
+
     return (
-        dt.strftime("%H:%M:%S ") + tz
+        local_dt.strftime("%H:%M:%S ") + label
         if time_only
-        else dt.strftime("%Y-%m-%d %H:%M:%S ") + tz
+        else local_dt.strftime("%Y-%m-%d %H:%M:%S ") + label
     )
 
 
