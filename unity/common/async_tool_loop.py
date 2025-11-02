@@ -1473,7 +1473,7 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
     except Exception:
         pass
 
-    results: dict = {"applied": []}
+    results: dict = {"applied": [], "skipped": []}
 
     def _norm(s: str) -> str:
         try:
@@ -1557,6 +1557,7 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
             task_info = getattr(getattr(h, "_task", None), "task_info", {}) or {}
 
         matched_any = False
+        matched_selectors: set[str] = set()
         if isinstance(task_info, dict) and task_info:
             for sel, child_node in children.items():
                 for _t, _inf in list(task_info.items()):
@@ -1568,6 +1569,10 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                     if _name and _child is not None and _selector_matches(sel, _name):
                         matched_any = True
                         try:
+                            matched_selectors.add(str(sel))
+                        except Exception:
+                            pass
+                        try:
                             _p = "/".join(str(p) for p in path)
                             LOGGER.debug(
                                 f"↘️ [{label}] Descend: selector {sel!r} matched child {_name!r} at {_p}",
@@ -1576,17 +1581,41 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                             pass
                         await _apply(_child, child_node, path + [str(_name)])
             if matched_any:
+                # Record any unmatched selectors at this level as skipped
+                try:
+                    for _sel in children.keys():
+                        if str(_sel) not in matched_selectors:
+                            try:
+                                results["skipped"].append(
+                                    {"path": list(path), "selector": str(_sel)},
+                                )
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
                 return
 
         # Wrapper fallback: when no explicit loop children matched, try common wrappers
         # Only when exactly one child node is provided (unambiguous)
+        used_wrapper = False
         if len(children) == 1:
             child_node = next(iter(children.values()))
             for attr in ("_actor_handle", "_current_handle"):
                 inner = getattr(h, attr, None)
                 if inner is not None:
+                    used_wrapper = True
                     await _apply(inner, child_node, path + [attr])
                     break
+
+        # If nothing matched and no wrapper was usable, mark all selectors as skipped
+        if not matched_any and not used_wrapper:
+            try:
+                for _sel in children.keys():
+                    results["skipped"].append(
+                        {"path": list(path), "selector": str(_sel)},
+                    )
+            except Exception:
+                pass
 
     await _apply(handle, spec, [str(label)])
     return results
