@@ -4,6 +4,7 @@ import pytest
 
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
 from tests.helpers import _handle_project
+from unity.function_manager.function_manager import FunctionManager
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -218,3 +219,53 @@ async def test_pause_freezes_duration():
     assert (
         elapsed_after_resume >= 0.05
     ), "Should wait after resume; clock was frozen while paused"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 9.  Entrypoint observes FunctionManager docstring via ask (LinkedIn flow)   #
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_entrypoint_demonstrates_function_knowledge_during_ask():
+    """
+    Simulate a browser-style function that works on LinkedIn sales leads.
+    The docstring should state:
+      1) trouble logging into LinkedIn; 2) then resolved.
+
+    When we ask the running SimulatedActor if it is encountering problems,
+    the response should reference LinkedIn, proving function metadata was observed.
+    """
+
+    fm = FunctionManager()
+
+    impl = '''
+def simulate_linkedin_sales_leads() -> str:
+    """Simulated browser flow:
+    1) Trouble logging into LinkedIn (login blocked initially).
+    2) Issue resolved; proceed to search sales leads on LinkedIn."""
+    print("Trouble logging into LinkedIn: login blocked")
+    print("Issue resolved: Login successful; searching sales leads on LinkedIn")
+    return "ok"
+'''.strip()
+
+    res = fm.add_functions(implementations=impl)
+    status = res.get("simulate_linkedin_sales_leads", "")
+    assert any(s in str(status) for s in ("added", "updated", "skipped"))
+
+    fid = (
+        fm.list_functions().get("simulate_linkedin_sales_leads", {}).get("function_id")
+    )
+    assert isinstance(fid, int)
+
+    actor = SimulatedActor(steps=2, duration=None)
+    handle = await actor.act("Search sales leads.", entrypoint=fid)
+
+    reply = await handle.ask(
+        "Did you or are you encountering any problems logging in? Reply briefly, explaining any relevant websites.",
+    )
+    assert isinstance(reply, str) and reply.strip(), "Expected a non-empty reply"
+    assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
+
+    await handle.result()
