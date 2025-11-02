@@ -38,3 +38,29 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
             },
         }
         return await self.nested_steer(spec)
+
+    async def resume_actor(self, reason: str) -> Dict[str, Any]:
+        """
+        Resume any in-flight Actor/TaskScheduler execution and announce the resume.
+
+        Parameters
+        ----------
+        reason : str
+            Human-readable reason to include in the interjection.
+
+        Returns
+        -------
+        dict
+            Summary of applied/skipped operations from nested steering.
+        """
+
+        message = f"<Actor has been resumed due to {reason}>"
+        spec: Dict[str, Any] = {
+            "method": "interject",
+            "args": message,
+            "children": {
+                "TaskScheduler.execute": {"method": "resume"},
+                "Actor.act": {"method": "resume"},
+            },
+        }
+        return await self.nested_steer(spec)
