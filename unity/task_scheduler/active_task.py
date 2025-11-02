@@ -146,8 +146,9 @@ class ActiveTask(BaseActiveTask):
             _parent_chat_context=_parent_chat_context,
             _clarification_up_q=_clarification_up_q,
             _clarification_down_q=_clarification_down_q,
-            entrypoint_function_id=entrypoint_function_id,
-            persist=False, # Scheduler-run plans should complete instead of pausing for interjection
+            # Always pass entrypoint to the actor so it can immediately run the function
+            entrypoint=entrypoint_function_id,
+            persist=False,  # Scheduler-run plans should complete instead of pausing for interjection
         )
         return cls(
             actor_steerable_handle,  # type: ignore[arg-type]
