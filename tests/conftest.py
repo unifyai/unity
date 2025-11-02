@@ -122,10 +122,22 @@ def stub_controller_deps(monkeypatch):
     )
 
     # --- DateTime stub for prompts (centralized) -----------------------------------
-    def _static_now(time_only: bool = False):
-        """Return a fixed timestamp for consistent test caching."""
-        # Friday, June 13, 2025 at noon UTC
-        return "12:00:00 UTC" if time_only else "2025-06-13 12:00:00 UTC"
+    def _static_now(time_only: bool = False, tz: str = "UTC"):
+        """Return a fixed timestamp for consistent test caching, honoring timezone.
+
+        The fixed base is Friday, June 13, 2025 at 12:00:00 UTC; this value is
+        converted to the requested timezone and formatted.
+        """
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+
+        base = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        dt = base.astimezone(ZoneInfo(tz))
+        return (
+            dt.strftime("%H:%M:%S ") + tz
+            if time_only
+            else dt.strftime("%Y-%m-%d %H:%M:%S ") + tz
+        )
 
     # Patch the central helper once so all prompts inherit a stable timestamp
     monkeypatch.setattr("unity.common.prompt_helpers.now", _static_now)
