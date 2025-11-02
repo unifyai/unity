@@ -554,8 +554,8 @@ class LocalTaskView:
             for h in heads:
                 qid = h.queue_id
 
-                assert qid is not None
-                assert h.schedule is not None
+                if qid is None:
+                    continue
 
                 order: List[int] = []
                 seen: set[int] = set()
@@ -583,8 +583,8 @@ class LocalTaskView:
                     for t in order:
                         new_reverse[t] = qid
                     new_head_start[qid] = (
-                        h.schedule.start_at.isoformat()
-                        if h.schedule.start_at is not None
+                        h.schedule_start_at.isoformat()
+                        if h.schedule_start_at is not None
                         else None
                     )
 
