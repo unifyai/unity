@@ -748,9 +748,27 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
     # --- targeted nested steerability (programmatic, no LLM) -----------------
     async def nested_steer(self, spec: dict) -> dict:
-        """Apply a tree of steering commands to the current loop and matched children.
+        """Apply a nested steering spec to this loop and any matched child handles.
 
-        See module-level ``nested_steer_on`` for full behaviour description.
+        Programmatic (no LLM) and best‑effort: unknown or missing children are
+        silently ignored and traversal stops naturally when no child is found.
+
+        Spec schema (all keys optional):
+        - method: str – handle method to invoke (e.g., "pause", "resume", "stop",
+          "interject", "ask").
+        - args: any – convenience single argument; mapped to a common content key if
+          not provided in ``kwargs``.
+        - kwargs: dict – keyword arguments for the method; merged with ``args``.
+        - children: dict[str, dict] – mapping of selector → node to apply on matched
+          in‑flight child handles.
+
+        Selector matching (case‑insensitive):
+        - Matches against in‑flight tool names at this level (e.g., "TaskScheduler_execute").
+        - Dotted vs underscore tolerated ("TaskScheduler.execute").
+        - Method‑only suffix accepted ("execute").
+
+        Returns a summary dict: {"applied": [...], "skipped": [...]}, useful for tests.
+        See module‑level ``nested_steer_on`` for full behaviour details.
         """
 
         return await nested_steer_on(self, spec)
