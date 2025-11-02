@@ -779,7 +779,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             current_task_id=self._current_task_id,
         )
 
-    def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
+    def stop(self, *, cancel: bool = False, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
         try:
             return self._current_handle.stop(cancel=cancel, reason=reason)
         except Exception:

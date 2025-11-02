@@ -282,7 +282,12 @@ class ActiveTask(BaseActiveTask):
         await self._actor_handle.interject(message)
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:
+    def stop(
+        self,
+        *,
+        cancel: bool = False,
+        reason: Optional[str] = None,
+    ) -> Optional[str]:
         """Stop the running activity with explicit intent.
 
         When ``cancel`` is True the task instance is marked cancelled. When False, the
