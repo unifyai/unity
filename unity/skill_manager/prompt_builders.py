@@ -7,7 +7,7 @@ from typing import Callable, Dict, List
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
-    now_utc_str,
+    now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
@@ -160,6 +160,6 @@ def build_ask_prompt(
             "",
             read_only_ask_mutation_exit_block(),
             "",
-            f"Current UTC time is {now_utc_str()}.",
+            f"Current UTC time is {now()}.",
         ],
     )

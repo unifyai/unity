@@ -8,7 +8,7 @@ from .types.contact import Contact
 from ..knowledge_manager.types import column_type_schema
 from ..common.prompt_helpers import (
     sig_dict,
-    now_utc_str,
+    now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
     # New standardized composer utilities

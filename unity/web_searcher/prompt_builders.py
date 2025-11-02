@@ -1,5 +1,5 @@
 from typing import Dict, Callable
-from ..common.prompt_helpers import clarification_guidance, now_utc_str
+from ..common.prompt_helpers import clarification_guidance, now
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 
@@ -94,7 +94,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     # Early exit policy for mutation-intent requests reaching ask()
     lines += ["", read_only_ask_mutation_exit_block()]
     # Current time (for reproducibility and deterministic caching in tests)
-    lines += ["", f"Current UTC time is {now_utc_str()}."]
+    lines += ["", f"Current UTC time is {now()}."]
 
     return "\n".join(lines)
 

@@ -5,7 +5,7 @@ import json
 __all__ = [
     "clarification_guidance",
     "sig_dict",
-    "now_utc_str",
+    "now",
     "tool_name",
     "require_tools",
     "parallelism_guidance",
@@ -63,7 +63,7 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return {name: str(inspect.signature(fn)) for name, fn in tools.items()}
 
 
-def now_utc_str(time_only: bool = False) -> str:
+def now(time_only: bool = False) -> str:
     """Return current UTC timestamp as a compact human-readable string.
 
     Parameters
@@ -565,7 +565,7 @@ def compose_system_prompt(spec: PromptSpec) -> str:
     # 12) Current time footer
     if spec.include_time_footer:
         parts.append("")
-        parts.append(f"{spec.time_footer_prefix}{now_utc_str()}.")
+        parts.append(f"{spec.time_footer_prefix}{now()}.")
 
     # 13) Clarification footer (single-sourced guidance sentence)
     if spec.include_clarification_footer:
