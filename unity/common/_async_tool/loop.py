@@ -3,8 +3,9 @@ import unify
 import json
 import inspect
 import os
+from pathlib import Path
 import copy
-from datetime import datetime
+import re
 
 from typing import (
     Dict,
@@ -20,7 +21,7 @@ from typing import (
 from contextlib import suppress
 from pydantic import BaseModel
 
-from ...constants import LOGGER, LLM_IO_DEBUG
+from ...constants import LOGGER, LLM_IO_DEBUG, SESSION_ID
 from ..tool_spec import ToolSpec, normalise_tools
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
@@ -28,11 +29,12 @@ from .messages import (
     find_unreplied_assistant_entries,
     chat_context_repr,
     generate_with_preprocess,
+    PENDING_PLACEHOLDER_TEXT,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
-    ToolCallMetadata,
     create_tool_call_message,
+    ToolCallMetadata,
 )
 from .images import (
     set_live_images_context,
@@ -43,9 +45,10 @@ from .images import (
     has_live_images_context,
     LIVE_IMAGES_REGISTRY,
     LIVE_IMAGES_LOG,
+    build_live_images_overview_msgs,
 )
 from .formatting import sanitize_tool_msg_for_logging
-from ..llm_helpers import method_to_schema, _dumps, short_id
+from ..llm_helpers import method_to_schema, _dumps
 from .loop_config import (
     LoopConfig,
     TOOL_LOOP_LINEAGE,
@@ -62,6 +65,9 @@ from .messages import (
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
 from . import semantic_cache as sc
+
+# Single per-run LLM I/O debug file path (set on first use)
+_LLM_IO_FILE_PATH: str | None = None
 
 if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
@@ -155,6 +161,7 @@ async def async_tool_loop_inner(
     semantic_cache: Optional[Literal["read", "write", "both"]] = None,
     semantic_cache_namespace: Optional[str] = None,
     images: "ImageRefs | None" = None,
+    resume_children: Optional[list[dict]] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -276,12 +283,24 @@ async def async_tool_loop_inner(
     # Independent, centrally-configured LLM I/O logging flag
     llm_io_debug = bool(LLM_IO_DEBUG)
 
-    # File sink for LLM I/O: always a fresh file per process run
+    # File sink for LLM I/O: single per-run file under hidden folder, named by SESSION_ID
     _llm_io_file: str | None = None
     if llm_io_debug:
         with suppress(Exception):
-            ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-            _llm_io_file = os.path.join(os.getcwd(), f".unity_llm_io_{ts}.txt")
+            global _LLM_IO_FILE_PATH
+            if _LLM_IO_FILE_PATH is None:
+                root = Path(os.getcwd())
+                logs_dir = root / ".llm_io_debug"
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                # Sanitize SESSION_ID for filesystem safety
+                try:
+                    session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", SESSION_ID)
+                except Exception:
+                    session_safe = (
+                        SESSION_ID.replace(":", "-").replace("+", "-").replace("/", "-")
+                    )
+                _LLM_IO_FILE_PATH = str(logs_dir / f"{session_safe}.txt")
+            _llm_io_file = _LLM_IO_FILE_PATH
 
     def _llm_io_write(header: str, body: str) -> None:
         if not llm_io_debug or _llm_io_file is None:
@@ -360,6 +379,8 @@ async def async_tool_loop_inner(
             except Exception:
                 pass
         return False
+
+    # Helper moved to images.py: build_live_images_overview_msgs(reason)
 
     # If explicit images are provided, seed them; otherwise, isolate this loop
     # from any parent images by setting an empty images context.
@@ -471,10 +492,20 @@ async def async_tool_loop_inner(
                 for m in message
             ]
         await _msg_dispatcher.append_msgs(seeded_batch)
-        # Inject an initial snapshot of live images (if any)
+        # Inject an initial snapshot of live images (if any) immediately by
+        # appending assistant→tool messages directly to the client transcript.
         try:
             if has_live_images_context():
-                await _inject_live_images_overview("initial_images")
+                asst_msg, tool_msg = build_live_images_overview_msgs("initial_images")
+                try:
+                    client.append_messages([asst_msg, tool_msg])
+                    try:
+                        await to_event_bus(asst_msg, cfg)
+                        await to_event_bus(tool_msg, cfg)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -555,12 +586,28 @@ async def async_tool_loop_inner(
                 tools_data.clarification_channels,
             )
 
+    # (Initial live-images overview already injected directly when seeding messages.)
+
     # Ensure we forward stop to nested handles at most once, even if multiple
     # branches detect cancellation/stop around the same time.
     _stop_forwarded_once: bool = False
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
+        # If resuming with children, do not re-schedule those call_ids; they'll be adopted below
+        resume_children_call_ids: set[str] = set()
+        try:
+            if resume_children:
+                for _rec in resume_children:
+                    try:
+                        _cid = _rec.get("call_id")
+                        if isinstance(_cid, str) and _cid:
+                            resume_children_call_ids.add(_cid)
+                    except Exception:
+                        continue
+        except Exception:
+            resume_children_call_ids = set()
+
         unreplied = find_unreplied_assistant_entries(client)
         if unreplied:
             # backfill for all such assistant messages (oldest → newest)
@@ -568,7 +615,10 @@ async def async_tool_loop_inner(
                 amsg = entry["assistant_msg"]
                 # Before scheduling, drop any over-quota tool calls in this message
                 tools_data.prune_over_quota_tool_calls(amsg)
-                missing_ids = set(entry["missing"])
+                # Exclude any call_ids that will be adopted as resume_children
+                missing_ids = set(entry["missing"]) - resume_children_call_ids
+                if not missing_ids:
+                    continue
                 await schedule_missing_for_message(
                     amsg,
                     missing_ids,
@@ -580,98 +630,105 @@ async def async_tool_loop_inner(
                     msg_dispatcher=_msg_dispatcher,
                 )
 
+    # Adopt any nested children provided for resume (after backfill so placeholders exist)
+    try:
+        if resume_children:
+            # ToolCallMetadata is imported at module level; avoid local import to prevent
+            # function-scope shadowing that leads to UnboundLocalError on other paths.
+
+            # Build indices:
+            #  - call_index: call_id -> (assistant_msg, tool_call, tool_idx)
+            #  - reply_index: call_id -> existing tool reply message (if any)
+            call_index: dict[str, tuple[dict, dict, int]] = {}
+            reply_index: dict[str, dict] = {}
+            for m in client.messages:
+                try:
+                    if m.get("role") != "assistant":
+                        # capture existing tool reply messages
+                        if m.get("role") == "tool":
+                            try:
+                                cid = m.get("tool_call_id")
+                                if isinstance(cid, str):
+                                    reply_index[cid] = m
+                            except Exception:
+                                pass
+                        continue
+                    for i, tc in enumerate(m.get("tool_calls") or []):
+                        cid = tc.get("id")
+                        if isinstance(cid, str):
+                            call_index[cid] = (m, tc, i)
+                except Exception:
+                    continue
+
+            for child in resume_children:
+                try:
+                    cid = child.get("call_id")
+                    tool_name = str(child.get("tool_name") or "")
+                    ch = child.get("handle")
+                    if not cid or not tool_name or ch is None:
+                        continue
+                    tup = call_index.get(cid)
+                    if not tup:
+                        continue
+                    amsg, tc, idx = tup
+
+                    # Compute tool schema if available
+                    schema = {}
+                    try:
+                        spec = tools_data.normalized.get(tool_name)
+                        if spec is not None:
+                            schema = method_to_schema(spec.fn, tool_name)
+                    except Exception:
+                        schema = {}
+
+                    raw_args = "{}"
+                    try:
+                        raw_args = tc.get("function", {}).get("arguments", "{}")
+                    except Exception:
+                        raw_args = "{}"
+
+                    # Reuse existing placeholder tool message if present to avoid duplicates
+                    existing_tool_msg = reply_index.get(str(cid))
+
+                    info = ToolCallMetadata(
+                        name=tool_name,
+                        call_id=str(cid),
+                        call_dict=tc,
+                        call_idx=int(idx),
+                        chat_context=None,
+                        assistant_msg=amsg,
+                        is_interjectable=hasattr(ch, "interject"),
+                        tool_schema=schema,
+                        llm_arguments={},
+                        raw_arguments_json=str(raw_args),
+                        is_passthrough=bool(child.get("is_passthrough", False)),
+                        tool_reply_msg=existing_tool_msg,
+                    )
+
+                    await tools_data.adopt_nested(
+                        info,
+                        ch,
+                        msg_dispatcher=_msg_dispatcher,
+                        assistant_meta=assistant_meta,
+                        outer_handle_container=outer_handle_container,
+                    )
+                    try:
+                        logger.info(
+                            f"Adopted child handle for call_id={cid} tool={tool_name}",
+                            prefix="🔗",
+                        )
+                    except Exception:
+                        pass
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
     # Helper: inject a synthetic image-overview tool call/result so the full
     # set of live images persists in the transcript (independent of tool policy).
     async def _inject_live_images_overview(reason: str = "") -> None:
         try:
-            # Build AnnotatedImageRefs payload from current registry/log
-            from .images import LIVE_IMAGES_REGISTRY, LIVE_IMAGES_LOG  # local import
-            from ...image_manager.types.annotated_image_ref import (
-                AnnotatedImageRef as _AnnotatedImageRef,
-            )
-            from ...image_manager.types.raw_image_ref import (
-                RawImageRef as _RawImageRef,
-            )
-            from ...image_manager.types.image_refs import (
-                AnnotatedImageRefs as _AnnotatedImageRefs,
-            )
-
-            reg = LIVE_IMAGES_REGISTRY.get() or {}
-            logs = LIVE_IMAGES_LOG.get() or []
-
-            # Compute last annotation per image_id
-            last_ann: dict[int, str] = {}
-            for rec in logs:
-                try:
-                    _iid = int(rec.get("image_id"))
-                except Exception:
-                    continue
-                ann = rec.get("annotation")
-                last_ann[_iid] = str(ann) if ann is not None else ""
-
-            annotated_list: list[_AnnotatedImageRef] = []
-            images_meta: list[dict] = []
-            for _iid, _h in getattr(reg, "items", lambda: [])():
-                try:
-                    iid = int(_iid)
-                except Exception:
-                    continue
-                ann_txt = last_ann.get(iid) or str(getattr(_h, "annotation", "") or "")
-                try:
-                    annotated_list.append(
-                        _AnnotatedImageRef(
-                            raw_image_ref=_RawImageRef(image_id=iid),
-                            annotation=ann_txt or "",
-                        ),
-                    )
-                except Exception:
-                    # Best-effort: skip malformed entries
-                    continue
-                # Enrich with optional metadata for ease of use by the LLM
-                try:
-                    images_meta.append(
-                        {
-                            "image_id": iid,
-                            "caption": getattr(_h, "caption", None),
-                            "timestamp": getattr(
-                                getattr(_h, "timestamp", None),
-                                "isoformat",
-                                lambda: "",
-                            )(),
-                        },
-                    )
-                except Exception:
-                    pass
-
-            # Compose payload with full AnnotatedImageRefs
-            payload = {
-                "status": "ok",
-                "reason": reason,
-                "images": _AnnotatedImageRefs.model_validate(annotated_list),
-                "images_meta": images_meta,
-                "hint": (
-                    "Forward these images into future tools that declare an 'images' argument (prefer AnnotatedImageRefs). "
-                    "Rewrite or augment annotations so they align with the delegated question/action (not the original phrasing), "
-                    "and preserve user-referenced ordering when it matters."
-                ),
-            }
-
-            # Synthetic assistant tool call followed by its tool result
-            call_id = short_id(8)
-            asst_msg = {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": "live_images_overview",
-                            "arguments": "{}",
-                        },
-                    },
-                ],
-            }
+            asst_msg, tool_msg = build_live_images_overview_msgs(reason)
 
             await _msg_dispatcher.append_msgs([asst_msg])
             try:
@@ -681,12 +738,6 @@ async def async_tool_loop_inner(
 
             # Ensure assistant_meta bookkeeping before inserting tool result
             assistant_meta[id(asst_msg)] = {"results_count": 0}
-
-            tool_msg = create_tool_call_message(
-                name="live_images_overview",
-                call_id=call_id,
-                content=_dumps(payload, indent=4),
-            )
             await insert_tool_message_after_assistant(
                 assistant_meta,
                 asst_msg,
@@ -1052,6 +1103,14 @@ async def async_tool_loop_inner(
                     break
 
                 llm_turn_required = True
+                # Special sentinel: request immediate LLM turn without creating a new system message
+                try:
+                    if isinstance(extra, dict) and extra.get("_replay"):
+                        # Do not append any message; just grant the next LLM turn
+                        # and proceed. This preserves transcript fidelity after resume.
+                        continue
+                except Exception:
+                    pass
                 # Build system message based on the user-visible history stored on the outer handle.
                 history_lines: list[str] = []
                 try:
@@ -2265,7 +2324,7 @@ async def async_tool_loop_inner(
                 try:
                     await ensure_placeholders_for_pending(
                         assistant_msg=msg,
-                        content="Pending… tool call accepted. Working on it.",
+                        content=PENDING_PLACEHOLDER_TEXT,
                         tools_data=tools_data,
                         assistant_meta=assistant_meta,
                         client=client,

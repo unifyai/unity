@@ -3,9 +3,12 @@ from __future__ import annotations
 from contextvars import ContextVar
 from contextlib import suppress
 from typing import Any, List, Optional
+import inspect
+from .tools_utils import create_tool_call_message
+from ..llm_helpers import _dumps, short_id
 
 # New typed container for image references
-from unity.image_manager.types.image_refs import ImageRefs
+from unity.image_manager.types.image_refs import ImageRefs, AnnotatedImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 
@@ -336,10 +339,15 @@ def build_live_image_tools(
                 except Exception:
                     ctx_repr = parent_chat_context or []
 
-                return await ih.ask(
-                    question,
-                    parent_chat_context_cont=ctx_repr,
-                )
+                # Pass parent context only when the handle supports it
+                fn = getattr(ih, "ask")
+                params = inspect.signature(fn).parameters
+                if "parent_chat_context_cont" in params:
+                    return await ih.ask(
+                        question,
+                        parent_chat_context_cont=ctx_repr,
+                    )
+                return await ih.ask(question)
 
             # Fallback: no propagation
             return await ih.ask(question)
@@ -557,3 +565,99 @@ def has_live_images_context() -> bool:
         return bool(reg) or bool(logs)
     except Exception:
         return False
+
+
+# Helper: build a synthetic assistant→tool pair for the live images overview
+def build_live_images_overview_msgs(reason: str = "") -> tuple[dict, dict]:
+    """Return (assistant_msg, tool_msg) representing a live images overview call.
+
+    The assistant message contains a single tool_call to "live_images_overview" and
+    the tool message carries a structured payload with AnnotatedImageRefs and
+    lightweight per-image metadata (caption, timestamp).
+    """
+    try:
+        reg = LIVE_IMAGES_REGISTRY.get() or {}
+    except Exception:
+        reg = {}
+    try:
+        logs = LIVE_IMAGES_LOG.get() or []
+    except Exception:
+        logs = []
+
+    # Compute the last annotation seen per image id
+    last_ann: dict[int, str] = {}
+    for rec in logs:
+        try:
+            _iid = int(rec.get("image_id"))
+        except Exception:
+            continue
+        ann = rec.get("annotation")
+        last_ann[_iid] = str(ann) if ann is not None else ""
+
+    annotated_list: list[AnnotatedImageRef] = []
+    images_meta: list[dict] = []
+    for _iid, _h in getattr(reg, "items", lambda: [])():
+        try:
+            iid = int(_iid)
+        except Exception:
+            continue
+        ann_txt = last_ann.get(iid) or str(getattr(_h, "annotation", "") or "")
+        try:
+            annotated_list.append(
+                AnnotatedImageRef(
+                    raw_image_ref=RawImageRef(image_id=iid),
+                    annotation=ann_txt or "",
+                ),
+            )
+        except Exception:
+            # Best-effort: skip malformed entries
+            continue
+        # Enrich with optional metadata
+        try:
+            images_meta.append(
+                {
+                    "image_id": iid,
+                    "caption": getattr(_h, "caption", None),
+                    "timestamp": getattr(
+                        getattr(_h, "timestamp", None),
+                        "isoformat",
+                        lambda: "",
+                    )(),
+                },
+            )
+        except Exception:
+            pass
+
+    payload = {
+        "status": "ok",
+        "reason": reason,
+        "images": AnnotatedImageRefs.model_validate(annotated_list),
+        "images_meta": images_meta,
+        "hint": (
+            "Forward these images into future tools that declare an 'images' argument (prefer AnnotatedImageRefs). "
+            "Rewrite or augment annotations so they align with the delegated question/action (not the original phrasing), "
+            "and preserve user-referenced ordering when it matters."
+        ),
+    }
+
+    call_id = short_id(8)
+    asst_msg = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": "live_images_overview",
+                    "arguments": "{}",
+                },
+            },
+        ],
+    }
+    tool_msg = create_tool_call_message(
+        name="live_images_overview",
+        call_id=call_id,
+        content=_dumps(payload, indent=4),
+    )
+    return asst_msg, tool_msg

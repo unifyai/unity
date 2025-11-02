@@ -202,7 +202,7 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
         if m.get("role") == "tool" and m.get("name") == "ask_image"
     ]
     assert tool_msgs, "Expected a tool-result message for ask_image"
-    assert any('"BLUE"' in (m.get("content") or "") for m in tool_msgs)
+    assert any("BLUE" in (m.get("content") or "") for m in tool_msgs)
 
 
 @pytest.mark.eval
@@ -532,7 +532,7 @@ async def test_images_and_ask_image(monkeypatch) -> None:
         if m.get("role") == "tool" and m.get("name") == "ask_image"
     ]
     assert ask_msgs, "Expected a tool-result message for ask_image"
-    assert any('"BLUE"' in (m.get("content") or "") for m in ask_msgs)
+    assert any("BLUE" in (m.get("content") or "") for m in ask_msgs)
 
     # Final answer should reflect Emily's colour
     assert final.strip().lower().startswith("blue")

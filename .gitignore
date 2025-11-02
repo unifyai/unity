@@ -7,6 +7,8 @@ implementations.py
 log.txt
 .logs.txt
 logs.txt
+.pytest_logs/
+.llm_io_debug/
 test.py
 .env.latest
 .env.old

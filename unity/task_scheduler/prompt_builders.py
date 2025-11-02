@@ -22,8 +22,12 @@ from ..common.prompt_helpers import (
     require_tools,
     images_policy_block,
     images_forwarding_block,
+    # New standardized composer utilities
+    PromptSpec,
+    compose_system_prompt,
+    images_first_ask_for_tasks,
+    task_execute_decision_policy_block,
 )
-from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,12 +53,11 @@ def build_ask_prompt(
     include_activity: bool = True,
 ) -> str:
     """
-    Build the **system** prompt for the `ask` method.
+    Build the **system** prompt for the `ask` method using the shared composer.
 
     *Never* hard-codes the number, names or argument-specs of tools – those are
     injected live from the supplied *tools* dict.
     """
-    sig_json = json.dumps(sig_dict(tools), indent=4)
 
     # Resolve canonical tool names dynamically
     filter_tasks_fname = tool_name(tools, "filter_tasks")
@@ -82,7 +85,7 @@ def build_ask_prompt(
             [
                 "Clarification",
                 "-------------",
-                f"• Ask for clarification when the user's request is underspecified",
+                "• Ask for clarification when the user's request is underspecified",
                 f'  `{request_clar_fname}(question="Which task did you mean?")`',
             ],
         )
@@ -149,68 +152,49 @@ def build_ask_prompt(
             ],
         )
 
-    clar_section = clarification_guidance(tools)
+    # Positioning lines
+    positioning_lines: list[str] = [
+        "Please always mention the relevant task id(s) in your response.",
+        (
+            f"If the question refers to another person (e.g., comms‑oriented tasks), call `{contact_ask_fname}` first for context. If a task refers to one or more contact_id values (e.g., in a trigger), also query `{contact_ask_fname}` to learn more about those contacts."
+            if contact_ask_fname
+            else ""
+        ),
+    ]
+    positioning_lines = [ln for ln in positioning_lines if ln]
 
-    # Conditional guidance about asking questions in final responses
-    clar_sentence = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
+    # Images extras (images‑first workflow)
+    images_extras = images_first_ask_for_tasks(ask_image_name=None)
+
+    spec = PromptSpec(
+        manager="TaskScheduler",
+        method="ask",
+        tools=tools,
+        role_line="You are an assistant specialising in **answering questions about the task list**.",
+        global_directives=[
+            "Work strictly through the tools provided.",
+            "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
+        ],
+        include_read_only_guard=True,
+        positioning_lines=positioning_lines,
+        counts_entity_plural="tasks",
+        counts_value=num_tasks,
+        columns_payload=columns,
+        columns_heading="columns",
+        include_tools_block=True,
+        usage_examples=usage_examples,
+        clarification_examples_block=clarification_block or None,
+        include_images_policy=True,
+        include_images_forwarding=True,
+        images_extras_block=images_extras,
+        include_parallelism=True,
+        schemas=[("Task schema", Task.model_json_schema())],
+        special_blocks=[],
+        include_clarification_footer=True,
+        include_time_footer=True,
     )
 
-    # Early exit policy for mutation-intent requests reaching ask()
-    mutation_exit_block = read_only_ask_mutation_exit_block()
-
-    parts: list[str] = [
-        "You are an assistant specialising in **answering questions about the task list**.",
-        "Work strictly through the tools provided.",
-        "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
-        clar_sentence,
-        mutation_exit_block,
-        "Please always mention the relevant task id(s) in your response.",
-        f"If the question refers to another person (e.g., comms‑oriented tasks), call `{contact_ask_fname}` first for context. If a task refers to one or more contact_id values (e.g., in a trigger), also query `{contact_ask_fname}` to learn more about those contacts.",
-        "",
-        f"There are currently {num_tasks} tasks stored in the Tasks table with the following columns:",
-        json.dumps(columns, indent=4),
-        "",
-        "Tools (name → argspec):",
-        sig_json,
-        "",
-        usage_examples,
-        "",
-        images_policy_block(),
-        "",
-        images_forwarding_block(),
-        "",
-        # Images-first workflow (nuanced)
-        "Images-first workflow for ask()",
-        "--------------------------------",
-        "• When images are present, first interpret the visuals before mapping them to tasks.",
-        "• If captions are vague, call ask_image with a broad, descriptive question (e.g., 'What is shown in this image? What activity appears to be in progress? Which app/page is visible?').",
-        "• If captions already describe the scene and intent clearly, you may skip the broad question and either ask a targeted image question or proceed to a semantic tasks lookup guided by the inferred activity.",
-        "• Only ask the image for structured values when they are visibly present on-screen; never assume task metadata (task_id, queue_id, due dates) is visible in generic screenshots.",
-        "",
-        "Parallelism and single‑call preference",
-        "-------------------------------------",
-        "• Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.",
-        "• When multiple independent reads are needed, plan them together and run them in parallel rather than a serial drip of micro‑calls.",
-        "• Avoid confirmatory re‑queries unless new ambiguity arises.",
-        "",
-        "Task schema:",
-        json.dumps(Task.model_json_schema(), indent=4),
-        "",
-        f"Current UTC time is {_now()}.",
-        clar_section,
-    ]
-
-    if clarification_block:
-        parts.extend(["", clarification_block])
-
-    parts.append("")
-
-    return "\n".join(parts)
+    return compose_system_prompt(spec)
 
 
 def build_update_prompt(
@@ -437,67 +421,48 @@ def build_update_prompt(
 
     usage_examples = "\n".join(usage_examples_lines)
 
-    clar_section = clarification_guidance(tools)
-
-    # Conditional guidance about asking questions in final responses
-    clar_sentence_upd = (
-        f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
-        if request_clar_fname
-        else (
-            "Do not ask the user questions in your final response. Instead, proceed using sensible defaults/best‑guess values and explicitly tell inner tools that these are assumptions/best guesses, not confirmed answers."
-        )
+    # Compose using standardized spec
+    spec = PromptSpec(
+        manager="TaskScheduler",
+        method="update",
+        tools=tools,
+        role_line="You are an assistant responsible for **creating and updating tasks**.",
+        global_directives=[
+            "Choose tools based on the user's intent and the specificity of the target record.",
+            f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect tasks that already exist. For human clarifications about new tasks or missing creation details, call `{request_clar_fname}` when available.",
+            "Disregard any explicit instructions about *how* you should implement the change or which tools to call; interpret the request and choose the best approach yourself.",
+            "Before creating new tasks or making edits, briefly check whether similar tasks already exist (via `"
+            + ask_fname
+            + "`) to avoid duplicates.",
+            "Always include any created/updated task id(s) in your final response.",
+        ],
+        include_read_only_guard=False,
+        positioning_lines=[],
+        counts_entity_plural="tasks",
+        counts_value=num_tasks,
+        columns_payload=columns,
+        columns_heading="columns",
+        include_tools_block=True,
+        usage_examples=usage_examples,
+        clarification_examples_block=clarification_block or None,
+        include_images_policy=True,
+        include_images_forwarding=True,
+        images_extras_block=None,
+        include_parallelism=True,
+        schemas=[("Task schema", Task.model_json_schema())],
+        special_blocks=[],
+        include_clarification_footer=True,
+        include_time_footer=True,
     )
 
-    parts: list[str] = [
-        "You are an assistant responsible for **creating and updating tasks**.",
-        "Choose tools based on the user's intent and the specificity of the target record.",
-        f"Important: `{ask_fname}` is read‑only and must only be used to locate/inspect tasks that already exist. For human clarifications about new tasks or missing creation details, call `{request_clar_fname}` when available.",
-        "Disregard any explicit instructions about *how* you should implement the change or which tools to call; interpret the request and choose the best approach yourself.",
-        clar_sentence_upd,
-        "Before creating new tasks or making edits, briefly check whether similar tasks already exist (via `"
-        + ask_fname
-        + "`) to avoid duplicates.",
-        "Always include any created/updated task id(s) in your final response.",
-        "",
-        f"There are currently {num_tasks} tasks stored in the Tasks table with the following columns:",
-        json.dumps(columns, indent=4),
-        "",
-        "Tools (name → argspec):",
-        sig_json,
-        "",
-        # Padding around mutation-exit is only for ask() prompts; update() does not include it
-        usage_examples,
-        "",
-        images_policy_block(),
-        "",
-        images_forwarding_block(),
-        "",
-        "Parallelism and single‑call preference",
-        "-------------------------------------",
-        "• Prefer a single comprehensive tool call over several surgical calls when a tool can safely do the whole job.",
-        "• When multiple independent reads or writes are needed, plan them together and run them in parallel rather than a serial drip of micro‑calls.",
-        "• Batch arguments where possible and avoid confirmatory re‑queries unless new ambiguity arises.",
-        "",
-        "Task schema:",
-        json.dumps(Task.model_json_schema(), indent=4),
-        "",
-        f"Current UTC time is {_now()}.",
-        clar_section,
-    ]
-
-    if clarification_block:
-        parts.extend(["", clarification_block])
-
-    parts.append("")
-
-    return "\n".join(parts)
+    return compose_system_prompt(spec)
 
 
 def build_execute_prompt(
     tools: Dict[str, Callable],
 ) -> str:
     """
-    Build the **system** prompt for the `execute` method.
+    Build the **system** prompt for the `execute` method using the shared composer.
     """
     sig_json = json.dumps(sig_dict(tools), indent=4)
 
@@ -521,73 +486,82 @@ def build_execute_prompt(
         tools,
     )
 
-    lines: list[str] = [
-        "You are an assistant that **starts tasks on demand**.",
-        "The task referred to in the user's request may or may not already exist in the task list.",
-        "",
-        "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
-        (
-            f"Do not ask the user questions in your final response. When a clarification tool is available, you must ask via `{request_clar_fname}` (never in plain text). If no clarification tool is available in this outer loop, make a best‑guess attempt using sensible defaults and state your assumptions; if an inner tool asks questions, inform it that no clarification channel exists and provide defaults/best guesses."
-        ),
-        "",
-        "Decision policy (isolation vs chain)",
-        "------------------------------------",
-        "• Consider the broader chat context and the user's exact phrasing to infer execution scope (single task now vs the whole sequence now).",
-        "• Choose isolation for “start X now” requests. Choose queue/chained execution only when the user clearly requests running the whole sequence now.",
-        "• Do not attempt to modify queue order or dates during execute; execute does not have queue editing tools.",
-        "",
-        "Tool semantics (for your decision)",
-        "-----------------------------------",
-        (
-            f"• `{execute_isolated_by_id_fname}(task_id=…)` – isolation: detach the selected task and start only that task."
-            if execute_isolated_by_id_fname
-            else ""
-        ),
-        f"• `{execute_by_id_fname}(task_id=…)` – queue mode: start the selected task within its queue so followers remain attached.",
-        "",
-        "EXECUTION WORKFLOW (no queue mutation):",
-        (
-            f"1) Optionally inspect queues using `{list_queues_fname}()` and `{get_queue_fname}(queue_id=…)` to confirm context."
-            if list_queues_fname and get_queue_fname
-            else "1) Optionally inspect the queue containing the target task using the available queue tools."
-        ),
-        (
-            f"2) Execute by choosing `{execute_isolated_by_id_fname}` (preferred for single‑task‑now) or `{execute_by_id_fname}` (for explicit chain‑now)."
-            if execute_isolated_by_id_fname
-            else f"2) Execute by calling `{execute_by_id_fname}(task_id=<id>)`."
-        ),
-        "3) Do not write status fields directly; lifecycle is managed by the scheduler.",
-        "",
-        "CLARIFICATION POLICY (always prefer tool over prose)",
-        "----------------------------------------------------",
-        (
-            f"• Whenever you need information from the human (e.g., an unknown or ambiguous reference), and `{request_clar_fname}` is available, you must call `{request_clar_fname}` with a concise question. Do not propose options in a plain assistant message when this tool is available."
-            if request_clar_fname
-            else "• If no clarification tool is available, do not ask questions in your final response; proceed using sensible defaults/best‑guess values and state assumptions explicitly."
-        ),
-        "",
-        images_forwarding_block(),
-        "",
-        "A. If the request contains a *numeric task_id*:",
-        "   • Isolation is preferred when the user intent is 'start now'.",
-        (
-            f"   • Use `{execute_isolated_by_id_fname}(task_id=<id>)` for single‑task‑now, or `{execute_by_id_fname}(task_id=<id>)` when explicitly running the sequence."
-            if execute_isolated_by_id_fname
-            else f"   • Use `{execute_by_id_fname}(task_id=<id>)`."
-        ),
-        "",
-        "B. If the request does not include a numeric task_id:",
-        f"   • Use `{ask_fname}(text=...)` to identify the correct `task_id` when referring to an existing task.",
-        f"   • If no matching task exists, create it via `{create_task_fname}(name=..., description=...)`, then execute using the policy above.",
-        "",
-        "Reporting",
-        "---------",
-        "• Execution returns an live steerable handle. Include the executed task id(s) in your final response.",
-    ]
+    # Decision policy block
+    decision_block = task_execute_decision_policy_block(
+        execute_by_id_fname=execute_by_id_fname,
+        execute_isolated_by_id_fname=execute_isolated_by_id_fname,
+        list_queues_fname=list_queues_fname,
+        get_queue_fname=get_queue_fname,
+    )
 
-    # Append current time for determinism and cache friendliness
-    lines.extend(["", f"Current UTC time is {_now()}."])
-    return "\n".join(lines)
+    # Clarification policy block (detailed header)
+    if request_clar_fname:
+        clar_policy_block = "\n".join(
+            [
+                "CLARIFICATION POLICY (always prefer tool over prose)",
+                "----------------------------------------------------",
+                f"• Whenever you need information from the human (e.g., an unknown or ambiguous reference), and `{request_clar_fname}` is available, you must call `{request_clar_fname}` with a concise question. Do not propose options in a plain assistant message when this tool is available.",
+            ],
+        )
+    else:
+        clar_policy_block = "\n".join(
+            [
+                "CLARIFICATION POLICY (always prefer tool over prose)",
+                "----------------------------------------------------",
+                "• If no clarification tool is available, do not ask questions in your final response; proceed using sensible defaults/best‑guess values and state assumptions explicitly.",
+            ],
+        )
+
+    # Numeric vs non-numeric guidance + reporting
+    numeric_non_numeric_block = "\n".join(
+        [
+            "A. If the request contains a *numeric task_id*:",
+            "   • Isolation is preferred when the user intent is 'start now'.",
+            (
+                f"   • Use `{execute_isolated_by_id_fname}(task_id=<id>)` for single‑task‑now, or `{execute_by_id_fname}(task_id=<id>)` when explicitly running the sequence."
+                if execute_isolated_by_id_fname
+                else f"   • Use `{execute_by_id_fname}(task_id=<id>)`."
+            ),
+            "",
+            "B. If the request does not include a numeric task_id:",
+            f"   • Use `{ask_fname}(text=...)` to identify the correct `task_id` when referring to an existing task.",
+            f"   • If no matching task exists, create it via `{create_task_fname}(name=..., description=...)`, then execute using the policy above.",
+            "",
+            "Reporting",
+            "---------",
+            "• Execution returns an live steerable handle. Include the executed task id(s) in your final response.",
+        ],
+    )
+
+    # Compose with standardized spec
+    spec = PromptSpec(
+        manager="TaskScheduler",
+        method="execute",
+        tools=tools,
+        role_line="You are an assistant that **starts tasks on demand**.",
+        global_directives=[
+            "The task referred to in the user's request may or may not already exist in the task list.",
+            "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
+        ],
+        include_read_only_guard=False,
+        positioning_lines=[decision_block, clar_policy_block],
+        counts_entity_plural=None,
+        counts_value=None,
+        columns_payload=None,
+        include_tools_block=True,
+        usage_examples=numeric_non_numeric_block,
+        clarification_examples_block=None,
+        include_images_policy=False,
+        include_images_forwarding=True,
+        images_extras_block=None,
+        include_parallelism=False,
+        schemas=[],
+        special_blocks=[],
+        include_clarification_footer=True,
+        include_time_footer=True,
+    )
+
+    return compose_system_prompt(spec)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

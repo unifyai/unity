@@ -156,6 +156,9 @@ def wrap_handle_with_logging(
             def __getattr__(self, item):
                 return getattr(self._inner, item)
 
+            def serialize(self) -> dict:  # type: ignore[override]
+                return self._inner.serialize()
+
             # --- event APIs -------------------------------------------------
             async def next_clarification(self) -> dict:
                 try:
@@ -242,6 +245,9 @@ def wrap_handle_with_logging(
         async def ask(self, question: str, *a, **kw):
             await self._publish(action="ask", question=question)
             return await self._inner.ask(question, *a, **kw)
+
+        def serialize(self) -> dict:
+            return self._inner.serialize()
 
         # fallback for everything else
         def __getattr__(self, item):

@@ -140,7 +140,7 @@ async def test_nested_async_tool_loop():
     assert first_tool_resp["role"] == "tool"
     assert first_tool_resp["name"] == "outer_tool"
     assert (
-        first_tool_resp["content"] == '"done"'
+        first_tool_resp["content"] == "done"
     ), "The placeholder for outer_tool should be updated with the inner loop's final result."
 
     # 4. Assistant: final response "all done"
@@ -420,14 +420,14 @@ async def test_interject_nested_handle(monkeypatch):
     )
 
     if status_check_msg is not None:
-        # Tool response to status check should be '"done"'
+        # Tool response to status check should be "done"
         status_response_msg = next(
             (
                 m
                 for m in msgs
                 if m["role"] == "tool"
                 and m["name"].startswith("check_status_call_")
-                and m["content"] == '"done"'
+                and m["content"] == "done"
             ),
             None,
         )
@@ -435,14 +435,10 @@ async def test_interject_nested_handle(monkeypatch):
             status_response_msg is not None
         ), "Tool response with '\"done\"' not found"
     else:
-        # Fallback: ensure there is some tool message that delivered '"done"'
+        # Fallback: ensure there is some tool message that delivered "done"
         # as the completion result even without an explicit status check.
         fallback_done = next(
-            (
-                m
-                for m in msgs
-                if m.get("role") == "tool" and m.get("content") == '"done"'
-            ),
+            (m for m in msgs if m.get("role") == "tool" and m.get("content") == "done"),
             None,
         )
         assert (

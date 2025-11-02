@@ -1,6 +1,6 @@
-import asyncio
 from typing import List
 import unify
+import asyncio
 
 # --------------------------------------------------------------------------- #
 #  ASYNC TOOL LOOP – TEST HELPERS                                             #
@@ -279,3 +279,196 @@ def first_tool_message_by_name(msgs: List[dict], name: str) -> dict:
         if m.get("role") == "tool" and m.get("name") == name:
             return m
     raise AssertionError(f"No tool message found with name: {name}")
+
+
+# --------------------------------------------------------------------------- #
+#  EVENT-BASED WAIT HELPERS (no polling)                                       #
+# --------------------------------------------------------------------------- #
+
+
+@unify.traced
+async def _wait_for_system_interjection_event(
+    *,
+    contains: str | None = None,
+    timeout: float = 300.0,
+):
+    """Await the next ToolLoop event whose message is a non-leading system interjection.
+
+    We subscribe to the EventBus and trigger on the first matching event after registration.
+    """
+    from unity.events.event_bus import EVENT_BUS
+
+    done: asyncio.Event = asyncio.Event()
+
+    # Build a safe filter expression evaluated against evt.model_dump() namespace
+    # Payload shape published by LoopMessageDispatcher.to_event_bus: {"message": <dict>, ...}
+    base = "(payload['message'].get('role') == 'system')"
+    if contains is not None:
+        # substring match in content without relying on builtins
+        sub = contains.replace("'", "\\'")
+        base += f" and ('{sub}' in (payload['message'].get('content') or ''))"
+
+    async def _cb(_events):  # noqa: D401 – small event marker
+        try:
+            done.set()
+        except Exception:
+            pass
+
+    # Register a count-based trigger so only the next matching event fires
+    await EVENT_BUS.register_callback(
+        event_type="ToolLoop",
+        callback=_cb,
+        filter=base,
+        every_n=1,
+    )
+
+    await asyncio.wait_for(done.wait(), timeout=timeout)
+
+
+@unify.traced
+async def _wait_for_any_assistant_tool_call(
+    tool_name: str,
+    *,
+    timeout: float = 300.0,
+):
+    """Await the next assistant ToolLoop event that calls `tool_name`."""
+    from unity.events.event_bus import EVENT_BUS
+
+    done: asyncio.Event = asyncio.Event()
+
+    async def _cb(events):
+        try:
+            for evt in events or []:
+                payload = getattr(evt, "payload", {})
+                msg = payload.get("message") if isinstance(payload, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                for tc in msg.get("tool_calls") or []:
+                    nm = (tc.get("function") or {}).get("name")
+                    if nm == tool_name:
+                        done.set()
+                        return
+        except Exception:
+            pass
+
+    await EVENT_BUS.register_callback(
+        event_type="ToolLoop",
+        callback=_cb,
+        every_n=1,
+    )
+    await asyncio.wait_for(done.wait(), timeout=timeout)
+
+
+@unify.traced
+async def _wait_for_any_tool_message_by_name(
+    tool_name: str,
+    *,
+    timeout: float = 300.0,
+):
+    """Await the next tool message with name == tool_name across all loops."""
+    from unity.events.event_bus import EVENT_BUS
+
+    done: asyncio.Event = asyncio.Event()
+
+    async def _cb(events):
+        try:
+            for evt in events or []:
+                payload = getattr(evt, "payload", {})
+                msg = payload.get("message") if isinstance(payload, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "tool":
+                    continue
+                if msg.get("name") == tool_name:
+                    done.set()
+                    return
+        except Exception:
+            pass
+
+    await EVENT_BUS.register_callback(
+        event_type="ToolLoop",
+        callback=_cb,
+        every_n=1,
+    )
+    await asyncio.wait_for(done.wait(), timeout=timeout)
+
+
+@unify.traced
+async def _wait_for_any_tool_message_prefix(
+    prefix: str,
+    *,
+    timeout: float = 300.0,
+):
+    """Await the next tool message whose name startswith ``prefix`` across all loops (event-based).
+
+    Uses the EventBus to subscribe to ToolLoop events and triggers on the next
+    tool message that satisfies the prefix condition.
+    """
+    from unity.events.event_bus import EVENT_BUS
+
+    done: asyncio.Event = asyncio.Event()
+
+    async def _cb(events):
+        try:
+            for evt in events or []:
+                payload = getattr(evt, "payload", {})
+                msg = payload.get("message") if isinstance(payload, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "tool":
+                    continue
+                name = msg.get("name")
+                if isinstance(name, str) and name.startswith(prefix):
+                    done.set()
+                    return
+        except Exception:
+            pass
+
+    await EVENT_BUS.register_callback(
+        event_type="ToolLoop",
+        callback=_cb,
+        every_n=1,
+    )
+    await asyncio.wait_for(done.wait(), timeout=timeout)
+
+
+@unify.traced
+async def _wait_for_assistant_tool_calls(
+    tool_names: list[str],
+    *,
+    timeout: float = 300.0,
+):
+    """Wait until assistant has called all tools in `tool_names` at least once.
+
+    Uses a single EventBus subscription to avoid dedupe collisions and races.
+    """
+    from unity.events.event_bus import EVENT_BUS
+
+    required = set(tool_names or [])
+    seen: set[str] = set()
+    done: asyncio.Event = asyncio.Event()
+
+    async def _cb(events):
+        try:
+            for evt in events or []:
+                payload = getattr(evt, "payload", {})
+                msg = payload.get("message") if isinstance(payload, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                calls = msg.get("tool_calls") or []
+                for tc in calls:
+                    try:
+                        nm = (tc.get("function") or {}).get("name")
+                        if isinstance(nm, str):
+                            if nm in required and nm not in seen:
+                                seen.add(nm)
+                                if seen >= required:
+                                    done.set()
+                                    return
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+    await EVENT_BUS.register_callback(
+        event_type="ToolLoop",
+        callback=_cb,
+        every_n=1,
+    )
+    await asyncio.wait_for(done.wait(), timeout=timeout)
