@@ -773,6 +773,11 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
       - If no loop-children matched, fall back to common wrapper attributes ("_actor_handle",
         "_current_handle") when exactly one child node is provided.
       - Unknown selectors are ignored; traversal stops naturally when no child is found.
+
+    Selector matching rules (case-insensitive):
+      - Accept exact tool name matches (e.g., "TaskScheduler_execute").
+      - Accept dotted form (e.g., "TaskScheduler.execute") matching underscore names.
+      - Accept method-only suffix (e.g., "execute" matches "TaskScheduler_execute").
     """
 
     # Best-effort label for diagnostics
@@ -791,6 +796,33 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
         pass
 
     results: dict = {"applied": []}
+
+    def _norm(s: str) -> str:
+        try:
+            return str(s).replace(".", "_").strip().lower()
+        except Exception:
+            return str(s).lower()
+
+    def _selector_matches(selector: str, candidate_name: str) -> bool:
+        """Return True when selector matches candidate_name under relaxed rules.
+
+        Rules:
+        - Case-insensitive exact match on underscore-normalised strings.
+        - Method-only suffix match: selector == part after first underscore.
+        - Dotted-vs-underscore tolerance handled by normalisation.
+        """
+        sel = _norm(selector)
+        cand = _norm(candidate_name)
+        if not sel or not cand:
+            return False
+        if sel == cand:
+            return True
+        # Suffix match: allow targeting by bare method name
+        try:
+            suffix = cand.split("_", 1)[1]
+        except Exception:
+            suffix = cand
+        return sel == suffix
 
     async def _apply(h, node: dict | None, path: list[str]) -> None:
         node = node or {}
@@ -844,7 +876,7 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                         _child = getattr(_inf, "handle", None)
                     except Exception:
                         _name, _child = None, None
-                    if _name == sel and _child is not None:
+                    if _name and _child is not None and _selector_matches(sel, _name):
                         matched_any = True
                         await _apply(_child, child_node, path + [str(_name)])
             if matched_any:
