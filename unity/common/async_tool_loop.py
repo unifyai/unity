@@ -1499,14 +1499,8 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
         except Exception:
             return str(s).lower()
 
-    def _selector_matches(selector: str, candidate_name: str) -> bool:
-        """Return True when selector matches candidate_name under relaxed rules.
-
-        Rules:
-        - Case-insensitive exact match on underscore-normalised strings.
-        - Method-only suffix match: selector == part after first underscore.
-        - Dotted-vs-underscore tolerance handled by normalisation.
-        """
+    def _selector_matches_name(selector: str, candidate_name: str) -> bool:
+        """Name-only matching with relaxed rules (case-insensitive, suffix)."""
         sel = _norm(selector)
         cand = _norm(candidate_name)
         if not sel or not cand:
@@ -1519,6 +1513,57 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
         except Exception:
             suffix = cand
         return sel == suffix
+
+    def _selector_hits(
+        selector: str,
+        candidate_name: str,
+        candidate_call_id: str | None,
+    ) -> bool:
+        """Extended selector matcher supporting wildcard and call_id forms.
+
+        Accepted forms:
+        - "*" → match all children at the current level
+        - exact call_id → matches the tool with that call_id
+        - "#<id_suffix>" → match when call_id endswith(<id_suffix>)
+        - "<name>#<call_id|suffix>" → match by name AND call_id (or its suffix)
+        - name-only → uses relaxed name rules (dotted vs underscore; suffix method)
+        """
+        try:
+            s = str(selector or "").strip()
+        except Exception:
+            s = str(selector)
+
+        # Wildcard for broadcast at this level
+        if s == "*":
+            return True
+
+        # Direct call_id match
+        if candidate_call_id and s == str(candidate_call_id):
+            return True
+
+        # call_id suffix match via leading '#'
+        if s.startswith("#"):
+            suf = s[1:]
+            if candidate_call_id and (
+                candidate_call_id.endswith(suf) or candidate_call_id == suf
+            ):
+                return True
+            return False
+
+        # Combined name#id form
+        if "#" in s:
+            try:
+                left, right = s.split("#", 1)
+            except Exception:
+                left, right = s, ""
+            if _selector_matches_name(left, candidate_name):
+                if not candidate_call_id:
+                    return False
+                return candidate_call_id == right or candidate_call_id.endswith(right)
+            return False
+
+        # Default: name-only
+        return _selector_matches_name(s, candidate_name)
 
     async def _apply(h, node: dict | None, path: list[str]) -> None:
         node = node or {}
@@ -1581,10 +1626,15 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                 for _t, _inf in list(task_info.items()):
                     try:
                         _name = getattr(_inf, "name", None)
+                        _cid = getattr(_inf, "call_id", None)
                         _child = getattr(_inf, "handle", None)
                     except Exception:
-                        _name, _child = None, None
-                    if _name and _child is not None and _selector_matches(sel, _name):
+                        _name, _cid, _child = None, None, None
+                    if (
+                        _name
+                        and _child is not None
+                        and _selector_hits(sel, _name, _cid)
+                    ):
                         matched_any = True
                         try:
                             matched_selectors.add(str(sel))
@@ -1613,17 +1663,32 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                     pass
                 return
 
-        # Wrapper fallback: when no explicit loop children matched, try common wrappers
-        # Only when exactly one child node is provided (unambiguous)
+        # Wrapper fallback: when no explicit loop children matched, try common wrappers.
+        # Prefer a single clear wrapper attribute when available; allow multiple child nodes.
         used_wrapper = False
-        if len(children) == 1:
-            child_node = next(iter(children.values()))
-            for attr in ("_actor_handle", "_current_handle"):
-                inner = getattr(h, attr, None)
-                if inner is not None:
-                    used_wrapper = True
-                    await _apply(inner, child_node, path + [attr])
-                    break
+        try:
+            wrapper_attrs = [
+                a
+                for a in ("_actor_handle", "_current_handle")
+                if getattr(h, a, None) is not None
+            ]
+        except Exception:
+            wrapper_attrs = []
+        if not matched_any and wrapper_attrs:
+            # Choose the first available wrapper to descend into
+            inner = getattr(h, wrapper_attrs[0], None)
+            if inner is not None:
+                used_wrapper = True
+                # Avoid double-applying the current node's method on the inner wrapper:
+                # forward only children when present; otherwise pass the node as-is.
+                if children:
+                    await _apply(
+                        inner,
+                        {"children": children},
+                        path + [wrapper_attrs[0]],
+                    )
+                else:
+                    await _apply(inner, node, path + [wrapper_attrs[0]])
 
         # If nothing matched and no wrapper was usable, mark all selectors as skipped
         if not matched_any and not used_wrapper:
