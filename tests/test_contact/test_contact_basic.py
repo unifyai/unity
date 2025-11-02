@@ -137,6 +137,36 @@ def test_search_contacts():
 
 
 # ────────────────────────────────────────────────────────────────────────────
+#  Timezone (utc_offset_hours) basic read/update                             #
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+@_handle_project
+def test_create_and_update_timezone():
+    cm = ContactManager()
+
+    # Create a regular (non-system) contact
+    out = cm._create_contact(first_name="Zed")
+    cid = out["details"]["contact_id"]
+    assert cid > 1
+
+    # Initially timezone should be None
+    c = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
+    assert c.utc_offset_hours is None
+
+    # Update timezone to +5.5 hours
+    cm.update_contact(contact_id=cid, utc_offset_hours=5.5)
+    c = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
+    assert c.utc_offset_hours == 5.5
+
+    # Update timezone to -3.0 hours
+    cm.update_contact(contact_id=cid, utc_offset_hours=-3.0)
+    c = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
+    assert c.utc_offset_hours == -3.0
+
+
+# ────────────────────────────────────────────────────────────────────────────
 #  System contacts respond_to defaults                              #
 # ────────────────────────────────────────────────────────────────────────────
 
