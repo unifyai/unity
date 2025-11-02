@@ -122,21 +122,20 @@ def stub_controller_deps(monkeypatch):
     )
 
     # --- DateTime stub for prompts (centralized) -----------------------------------
-    def _static_now(time_only: bool = False, tz: str = "UTC"):
-        """Return a fixed timestamp for consistent test caching, honoring timezone.
+    def _static_now(time_only: bool = False):
+        """Return a fixed timestamp for consistent test caching in assistant TZ.
 
-        The fixed base is Friday, June 13, 2025 at 12:00:00 UTC; this value is
-        converted to the requested timezone and formatted.
+        The fixed base is Friday, June 13, 2025 at 12:00:00 UTC; for tests we
+        treat the assistant timezone as UTC so the rendered label is "UTC".
         """
         from datetime import datetime, timezone
-        from zoneinfo import ZoneInfo
 
-        base = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
-        dt = base.astimezone(ZoneInfo(tz))
+        dt = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        label = "UTC"
         return (
-            dt.strftime("%H:%M:%S ") + tz
+            dt.strftime("%H:%M:%S ") + label
             if time_only
-            else dt.strftime("%Y-%m-%d %H:%M:%S ") + tz
+            else dt.strftime("%Y-%m-%d %H:%M:%S ") + label
         )
 
     # Patch the central helper once so all prompts inherit a stable timestamp
