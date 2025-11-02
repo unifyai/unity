@@ -791,7 +791,19 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
         label = "handle"
 
     try:
-        LOGGER.info(f"🎯 [{label}] Nested steer requested")
+        root_method = None
+        children_count = 0
+        try:
+            if isinstance(spec, dict):
+                root_method = spec.get("method")
+                children = spec.get("children") or {}
+                if isinstance(children, dict):
+                    children_count = len(children)
+        except Exception:
+            root_method, children_count = None, 0
+        LOGGER.info(
+            f"🎯 [{label}] Nested steer requested – method={root_method or '-'} children={children_count}",
+        )
     except Exception:
         pass
 
@@ -853,9 +865,20 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                     results["applied"].append({"path": list(path), "method": method})
                 except Exception:
                     pass
+                try:
+                    _p = "/".join(str(p) for p in path)
+                    LOGGER.debug(f"✅ [{label}] Applied method '{method}' at path {_p}")
+                except Exception:
+                    pass
             except Exception:
                 # Steering failures are best-effort; continue traversal
-                pass
+                try:
+                    _p = "/".join(str(p) for p in path)
+                    LOGGER.debug(
+                        f"⚠️  [{label}] Failed to apply '{method}' at path {_p}",
+                    )
+                except Exception:
+                    pass
 
         # 2) Recurse into matched children
         children = node.get("children") or {}
@@ -878,6 +901,13 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                         _name, _child = None, None
                     if _name and _child is not None and _selector_matches(sel, _name):
                         matched_any = True
+                        try:
+                            _p = "/".join(str(p) for p in path)
+                            LOGGER.debug(
+                                f"↘️ [{label}] Descend: selector {sel!r} matched child {_name!r} at {_p}",
+                            )
+                        except Exception:
+                            pass
                         await _apply(_child, child_node, path + [str(_name)])
             if matched_any:
                 return
