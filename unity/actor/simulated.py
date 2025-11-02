@@ -9,6 +9,7 @@ import logging
 from .base import BaseActor
 from typing import Optional
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.function_manager.function_manager import FunctionManager
 
 
 class SimulatedActorHandle(SteerableToolHandle):
@@ -36,6 +37,9 @@ class SimulatedActorHandle(SteerableToolHandle):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         log_mode: "str | None" = "log",
+        # Optional: function entrypoint context and prebaked result
+        entrypoint_info: dict | None = None,
+        planned_result: str | None = None,
     ) -> None:
         self._llm = llm
         self._description = description
@@ -48,6 +52,10 @@ class SimulatedActorHandle(SteerableToolHandle):
         self._log_mode: str | None = (
             log_mode if log_mode in ("print", "log", None) else "log"
         )
+
+        # Store optional entrypoint metadata and a planned completion result
+        self._entrypoint_info: dict | None = entrypoint_info
+        self._planned_result: str | None = planned_result or None
 
         self._steps_taken = 0
         self._step_lock = threading.Lock()
@@ -99,14 +107,19 @@ class SimulatedActorHandle(SteerableToolHandle):
                     and (time.monotonic() - self._last_started_at)
                     >= self._remaining_duration
                 ):
-                    self._complete(
-                        f"Completed '{description}' after {self._duration}\u2009s duration.",
+                    # Prefer prebaked function-aware result if available
+                    msg = (
+                        self._planned_result
+                        or f"Completed '{description}' after {self._duration}\u2009s duration."
                     )
+                    self._complete(msg)
                     return
                 if self._steps is not None and self._steps_taken >= (self._steps or 0):
-                    self._complete(
-                        f"Completed '{description}' in {self._steps} steps.",
+                    msg = (
+                        self._planned_result
+                        or f"Completed '{description}' in {self._steps} steps."
                     )
+                    self._complete(msg)
                     return
                 self._pause_event.wait()
                 time.sleep(0.1)
@@ -208,10 +221,20 @@ class SimulatedActorHandle(SteerableToolHandle):
         if not self._description:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
-        prompt = (
-            f"Current simulated actions:\n{self._description}\n\n"
-            f"User instruction to adjust the plan:\n{instruction}"
-        )
+        if self._entrypoint_info:
+            fn = self._entrypoint_info
+            prompt = (
+                "You are mid-execution of a function-driven simulated task.\n"
+                f"Task: {self._description}\n"
+                f"Entrypoint: {fn.get('name')} {fn.get('argspec','')} (id={fn.get('function_id')})\n"
+                f"Docstring:\n{fn.get('docstring','')}\n\n"
+                f"User instruction to adjust the plan:\n{instruction}"
+            )
+        else:
+            prompt = (
+                f"Current simulated actions:\n{self._description}\n\n"
+                f"User instruction to adjust the plan:\n{instruction}"
+            )
         await self._llm.generate(prompt)
 
     def pause(self) -> str:
@@ -246,10 +269,20 @@ class SimulatedActorHandle(SteerableToolHandle):
         if not self._description:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
-        prompt = (
-            f"You are working on simulating these actions:\n{self._description}\n\n"
-            f"User asks: {question}"
-        )
+        if self._entrypoint_info:
+            fn = self._entrypoint_info
+            prompt = (
+                "You are executing a simulated function as part of a task. Answer briefly.\n"
+                f"Task: {self._description}\n"
+                f"Entrypoint: {fn.get('name')} {fn.get('argspec','')} (id={fn.get('function_id')})\n"
+                f"Docstring:\n{fn.get('docstring','')}\n\n"
+                f"User asks: {question}"
+            )
+        else:
+            prompt = (
+                f"You are working on simulating these actions:\n{self._description}\n\n"
+                f"User asks: {question}"
+            )
         return await self._llm.generate(prompt)
 
     def done(self) -> bool:
@@ -370,9 +403,59 @@ class SimulatedActor(BaseActor):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        # New optional function entrypoint id (preferred spelling going forward)
+        entrypoint: Optional[int] = None,
+        # Back-compat shim while callers migrate
+        entrypoint_function_id: Optional[int] = None,
         **kwargs,
     ) -> SimulatedActorHandle:
-        # Pass the original TaskScheduler-provided description unchanged.
+        # Normalise entrypoint from either keyword
+        if entrypoint is None and entrypoint_function_id is not None:
+            try:
+                entrypoint = int(entrypoint_function_id)
+            except Exception:
+                entrypoint = None
+
+        entrypoint_info: dict | None = None
+        planned_result: str | None = None
+
+        # If an entrypoint is provided, fetch real function metadata/code and prebake a result
+        if entrypoint is not None:
+            try:
+                fm = FunctionManager()
+                log = fm._get_log_by_function_id(function_id=int(entrypoint), raise_if_missing=True)  # type: ignore[attr-defined]
+                ent = log.entries if hasattr(log, "entries") else {}
+                entrypoint_info = {
+                    "function_id": ent.get("function_id", entrypoint),
+                    "name": ent.get("name"),
+                    "argspec": ent.get("argspec"),
+                    "docstring": ent.get("docstring") or "",
+                    "implementation": ent.get("implementation") or "",
+                }
+
+                # Compose a concise final completion sentence consistent with the function
+                impl = entrypoint_info.get("implementation", "")
+                name = entrypoint_info.get("name") or f"function_{entrypoint}"
+                sig = entrypoint_info.get("argspec", "")
+                doc = entrypoint_info.get("docstring", "")
+                prompt = (
+                    "You are simulating the execution of a Python function inside a task.\n"
+                    "Return ONE short past-tense sentence that STARTS with 'Completed',\n"
+                    "summarising the concrete outcome of running the function in the context below.\n"
+                    "Do not include code or steps. Keep it under two sentences.\n\n"
+                    f"Task description: {description}\n"
+                    f"Function: {name} {sig} (id={entrypoint})\n"
+                    f"Docstring:\n{doc}\n\n"
+                    f"Implementation:\n{impl}"
+                )
+                planned_result = await self._llm.generate(prompt)
+                if not isinstance(planned_result, str) or not planned_result.strip():
+                    planned_result = None
+            except Exception:
+                entrypoint_info = None
+                planned_result = None
+
+        # Construct the simulated handle with optional entrypoint context
         return SimulatedActorHandle(
             self._llm,
             description,
@@ -383,4 +466,6 @@ class SimulatedActor(BaseActor):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             log_mode=self._log_mode,
+            entrypoint_info=entrypoint_info,
+            planned_result=planned_result,
         )
