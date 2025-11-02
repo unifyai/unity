@@ -3,10 +3,6 @@ from ..common.prompt_helpers import clarification_guidance, now_utc_str
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 
-def _now() -> str:
-    return now_utc_str()
-
-
 def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     """Return the system prompt used by WebSearcher.ask formatted as sections."""
     have_search = "search" in tools
@@ -98,7 +94,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     # Early exit policy for mutation-intent requests reaching ask()
     lines += ["", read_only_ask_mutation_exit_block()]
     # Current time (for reproducibility and deterministic caching in tests)
-    lines += ["", f"Current UTC time is {_now()}."]
+    lines += ["", f"Current UTC time is {now_utc_str()}."]
 
     return "\n".join(lines)
 

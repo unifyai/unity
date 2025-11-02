@@ -9,10 +9,6 @@ from typing import List, Dict, Any, Optional
 from unity.common.prompt_helpers import now_utc_str
 
 
-def _now() -> str:  # UTC timestamp helper
-    return now_utc_str()
-
-
 # Enhanced metadata extraction prompt for new parser
 def build_metadata_extraction_prompt() -> str:
     """Build prompt for LLM-based metadata extraction using Pydantic model validation."""
@@ -282,7 +278,7 @@ def build_intranet_ask_llm_prompt(
         "",
         documents_block,
         extra,
-        f"Current UTC time: {_now()}.",
+        f"Current UTC time: {now_utc_str()}.",
     ]
 
     return "\n".join(parts)

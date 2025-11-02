@@ -28,10 +28,6 @@ def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return sig_dict(tools)
 
 
-def _now() -> str:  # UTC timestamp helper
-    return now_utc_str()
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Public builders
 # ─────────────────────────────────────────────────────────────────────────────

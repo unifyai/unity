@@ -40,11 +40,6 @@ def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return sig_dict(tools)
 
 
-def _now() -> str:
-    """UTC timestamp helper for prompt reproducibility."""
-    return now_utc_str()
-
-
 def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
     """Delegate to shared tool name resolver."""
     return _shared_tool_name(tools, needle)

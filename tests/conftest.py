@@ -121,50 +121,13 @@ def stub_controller_deps(monkeypatch):
         _DummyWorker,
     )
 
-    # --- DateTime stub for prompt builders for all managers -----------------------------------
+    # --- DateTime stub for prompts (centralized) -----------------------------------
     def _static_now():
         """Return a fixed timestamp for consistent test caching."""
         return "2025-06-13 12:00:00 UTC"  # Friday, June 13, 2025 at noon UTC
 
-    # Patch all _now functions in prompt builders
-    monkeypatch.setattr("unity.contact_manager.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.knowledge_manager.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.conductor.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.task_scheduler.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.transcript_manager.prompt_builders._now", _static_now)
-    # Additional managers to ensure deterministic prompts across the suite
-    monkeypatch.setattr("unity.memory_manager.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.file_manager.prompt_builders._now", _static_now)
-    monkeypatch.setattr(
-        "unity.web_searcher.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.guidance_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.secret_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.skill_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.image_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.conversation_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
+    # Patch the central helper once so all prompts inherit a stable timestamp
+    monkeypatch.setattr("unity.common.prompt_helpers.now_utc_str", _static_now)
 
 
 # --------------------------------------------------------------------------- #
