@@ -550,6 +550,11 @@ async def test_serialize_requires_recursive_flag_for_nested():
     This guards the v1 contract that nested tool loops are only supported when callers
     explicitly opt-in via recursive=True. It prevents accidental implicit nested capture.
     """
+    # Gate the inner tool so the nested child remains in-flight when we call serialize
+    # (ensures the guard sees an active nested handle rather than a completed one).
+    global INNER_GATE
+    INNER_GATE = asyncio.Event()
+
     client = _outer_client()
     handle = start_async_tool_loop(
         client,
@@ -562,11 +567,22 @@ async def test_serialize_requires_recursive_flag_for_nested():
     await _wait_for_tool_request(client, "outer_tool")
     await _wait_for_tool_message_prefix(client, "outer_tool", timeout=120.0)
 
-    with pytest.raises(
-        ValueError,
-        match="Nested tool loops are not supported by v1 snapshot",
-    ):
-        handle.serialize()
+    try:
+        with pytest.raises(
+            ValueError,
+            match="Nested tool loops are not supported by v1 snapshot",
+        ):
+            handle.serialize()
+    finally:
+        # Cleanup: release resources and restore default state for subsequent tests
+        try:
+            handle.stop(reason="test cleanup")
+        except Exception:
+            pass
+        try:
+            INNER_GATE = None
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
