@@ -21,6 +21,12 @@ def _prune_assistant_msg(
     """
     Return a shallow-copied assistant message with tool_calls filtered by policy,
     or None when no tool_calls survive.
+
+    Invariants and policy:
+    - Drops synthetic helper calls whose names start with "check_status_".
+    - When `allowed_tools` is provided, only keeps tools in that set; always
+      preserves the built-in clarification helper "request_clarification" even
+      if it is not in `allowed_tools`.
     """
     if not isinstance(msg, dict) or msg.get("role") != "assistant":
         return None
@@ -71,6 +77,17 @@ def extract_assistant_and_tool_steps(
       - callid_to_tool_name: Dict[str, str]
       - final_call_ids: Set[str]
       - pending_call_ids: Set[str]
+
+    Invariants and behaviour:
+    - Assistant messages are pruned via `_prune_assistant_msg` respecting
+      `allowed_tools` and keeping clarification helpers.
+    - Tool results are paired by `tool_call_id` and we keep the LAST occurrence
+      per call id to reflect the final state in a streaming transcript.
+    - Final vs pending is determined using `non_final` (defaults to
+      `messages.is_non_final_tool_reply`): only replies that are not placeholders
+      (e.g., progress or clarification wrappers) are considered final.
+    - Indices are taken from the original `msgs` list to allow precise
+      reconstruction when needed.
     """
     if non_final is None:
         non_final = _is_non_final_tool_reply
@@ -181,7 +198,13 @@ def extract_assistant_and_tool_steps(
 
 
 def extract_interjections(msgs: List[dict]) -> Tuple[List[dict], List[int]]:
-    """Return (interjections, interjections_indices) for non-leading system messages."""
+    """
+    Return (interjections, interjections_indices) for non-leading system
+    messages.
+
+    Invariant: only system messages at positions > 0 are treated as
+    interjections; the leading system prompt is excluded.
+    """
     interjections: List[dict] = []
     interjections_indices: List[int] = []
     for i, m in enumerate(msgs or []):
@@ -202,7 +225,12 @@ def extract_clarifications(
 ) -> List[dict]:
     """
     Build a clarifications summary from tool_results whose name startswith
-    "clarification_request_". Uses callid_to_tool_name to attach the base tool name.
+    "clarification_request_". Uses callid_to_tool_name to attach the base tool
+    name.
+
+    Invariants:
+    - Each entry contains {call_id, tool_name, question} where `question` is the
+      tool message content verbatim; no parsing or rewriting is applied.
     """
     callid_to_tool_name = callid_to_tool_name or {}
     clarifications: List[dict] = []
@@ -225,7 +253,12 @@ def extract_clarifications(
 
 
 def initial_user_from_user_visible_history(history: List[dict] | None) -> Any:
-    """Return the initial user-visible message content when available."""
+    """
+    Return the initial user-visible message content when available.
+
+    Invariant: inspects only the first entry and returns its `content` when the
+    entry has role == "user"; otherwise returns None.
+    """
     try:
         if history:
             first = history[0]
@@ -247,8 +280,14 @@ def build_clean_tool_trajectory(
     with arguments/results, preserving the execution order implied by assistant
     tool_calls and pairing against the last corresponding tool result.
 
-    - Skips tool results that look non-final (placeholders/progress/clarification wrappers).
-    - Skips any tool name present in `drop_names`.
+    Invariants and behaviour:
+    - For each call id, pairs against the LAST tool reply message (final state).
+    - Uses `non_final` (defaults to `messages.is_non_final_tool_reply`) to
+      exclude placeholders/progress/clarification wrappers from results.
+    - Only considers tool replies whose `tool_call_id` conforms to typical
+      provider shape (startswith "call_") to avoid mis-pairing arbitrary ids.
+    - Respects `drop_names` to omit specific tool names from the trajectory.
+    - Produces a stable 0..N-1 `index` in the returned list.
     """
     if non_final is None:
         non_final = _is_non_final_tool_reply
