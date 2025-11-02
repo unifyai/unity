@@ -18,6 +18,9 @@ from unity.common.tool_spec import ToolSpec, normalise_tools
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
 from ..llm_helpers import _dumps
+from .transcript_ops import (
+    build_clean_tool_trajectory as _build_clean_tool_trajectory,
+)
 
 
 _SEMANTIC_CACHE_SAVER: "_SemanticCacheSaver | None" = None
@@ -265,54 +268,28 @@ class _SemanticCacheSaver:
         msgs,
         previous_tool_trajectory=None,
     ) -> List[CleanToolCall]:
+        # Build a cleaned trajectory using the shared transcript ops helper,
+        # ensuring we drop the semantic_search placeholder results.
+        cleaned_trajectory = _build_clean_tool_trajectory(
+            msgs,
+            drop_names={"semantic_search"},
+        )
 
-        cleaned_trajectory = []
-        _flatten_tools = {}
-
-        for msg in msgs:
-            if msg.get("role") == "tool":
-                # Skip completion status tools or anything not an actual tool call
-                if not msg["tool_call_id"].startswith("call_"):
-                    continue
-
-                _flatten_tools[msg["tool_call_id"]] = msg
-
-        for msg in msgs:
-            if msg.get("role") != "assistant":
-                continue
-
-            if msg.get("tool_calls") is not None:
-                for tool_call in msg.get("tool_calls"):
-                    if (call_id := tool_call.get("id")) in _flatten_tools.keys():
-                        if _flatten_tools[call_id].get("name") == "semantic_search":
-                            continue
-
-                        name = tool_call["function"]["name"]
-                        arguments = tool_call["function"]["arguments"]
-                        result = _flatten_tools[call_id]["content"]
-
-                        cleaned_trajectory.append(
-                            {
-                                "index": -1,
-                                "name": name,
-                                "arguments": arguments,
-                                "result": result,
-                            },
-                        )
-
+        # Prepend any prior trajectory steps when provided
         if previous_tool_trajectory:
             cleaned_trajectory = [*previous_tool_trajectory, *cleaned_trajectory]
 
-        # index the tool calls
+        # Re-index before pruning (for deterministic prompts)
         for idx, tool_call in enumerate(cleaned_trajectory):
             tool_call["index"] = idx
 
+        # Prune redundant/irrelevant calls via the LLM-based cleaner
         cleaned_trajectory = self._prune_tool_trajectory(
             user_message,
             cleaned_trajectory,
         )
 
-        # re-index the tool calls
+        # Re-index after pruning to keep a compact, stable ordering
         for idx, tool_call in enumerate(cleaned_trajectory):
             tool_call["index"] = idx
 
