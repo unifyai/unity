@@ -1663,35 +1663,8 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                     pass
                 return
 
-        # Wrapper fallback: when no explicit loop children matched, try common wrappers.
-        # Prefer a single clear wrapper attribute when available; allow multiple child nodes.
-        used_wrapper = False
-        try:
-            wrapper_attrs = [
-                a
-                for a in ("_actor_handle", "_current_handle")
-                if getattr(h, a, None) is not None
-            ]
-        except Exception:
-            wrapper_attrs = []
-        if not matched_any and wrapper_attrs:
-            # Choose the first available wrapper to descend into
-            inner = getattr(h, wrapper_attrs[0], None)
-            if inner is not None:
-                used_wrapper = True
-                # Avoid double-applying the current node's method on the inner wrapper:
-                # forward only children when present; otherwise pass the node as-is.
-                if children:
-                    await _apply(
-                        inner,
-                        {"children": children},
-                        path + [wrapper_attrs[0]],
-                    )
-                else:
-                    await _apply(inner, node, path + [wrapper_attrs[0]])
-
-        # If nothing matched and no wrapper was usable, mark all selectors as skipped
-        if not matched_any and not used_wrapper:
+        # If nothing matched, mark all selectors as skipped
+        if not matched_any:
             try:
                 for _sel in children.keys():
                     results["skipped"].append(

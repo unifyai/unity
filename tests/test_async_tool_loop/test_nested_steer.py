@@ -158,10 +158,8 @@ async def test_nested_steer_targets_child_and_applies_method():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_steer_wrapper_fallback_descends_when_single_child():
-    """When a child selector doesn't match but exactly one child-node is provided, nested_steer should
-    descend through common wrapper attributes (e.g., _current_handle) and apply the method to the inner handle.
-    """
+async def test_nested_steer_noop_when_child_selector_does_not_match():
+    """When a child selector does not match any in-flight child, nested_steer should do nothing (no fallback)."""
 
     inner = ToyHandle()
 
@@ -242,9 +240,8 @@ async def test_nested_steer_wrapper_fallback_descends_when_single_child():
 
         await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
 
-        # Important: the first child-level selector intentionally does NOT match the tool name
-        # so that nested_steer, once inside the wrapper handle, uses the single-child fallback
-        # to descend into `_current_handle`.
+        # Intentionally provide a non-matching child-level selector. Without any fallback,
+        # no method should be applied.
         spec = {
             "children": {
                 "Wrapper_run": {
@@ -255,16 +252,20 @@ async def test_nested_steer_wrapper_fallback_descends_when_single_child():
             },
         }
 
-        await outer.nested_steer(spec)  # type: ignore[attr-defined]
+        res = await outer.nested_steer(spec)  # type: ignore[attr-defined]
 
-        async def _paused():
-            return inner.paused >= 1
-
-        await _wait_for_condition(_paused, poll=0.01, timeout=30.0)
-
+        # No-op expected: inner remains unpaused and selector is recorded as skipped
         assert (
-            inner.paused >= 1
-        ), "pause was not applied to the wrapped inner handle via fallback traversal"
+            inner.paused == 0
+        ), "No child matched; nested_steer should not apply any method"
+        assert any(
+            (item.get("selector") == "IGNORED")
+            and any(
+                isinstance(p, str) and ("Wrapper_run" in p)
+                for p in (item.get("path") or [])
+            )
+            for item in (res.get("skipped") or [])
+        ), "Expected non-matching selector to be recorded as skipped with the correct path"
     finally:
         # Ensure both outer and inner are stopped and finished to avoid pending tasks
         try:
