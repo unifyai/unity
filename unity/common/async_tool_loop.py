@@ -750,111 +750,118 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     async def nested_steer(self, spec: dict) -> dict:
         """Apply a tree of steering commands to the current loop and matched children.
 
-        Schema
-        ------
-        spec : dict
-            Node with optional keys: ``method`` (str), ``args`` (any), ``kwargs`` (dict),
-            and ``children`` (dict[str, dict]). Missing keys are treated as None.
-
-        Behaviour
-        ---------
-        - Applies ``method`` to the current handle first (when provided).
-        - Then matches ``children`` selectors against in‑flight tool names in this loop's
-          ``task_info`` and recursively applies the corresponding child node to each
-          matched child handle.
-        - If no child matches a given selector at this level, that selector is ignored
-          (downward progression stops on that branch).
-        - No LLM calls are made; forwarding uses the existing handle methods directly.
-
-        Returns
-        -------
-        dict
-            Summary of applied actions: {"applied": [{"path": [...], "method": str}, ...]}.
+        See module-level ``nested_steer_on`` for full behaviour description.
         """
 
-        label = getattr(self, "_log_label", None) or self._loop_id
-        try:
-            LOGGER.info(f"🎯 [{label}] Nested steer requested")
-        except Exception:
-            pass
+        return await nested_steer_on(self, spec)
 
-        results: dict = {"applied": []}
 
-        async def _apply(handle, node: dict | None, path: list[str]) -> None:
-            node = node or {}
-            method = node.get("method")
-            args = node.get("args")
-            kwargs = node.get("kwargs") or {}
+# --- module-level generic helper ----------------------------------------------
+async def nested_steer_on(handle: Any, spec: dict) -> dict:
+    """Apply a nested steering spec to any compatible handle without LLM calls.
 
-            # 1) Apply local method if requested
-            if isinstance(method, str) and method:
-                call_kwargs = dict(kwargs)
-                if args is not None and not any(
-                    k in call_kwargs
-                    for k in ("content", "message", "question", "reason")
-                ):
-                    call_kwargs["content"] = args
+    Node schema (keys optional; omitted treated as None):
+      - method: str – method name to invoke on the current handle (e.g., "pause", "resume", "interject", "stop", "ask").
+      - args: any – convenience single argument; mapped to a common content key if not otherwise provided in kwargs.
+      - kwargs: dict – keyword arguments to pass to the method.
+      - children: dict[str, dict] – mapping of selector → child node, where selector
+        is matched against in-flight tool names at this level (from task_info metadata).
+
+    Behaviour:
+      - Apply the local method first (when present), using robust forwarding.
+      - Discover loop-children via _task.task_info and recurse into matched child handles.
+      - If no loop-children matched, fall back to common wrapper attributes ("_actor_handle",
+        "_current_handle") when exactly one child node is provided.
+      - Unknown selectors are ignored; traversal stops naturally when no child is found.
+    """
+
+    # Best-effort label for diagnostics
+    try:
+        label = (
+            getattr(handle, "_log_label", None)
+            or getattr(handle, "_loop_id", None)
+            or getattr(getattr(handle, "__class__", object), "__name__", "handle")
+        )
+    except Exception:
+        label = "handle"
+
+    try:
+        LOGGER.info(f"🎯 [{label}] Nested steer requested")
+    except Exception:
+        pass
+
+    results: dict = {"applied": []}
+
+    async def _apply(h, node: dict | None, path: list[str]) -> None:
+        node = node or {}
+        method = node.get("method")
+        args = node.get("args")
+        kwargs = node.get("kwargs") or {}
+
+        # 1) Apply local method if requested
+        if isinstance(method, str) and method:
+            call_kwargs = dict(kwargs)
+            if args is not None and not any(
+                k in call_kwargs for k in ("content", "message", "question", "reason")
+            ):
+                call_kwargs["content"] = args
+            try:
+                await forward_handle_call(
+                    h,
+                    method,
+                    call_kwargs,
+                    fallback_positional_keys=(
+                        "content",
+                        "message",
+                        "question",
+                        "reason",
+                    ),
+                )
                 try:
-                    await forward_handle_call(
-                        handle,
-                        method,
-                        call_kwargs,
-                        fallback_positional_keys=(
-                            "content",
-                            "message",
-                            "question",
-                            "reason",
-                        ),
-                    )
-                    try:
-                        results["applied"].append(
-                            {"path": list(path), "method": method},
-                        )
-                    except Exception:
-                        pass
+                    results["applied"].append({"path": list(path), "method": method})
                 except Exception:
-                    # Best-effort – steering failures should not crash callers
                     pass
+            except Exception:
+                # Steering failures are best-effort; continue traversal
+                pass
 
-            # 2) Recurse into matched children
-            children = node.get("children") or {}
-            if not children:
+        # 2) Recurse into matched children
+        children = node.get("children") or {}
+        if not children:
+            return
+
+        # Discover loop children via task_info when available
+        task_info = {}
+        with suppress(Exception):
+            task_info = getattr(getattr(h, "_task", None), "task_info", {}) or {}
+
+        matched_any = False
+        if isinstance(task_info, dict) and task_info:
+            for sel, child_node in children.items():
+                for _t, _inf in list(task_info.items()):
+                    try:
+                        _name = getattr(_inf, "name", None)
+                        _child = getattr(_inf, "handle", None)
+                    except Exception:
+                        _name, _child = None, None
+                    if _name == sel and _child is not None:
+                        matched_any = True
+                        await _apply(_child, child_node, path + [str(_name)])
+            if matched_any:
                 return
 
-            # Discover loop children via task_info when available
-            task_info = {}
-            with suppress(Exception):
-                task_info = (
-                    getattr(getattr(handle, "_task", None), "task_info", {}) or {}
-                )
+        # Wrapper fallback: when no explicit loop children matched, try common wrappers
+        # Only when exactly one child node is provided (unambiguous)
+        if len(children) == 1:
+            child_node = next(iter(children.values()))
+            for attr in ("_actor_handle", "_current_handle"):
+                inner = getattr(h, attr, None)
+                if inner is not None:
+                    await _apply(inner, child_node, path + [attr])
+                    break
 
-            matched_any = False
-            if isinstance(task_info, dict) and task_info:
-                for sel, child_node in children.items():
-                    for _t, _inf in list(task_info.items()):
-                        try:
-                            _name = getattr(_inf, "name", None)
-                            _child = getattr(_inf, "handle", None)
-                        except Exception:
-                            _name, _child = None, None
-                        if _name == sel and _child is not None:
-                            matched_any = True
-                            await _apply(_child, child_node, path + [str(_name)])
-                if matched_any:
-                    return
-
-            # Wrapper fallback: when no explicit loop children matched, try common wrappers
-            # If exactly one child node is provided, forward it to an inner handle when present.
-            if len(children) == 1:
-                child_node = next(iter(children.values()))
-                for attr in ("_actor_handle", "_current_handle"):
-                    inner = getattr(handle, attr, None)
-                    if inner is not None:
-                        await _apply(inner, child_node, path + [attr])
-                        break
-
-        await _apply(self, spec, [label])
-        return results
+    await _apply(handle, spec, [str(label)])
+    return results
 
     # --- snapshotting v1: read-only capture (flat only) ---------------------
     def serialize(
