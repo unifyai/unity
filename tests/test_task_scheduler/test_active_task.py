@@ -16,6 +16,7 @@ import pytest
 from unity.task_scheduler.active_task import ActiveTask
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
+from unity.function_manager.function_manager import FunctionManager
 
 #  The helper used in the existing test-suite – applies project-level monkey-
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -258,3 +259,55 @@ async def test_active_task_interject_implies_defer_and_reinstate(monkeypatch):
     # Reintegration should run via the primary path (not fallback)
     assert fake_sched.reinstate_called is True
     assert fake_sched.fallback_called is False
+
+
+# --------------------------------------------------------------------------- #
+#  6. Entrypoint observes FunctionManager doc via ActiveTask.ask              #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_task_entrypoint_demonstrates_function_knowledge_during_ask():
+    """
+    Mirror the SimulatedActor entrypoint test, but run through ActiveTask to
+    ensure the scheduler wrapper forwards the entrypoint so the actor observes
+    the function metadata during ask().
+    """
+
+    fm = FunctionManager()
+
+    impl = '''
+def simulate_linkedin_sales_leads() -> str:
+    """Simulated browser flow:
+    1) Trouble logging into LinkedIn (login blocked initially).
+    2) Issue resolved; proceed to search sales leads on LinkedIn."""
+    print("Trouble logging into LinkedIn: login blocked")
+    print("Issue resolved: Login successful; searching sales leads on LinkedIn")
+    return "ok"
+'''.strip()
+
+    res = fm.add_functions(implementations=impl)
+    status = res.get("simulate_linkedin_sales_leads", "")
+    assert any(s in str(status) for s in ("added", "updated", "skipped"))
+
+    fid = (
+        fm.list_functions().get("simulate_linkedin_sales_leads", {}).get("function_id")
+    )
+    assert isinstance(fid, int)
+
+    actor = SimulatedActor(steps=2, duration=None)
+    task = await ActiveTask.create(
+        actor,
+        task_description="Search sales leads.",
+        entrypoint_function_id=fid,
+    )
+
+    ask_handle = await task.ask(
+        "Did you or are you encountering any problems logging in? Reply briefly, explaining any relevant websites.",
+    )
+    reply = await ask_handle.result()
+    assert isinstance(reply, str) and reply.strip(), "Expected a non-empty reply"
+    assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
+
+    await task.result()
