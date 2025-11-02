@@ -9,7 +9,7 @@ import logging
 
 from dataclasses import dataclass
 import threading
-from typing import Any, Mapping, TypedDict, Callable, List
+from typing import Any, Mapping, Callable, List
 from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
@@ -24,19 +24,13 @@ from .transcript_ops import (
 )
 from .transcript_ops import (
     build_clean_tool_trajectory as _build_clean_tool_trajectory,
+    CleanToolCall,
 )
 
 
 _SEMANTIC_CACHE_SAVER: "_SemanticCacheSaver | None" = None
 _USER_MESSAGE_EMBEDDING_FIELD_NAME = "_user_message_emb"
 logger = logging.getLogger(__name__)
-
-
-class CleanToolCall(TypedDict):
-    index: int
-    name: str
-    arguments: str
-    result: str
 
 
 @dataclass
