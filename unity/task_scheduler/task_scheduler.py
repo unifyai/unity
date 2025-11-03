@@ -1040,25 +1040,22 @@ class TaskScheduler(BaseTaskScheduler):
             entries["activated_by"] = str(activated_by)
 
         result = self._write_log_entries(
-            logs=log_objs[0].id if hasattr(log_objs[0], "id") else log_objs[0],
+            logs=log_objs[0].id,
             entries=entries,
             overwrite=True,
         )
         # Auto-clear reintegration plan on completion/failed to avoid stale replay.
         # Intentionally keep the plan on 'cancelled' so callers can reinstate
         # a cancelled isolated activation back to its prior queue position.
-        try:
-            key = (task_id, instance_id)
-            plan = self._reintegration_plans.get(key)
-            if (
-                plan is not None
-                and plan.task_id == task_id
-                and plan.instance_id == instance_id
-                and new_status_enum in {Status.completed, Status.failed}
-            ):
-                self._reintegration_plans.pop(key, None)
-        except Exception:
-            pass
+        key = (task_id, instance_id)
+        plan = self._reintegration_plans.get(key)
+        if (
+            plan is not None
+            and plan.task_id == task_id
+            and plan.instance_id == instance_id
+            and new_status_enum in {Status.completed, Status.failed}
+        ):
+            self._reintegration_plans.pop(key, None)
 
         return result
 
