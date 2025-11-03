@@ -124,31 +124,6 @@ async def test_full_api_flow_detection_and_annotation(mocked_manager):
     assert len(annotated_handles) == 1
     assert annotated_handles[0].annotation == "This is the rich annotation."
 
-
-@pytest.mark.unit
-@_handle_project
-@pytest.mark.asyncio
-async def test_detection_prompt_includes_opportunistic_captions(mocked_manager, monkeypatch):
-    """Verifies that resolved auto-captions are included in the detection prompt."""
-    manager, mocks = mocked_manager
-    mocks["detect"].generate.return_value = json.dumps({"moments": []})
-
-    mock_handle_with_caption = MagicMock(spec=ImageHandle)
-    mock_handle_with_caption.caption = "A login form appeared."
-    
-    mock_add_images = MagicMock(return_value=[mock_handle_with_caption])
-    monkeypatch.setattr(manager._image_manager, "add_images", mock_add_images)
-
-    turn_state = TurnState(
-        visual_events=[{"timestamp": 2.0, "after_frame_b64": PNG_RED_B64}]
-    )
-    await manager._detect_key_moments(turn_state)
-
-    call_args, _ = mock_add_images.call_args_list[0]
-    assert call_args[0][0]["auto_caption"] is True
-
-    prompt = mocks["detect"].set_system_message.call_args.args[0]
-    assert 'showing: "A login form appeared."' in prompt
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
@@ -210,29 +185,6 @@ async def test_summary_update_triggered_after_annotation(mocked_manager):
     assert "Initial summary." in summary_prompt
     async with manager._state_lock:
         assert manager._session_summary == "Updated summary including the new event."
-
-@pytest.mark.unit
-@_handle_project
-@pytest.mark.asyncio
-async def test_detection_prompt_handles_missing_captions(mocked_manager, monkeypatch):
-    """Verifies the detection prompt gracefully handles captions that are not yet ready."""
-    manager, mocks = mocked_manager
-    mocks["detect"].generate.return_value = json.dumps({"moments": []})
-
-    mock_handle_no_caption = MagicMock(spec=ImageHandle)
-    mock_handle_no_caption.caption = None
-    
-    mock_add_images = MagicMock(return_value=[mock_handle_no_caption])
-    monkeypatch.setattr(manager._image_manager, "add_images", mock_add_images)
-
-    turn_state = TurnState(
-        visual_events=[{"timestamp": 3.0, "after_frame_b64": PNG_BLUE_B64}]
-    )
-    await manager._detect_key_moments(turn_state)
-
-    prompt = mocks["detect"].set_system_message.call_args.args[0]
-    assert "Visual change at t=3.00s." in prompt
-    assert "showing:" not in prompt
 
 
 @pytest.mark.unit

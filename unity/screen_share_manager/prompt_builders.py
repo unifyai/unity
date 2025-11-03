@@ -116,7 +116,7 @@ def build_single_annotation_prompt(
     previous_annotations_section = ""
     if previous_annotations_in_turn:
         previous_annotations_section = f"""
-3.  **Previous Annotations from this Turn:** Descriptions of what has already been noted in the last few seconds.
+3.  **Previous Annotations from this Turn:** Descriptions of what has already been noted in this specific analysis turn.
     <previous_annotations>
     {json.dumps(previous_annotations_in_turn, indent=2)}
     </previous_annotations>
@@ -128,14 +128,14 @@ def build_single_annotation_prompt(
         else "No recent events have been identified."
     )
     recent_events_section = f"""
-4.  **Recent Key Events:** A list of the last 5 events that were identified.
+4.  **Recent Key Events:** A list of the last events that were identified.
     <recent_events>
     {recent_events_formatted}
     </recent_events>
 """
 
     prompt = f"""
-You are an expert AI assistant specializing in analyzing screen share sessions. Your task is to view a single image and write a clear, descriptive annotation for it.
+You are an expert AI assistant specializing in analyzing screen share sessions. Your task is to view a single image and write a clear, narrative annotation that builds upon previous events.
 
 CONTEXT PROVIDED:
 ----------------
@@ -150,19 +150,20 @@ CONTEXT PROVIDED:
 
 YOUR TASK:
 ----------
-- Write a single, clear annotation string for the image.
-- Your annotation must describe what the screenshot visually contains and explain its significance relative to the available context.
+- Examine the Key Image and compare it to the description of the 'Immediately Preceding Event'.
+- Write a single, clear annotation string that describes what is new or different in the current image. Your annotation must create a narrative flow.
 
 CRITICAL RULES:
 ---------------
-1.  **Be Informative:** Your annotation must provide new information. Focus on what has changed or what the outcome of the user's last action is. While you should avoid repeating old information verbatim, you can briefly reference it to provide context. For example, instead of "The user clicked submit," a better annotation for the next frame would be "Following the click, a confirmation modal appeared..
-2.  **Raw String Output:** Your entire response must be ONLY the annotation text, as a raw string. Do NOT wrap it in JSON or markdown.
+1.  **Focus on the Delta:** Your primary goal is to explain the change. For example, instead of "The screen shows a file tree," a better annotation is "The user has now expanded the 'unity' folder in the file tree, revealing its subdirectories."
+2.  **Be Informative and Concise:** Explain the significance of the change in relation to the overall context.
+3.  **Handle First Event:** If this is the first event, it's okay to provide a complete description of the scene as a baseline.
+4.  **Raw String Output:** Your entire response must be ONLY the annotation text, as a raw string. Do NOT wrap it in JSON or markdown.
 
-Example of a GOOD response:
-The user has clicked on the 'Context' dropdown menu, revealing a list of available options including 'Sandbox' and 'Default'.
+Example of a GOOD, narrative response:
+Following the user's action, a dropdown menu for 'Context' has opened, showing 'Sandbox' and 'Default' as available options.
 """
     return prompt + f"\n\nCurrent UTC time is {now()}."
-
 
 def build_summary_update_prompt(
     current_summary: str,

@@ -97,7 +97,10 @@ class ScreenShareManagerSettings(BaseModel):
         default=1.0,
         description="Initial delay for LLM retry backoff.",
     )
-
+    use_auto_captions: bool = Field(
+            default=False,
+            description="Enable opportunistic auto-captioning to enrich the context for the event detection LLM.",
+        )
 
 @dataclass
 class TurnState:
@@ -199,8 +202,7 @@ class ScreenShareManager:
         self._summary_update_task: Optional[asyncio.Task] = None
 
     async def start(self):
-        if self._debug:
-            logger.debug("ScreenShareManager starting background workers...")
+        logger.info("ScreenShareManager starting background workers...")
         self._last_activity_time = asyncio.get_event_loop().time()
         self._sequencer_task = asyncio.create_task(self._sequencer())
         self._frame_workers = [
@@ -210,8 +212,7 @@ class ScreenShareManager:
         self._inactivity_task = asyncio.create_task(self._inactivity_flush_loop())
 
     async def stop(self):
-        if self._debug:
-            logger.debug("ScreenShareManager stopping...")
+        logger.info("ScreenShareManager stopping...")
         self._stop_event.set()
         tasks = [
             self._sequencer_task,
@@ -268,8 +269,7 @@ class ScreenShareManager:
         Starts a new analysis turn. All subsequent speech and visual events will
         be collected for this turn until end_turn() is called.
         """
-        if self._debug:
-            logger.debug("Starting a new manual analysis turn.")
+        logger.info("Starting a new manual analysis turn.")
         self._current_turn_speech_events = []
         self._pending_vision_events.clear()
         self._turn_in_progress = True
@@ -520,9 +520,12 @@ class ScreenShareManager:
         if not turn_state.speech_events and not turn_state.visual_events and not turn_state.latest_frame:
             await self._detection_queue.put([])
             return
+        
         burst_events_info: List[str] = []
         timestamp_to_handle_map: Dict[float, ImageHandle] = {}
         all_handles: List[ImageHandle] = []
+        items_to_add = []
+
         if turn_state.visual_events:
             turn_state.visual_events.sort(key=lambda x: x["timestamp"])
             bursts: List[List[Dict]] = []
@@ -538,6 +541,7 @@ class ScreenShareManager:
                         bursts.append(current_burst)
                         current_burst = [turn_state.visual_events[i]]
                 bursts.append(current_burst)
+
             consolidated_visual_events: List[Dict] = []
             for burst in bursts:
                 if len(burst) > self.settings.visual_event_sampling_threshold:
@@ -549,37 +553,40 @@ class ScreenShareManager:
                     )
                 else:
                     consolidated_visual_events.extend(burst)
-            items_to_add = [
-                {
+            
+            for event in consolidated_visual_events:
+                 items_to_add.append({
                     "data": self._strip_data_url_prefix(event["after_frame_b64"]),
                     "auto_caption": True,
-                }
-                for event in consolidated_visual_events
-            ]
-            if items_to_add:
-                handles = await asyncio.to_thread(
-                    self._image_manager.add_images,
-                    items_to_add,
-                    synchronous=False, return_handles=True,
-                )
-                all_handles.extend(h for h in handles if h)
-                for i, handle in enumerate(handles):
-                    if handle:
-                        ts = consolidated_visual_events[i]["timestamp"]
-                        timestamp_to_handle_map[ts] = handle
+                    "_timestamp": event["timestamp"],
+                })
+
         if turn_state.latest_frame:
             ts, b64 = turn_state.latest_frame
-            [handle] = await asyncio.to_thread(
-                self._image_manager.add_images,
-                [{"data": self._strip_data_url_prefix(b64), "auto_caption": True}],
-                synchronous=False, return_handles=True,
+            items_to_add.append({
+                "data": self._strip_data_url_prefix(b64), 
+                "auto_caption": True,
+                "_timestamp": ts
+            })
+
+        if items_to_add:
+            handles = self._image_manager.add_images(
+                items_to_add,
+                synchronous=False,
+                return_handles=True,
             )
-            if handle:
-                timestamp_to_handle_map[ts] = handle
-        if all_handles:
+            all_handles.extend(h for h in handles if h)
+            for i, handle in enumerate(handles):
+                if handle:
+                    ts = items_to_add[i]["_timestamp"]
+                    timestamp_to_handle_map[ts] = handle
+
+        if all_handles and self.settings.use_auto_captions:
             if self._debug:
                 logger.debug(f"Awaiting {len(all_handles)} auto-caption(s)...")
             await asyncio.gather(*[h.wait_for_caption(timeout=5.0) for h in all_handles], return_exceptions=True)
+            if self._debug:
+                logger.debug("Auto-captions resolved or timed out.")
 
         visual_events_info = []
         for ts, handle in timestamp_to_handle_map.items():
