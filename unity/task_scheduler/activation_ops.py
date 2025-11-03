@@ -82,11 +82,8 @@ def detach_from_queue_for_activation(
     else:
         # Prefer LocalTaskView for a single-step head start_at resolution.
         _qid = task_row.queue_id
-        if isinstance(_qid, int):
-            try:
-                head_start_at = scheduler._view.get_head_start_at(int(_qid))  # type: ignore[attr-defined]
-            except Exception:
-                head_start_at = None
+        if _qid is not None:
+            head_start_at = scheduler._view.get_head_start_at(_qid)
         # Fallbacks when queue_id is missing or the local view returned nothing
         if head_start_at is None:
             # Fallback: walk prev pointers (rare case when queue_id is absent)
@@ -94,12 +91,11 @@ def detach_from_queue_for_activation(
             while cur_head is not None and cur_head.schedule_prev is not None:
                 cur_head = _get_row(cur_head.schedule_prev)
             if cur_head is not None:
-                if cur_head.schedule is not None:
-                    head_start_at = (
-                        cur_head.schedule_start_at.isoformat()
-                        if cur_head.schedule_start_at is not None
-                        else None
-                    )
+                head_start_at = (
+                    cur_head.schedule_start_at.isoformat()
+                    if cur_head.schedule_start_at is not None
+                    else None
+                )
 
     # Batch-fetch log objects for all relevant task_ids in one backend call (reuse scheduler helper)
     needed_ids: list[int] = []
@@ -115,13 +111,10 @@ def detach_from_queue_for_activation(
         log_objs = []
     _log_cache: Dict[int, unify.Log] = {}
     for lg in log_objs or []:
-        try:
-            entries = getattr(lg, "entries", {}) or {}
-            tid = entries.get("task_id")
-            if isinstance(tid, int):
-                _log_cache[int(tid)] = lg
-        except Exception:
-            continue
+        entries = getattr(lg, "entries", {})
+        tid = entries.get("task_id")
+        if tid is not None:
+            _log_cache[int(tid)] = lg
 
     def _get_log_obj(tid: int) -> Optional[unify.Log]:
         if not isinstance(tid, int):
