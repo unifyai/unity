@@ -4506,15 +4506,11 @@ class TaskScheduler(BaseTaskScheduler):
             )
         except Exception:
             logs = []
+
         rows_by_id: Dict[int, Dict[str, Any]] = {}
-        for lg in logs or []:
-            try:
-                e = dict(getattr(lg, "entries", {}) or {})
-                tid = e.get("task_id")
-                if isinstance(tid, int):
-                    rows_by_id[int(tid)] = e
-            except Exception:
-                continue
+        for lg in logs:
+            tid = lg.entries["task_id"]
+            rows_by_id[tid] = lg.entries
         return rows_by_id
 
     def _find_name_desc_collisions(
