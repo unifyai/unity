@@ -29,11 +29,23 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
         """
 
         message = f"<Actor has been paused due to {reason}>"
+        child_message = f"<execution was paused due to {reason}>"
         # Interject only if at least one pause actually applies to a child.
+        # For each matched child, pause first, then immediately interject within the child's context.
         spec: Dict[str, Any] = {
             "children": {
-                "TaskScheduler.execute": {"steps": [{"method": "pause"}]},
-                "Actor.act": {"steps": [{"method": "pause"}]},
+                "TaskScheduler.execute": {
+                    "steps": [
+                        {"method": "pause"},
+                        {"method": "interject", "args": child_message},
+                    ],
+                },
+                "Actor.act": {
+                    "steps": [
+                        {"method": "pause"},
+                        {"method": "interject", "args": child_message},
+                    ],
+                },
             },
             "conditions": [
                 {
@@ -65,11 +77,23 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
         """
 
         message = f"<Actor has been resumed due to {reason}>"
+        child_message = f"<execution was resumed due to {reason}>"
         # Interject only if at least one resume actually applies to a child.
+        # For each matched child, interject first (so the user sees the reason), then resume immediately after.
         spec: Dict[str, Any] = {
             "children": {
-                "TaskScheduler.execute": {"steps": [{"method": "resume"}]},
-                "Actor.act": {"steps": [{"method": "resume"}]},
+                "TaskScheduler.execute": {
+                    "steps": [
+                        {"method": "interject", "args": child_message},
+                        {"method": "resume"},
+                    ],
+                },
+                "Actor.act": {
+                    "steps": [
+                        {"method": "interject", "args": child_message},
+                        {"method": "resume"},
+                    ],
+                },
             },
             "conditions": [
                 {
