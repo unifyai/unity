@@ -4,12 +4,22 @@ from typing import List
 from pydantic import BaseModel, Field
 
 
+UNASSIGNED_SECRET_ID = -1
+
+
 class Secret(BaseModel):
     """Fixed schema for storing secrets.
 
     The schema is intentionally immutable: columns cannot be added or removed.
     """
 
+    secret_id: int = Field(
+        default=UNASSIGNED_SECRET_ID,
+        ge=UNASSIGNED_SECRET_ID,
+        description=(
+            "Stable integer identifier for the secret row (auto-counted). Safe to surface to LLMs."
+        ),
+    )
     name: str = Field(
         description="Unique identifier for the secret. Used in placeholders like ${name}.",
     )

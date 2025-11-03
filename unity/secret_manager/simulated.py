@@ -429,8 +429,18 @@ class SimulatedSecretManager(BaseSecretManager):
         """Simulate a semantic search over secrets (returns redacted models)."""
         # Provide a small, stable set without exposing values
         base = [
-            Secret(name="api_key", value="", description="API access token"),
-            Secret(name="db_password", value="", description="database password"),
+            Secret(
+                secret_id=1,
+                name="api_key",
+                value="",
+                description="API access token",
+            ),
+            Secret(
+                secret_id=2,
+                name="db_password",
+                value="",
+                description="database password",
+            ),
         ]
         return base[: max(0, int(k))]
 
@@ -443,8 +453,18 @@ class SimulatedSecretManager(BaseSecretManager):
     ) -> list[Secret]:
         """Simulate a filter over secrets (returns redacted models)."""
         rows = [
-            Secret(name="api_key", value="", description="API access token"),
-            Secret(name="db_password", value="", description="database password"),
+            Secret(
+                secret_id=1,
+                name="api_key",
+                value="",
+                description="API access token",
+            ),
+            Secret(
+                secret_id=2,
+                name="db_password",
+                value="",
+                description="database password",
+            ),
         ]
         return rows[offset : offset + limit] if limit is not None else rows[offset:]
 
