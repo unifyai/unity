@@ -759,7 +759,7 @@ class TaskScheduler(BaseTaskScheduler):
             task_id=task_id,
             instance_id=task_row.instance_id,
             scheduler=self,
-            entrypoint_function_id=_entrypoint_fid,
+            entrypoint=_entrypoint_fid,
         )
 
         self._active_task = TaskScheduler.ActivePointer(

@@ -300,7 +300,7 @@ def simulate_linkedin_sales_leads() -> str:
     task = await ActiveTask.create(
         actor,
         task_description="Search sales leads.",
-        entrypoint_function_id=fid,
+        entrypoint=fid,
     )
 
     ask_handle = await task.ask(

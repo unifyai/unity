@@ -403,19 +403,10 @@ class SimulatedActor(BaseActor):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        # New optional function entrypoint id (preferred spelling going forward)
+        # optional function entrypoint id
         entrypoint: Optional[int] = None,
-        # Back-compat shim while callers migrate
-        entrypoint_function_id: Optional[int] = None,
         **kwargs,
     ) -> SimulatedActorHandle:
-        # Normalise entrypoint from either keyword
-        if entrypoint is None and entrypoint_function_id is not None:
-            try:
-                entrypoint = int(entrypoint_function_id)
-            except Exception:
-                entrypoint = None
-
         entrypoint_info: dict | None = None
         planned_result: str | None = None
 
