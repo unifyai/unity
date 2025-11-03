@@ -23,22 +23,9 @@ async def test_parse_single_file(file_manager, supported_file_examples: dict):
     assert "records" in result[display_name]
     assert isinstance(result[display_name]["records"], list)
 
-    # Check metadata
-    metadata = result[display_name].get("metadata", {})
-    assert "file_type" in metadata
-    assert "file_size" in metadata
-
-    # If the parsed document had tables, ensure per-table contexts were created
-    tables = (metadata or {}).get("tables", []) if isinstance(metadata, dict) else []
-    if tables:
-        try:
-            import unify
-
-            ctxs = unify.get_contexts(prefix=f"{unify.active_project()}/")
-            # Look for any context suffix matching Tables__
-            assert any("/Tables__" in name for name in ctxs.keys())
-        except Exception:
-            pass
+    # Check flattened metadata
+    assert "file_type" in result[display_name]
+    assert "file_size" in result[display_name]
 
 
 @pytest.mark.asyncio
@@ -66,12 +53,13 @@ async def test_parse_with_options(file_manager, supported_file_examples: dict):
     filename, example_data = next(iter(supported_file_examples.items()))
     display_name = file_manager.import_file(example_data["path"])  # new API
 
-    # Parse with options (these are passed to the parser)
-    result = file_manager.parse(
-        display_name,
-        max_chunk_size=100,
-        chunk_overlap=20,
+    # Parse with options via config (forwarded to parser)
+    from unity.file_manager.types.config import FilePipelineConfig, ParseConfig
+
+    cfg = FilePipelineConfig(
+        parse=ParseConfig(parser_kwargs={"max_chunk_size": 100, "chunk_overlap": 20}),
     )
+    result = file_manager.parse(display_name, config=cfg)
 
     assert display_name in result
     assert result[display_name]["status"] == "success"
@@ -119,10 +107,7 @@ async def test_parse_supported_formats(file_manager, supported_file_examples: di
         assert len(result[display_name]["records"]) > 0
 
         # If this is a spreadsheet (csv or xlsx), ensure per-table context is present
-        metadata = result[display_name].get("metadata", {})
-        file_type = (
-            (metadata or {}).get("file_type") if isinstance(metadata, dict) else None
-        )
+        file_type = result[display_name].get("file_type")
         if file_type in (
             "text/csv",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -132,7 +117,7 @@ async def test_parse_supported_formats(file_manager, supported_file_examples: di
 
                 ctxs = unify.get_contexts(prefix=f"{unify.active_project()}/")
                 table_ctx_candidates = [
-                    name for name in ctxs.keys() if "/Tables__" in name
+                    name for name in ctxs.keys() if "/Tables/" in name
                 ]
                 assert (
                     table_ctx_candidates
@@ -167,6 +152,6 @@ async def test_parse_multiple_supported_files(
         import unify
 
         ctxs = unify.get_contexts(prefix=f"{unify.active_project()}/")
-        assert any("/Tables__" in name for name in ctxs.keys())
+        assert any("/Tables/" in name for name in ctxs.keys())
     except Exception:
         pass

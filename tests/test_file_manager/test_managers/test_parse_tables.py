@@ -23,6 +23,7 @@ async def test_csv_per_table_context(file_manager, tmp_path: Path):
 
     # Parse file
     result = file_manager.parse(display_name)
+    print(result)
     assert result[display_name]["status"] == "success"
 
     # Verify a per-table context exists
@@ -30,7 +31,7 @@ async def test_csv_per_table_context(file_manager, tmp_path: Path):
 
     ctxs = unify.get_contexts()
     table_ctx_candidates = [
-        name for name in ctxs.keys() if "/Tables__" in name and "people" in name
+        name for name in ctxs.keys() if "/Tables/" in name and "people" in name
     ]
     assert table_ctx_candidates, "No table context candidates found"
 
@@ -65,6 +66,7 @@ async def test_xlsx_multi_tab_per_table_context(file_manager):
         if path.exists():
             display_name = file_manager.import_file(path)
             res = file_manager.parse(display_name)
+            print(res)
             assert res[display_name]["status"] == "success"
         else:
             print(f"Path {path} does not exist")
@@ -77,7 +79,7 @@ async def test_xlsx_multi_tab_per_table_context(file_manager):
     table_ctx_candidates = [
         name
         for name in ctxs.keys()
-        if "/Tables__" in name
+        if "/Tables/" in name
         and any(k in name for k in ["retail_data", "workforce_data"])
     ]
     assert len(table_ctx_candidates) >= 2
