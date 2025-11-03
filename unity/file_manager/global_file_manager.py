@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from typing import Any, Callable, Dict, List, Optional
 
 import unify
@@ -9,17 +10,17 @@ from unity.file_manager.managers.base import BaseFileManager
 from unity.file_manager.base import BaseGlobalFileManager
 from unity.common.llm_helpers import (
     methods_to_tool_dict,
-    make_request_clarification_tool,
 )
+from unity.common.clarification_tools import add_clarification_tool_with_events
 from unity.common.async_tool_loop import (
     TOOL_LOOP_LINEAGE,
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from ..constants import is_readonly_ask_guard_enabled
+from ..constants import is_readonly_ask_guard_enabled, is_semantic_cache_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.events.manager_event_logging import log_manager_call
-from unity.events.event_bus import EVENT_BUS, Event
+from unity.common.tool_spec import manager_tool
 from unity.file_manager.prompt_builders import (
     build_global_file_manager_ask_prompt,
     build_global_file_manager_organize_prompt,
@@ -27,329 +28,88 @@ from unity.file_manager.prompt_builders import (
 
 
 class GlobalFileManager(BaseGlobalFileManager):
-    """Single-surface file manager over multiple per-filesystem managers.
+    """Single-surface facade over multiple filesystem-specific FileManagers.
 
-    Retrieval (search/filter/list columns) is Unify-only via the underlying
-    managers' Unify tools. Organize actions are routed to a specific manager's
-    organize() which will call its adapter for mutations behind the scenes.
+    This manager does not expose low-level operations itself. Instead, it
+    presents a unified read-only "ask" surface and an "organize" surface that
+    delegates to the underlying managers' class‑named tools (e.g.,
+    ``LocalFileManager_ask``, ``LocalFileManager_organize``).
     """
 
-    def __init__(self, managers_by_alias: Dict[str, BaseFileManager]):
+    def __init__(self, managers: List[BaseFileManager]):
         """
-        Create a GlobalFileManager over multiple filesystem-specific managers.
+        Construct a GlobalFileManager over multiple FileManager instances.
 
         Parameters
         ----------
-        managers_by_alias : dict[str, BaseFileManager]
-            Mapping of filesystem alias (e.g., "local", "drive", "interact") to the
-            corresponding concrete FileManager instance. The aliases are used to
-            namespace filenames in aggregated views (e.g., "/local/notes.txt").
-
-        Notes
-        -----
-        - Registers separate tool surfaces for ``ask`` and ``organize``. For each
-          underlying manager, lightweight alias-prefixed passthrough helpers are
-          added (e.g., ``ask__local``, ``ask_about_file__drive``) so the LLM can
-          route questions to a specific filesystem when needed.
-        - Aggregated tools (``_list_columns``, ``_filter_files``, ``_search_files``)
-          operate across all managers and add a synthetic ``source_filesystem``
-          field for provenance.
+        managers : list[BaseFileManager]
+            Concrete FileManager instances to expose. Their tools are surfaced
+            with class‑named entries via ``include_class_name=True`` so the LLM
+            can choose the right manager directly without aliases.
         """
         super().__init__()
-        self._managers: Dict[str, BaseFileManager] = dict(managers_by_alias)
+        self._managers: List[BaseFileManager] = list(managers)
 
-        # Ask tools: global aggregated retrieval + alias-specific passthrough
+        # Ask tools: list filesystems + per-manager ask surfaces (class‑named)
         ask_tools: Dict[str, Callable] = methods_to_tool_dict(
             self._list_filesystems,
-            self._list_columns,
-            self._filter_files,
-            self._search_files,
-            include_class_name=True,
+            include_class_name=False,
         )
-        for alias, mgr in self._managers.items():
-
-            async def _ask_alias(text: str, __alias=alias):  # type: ignore
-                handle = await self._managers[__alias].ask(text)
-                return await handle.result()
-
-            async def _ask_about_file_alias(filename: str, question: str, __alias=alias):  # type: ignore
-                handle = await self._managers[__alias].ask_about_file(
-                    filename,
-                    question,
-                )
-                return await handle.result()
-
-            ask_tools[f"ask__{alias}"] = _ask_alias
-            ask_tools[f"ask_about_file__{alias}"] = _ask_about_file_alias
+        for mgr in self._managers:
+            ask_tools.update(
+                methods_to_tool_dict(
+                    mgr.ask,
+                    mgr.ask_about_file,
+                    include_class_name=True,
+                ),
+            )
         self.add_tools("ask", ask_tools)
 
-        # Organize tools: expose global inspection + alias-specific organizing
+        # Organize tools: discovery via ask + per-manager organize (class‑named)
         organize_tools: Dict[str, Callable] = methods_to_tool_dict(
-            self._list_filesystems,
-            self._list_columns,
-            self._filter_files,
-            self._search_files,
-            self._rename_file,
-            self._move_file,
-            self._delete_file,
-            include_class_name=True,
+            self.ask,
+            include_class_name=False,
         )
-        for alias, mgr in self._managers.items():
-
-            async def _organize_alias(text: str, __alias=alias):  # type: ignore
-                handle = await self._managers[__alias].organize(text)
-                return await handle.result()
-
-            organize_tools[f"organize__{alias}"] = _organize_alias
+        for mgr in self._managers:
+            organize_tools.update(
+                methods_to_tool_dict(
+                    mgr.organize,
+                    include_class_name=True,
+                ),
+            )
         self.add_tools("organize", organize_tools)
+
+    # -------------------- Default tool loop policies -------------------- #
+    @staticmethod
+    def _default_ask_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Default ask-side tool policy (no-op, retain current tools)."""
+        return ("auto", current_tools)
+
+    @staticmethod
+    def _default_organize_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require ask on the first step; auto thereafter."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
+        return ("auto", current_tools)
 
     # Helpers
 
     def _list_filesystems(self) -> List[str]:
-        """Return the list of configured filesystem aliases in deterministic order."""
-        return list(self._managers.keys())
-
-    @staticmethod
-    def _strip_filesystem_prefix(path: str, filesystem: str) -> str:
-        """
-        Strip filesystem namespace prefix from a path.
-
-        Examples:
-            _strip_filesystem_prefix("/local/file.txt", "local") -> "file.txt"
-            _strip_filesystem_prefix("local/file.txt", "local") -> "file.txt"
-            _strip_filesystem_prefix("file.txt", "local") -> "file.txt"
-        """
-        path = str(path).lstrip("/")
-        prefix = f"{filesystem}/"
-        if path.startswith(prefix):
-            return path[len(prefix) :]
-        return path
-
-    def _rename_file(
-        self,
-        *,
-        filesystem: str,
-        target_id_or_path: str,
-        new_name: str,
-    ) -> Dict[str, Any]:
-        """
-        Rename a file within a specific filesystem.
-
-        Parameters
-        ----------
-        filesystem : str
-            Alias of the target filesystem (must exist in this manager).
-        target_id_or_path : str
-            Adapter-specific identifier or path for the file to rename. May be
-            namespaced ("/alias/path") or plain; any leading alias is stripped
-            before delegation.
-        new_name : str
-            New filename without directory components.
-
-        Returns
-        -------
-        dict
-            Adapter-specific result from the underlying manager.
-        """
-        if filesystem not in self._managers:
-            raise ValueError(f"Filesystem '{filesystem}' not found.")
-        # Strip filesystem namespace prefix before delegating
-        clean_path = self._strip_filesystem_prefix(target_id_or_path, filesystem)
-        return self._managers[filesystem]._rename_file(  # type: ignore[attr-defined]
-            target_id_or_path=clean_path,
-            new_name=new_name,
-        )
-
-    def _move_file(
-        self,
-        *,
-        filesystem: str,
-        target_id_or_path: str,
-        new_parent_path: str,
-    ) -> Dict[str, Any]:
-        """
-        Move a file to a new parent path within a specific filesystem.
-
-        Parameters
-        ----------
-        filesystem : str
-            Alias of the target filesystem.
-        target_id_or_path : str
-            Adapter-specific identifier or path of the file to move.
-        new_parent_path : str
-            Destination directory path (within the same filesystem).
-
-        Returns
-        -------
-        dict
-            Adapter-specific result from the underlying manager.
-        """
-        if filesystem not in self._managers:
-            raise ValueError(f"Filesystem '{filesystem}' not found.")
-        # Strip filesystem namespace prefix from both paths before delegating
-        clean_path = self._strip_filesystem_prefix(target_id_or_path, filesystem)
-        clean_parent = self._strip_filesystem_prefix(new_parent_path, filesystem)
-        return self._managers[filesystem]._move_file(  # type: ignore[attr-defined]
-            target_id_or_path=clean_path,
-            new_parent_path=clean_parent,
-        )
-
-    def _delete_file(self, *, filesystem: str, file_id: int) -> Dict[str, Any]:
-        """
-        Permanently delete a file from a specific filesystem.
-
-        Parameters
-        ----------
-        filesystem : str
-            Alias of the target filesystem.
-        file_id : int
-            Numeric id of the file to delete (adapter-specific).
-
-        Returns
-        -------
-        dict
-            Adapter-specific confirmation payload.
-        """
-        if filesystem not in self._managers:
-            raise ValueError(f"Filesystem '{filesystem}' not found.")
-        return self._managers[filesystem]._delete_file(file_id=file_id)  # type: ignore[attr-defined]
-
-    # ----------------- Unify-backed aggregated retrieval ----------------- #
-    def _list_columns(self, *, include_types: bool = True):
-        """
-        Return the global schema for files, augmented with ``source_filesystem``.
-
-        Parameters
-        ----------
-        include_types : bool, default True
-            When True, returns ``{column: type}``; otherwise returns a list of
-            column names.
-
-        Returns
-        -------
-        dict[str, Any] | list[str]
-            Consolidated schema from the first manager (they share a model) with
-            an added ``source_filesystem`` column.
-        """
-        # Use schema from the first manager (shared model) and add source column
-        cols: Dict[str, Any] = {}
-        try:
-            for _, mgr in self._managers.items():
-                cols = mgr._list_columns(include_types=True)  # type: ignore[attr-defined]
-                break
-        except Exception:
-            cols = {}
-        if include_types:
-            out = dict(cols or {})
-            out["source_filesystem"] = "str"
-            return out
-        keys = list((cols or {}).keys())
-        if "source_filesystem" not in keys:
-            keys.append("source_filesystem")
-        return keys
-
-    def _filter_files(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-    ):
-        """
-        Filter files across all filesystems using a Python expression.
-
-        Parameters
-        ----------
-        filter : str | None, default None
-            Row-level predicate evaluated per underlying manager result row. The
-            predicate may reference any column in the files table; use single
-            quotes for string literals.
-        offset : int, default 0
-            Zero-based index of the first row to include (after aggregation).
-        limit : int, default 100
-            Maximum number of rows to return.
-
-        Returns
-        -------
-        list[dict]
-            Normalized rows with namespaced ``filename`` and ``source_filesystem``.
-        """
-        aggregated: List[Dict[str, Any]] = []
-        for alias, mgr in self._managers.items():
-            try:
-                rows = mgr._filter_files(filter=filter, offset=0, limit=limit)  # type: ignore[attr-defined]
-                for r in rows:
-                    e = (
-                        r
-                        if isinstance(r, dict)
-                        else getattr(r, "model_dump", lambda: r.__dict__)()
-                    )
-                    e = dict(e)
-                    fname = e.get("file_path")
-                    if isinstance(fname, str):
-                        e["file_path"] = f"/{alias}/{fname}"
-                    e["source_filesystem"] = alias
-                    aggregated.append(e)
-            except Exception:
-                continue
-        return aggregated[offset : offset + limit]
-
-    def _search_files(
-        self,
-        *,
-        references: Optional[Dict[str, str]] = None,
-        k: int = 10,
-    ):
-        """
-        Semantic search across all filesystems and interleave top results.
-
-        Parameters
-        ----------
-        references : dict[str, str] | None, default None
-            Mapping of ``source_expr → reference_text`` terms. Each source
-            expression is a column or derived expression in the underlying
-            manager. When omitted/empty, falls back to most recent files.
-        k : int, default 10
-            Maximum number of results to return after interleaving per-alias
-            rankings.
-
-        Returns
-        -------
-        list[dict]
-            Up to ``k`` normalized rows (with ``filename`` namespaced and
-            ``source_filesystem`` added).
-        """
-        per_alias: Dict[str, List[Dict[str, Any]]] = {}
-        for alias, mgr in self._managers.items():
-            try:
-                rows = mgr._search_files(references=references, k=k)  # type: ignore[attr-defined]
-                normalized: List[Dict[str, Any]] = []
-                for r in rows:
-                    e = (
-                        r
-                        if isinstance(r, dict)
-                        else getattr(r, "model_dump", lambda: r.__dict__)()
-                    )
-                    e = dict(e)
-                    fname = e.get("file_path")
-                    if isinstance(fname, str):
-                        e["file_path"] = f"/{alias}/{fname}"
-                    e["source_filesystem"] = alias
-                    normalized.append(e)
-                per_alias[alias] = normalized
-            except Exception:
-                continue
-        merged: List[Dict[str, Any]] = []
-        while len(merged) < k and any(per_alias.values()):
-            for alias in list(per_alias.keys()):
-                batch = per_alias.get(alias) or []
-                if batch:
-                    merged.append(batch.pop(0))
-                    if len(merged) >= k:
-                        break
-        return merged
+        """Return the list of manager class names in deterministic order."""
+        names = [
+            getattr(m.__class__, "__name__", "FileManager") for m in self._managers
+        ]
+        return sorted(set(names))
 
     # Public surfaces
+    @functools.wraps(BaseGlobalFileManager.ask, updated=())
+    @manager_tool
     @log_manager_call("GlobalFileManager", "ask", payload_key="question")
     async def ask(
         self,
@@ -388,55 +148,29 @@ class GlobalFileManager(BaseGlobalFileManager):
         client = new_llm_client()
         tools = dict(self.get_tools("ask"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "GlobalFileManager",
-                                "method": "ask",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            async def _on_answer(ans: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "GlobalFileManager",
-                                "method": "ask",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 _clarification_up_q,
                 _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="GlobalFileManager",
+                method="ask",
+                call_id=_call_id,
             )
         include_activity = (
             True if rolling_summary_in_prompts is None else rolling_summary_in_prompts
         )
         system_msg = build_global_file_manager_ask_prompt(
             tools,
+            num_filesystems=len(self._managers),
             include_activity=include_activity,
         )
         client.set_system_message(system_msg)
+        use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        tool_policy_fn = (
+            None
+            if use_semantic_cache in ("read", "both")
+            else self._default_ask_tool_policy
+        )
         handle = start_async_tool_loop(
             client,
             text,
@@ -444,7 +178,9 @@ class GlobalFileManager(BaseGlobalFileManager):
             loop_id=f"{self.__class__.__name__}.ask",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            tool_policy=lambda i, t: ("required", t) if i < 1 else ("auto", t),
+            tool_policy=tool_policy_fn,
+            semantic_cache=use_semantic_cache,
+            semantic_cache_namespace=f"{self.__class__.__name__}.ask",
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
@@ -459,6 +195,7 @@ class GlobalFileManager(BaseGlobalFileManager):
             handle.result = _wrapped_result  # type: ignore[attr-defined]
         return handle
 
+    @functools.wraps(BaseGlobalFileManager.organize, updated=())
     @log_manager_call("GlobalFileManager", "organize", payload_key="text")
     async def organize(
         self,
@@ -497,55 +234,24 @@ class GlobalFileManager(BaseGlobalFileManager):
         client = new_llm_client()
         tools = dict(self.get_tools("organize"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "GlobalFileManager",
-                                "method": "organize",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            async def _on_answer(ans: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "GlobalFileManager",
-                                "method": "organize",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 _clarification_up_q,
                 _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="GlobalFileManager",
+                method="organize",
+                call_id=_call_id,
             )
         include_activity = (
             True if rolling_summary_in_prompts is None else rolling_summary_in_prompts
         )
         system_msg = build_global_file_manager_organize_prompt(
             tools,
+            num_filesystems=len(self._managers),
             include_activity=include_activity,
         )
         client.set_system_message(system_msg)
+        tool_policy = self._default_organize_tool_policy
         handle = start_async_tool_loop(
             client,
             text,
@@ -553,7 +259,7 @@ class GlobalFileManager(BaseGlobalFileManager):
             loop_id=f"{self.__class__.__name__}.organize",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            tool_policy=lambda i, t: ("required", t) if i < 1 else ("auto", t),
+            tool_policy=tool_policy,
         )
         if _return_reasoning_steps:
             original_result = handle.result
@@ -565,6 +271,7 @@ class GlobalFileManager(BaseGlobalFileManager):
             handle.result = _wrapped_result  # type: ignore[attr-defined]
         return handle
 
+    @functools.wraps(BaseGlobalFileManager.clear, updated=())
     def clear(self) -> None:  # type: ignore[override]
         """
         Reset the GlobalFileManager view and all underlying managers.
@@ -594,7 +301,7 @@ class GlobalFileManager(BaseGlobalFileManager):
 
         # Fan‑out clear to all underlying managers
         try:
-            for _, mgr in (self._managers or {}).items():
+            for mgr in self._managers or []:
                 try:
                     mgr.clear()
                 except Exception:
