@@ -29,14 +29,23 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
         """
 
         message = f"<Actor has been paused due to {reason}>"
+        # Interject only if at least one pause actually applies to a child.
         spec: Dict[str, Any] = {
-            "steps": [
-                {"method": "interject", "args": message},
-            ],
             "children": {
                 "TaskScheduler.execute": {"steps": [{"method": "pause"}]},
                 "Actor.act": {"steps": [{"method": "pause"}]},
             },
+            "conditions": [
+                {
+                    "when": {
+                        "any": [
+                            {"selector": "TaskScheduler.execute", "status": "full"},
+                            {"selector": "Actor.act", "status": "full"},
+                        ],
+                    },
+                    "then": [{"method": "interject", "args": message}],
+                },
+            ],
         }
         return await self.nested_steer(spec)
 
@@ -56,13 +65,22 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
         """
 
         message = f"<Actor has been resumed due to {reason}>"
+        # Interject only if at least one resume actually applies to a child.
         spec: Dict[str, Any] = {
-            "steps": [
-                {"method": "interject", "args": message},
-            ],
             "children": {
                 "TaskScheduler.execute": {"steps": [{"method": "resume"}]},
                 "Actor.act": {"steps": [{"method": "resume"}]},
             },
+            "conditions": [
+                {
+                    "when": {
+                        "any": [
+                            {"selector": "TaskScheduler.execute", "status": "full"},
+                            {"selector": "Actor.act", "status": "full"},
+                        ],
+                    },
+                    "then": [{"method": "interject", "args": message}],
+                },
+            ],
         }
         return await self.nested_steer(spec)
