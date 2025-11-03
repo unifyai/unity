@@ -122,8 +122,8 @@ def wrap_handle_with_logging(
                 self._inner = _h
 
             # delegate public API, but adapt stop signature
-            async def interject(self, message: str):
-                return await self._inner.interject(message)
+            async def interject(self, message: str, *, images: object | None = None):
+                return await self._inner.interject(message, images=images)
 
             def pause(self):
                 return self._inner.pause()
@@ -197,9 +197,9 @@ def wrap_handle_with_logging(
             )
 
         # ---------- public API mirror ----------------------------------------
-        async def interject(self, message: str):
+        async def interject(self, message: str, *, images: object | None = None):
             await self._publish(action="interject", content=message)
-            return await self._inner.interject(message)
+            return await self._inner.interject(message, images=images)
 
         def pause(self):
             asyncio.create_task(self._publish(action="pause"))
