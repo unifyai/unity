@@ -203,7 +203,7 @@ class ActiveTask(BaseActiveTask):
         return _AnswerHandle()
 
     @functools.wraps(BaseActiveTask.interject, updated=())
-    async def interject(self, message: str) -> None:
+    async def interject(self, message: str, *, images: object | None = None) -> None:
         # Classify steering intent and enforce lifecycle synchronization for stop/defer/cancel.
         intent: Optional[str] = None
         reason: Optional[str] = None
@@ -278,8 +278,8 @@ class ActiveTask(BaseActiveTask):
             self._clear_active_pointer()
             return
 
-        # No stop/defer/cancel intent ⇒ forward interjection to the actor.
-        await self._actor_handle.interject(message)
+        # No stop/defer/cancel intent ⇒ forward interjection to the actor (with images).
+        await self._actor_handle.interject(message, images=images)  # type: ignore[arg-type]
 
     @functools.wraps(BaseActiveTask.stop, updated=())
     def stop(

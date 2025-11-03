@@ -671,15 +671,20 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                     # Do NOT detach followers from each other; keep queue links intact
                     detach=False,
                 )
-                # Deliver any queued interjections for the newly active task
+                # Deliver any queued interjections (message + images) for the newly active task
                 try:
                     pending_msgs = getattr(self, "_queued_interjections", {}).pop(
                         self._current_task_id,
                         [],
                     )
-                    for _msg in pending_msgs:
+                    for _item in pending_msgs:
                         try:
-                            await self._current_handle.interject(_msg)
+                            if isinstance(_item, dict):
+                                _m = _item.get("message", "")
+                                _imgs = _item.get("images")
+                            else:
+                                _m, _imgs = _item, None
+                            await self._current_handle.interject(_m, images=_imgs)
                         except Exception:
                             pass
                 except Exception:
@@ -689,7 +694,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             # active_task_done() awaits on the completions queue
 
     # ----- Steerable surface proxies -----
-    async def interject(self, message: str) -> None:  # type: ignore[override]
+    async def interject(self, message: str, *, images: object | None = None) -> None:  # type: ignore[override]
         """Route interjections to specific tasks in the queue using an LLM router.
 
         The router receives the full queue snapshot and the user's instruction and
@@ -706,7 +711,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
         if self._should_passthrough():
             if not (message or "").strip():
                 return
-            await self._current_handle.interject(message)
+            await self._current_handle.interject(message, images=images)
             return
 
         # Fast path: empty/whitespace → no-op
@@ -745,7 +750,7 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 except Exception:
                     pass
                 return
-            await self._current_handle.interject(message)
+            await self._current_handle.interject(message, images=images)
             return
 
         if not hasattr(self, "_queued_interjections"):
@@ -759,11 +764,16 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
             for tid in task_ids:
                 if tid == self._current_task_id:
                     try:
-                        await self._current_handle.interject(instr)
+                        await self._current_handle.interject(instr, images=images)
                     except Exception:
                         pass
                 else:
-                    self._queued_interjections.setdefault(tid, []).append(instr)
+                    self._queued_interjections.setdefault(tid, []).append(
+                        {
+                            "message": instr,
+                            "images": images,
+                        },
+                    )
         return
 
     async def _route_interjection_llm(
