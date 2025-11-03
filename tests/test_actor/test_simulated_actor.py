@@ -5,6 +5,10 @@ import pytest
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
+from unity.image_manager.image_manager import ImageManager
+from unity.image_manager.types import RawImageRef, AnnotatedImageRef
+from pathlib import Path
+import base64
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -267,5 +271,58 @@ def simulate_linkedin_sales_leads() -> str:
     )
     assert isinstance(reply, str) and reply.strip(), "Expected a non-empty reply"
     assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
+
+    await handle.result()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 10.  Interject with image → simulation recognises spreadsheet               #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
+    """
+    Start a simulated task, interject with a screenshot (Google Sheets), then
+    ask about progress; the reply should reference a sheet/spreadsheet.
+    """
+
+    # Store the screenshot and obtain an image id
+    img_path = (
+        Path(__file__).parent.parent
+        / "test_task_scheduler"
+        / "organize_weekly_rotar.png"
+    )
+    raw_bytes = img_path.read_bytes()
+    img_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    im = ImageManager()
+    [img_id] = im.add_images(
+        [
+            {"caption": "weekly rota", "data": img_b64},
+        ],
+    )
+
+    actor = SimulatedActor(steps=3, duration=None)
+    handle = await actor.act(
+        "We'll start working on organizing the rota for the admin assistants.",
+    )
+
+    # Interject with the image attached; annotation intentionally does not say "spreadsheet"
+    await handle.interject(
+        "Please start working on this file.",
+        images=[
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_id)),
+                annotation="rota file",
+            ),
+        ],
+    )
+
+    # Ask about status and infer file type from the visual context
+    reply = await handle.ask(
+        "How is it going? What file are you working on? What file type is it?",
+    )
+    assert isinstance(reply, str) and reply.strip()
+    assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
     await handle.result()
