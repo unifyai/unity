@@ -8,7 +8,13 @@ Tests for communication flows (SMS, email, calls, etc.)
 import asyncio
 import pytest
 
-from tests.test_conversation_manager.helpers import capture_stream_response
+from tests.test_conversation_manager.helpers import (
+    capture_stream_response,
+    send_incoming_email,
+    send_incoming_phone_call,
+    send_incoming_sms,
+    send_incoming_unify_message,
+)
 from unity.conversation_manager_2.new_events import (
     EmailRecieved,
     EmailSent,
@@ -17,7 +23,6 @@ from unity.conversation_manager_2.new_events import (
     PhoneCallSent,
     PhoneCallStarted,
     PhoneUtterance,
-    SMSRecieved,
     SMSSent,
     UnifyMessageRecieved,
     UnifyMessageSent,
@@ -42,13 +47,7 @@ async def test_sms_to_sms(test_redis_client, event_capture):
 
     # Send incoming SMS
     contact_number = "+15555551111"
-    incoming_sms = SMSRecieved(
-        contact=contact_number,
-        content="Tell me a joke",
-    )
-
-    print(f"\n📱 Sending SMS from {contact_number}")
-    await test_redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
+    await send_incoming_sms(test_redis_client, contact_number, "Tell me a joke")
 
     # Wait for the assistant's response
     print("⏳ Waiting for SMS response (timeout: 60s)...")
@@ -76,17 +75,12 @@ async def test_sms_to_email(test_redis_client, event_capture):
     # Clear any events from initialization
     event_capture.clear()
 
+    # Send incoming SMS
     contact_number = "+15555551111"
     email_address = "test@contact.com"
-
-    # Send incoming SMS
-    incoming_sms = SMSRecieved(
-        contact=contact_number,
-        content="Tell me a joke via email",
+    await send_incoming_sms(
+        test_redis_client, contact_number, "Tell me a joke via email"
     )
-
-    print(f"\n📱 Sending SMS from {contact_number}")
-    await test_redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
 
     # Wait for the assistant's response
     print("⏳ Waiting for email response (timeout: 60s)...")
@@ -116,25 +110,22 @@ async def test_sms_to_unify_message(test_redis_client, event_capture):
 
     # Send incoming SMS
     contact_number = "+15555551111"
-    incoming_sms = SMSRecieved(
-        contact=contact_number,
-        content="Tell me a joke via unify message",
+    contact_id = 1
+    await send_incoming_sms(
+        test_redis_client, contact_number, "Tell me a joke via unify message"
     )
-
-    print(f"\n📱 Sending SMS from {contact_number}")
-    await test_redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
 
     # Wait for the assistant's response
     print("⏳ Waiting for unify message response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
         UnifyMessageSent,
         timeout=60.0,
-        contact=1,
+        contact=contact_id,
     )
 
     # Verify response
     assert isinstance(response, UnifyMessageSent)
-    assert response.contact == 1
+    assert response.contact == contact_id
     assert len(response.content) > 0
 
     print(f"✅ Got unify message response: {response.content[:100]}...")
@@ -150,14 +141,11 @@ async def test_sms_to_phone_call(test_redis_client, event_capture):
     # Clear any events from initialization
     event_capture.clear()
 
+    # Send incoming SMS
     contact_number = "+15555551111"
-    incoming_sms = SMSRecieved(
-        contact=contact_number,
-        content="Tell me a joke via phone call",
+    await send_incoming_sms(
+        test_redis_client, contact_number, "Tell me a joke via phone call"
     )
-
-    print(f"\n📱 Sending SMS from {contact_number}")
-    await test_redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
 
     # Wait for the assistant's response
     print("⏳ Waiting for phone call response (timeout: 60s)...")
@@ -197,16 +185,13 @@ async def test_email_to_email(test_redis_client, event_capture):
 
     # Send incoming email
     contact_email = "test@contact.com"
-    incoming_email = EmailRecieved(
-        contact=contact_email,
-        body="Tell me a joke",
-        subject="Test Subject",
-        message_id="test_message_id",
-    )
-
-    print(f"\n📧 Sending email from {contact_email}")
-    await test_redis_client.publish(
-        "app:comms:email_received", incoming_email.to_json()
+    message_id = "test_message_id"
+    await send_incoming_email(
+        test_redis_client,
+        contact_email,
+        "Test Subject",
+        "Tell me a joke",
+        message_id,
     )
 
     # Wait for the assistant's response
@@ -219,7 +204,7 @@ async def test_email_to_email(test_redis_client, event_capture):
 
     # Verify response
     assert isinstance(response, EmailSent)
-    assert response.message_id == incoming_email.message_id
+    assert response.message_id == message_id
     assert response.contact == contact_email
     assert len(response.body) > 0
 
@@ -236,20 +221,15 @@ async def test_email_to_sms(test_redis_client, event_capture):
     # Clear any events from initialization
     event_capture.clear()
 
+    # Send incoming email
     contact_number = "+15555551111"
     email_address = "test@contact.com"
-
-    # Send incoming email
-    incoming_email = EmailRecieved(
-        contact=email_address,
-        body="Tell me a joke via SMS",
-        subject="Test Subject",
-        message_id="test_message_id",
-    )
-
-    print(f"\n📧 Sending email from {email_address}")
-    await test_redis_client.publish(
-        "app:comms:email_received", incoming_email.to_json()
+    await send_incoming_email(
+        test_redis_client,
+        email_address,
+        "Test Subject",
+        "Tell me a joke via SMS",
+        "test_message_id",
     )
 
     # Wait for the assistant's response
@@ -263,6 +243,10 @@ async def test_email_to_sms(test_redis_client, event_capture):
     # Verify response
     assert isinstance(response, SMSSent)
     assert response.contact == contact_number
+    assert len(response.content) > 0
+
+    print(f"✅ Got SMS response: {response.content[:100]}...")
+    print(f"   Full response length: {len(response.content)} characters")
 
 
 @pytest.mark.asyncio
@@ -276,16 +260,12 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
 
     # Send incoming email
     email_address = "test@contact.com"
-    incoming_email = EmailRecieved(
-        contact=email_address,
-        body="Tell me a joke via unify message",
-        subject="Test Subject",
-        message_id="test_message_id",
-    )
-
-    print(f"\n📧 Sending email from {email_address}")
-    await test_redis_client.publish(
-        "app:comms:email_received", incoming_email.to_json()
+    await send_incoming_email(
+        test_redis_client,
+        email_address,
+        "Test Subject",
+        "Tell me a joke via unify message",
+        "test_message_id",
     )
 
     # Wait for the assistant's response
@@ -317,18 +297,12 @@ async def test_email_to_phone_call(test_redis_client, event_capture):
     # Send incoming email
     contact_number = "+15555551111"
     email_address = "test@contact.com"
-
-    # Send incoming email
-    incoming_email = EmailRecieved(
-        contact=email_address,
-        body="Tell me a joke via phone call",
-        subject="Test Subject",
-        message_id="test_message_id",
-    )
-
-    print(f"\n📧 Sending email from {email_address}")
-    await test_redis_client.publish(
-        "app:comms:email_received", incoming_email.to_json()
+    await send_incoming_email(
+        test_redis_client,
+        email_address,
+        "Test Subject",
+        "Tell me a joke via phone call",
+        "test_message_id",
     )
 
     # Wait for the assistant's response
@@ -363,27 +337,20 @@ async def test_unify_message_to_unify_message(test_redis_client, event_capture):
     event_capture.clear()
 
     # Send incoming unify message
-    incoming_unify_message = UnifyMessageRecieved(
-        contact=1,
-        content="Tell me a joke",
-    )
-
-    print(f"\n📧 Sending unify message from 1")
-    await test_redis_client.publish(
-        "app:comms:unify_message_received", incoming_unify_message.to_json()
-    )
+    contact_id = 1
+    await send_incoming_unify_message(test_redis_client, contact_id, "Tell me a joke")
 
     # Wait for the assistant's response
     print("⏳ Waiting for unify message response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
         UnifyMessageSent,
         timeout=60.0,
-        contact=1,
+        contact=contact_id,
     )
 
     # Verify response
     assert isinstance(response, UnifyMessageSent)
-    assert response.contact == 1
+    assert response.contact == contact_id
     assert len(response.content) > 0
 
     print(f"✅ Got unify message response: {response.content[:100]}...")
@@ -401,18 +368,13 @@ async def test_unify_message_to_sms(test_redis_client, event_capture):
     event_capture.clear()
 
     # Send incoming unify message
-    incoming_unify_message = UnifyMessageRecieved(
-        contact=1,
-        content="Tell me a joke via SMS",
-    )
-
-    print(f"\n📧 Sending unify message from 1")
-    await test_redis_client.publish(
-        "app:comms:unify_message_received", incoming_unify_message.to_json()
+    contact_id = 1
+    contact_number = "+15555551111"
+    await send_incoming_unify_message(
+        test_redis_client, contact_id, "Tell me a joke via SMS"
     )
 
     # Wait for the assistant's response
-    contact_number = "+15555551111"
     print("⏳ Waiting for SMS response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
         SMSSent,
@@ -440,18 +402,13 @@ async def test_unify_message_to_email(test_redis_client, event_capture):
     event_capture.clear()
 
     # Send incoming unify message
-    incoming_unify_message = UnifyMessageRecieved(
-        contact=1,
-        content="Tell me a joke via email",
-    )
-
-    print(f"\n📧 Sending unify message from 1")
-    await test_redis_client.publish(
-        "app:comms:unify_message_received", incoming_unify_message.to_json()
+    contact_id = 1
+    email_address = "test@contact.com"
+    await send_incoming_unify_message(
+        test_redis_client, contact_id, "Tell me a joke via email"
     )
 
     # Wait for the assistant's response
-    email_address = "test@contact.com"
     print("⏳ Waiting for email response (timeout: 60s)...")
     response = await event_capture.wait_for_event(
         EmailSent,
@@ -477,17 +434,11 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
     # Clear any events from initialization
     event_capture.clear()
 
-    contact_number = "+15555551111"
-
     # Send incoming unify message
-    incoming_unify_message = UnifyMessageRecieved(
-        contact=1,
-        content="Tell me a joke via phone call",
-    )
-
-    print(f"\n📧 Sending unify message from 1")
-    await test_redis_client.publish(
-        "app:comms:unify_message_received", incoming_unify_message.to_json()
+    contact_id = 1
+    contact_number = "+15555551111"
+    await send_incoming_unify_message(
+        test_redis_client, contact_id, "Tell me a joke via phone call"
     )
 
     # Wait for the assistant's response
@@ -518,57 +469,14 @@ async def test_phone_call_flow(test_redis_client, event_capture):
     # Clear any events from initialization
     event_capture.clear()
 
+    # Send incoming phone call
     contact_number = "+15555551111"
-
-    # Step 1: Send PhoneCallReceived
-    # (CM will try to spawn call script, but we ignore that)
-    incoming_call = PhoneCallRecieved(
-        contact=contact_number,
-        conference_name="test_conference",
+    pubsub = await send_incoming_phone_call(
+        test_redis_client, contact_number, "test_conference", "Tell me a joke"
     )
 
-    print(f"\n📞 Step 1: Sending PhoneCallReceived from {contact_number}")
-    await test_redis_client.publish("app:comms:call_recieved", incoming_call.to_json())
-
-    # Give CM a moment to process and attempt to spawn script
-    await asyncio.sleep(0.5)
-
-    # Step 2: Subscribe to the response streaming channel FIRST
-    # We must subscribe BEFORE PhoneCallStarted to catch the initial greeting
-    print("📞 Step 2: Subscribing to app:call:response_gen channel")
-    pubsub = test_redis_client.pubsub()
-    await pubsub.subscribe("app:call:response_gen")
-
-    # Wait a moment for subscription to be ready
-    await asyncio.sleep(0.2)
-
-    # Step 3: Act as the call script - publish PhoneCallStarted
-    # This triggers the initial greeting to be streamed
-    call_started = PhoneCallStarted(contact=contact_number)
-
-    print("📞 Step 3: Acting as call script - sending PhoneCallStarted")
-    await test_redis_client.publish(
-        "app:comms:phone_call_started", call_started.to_json()
-    )
-
-    # Step 4: Capture the initial greeting (triggered by PhoneCallStarted above)
-    print("📞 Step 4: Waiting for assistant's initial greeting...")
-    start1, chunks1, end1 = await capture_stream_response(pubsub, "Initial greeting")
-
-    assert start1, "Should receive start_gen for initial greeting"
-    assert len(chunks1) > 0, "Should receive chunks for initial greeting"
-    assert end1, "Should receive end_gen for initial greeting"
-
-    # Step 5: Send a user utterance
-    user_utterance = PhoneUtterance(contact=contact_number, content="Tell me a joke")
-
-    print("\n📞 Step 5: Sending user utterance (PhoneUtterance)")
-    await test_redis_client.publish(
-        "app:comms:phone_utterance", user_utterance.to_json()
-    )
-
-    # Step 6: Capture the assistant's response to the user utterance
-    print("📞 Step 6: Waiting for assistant's response to user...")
+    # Capture the assistant's response to the user utterance
+    print("📞 Waiting for assistant's response to user...")
     start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
 
     assert start2, "Should receive start_gen for response"
@@ -579,9 +487,8 @@ async def test_phone_call_flow(test_redis_client, event_capture):
     await pubsub.unsubscribe("app:call:response_gen")
     await pubsub.aclose()
 
-    # Step 7: Verify both exchanges completed successfully
+    # Verify exchange completed successfully
     print(f"\n✅ Phone call test complete!")
-    print(f"   Exchange 1 (Initial greeting): {len(''.join(chunks1))} characters")
     print(f"   Exchange 2 (Response to user): {len(''.join(chunks2))} characters")
 
     # End the phone call
@@ -602,60 +509,14 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
     # Clear any events from initialization
     event_capture.clear()
 
-    contact_number = "+15555551111"
-
     # Send incoming phone call
-    incoming_phone_call = PhoneCallRecieved(
-        contact=contact_number,
-        conference_name="test_conference",
+    contact_number = "+15555551111"
+    pubsub = await send_incoming_phone_call(
+        test_redis_client, contact_number, "test_conference", "Tell me a joke via SMS"
     )
 
-    print(f"\n📞 Sending phone call from {contact_number}")
-    await test_redis_client.publish(
-        "app:comms:call_recieved", incoming_phone_call.to_json()
-    )
-
-    # Give CM a moment to process and attempt to spawn script
-    await asyncio.sleep(0.5)
-
-    # Step 2: Subscribe to the response streaming channel FIRST
-    # We must subscribe BEFORE PhoneCallStarted to catch the initial greeting
-    print("📞 Step 2: Subscribing to app:call:response_gen channel")
-    pubsub = test_redis_client.pubsub()
-    await pubsub.subscribe("app:call:response_gen")
-
-    # Wait a moment for subscription to be ready
-    await asyncio.sleep(0.2)
-
-    # Step 3: Act as the call script - publish PhoneCallStarted
-    # This triggers the initial greeting to be streamed
-    call_started = PhoneCallStarted(contact=contact_number)
-
-    print("📞 Step 3: Acting as call script - sending PhoneCallStarted")
-    await test_redis_client.publish(
-        "app:comms:phone_call_started", call_started.to_json()
-    )
-
-    # Step 4: Capture the initial greeting (triggered by PhoneCallStarted above)
-    print("📞 Step 4: Waiting for assistant's initial greeting...")
-    start1, chunks1, end1 = await capture_stream_response(pubsub, "Initial greeting")
-
-    assert start1, "Should receive start_gen for initial greeting"
-    assert len(chunks1) > 0, "Should receive chunks for initial greeting"
-    assert end1, "Should receive end_gen for initial greeting"
-
-    # Step 5: Send a user utterance
-    user_utterance = PhoneUtterance(
-        contact=contact_number, content="Tell me a joke via SMS"
-    )
-
-    print("\n📞 Step 5: Sending user utterance (PhoneUtterance)")
-    await test_redis_client.publish(
-        "app:comms:phone_utterance", user_utterance.to_json()
-    )
-
-    # Step 6: Capture the assistant's response to the user utterance
-    print("📞 Step 6: Waiting for assistant's response to user...")
+    # Capture the assistant's response to the user utterance
+    print("📞 Waiting for assistant's response to user...")
     start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
 
     assert start2, "Should receive start_gen for response"
@@ -679,6 +540,10 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
     assert response.contact == contact_number
     assert len(response.content) > 0
 
+    # Verify exchange completed successfully
+    print(f"✅ Got SMS response: {response.content[:100]}...")
+    print(f"   Full response length: {len(response.content)} characters")
+
     # End the phone call
     end_phone_call = PhoneCallEnded(
         contact=contact_number,
@@ -697,60 +562,15 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
     # Clear any events from initialization
     event_capture.clear()
 
+    # Send incoming phone call
     contact_number = "+15555551111"
     email_address = "test@contact.com"
-
-    # Send incoming phone call
-    incoming_phone_call = PhoneCallRecieved(
-        contact=contact_number,
-        conference_name="test_conference",
+    pubsub = await send_incoming_phone_call(
+        test_redis_client, contact_number, "test_conference", "Tell me a joke via email"
     )
 
-    print(f"\n📞 Sending phone call from {contact_number}")
-    await test_redis_client.publish(
-        "app:comms:call_recieved", incoming_phone_call.to_json()
-    )
-
-    # Give CM a moment to process and attempt to spawn script
-    await asyncio.sleep(0.5)
-
-    # Step 2: Subscribe to the response streaming channel FIRST
-    # We must subscribe BEFORE PhoneCallStarted to catch the initial greeting
-    print("📞 Step 2: Subscribing to app:call:response_gen channel")
-    pubsub = test_redis_client.pubsub()
-    await pubsub.subscribe("app:call:response_gen")
-
-    # Wait a moment for subscription to be ready
-    await asyncio.sleep(0.2)
-
-    # Step 3: Act as the call script - publish PhoneCallStarted
-    # This triggers the initial greeting to be streamed
-    call_started = PhoneCallStarted(contact=contact_number)
-
-    print("📞 Step 3: Acting as call script - sending PhoneCallStarted")
-    await test_redis_client.publish(
-        "app:comms:phone_call_started", call_started.to_json()
-    )
-
-    # Step 4: Capture the initial greeting (triggered by PhoneCallStarted above)
-    print("📞 Step 4: Waiting for assistant's initial greeting...")
-    start1, chunks1, end1 = await capture_stream_response(pubsub, "Initial greeting")
-    assert start1, "Should receive start_gen for initial greeting"
-    assert len(chunks1) > 0, "Should receive chunks for initial greeting"
-    assert end1, "Should receive end_gen for initial greeting"
-
-    # Step 5: Send a user utterance
-    user_utterance = PhoneUtterance(
-        contact=contact_number, content="Tell me a joke via email"
-    )
-
-    print("\n📞 Step 5: Sending user utterance (PhoneUtterance)")
-    await test_redis_client.publish(
-        "app:comms:phone_utterance", user_utterance.to_json()
-    )
-
-    # Step 6: Capture the assistant's response to the user utterance
-    print("📞 Step 6: Waiting for assistant's response to user...")
+    # Capture the assistant's response to the user utterance
+    print("📞 Waiting for assistant's response to user...")
     start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
     assert start2, "Should receive start_gen for response"
     assert len(chunks2) > 0, "Should receive chunks for response"
@@ -773,6 +593,10 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
     assert response.contact == email_address
     assert len(response.body) > 0
 
+    # Verify exchange completed successfully
+    print(f"✅ Got email response: {response.body[:100]}...")
+    print(f"   Full response length: {len(response.body)} characters")
+
     # End the phone call
     end_phone_call = PhoneCallEnded(
         contact=contact_number,
@@ -791,60 +615,18 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
     # Clear any events from initialization
     event_capture.clear()
 
-    contact_number = "+15555551111"
-    unify_message_id = 1
-
     # Send incoming phone call
-    incoming_phone_call = PhoneCallRecieved(
-        contact=contact_number,
-        conference_name="test_conference",
+    contact_number = "+15555551111"
+    contact_id = 1
+    pubsub = await send_incoming_phone_call(
+        test_redis_client,
+        contact_number,
+        "test_conference",
+        "Tell me a joke via unify message",
     )
 
-    print(f"\n📞 Sending phone call from {contact_number}")
-    await test_redis_client.publish(
-        "app:comms:call_recieved", incoming_phone_call.to_json()
-    )
-
-    # Give CM a moment to process and attempt to spawn script
-    await asyncio.sleep(0.5)
-
-    # Step 2: Subscribe to the response streaming channel FIRST
-    # We must subscribe BEFORE PhoneCallStarted to catch the initial greeting
-    print("📞 Step 2: Subscribing to app:call:response_gen channel")
-    pubsub = test_redis_client.pubsub()
-    await pubsub.subscribe("app:call:response_gen")
-
-    # Wait a moment for subscription to be ready
-    await asyncio.sleep(0.2)
-
-    # Step 3: Act as the call script - publish PhoneCallStarted
-    # This triggers the initial greeting to be streamed
-    call_started = PhoneCallStarted(contact=contact_number)
-
-    print("📞 Step 3: Acting as call script - sending PhoneCallStarted")
-    await test_redis_client.publish(
-        "app:comms:phone_call_started", call_started.to_json()
-    )
-
-    # Step 4: Capture the initial greeting (triggered by PhoneCallStarted above)
-    print("📞 Step 4: Waiting for assistant's initial greeting...")
-    start1, chunks1, end1 = await capture_stream_response(pubsub, "Initial greeting")
-    assert start1, "Should receive start_gen for initial greeting"
-    assert len(chunks1) > 0, "Should receive chunks for initial greeting"
-    assert end1, "Should receive end_gen for initial greeting"
-
-    # Step 5: Send a user utterance
-    user_utterance = PhoneUtterance(
-        contact=contact_number, content="Tell me a joke via unify message"
-    )
-
-    print("\n📞 Step 5: Sending user utterance (PhoneUtterance)")
-    await test_redis_client.publish(
-        "app:comms:phone_utterance", user_utterance.to_json()
-    )
-
-    # Step 6: Capture the assistant's response to the user utterance
-    print("📞 Step 6: Waiting for assistant's response to user...")
+    # Capture the assistant's response to the user utterance
+    print("📞 Waiting for assistant's response to user...")
     start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
     assert start2, "Should receive start_gen for response"
     assert len(chunks2) > 0, "Should receive chunks for response"
@@ -859,13 +641,17 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
     response = await event_capture.wait_for_event(
         UnifyMessageSent,
         timeout=60.0,
-        contact=unify_message_id,
+        contact=contact_id,
     )
 
     # Verify response
     assert isinstance(response, UnifyMessageSent)
-    assert response.contact == unify_message_id
+    assert response.contact == contact_id
     assert len(response.content) > 0
+
+    # Verify exchange completed successfully
+    print(f"✅ Got unify message response: {response.content[:100]}...")
+    print(f"   Full response length: {len(response.content)} characters")
 
     # End the phone call
     end_phone_call = PhoneCallEnded(
