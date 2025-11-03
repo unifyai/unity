@@ -3548,7 +3548,6 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         task_ids: Union[int, List[int]],
         new_status: str,
-        allow_active: bool = False,
     ) -> Dict[str, str]:
         """
         Change the **lifecycle status** of one or many tasks.
