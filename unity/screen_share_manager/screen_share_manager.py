@@ -394,7 +394,7 @@ class ScreenShareManager:
         except Exception as e:
             raise ValueError("Invalid image data") from e
 
-    def _is_significant(self, img_before: Image.Image, img_after: Image.Image) -> bool:
+    def _is_significant_visual_change(self, img_before: Image.Image, img_after: Image.Image) -> bool:
         before = np.array(img_before, dtype=np.uint8)
         after = np.array(img_after, dtype=np.uint8)
 
@@ -494,7 +494,7 @@ class ScreenShareManager:
                     next_seq_id += 1
                     continue
                 if self._last_significant_frame_pil:
-                    if self._is_significant(self._last_significant_frame_pil, pil_img):
+                    if self._is_significant_visual_change(self._last_significant_frame_pil, pil_img):
                         if self._debug:
                             logger.debug(
                                 f"Sequencer detected significant visual change at t={ts:.2f}s.",
