@@ -100,7 +100,7 @@ async def test_handle_stop(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_handle_requests_clarification():
-    actor = SimulatedActor(steps=1, _requests_clarification=True)
+    actor = SimulatedActor(steps=2, _requests_clarification=True)
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
@@ -156,7 +156,7 @@ async def test_handle_pause_and_resume(monkeypatch):
         raising=True,
     )
 
-    actor = SimulatedActor(steps=2)
+    actor = SimulatedActor(steps=3)
     handle = await actor.act("Summarise all open opportunities.")
 
     pause_reply = handle.pause()
