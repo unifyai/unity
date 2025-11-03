@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Deque, List, Optional, Tuple, Dict
 from dataclasses import dataclass, field
 from textwrap import dedent
-
+import functools
 import backoff
 import unify
 import cv2
@@ -118,24 +118,25 @@ class TurnState:
 # --- Helper Decorators ---
 
 
-def llm_retry_decorator(max_tries: int, base_delay: float):
-    """A decorator to add exponential backoff retries to an async function."""
+def llm_retry_decorator(func):
+    """A decorator to add exponential backoff retries to an async function, using instance settings."""
 
-    def decorator(func):
+    @functools.wraps(func)
+    async def wrapper(self: "ScreenShareManager", *args, **kwargs):
+        settings = self.settings
         @backoff.on_exception(
             backoff.expo,
             Exception,
-            max_tries=max_tries,
-            base=base_delay,
+            max_tries=settings.llm_retry_max_tries,
+            base=settings.llm_retry_base_delay_sec,
             logger=logger,
         )
-        async def wrapper(*args, **kwargs):
-            return await func(*args, **kwargs)
+        async def inner():
+            return await func(self, *args, **kwargs)
 
-        return wrapper
+        return await inner()
 
-    return decorator
-
+    return wrapper
 
 # --- Main Manager Class ---
 
@@ -432,7 +433,7 @@ class ScreenShareManager:
         return (
             change_ratio > self.settings.change_ratio_threshold
             and hist_corr < self.settings.hist_corr_threshold
-            and (score < self.settings.ssim_threshold - 0.01)
+            and (score < self.settings.ssim_threshold)
         )
 
     async def _inactivity_flush_loop(self):
@@ -526,7 +527,7 @@ class ScreenShareManager:
             except Exception as e:
                 logger.error(f"Error in sequencer: {e}", exc_info=True)
 
-    @llm_retry_decorator(max_tries=3, base_delay=1.0)
+    @llm_retry_decorator
     async def _detect_key_moments(self, turn_state: TurnState):
         if not turn_state.speech_events and not turn_state.visual_events and not turn_state.latest_frame:
             await self._detection_queue.put([])
@@ -655,7 +656,7 @@ class ScreenShareManager:
         else:
             await self._detection_queue.put(final_events)
 
-    @llm_retry_decorator(max_tries=3, base_delay=1.0)
+    @llm_retry_decorator
     async def _get_llm_annotation_for_event(
         self,
         event_to_annotate: DetectedEvent,
@@ -694,31 +695,24 @@ class ScreenShareManager:
             },
             {"type": "image_url", "image_url": {"url": data_url}},
         ]
-        try:
-            if self._debug:
-                logger.debug(
-                    f"Calling annotation LLM for image at timestamp {event_to_annotate.timestamp:.2f}s...",
-                )
-            response = await self._analysis_client.generate(user_message=user_content)
-            if isinstance(response, str) and response.strip():
-                if self._debug:
-                    logger.debug(f"Annotation LLM returned: '{response.strip()}'")
-                previous_annotations_in_turn.append(response.strip())
-                return response.strip()
-            return None
-        except Exception as e:
-            logger.error(
-                f"Error during single-event LLM annotation: {e}",
-                exc_info=True,
+        if self._debug:
+            logger.debug(
+                f"Calling annotation LLM for image at timestamp {event_to_annotate.timestamp:.2f}s...",
             )
-            return None
+        response = await self._analysis_client.generate(user_message=user_content)
+        if isinstance(response, str) and response.strip():
+            if self._debug:
+                logger.debug(f"Annotation LLM returned: '{response.strip()}'")
+            previous_annotations_in_turn.append(response.strip())
+            return response.strip()
+        return None
 
     def _trigger_summary_update(self):
         if self._summary_update_task and not self._summary_update_task.done():
             return
         self._summary_update_task = asyncio.create_task(self._update_summary())
 
-    @llm_retry_decorator(max_tries=3, base_delay=1.0)
+    @llm_retry_decorator
     async def _update_summary(self):
         await asyncio.sleep(1.0)
         async with self._summary_update_lock:

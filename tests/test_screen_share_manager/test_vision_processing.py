@@ -33,7 +33,7 @@ async def test_vision_should_detect_significant_changes(manager: ScreenShareMana
     before_filename, after_filename = image_pair
     img_before = load_asset_image(before_filename)
     img_after = load_asset_image(after_filename)
-    assert manager._is_significant_visual_change(img_before, img_after) is True
+    assert manager._is_significant_visual_change(img_before, img_after)
 
 
 @pytest.mark.vision
@@ -48,7 +48,7 @@ async def test_vision_should_ignore_insignificant_changes(manager: ScreenShareMa
     before_filename, after_filename = image_pair
     img_before = load_asset_image(before_filename)
     img_after = load_asset_image(after_filename)
-    assert manager._is_significant_visual_change(img_before, img_after) is False
+    assert not manager._is_significant_visual_change(img_before, img_after)
 
 
 @pytest.mark.vision
@@ -57,4 +57,4 @@ async def test_vision_should_ignore_insignificant_changes(manager: ScreenShareMa
 async def test_vision_should_ignore_identical_images(manager):
     """Tests that identical images are not considered a significant change."""
     img = load_asset_image("modal_before.png")
-    assert manager._is_significant_visual_change(img, img.copy()) is False
+    assert not manager._is_significant_visual_change(img, img.copy())

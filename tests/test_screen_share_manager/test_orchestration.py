@@ -1,7 +1,7 @@
 import asyncio
 import base64
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -10,6 +10,7 @@ from unity.screen_share_manager.screen_share_manager import TurnState
 from unity.screen_share_manager.types import DetectedEvent
 from tests.helpers import _handle_project
 from tests.test_screen_share_manager.conftest import PNG_RED_B64
+from unittest.mock import PropertyMock
 
 
 @pytest.mark.unit
@@ -120,7 +121,7 @@ async def test_inactivity_flush_should_trigger_for_silent_visual_events(mocked_m
     manager.settings.inactivity_timeout_sec = 0.1
     manager._inactivity_task.cancel()  # Stop the default loop to control timing
 
-    with pytest.helpers.patch.object(manager, "_detect_key_moments", new_callable=pytest.helpers.AsyncMock) as mock_detect:
+    with patch.object(manager, "_detect_key_moments", new_callable=AsyncMock) as mock_detect:
         manager._pending_vision_events.append({"timestamp": 1.0, "after_frame_b64": PNG_RED_B64})
         manager._last_activity_time = asyncio.get_event_loop().time()
 
@@ -136,3 +137,22 @@ async def test_inactivity_flush_should_trigger_for_silent_visual_events(mocked_m
             await manager._detect_key_moments(turn_state)
 
         mock_detect.assert_called_once()
+
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_concurrency_should_remain_stable_under_load(manager):
+    """Tests that pushing frames and speech concurrently does not crash the manager."""
+    async def push_frames():
+        for i in range(5):
+            await manager.push_frame(PNG_RED_B64, i * 0.1)
+            await asyncio.sleep(0.01)
+
+    async def push_speech_flow():
+        manager.start_turn()
+        for i in range(3):
+            await manager.push_speech(f"utterance {i}", i, i + 0.05)
+            await asyncio.sleep(0.02)
+        manager.end_turn()
+
+    await asyncio.gather(push_frames(), push_speech_flow())
