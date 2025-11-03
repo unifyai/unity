@@ -75,7 +75,6 @@ def plan_reorder_queue(
     *,
     new_order: List[int],
     rows_by_id: Dict[int, Dict[str, Any]],
-    queue_id: Optional[int],
 ) -> Dict[int, Dict[str, Any]]:
     """
     Compute the invariant-preserving updates required to reorder a queue to match

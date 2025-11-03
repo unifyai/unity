@@ -2402,7 +2402,6 @@ class TaskScheduler(BaseTaskScheduler):
         updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
             new_order=new_order,
             rows_by_id=rows_by_id,
-            queue_id=queue_id,
         )
 
         # Build tid→log_id map once
