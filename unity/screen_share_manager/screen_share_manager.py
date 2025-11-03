@@ -45,9 +45,13 @@ class ScreenShareManagerSettings(BaseModel):
         default=0.985,
         description="Structural Similarity Index threshold for perceptual difference.",
     )
-    min_contour_area: int = Field(
-        default=100,
-        description="Minimum contour area to be considered a significant semantic change.",
+    change_ratio_threshold: float = Field(
+        default=0.02,
+        description="Fraction of pixels in the frame that changed noticeably compared to the previous one",
+    )
+    hist_corr_threshold: float = Field(
+        default=0.9,
+        description="Measures how similar the overall brightness and color distribution of the two frames are, using histogram correlation."
     )
     vision_event_cooldown_sec: float = Field(
         default=0.25,
@@ -390,26 +394,45 @@ class ScreenShareManager:
         except Exception as e:
             raise ValueError("Invalid image data") from e
 
-    def _calculate_mse(self, img1: Image.Image, img2: Image.Image) -> float:
-        err = np.sum(
-            (np.array(img1, dtype=np.float64) - np.array(img2, dtype=np.float64)) ** 2,
-        )
-        return err / (img1.size[0] * img1.size[1])
+    def _is_significant(self, img_before: Image.Image, img_after: Image.Image) -> bool:
+        before = np.array(img_before, dtype=np.uint8)
+        after = np.array(img_after, dtype=np.uint8)
 
-    def _is_significant(
-        self,
-        img_before: Image.Image,
-        img_after: Image.Image,
-    ) -> bool:
-        diff = cv2.absdiff(np.array(img_before), np.array(img_after))
-        _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
-        contours, _ = cv2.findContours(
-            thresh,
-            cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_SIMPLE,
-        )
-        return any(
-            cv2.contourArea(c) > self.settings.min_contour_area for c in contours
+        # --- Quick reject: MSE or identical check ---
+        err = np.sum((before - after) ** 2,)
+        mse = err / (img_before.size[0] * img_before.size[1])
+        if mse < self.settings.mse_threshold:
+            return False
+
+        # --- Perceptual SSIM check ---
+        score, diff_map = ssim(before, after, full=True)
+        if score > self.settings.ssim_threshold:
+            return False
+
+        # --- Pixel-level change ratio ---
+        diff_map = (1 - diff_map) * 255
+        diff_map = diff_map.astype(np.uint8)
+        _, mask = cv2.threshold(diff_map, 30, 255, cv2.THRESH_BINARY)
+
+        # Remove noise and fill small holes
+        kernel = np.ones((3, 3), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        change_ratio = np.sum(mask > 0) / mask.size
+
+        # --- Histogram correlation for scene-level changes ---
+        hist1 = cv2.calcHist([before], [0], None, [32], [0, 256])
+        hist2 = cv2.calcHist([after], [0], None, [32], [0, 256])
+        hist1 = cv2.normalize(hist1, hist1).flatten()
+        hist2 = cv2.normalize(hist2, hist2).flatten()
+        hist_corr = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+
+        # --- Combined decision ---
+        return (
+            change_ratio > self.settings.change_ratio_threshold
+            and hist_corr < self.settings.hist_corr_threshold
+            and (score < self.settings.ssim_threshold - 0.01)
         )
 
     async def _inactivity_flush_loop(self):
@@ -471,40 +494,24 @@ class ScreenShareManager:
                     next_seq_id += 1
                     continue
                 if self._last_significant_frame_pil:
-                    if (
-                        self._calculate_mse(pil_img, self._last_significant_frame_pil)
-                        > self.settings.mse_threshold
-                    ):
-                        score = await loop.run_in_executor(
-                            self._cpu_executor,
-                            ssim,
-                            np.array(self._last_significant_frame_pil),
-                            np.array(pil_img),
-                        )
-                        if (
-                            score < self.settings.ssim_threshold
-                            and self._is_significant(
-                                self._last_significant_frame_pil,
-                                pil_img,
+                    if self._is_significant(self._last_significant_frame_pil, pil_img):
+                        if self._debug:
+                            logger.debug(
+                                f"Sequencer detected significant visual change at t={ts:.2f}s.",
                             )
-                        ):
-                            if self._debug:
-                                logger.debug(
-                                    f"Sequencer detected significant visual change at t={ts:.2f}s.",
-                                )
-                            async with self._state_lock:
-                                self._pending_vision_events.append(
-                                    {
-                                        "timestamp": ts,
-                                        "before_frame_b64": self._last_significant_frame_b64,
-                                        "after_frame_b64": b64,
-                                    },
-                                )
-                            self._last_vision_event_time = loop.time()
-                            (
-                                self._last_significant_frame_b64,
-                                self._last_significant_frame_pil,
-                            ) = (b64, pil_img)
+                        async with self._state_lock:
+                            self._pending_vision_events.append(
+                                {
+                                    "timestamp": ts,
+                                    "before_frame_b64": self._last_significant_frame_b64,
+                                    "after_frame_b64": b64,
+                                },
+                            )
+                        self._last_vision_event_time = loop.time()
+                        (
+                            self._last_significant_frame_b64,
+                            self._last_significant_frame_pil,
+                        ) = (b64, pil_img)
                 else:
                     (
                         self._last_significant_frame_b64,

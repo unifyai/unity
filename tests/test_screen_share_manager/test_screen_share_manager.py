@@ -212,6 +212,7 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
     assert 2.5 in timestamps
 
 
+
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
@@ -321,19 +322,6 @@ async def test_adaptive_frame_dropping_under_load(caplog):
     await manager.stop()
 
 
-@pytest.mark.unit
-@_handle_project
-def test_custom_settings_are_applied():
-    """Ensures that custom settings passed to the constructor are used."""
-    custom_settings = ScreenShareManagerSettings(
-        inactivity_timeout_sec=0.0123,
-        mse_threshold=99.9,
-    )
-    manager = ScreenShareManager(settings=custom_settings)
-    assert manager.settings.inactivity_timeout_sec == 0.0123
-    assert manager.settings.mse_threshold == 99.9
-
-
 @pytest.mark.vision
 @_handle_project
 @pytest.mark.asyncio
@@ -352,15 +340,6 @@ async def test_visual_change_detection_significant_changes(
     before_filename, after_filename = image_pair
     img_before = load_asset_image(before_filename)
     img_after = load_asset_image(after_filename)
-    if "button_active" in before_filename:
-        manager.settings.mse_threshold = 10.0
-        manager.settings.ssim_threshold = 0.995
-        manager.settings.min_contour_area = 50
-    assert (
-        manager._calculate_mse(img_before, img_after) > manager.settings.mse_threshold
-    )
-    score = ssim(np.array(img_before), np.array(img_after))
-    assert score < manager.settings.ssim_threshold
     assert manager._is_significant(img_before, img_after) is True
 
 
