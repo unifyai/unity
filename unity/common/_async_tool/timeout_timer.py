@@ -51,28 +51,10 @@ class TimeoutTimer:
         if self._max_steps is None:
             return False
 
-        # Exclude synthetic system headers from step counting (e.g., context/time headers)
-        try:
-            msgs = getattr(self._client, "messages", []) or []
-            counted = 0
-            for m in msgs:
-                try:
-                    if (
-                        isinstance(m, dict)
-                        and m.get("role") == "system"
-                        and (m.get("_ctx_header") or m.get("_time_header"))
-                    ):
-                        continue
-                except Exception:
-                    pass
-                counted += 1
-        except Exception:
-            counted = len(getattr(self._client, "messages", []) or [])
-
-        ret = counted >= self._max_steps
+        ret = len(self._client.messages) >= self._max_steps
         if self._raise_on_limit and ret:
             raise RuntimeError(
                 f"Conversation exceeded max_steps={self._max_steps} "
-                f"(counted_messages={counted})",
+                f"(len(client.messages)={len(self._client.messages)})",
             )
         return ret

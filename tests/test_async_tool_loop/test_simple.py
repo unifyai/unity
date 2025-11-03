@@ -340,7 +340,7 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
         "hello",
         "hello",
     ], "With ignore_tool_duplicates=False the tool should be invoked twice."
-    roles_raw = [
+    roles = [
         m["role"]
         for m in client.messages
         if not (
@@ -358,25 +358,14 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
             and str(m.get("name", "")).startswith("check_status_")
         )
     ]
-    # Ignore any additional system messages injected mid-conversation (e.g. time context)
-    roles = []
-    seen_first_system = False
-    for r in roles_raw:
-        if r == "system":
-            if seen_first_system:
-                continue
-            seen_first_system = True
-        roles.append(r)
-    # Looser assertion: preserve semantics but allow extra assistant/system turns.
-    assert roles[0] == "system"
-    assert roles[1] == "user"
-    tool_positions = [i for i, r in enumerate(roles) if r == "tool"]
-    assert (
-        len(tool_positions) >= 2
-    ), "Expected at least two tool replies in the transcript."
-    assert roles[-1] == "assistant"
-    # Ensure the assistant spoke before tools started (requested tool calls)
-    assert "assistant" in roles[: tool_positions[0] + 1]
+    assert roles == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
+    ]
 
     # ------------------------------------------------------------------ #
     # 2️⃣  duplicates SHOULD be removed when pruning is enabled
@@ -393,7 +382,7 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
         "hello",
         "hello",
     ], "With ignore_tool_duplicates=True, two invocations are still expected."
-    roles_raw = [
+    roles = [
         m["role"]
         for m in client.messages
         if not (
@@ -411,22 +400,15 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
             and str(m.get("name", "")).startswith("check_status_")
         )
     ]
-    roles = []
-    seen_first_system = False
-    for r in roles_raw:
-        if r == "system":
-            if seen_first_system:
-                continue
-            seen_first_system = True
-        roles.append(r)
-    assert roles[0] == "system"
-    assert roles[1] == "user"
-    tool_positions = [i for i, r in enumerate(roles) if r == "tool"]
-    assert (
-        len(tool_positions) >= 2
-    ), "Expected at least two tool replies in the transcript."
-    assert roles[-1] == "assistant"
-    assert "assistant" in roles[: tool_positions[0] + 1]
+    assert roles == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -454,15 +436,11 @@ async def test_no_tools_with_system_message() -> None:
     # The assistant must answer directly and never insert any tool messages.
     assert answer.strip(), "Assistant reply should not be empty."
     assert count_tool_messages(client) == 0
-    roles = [m["role"] for m in client.messages]
-    # Must start with a system message provided by the client
-    assert roles[0] == "system"
-    # There must be a user turn, and an assistant turn after it
-    assert "user" in roles, "Missing user message in transcript"
-    assert "assistant" in roles, "Missing assistant message in transcript"
-    assert roles.index("user") < roles.index("assistant")
-    # No tool messages should be present, and only expected roles should appear
-    assert set(roles) <= {"system", "user", "assistant"}
+    assert [m["role"] for m in client.messages] == [
+        "system",
+        "user",
+        "assistant",
+    ]
 
 
 @pytest.mark.asyncio
@@ -489,14 +467,10 @@ async def test_no_tools_without_system_message() -> None:
 
     assert answer.strip(), "Assistant reply should not be empty."
     assert count_tool_messages(client) == 0
-    roles = [m["role"] for m in client.messages]
-    # Must start with a user message (no initial system provided in this case)
-    assert roles[0] == "user"
-    # There must be an assistant turn after the user turn
-    assert "assistant" in roles, "Missing assistant message in transcript"
-    assert roles.index("assistant") > roles.index("user")
-    # No tool messages should be present, and only expected roles should appear
-    assert set(roles) <= {"system", "user", "assistant"}
+    assert [m["role"] for m in client.messages] == [
+        "user",
+        "assistant",
+    ]
 
 
 # --------------------------------------------------------------------------- #

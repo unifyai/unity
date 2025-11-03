@@ -25,7 +25,6 @@ from ..tool_spec import normalise_tools
 from ..llm_helpers import method_to_schema
 from .formatting import serialize_tool_content, sanitize_tool_msg_for_logging
 from contextlib import suppress
-from .. import prompt_helpers as _prompt_helpers
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
@@ -297,7 +296,6 @@ class ToolsData:
             tool_schema=method_to_schema(fn, name),
             llm_arguments=allowed_call_args,
             raw_arguments_json=args_json,
-            scheduled_at=_prompt_helpers.now(time_only=False),
         )
         self.save_task(t, metadata)
 
