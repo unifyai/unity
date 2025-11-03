@@ -6,9 +6,10 @@ Implementation lives in `unity/screen_share_manager/`; representative tests live
 
 ## Motivation and Design
 
-This manager follows a direct-control model. The consumer is responsible for its lifecycle (`start`/`stop`) and for pushing data into it (`push_frame`/`push_speech`). This design offers several key advantages:
+This manager follows a direct-control model. The consumer is responsible for its lifecycle (`start`/`stop`) and for explicitly defining the boundaries of an analysis "turn" using `start_turn()` and `end_turn()`. This design offers several key advantages:
 
--   **Clear Ownership:** The flow of data is explicit. The consumer drives the analysis, eliminating ambiguity about when and why analysis occurs.
+-   **Explicit Turn Control:** The consumer has full authority over when an analysis turn begins and ends. This allows for complex turns containing multiple speech utterances or specific visual interactions, eliminating ambiguity about what events belong together.
+-   **Clear Ownership:** The flow of data is explicit. The consumer drives the analysis, making the system's behavior predictable and easy to reason about.
 -   **Testability:** The manager can be tested in complete isolation without dependencies on infrastructure like Redis.
 -   **Performance:** The architecture is optimized for concurrency, preventing the consumer from being blocked by slow analysis tasks.
 
@@ -18,12 +19,13 @@ To maximize performance and responsiveness, the analysis process is decoupled in
 
 ### Stage 1: Fast Event Detection
 
-The first stage quickly identifies *potential* moments of interest without performing expensive analysis.
+The first stage quickly identifies *potential* moments of interest from all the events collected during a turn.
 
-1.  The consumer pushes a stream of video frames and speech events into the manager.
-2.  The consumer calls `manager.analyze_turn()`, which returns an `asyncio.Task` immediately.
-3.  This task is non-blocking. It internally triggers a lightweight analysis (using heuristics or a fast model) to identify timestamps of significant visual changes or speech events.
-4.  When awaited, the task resolves to a `List[DetectedEvent]`. A `DetectedEvent` is a simple data object containing a timestamp and a pending `ImageHandle` for the relevant screenshot.
+1.  The consumer calls `manager.start_turn()` to begin a new analysis window.
+2.  The consumer pushes a stream of video frames (`push_frame`) and one or more speech events (`push_speech`) into the manager. These are collected but not yet analyzed.
+3.  When the consumer decides the turn is complete, it calls `manager.end_turn()`. This call is non-blocking and immediately returns an `asyncio.Task`.
+4.  This task internally triggers a lightweight analysis on all the events collected during the turn, identifying timestamps of significant visual changes or speech events.
+5.  When awaited, the task resolves to a `List[DetectedEvent]`. A `DetectedEvent` is a simple data object containing a timestamp and a pending `ImageHandle` for the relevant screenshot.
 
 ### Stage 2: On-Demand Contextual Annotation
 
@@ -34,11 +36,9 @@ The second stage generates rich, user-facing descriptions for the events identif
 3.  This method performs the expensive, high-quality vision LLM call. It intelligently combines its own internal, long-term `session_summary` with the optional, immediate context from the consumer to generate the most relevant annotations.
 4.  It attaches the generated annotation string to the `.annotation` property of the original `ImageHandle` objects and returns the now-enriched list of handles.
 
-This two-stage flow allows the consumer to run the expensive annotation step in parallel with its own logic, awaiting the results only when they are needed for its final output.
-
 ## End-to-End Consumer Example
 
-This example shows how a consumer like `ConversationManager` would use the two-stage API.
+This example shows how a consumer would use the new manual turn-based API.
 
 ```python
 from __future__ import annotations
@@ -52,55 +52,55 @@ async def run_consumer_workflow():
     await screen_manager.start()
     screen_manager.set_session_context("User is attempting to navigate a web portal.")
 
-    # In a real system, frame pushing would happen in a background loop.
-    # For this example, we simulate a single user turn.
-    await screen_manager.push_speech("Okay, I'm clicking the 'Submit' button now.", 10.0, 11.5)
+    # In a real system, frame pushing happens in a background loop.
+    
+    # --- Stage 1: Detection (Driven by Manual Turn Control) ---
+    
+    # 2. Consumer starts a turn
+    screen_manager.start_turn()
+    print("Turn started. Manager is now collecting events.")
+    
+    # 3. User speaks multiple times. The manager collects these events for the turn.
+    await screen_manager.push_speech("Okay, I see the login form.", 10.0, 11.5)
+    await asyncio.sleep(2) # User performs some actions
+    await screen_manager.push_speech("Now I'm clicking the 'Submit' button.", 14.0, 15.0)
 
-    # --- Stage 1: Detection (Fast and Non-Blocking) ---
-    analysis_task = screen_manager.analyze_turn()
-    print("Detection task started...")
-
-    # The consumer can do other work here while detection runs...
+    # 4. Consumer ends the turn and triggers analysis. This is non-blocking.
+    analysis_task = screen_manager.end_turn()
+    print("Turn ended. Detection task for the collected events has started...")
 
     detected_events = await analysis_task
     if not detected_events:
-        print("No key events were detected.")
-        screen_manager.stop()
+        print("No key events were detected in this turn.")
+        await screen_manager.stop()
         return
 
     print(f"Detected {len(detected_events)} candidate event(s).")
 
     # --- Stage 2: Annotation (Concurrent) ---
-    # The consumer provides its own context to improve annotation quality.
     annotation_context = "The user is filling out a profile form and just stated their intent to submit."
-
-    # This call runs annotation in the background.
     annotation_task = asyncio.create_task(
         screen_manager.annotate_events(detected_events, annotation_context)
     )
-    print("Annotation task started in the background...")
-
-    # Await the final result only when the annotated handles are needed.
     final_annotated_handles = await annotation_task
-    print("Annotation task finished.")
 
     for handle in final_annotated_handles:
         print(f"  - Image (Pending ID: {handle.image_id}): {handle.annotation}")
 
-    # 4. Clean up
-    screen_manager.stop()
+    # 5. Clean up
+    await screen_manager.stop()
 
 ```
 
 ## Public API Reference
 
--   `__init__(...)`: Initializes the manager and its internal components.
 -   `start() -> Awaitable[None]`: Starts all internal background tasks. Must be called before any other methods.
--   `stop() -> None`: Signals all background tasks to shut down gracefully.
+-   `stop() -> Awaitable[None]`: Signals all background tasks to shut down gracefully.
 -   `set_session_context(context_text: str) -> None`: Sets the initial long-term context for the session.
 -   `push_frame(frame_b64: str, timestamp: float) -> Awaitable[None]`: Pushes a single video frame into the processing queue.
--   `push_speech(content: str, start_time: float, end_time: float) -> Awaitable[None]`: Pushes a user utterance, which triggers the debounced detection process.
--   `analyze_turn() -> asyncio.Task[List[DetectedEvent]]`: Returns a handle (a Task) to the result of the fast detection stage. The consumer must `await` this task to get the list of candidate events.
+-   `push_speech(content: str, start_time: float, end_time: float) -> Awaitable[None]`: Pushes a user utterance. If a turn is active (`start_turn` was called), this utterance is collected for the turn's analysis.
+-   `start_turn() -> None`: Manually begins a new analysis turn. The manager will collect all subsequent speech and visual events until `end_turn()` is called.
+-   `end_turn() -> asyncio.Task[List[DetectedEvent]]`: Ends the current turn and triggers the fast detection stage on all collected events. It returns a task that the consumer must `await` to get the list of candidate `DetectedEvent` objects.
 -   `annotate_events(events: List[DetectedEvent], context: str) -> Awaitable[List[ImageHandle]]`: Triggers the expensive annotation process for the given events and returns the list of handles, which will have their `.annotation` property populated upon completion.
 
 ## Key Features and Mechanics
@@ -126,6 +126,6 @@ The manager uses a robust set of internal patterns to handle real-time streams e
     3.  **Intra-Turn Context:** The sequence of annotations that have already been generated *within the same analysis turn*, allowing the model to build a coherent narrative and avoid repetition.
     4.  **Recent Event History:** A list of the last few annotated events, giving the model immediate historical context.
 
--   **Debouncing and Inactivity Flushing:** Analysis is not triggered on every single event.
-    -   **Debouncing:** When a user speaks (`push_speech`), the manager waits for a brief period (`debounce_delay_sec`) before starting the analysis. This allows related visual events that occur shortly after the speech to be grouped into the same analysis turn.
-    -   **Inactivity Flushing:** If a significant visual change occurs without any accompanying speech, an inactivity timer (`inactivity_timeout_sec`) begins. If no further activity occurs before the timer expires, the pending visual events are "flushed" for analysis. This ensures purely visual actions are still captured.
+-   **Explicit Turns and Inactivity Flushing:** Analysis is triggered by explicit consumer control.
+    -   **Manual Turns:** The consumer calls `start_turn()` and `end_turn()` to define the exact boundaries of an analysis turn. This model replaces the previous automatic debouncing logic.
+    -   **Inactivity Flushing:** If a significant visual change occurs without any accompanying speech, and a manual turn is *not* in progress, an inactivity timer (`inactivity_timeout_sec`) begins. If no further activity occurs before the timer expires, the pending visual events are "flushed" for analysis as a silent, visual-only turn. This ensures purely visual actions are still captured.

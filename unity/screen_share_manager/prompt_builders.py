@@ -6,18 +6,24 @@ from ..common.prompt_helpers import now
 
 def build_detection_prompt(
     current_summary: str,
-    speech_event: Optional[Dict],
+    speech_events: List[Dict],
     has_visual_events: bool,
     burst_events_info: List[str],
 ) -> str:
     """
     Builds a lightweight system prompt for the *detection* stage.
     """
-    speech_text = (
-        f"User Speech: \"{speech_event['payload']['content']}\""
-        if speech_event
-        else "No user speech occurred."
-    )
+    if speech_events:
+        speech_details = "\n".join(
+            [
+                f"- At t={evt['payload']['start_time']:.2f}s: \"{evt['payload']['content']}\""
+                for evt in speech_events
+            ]
+        )
+        speech_text = f"User Speech:\n{speech_details}"
+    else:
+        speech_text = "No user speech occurred during this turn."
+
     visual_text = (
         "Key visual frames representing screen changes were also provided."
         if has_visual_events
@@ -68,8 +74,9 @@ YOUR CURRENT TURN CONTEXT:
 
 CRITICAL RULES:
 1.  **Prioritize Outcomes:** Always favor the visual result of an action over the spoken intent when they refer to the same event.
-2.  **Be Selective with Animations:** For a single action that causes multiple visual changes (like an animation or a window opening), **only return the timestamp for the final, stable frame of that action.**
-3.  **Handle Multi-Step Actions:** If a user's speech implies multiple distinct steps, it is appropriate to return a moment for the outcome of each step.
+2.  **Preserve Speech Without Visuals:** If a speech event occurs but has NO corresponding visual change within the turn, the speech event ITSELF IS the key moment. **Do NOT discard it.** Return a moment with the speech event's timestamp.
+3.  **Be Selective with Animations:** For a single action that causes multiple visual changes (like an animation or a window opening), **only return the timestamp for the final, stable frame of that action.**
+4.  **Handle Multi-Step Actions:** If a user's speech implies multiple distinct steps, it is appropriate to return a moment for the outcome of each step.
 
 Respond with a JSON object containing a single key "moments", which is a list of objects. Each object must have a "timestamp" (float) and a "reason" (string). Provide ONLY the JSON object.
 

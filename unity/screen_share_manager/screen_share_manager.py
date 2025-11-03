@@ -52,10 +52,6 @@ class ScreenShareManagerSettings(BaseModel):
         default=0.25,
         description="Cooldown period after a visual event is detected to prevent floods of events from a single animation.",
     )
-    debounce_delay_sec: float = Field(
-        default=0.5,
-        description="Delay after the last event before triggering analysis.",
-    )
     inactivity_timeout_sec: float = Field(
         default=5.0,
         description="Time without any activity before flushing pending visual events.",
@@ -106,7 +102,7 @@ class ScreenShareManagerSettings(BaseModel):
 class TurnState:
     """Encapsulates the state for a single analysis turn."""
 
-    speech_event: Optional[Dict] = None
+    speech_events: List[Dict] = field(default_factory=list)
     visual_events: List[Dict] = field(default_factory=list)
     latest_frame: Optional[Tuple[float, str]] = None
 
@@ -196,7 +192,8 @@ class ScreenShareManager:
         self._last_vision_event_time: float = 0.0
 
         self._state_lock = asyncio.Lock()
-        self._debounce_task: Optional[asyncio.Task] = None
+        self._turn_in_progress: bool = False
+        self._current_turn_speech_events: List[Dict] = []
 
         self._session_summary: str = "The session has just begun."
         self._recent_key_events: Deque[KeyEvent] = deque(maxlen=5)
@@ -221,7 +218,6 @@ class ScreenShareManager:
             self._sequencer_task,
             self._inactivity_task,
             self._summary_update_task,
-            self._debounce_task,
             *self._frame_workers,
         ]
         for task in tasks:
@@ -256,6 +252,10 @@ class ScreenShareManager:
 
     async def push_speech(self, content: str, start_time: float, end_time: float):
         logger.info(f"Received speech event: '{content}'")
+        if not self._turn_in_progress:
+            logger.warning("Speech event received, but no turn is in progress. Ignoring.")
+            return
+            
         speech_event = {
             "payload": {
                 "content": content,
@@ -263,9 +263,59 @@ class ScreenShareManager:
                 "end_time": end_time,
             },
         }
-        self._trigger_turn_analysis(speech_event=speech_event)
+        self._current_turn_speech_events.append(speech_event)
+        self._last_activity_time = asyncio.get_event_loop().time()
 
-    def analyze_turn(self) -> asyncio.Task[List[DetectedEvent]]:
+
+    def start_turn(self):
+        """
+        Starts a new analysis turn. All subsequent speech and visual events will
+        be collected for this turn until end_turn() is called.
+        """
+        logger.info("Starting a new manual analysis turn.")
+        self._current_turn_speech_events = []
+        self._pending_vision_events.clear()
+        self._turn_in_progress = True
+
+    def end_turn(self) -> asyncio.Task[List[DetectedEvent]]:
+        """
+        Ends the current turn, triggers analysis of all accumulated events,
+        and returns a Task to await the detection results.
+        """
+        if not self._turn_in_progress:
+            logger.warning("end_turn called but no turn is in progress. Returning an empty task.")
+            async def empty_task():
+                return []
+            return asyncio.create_task(empty_task())
+
+        logger.info(
+            f"Ending turn with {len(self._current_turn_speech_events)} speech event(s) and "
+            f"{len(self._pending_vision_events)} potential visual event(s)."
+        )
+
+        visual_events = list(self._pending_vision_events)
+        speech_events = list(self._current_turn_speech_events)
+
+        self._pending_vision_events.clear()
+        self._current_turn_speech_events.clear()
+        self._turn_in_progress = False
+
+        turn_state = TurnState(
+            speech_events=speech_events,
+            visual_events=visual_events,
+        )
+
+        asyncio.create_task(self._detect_key_moments(turn_state))
+
+        return self.detect_events()
+
+
+    def detect_events(self) -> asyncio.Task[List[DetectedEvent]]:
+        """
+        Returns a handle (a Task) to the result of the fast detection stage
+        for a turn that has been initiated. The consumer must `await` this
+        task to get the list of candidate events.
+        """
         async def _analysis_wrapper() -> List[DetectedEvent]:
             detection_result = await self._detection_queue.get()
             if not detection_result:
@@ -407,17 +457,21 @@ class ScreenShareManager:
     async def _inactivity_flush_loop(self):
         while not self._stop_event.is_set():
             await asyncio.sleep(self.settings.inactivity_timeout_sec)
-            is_debouncing = self._debounce_task and not self._debounce_task.done()
-            if (
+            if not self._turn_in_progress and (
                 asyncio.get_event_loop().time() - self._last_activity_time
                 >= self.settings.inactivity_timeout_sec
-                and not is_debouncing
                 and self._pending_vision_events
             ):
                 logger.info(
                     "Inactivity timeout. Flushing pending vision events for silent detection.",
                 )
-                self._trigger_turn_analysis(speech_event=None)
+                async with self._state_lock:
+                    visual_events = list(self._pending_vision_events)
+                    self._pending_vision_events.clear()
+                
+                turn_state = TurnState(speech_events=[], visual_events=visual_events)
+                await self._detect_key_moments(turn_state)
+
 
     async def _frame_processing_worker(self):
         loop = asyncio.get_running_loop()
@@ -439,7 +493,7 @@ class ScreenShareManager:
     async def _sequencer(self):
         next_seq_id, results_buffer = 1, {}
         loop = asyncio.get_running_loop()
-        cooldown_period = self.settings.vision_event_cooldown_sec  # SUGGESTION #2
+        cooldown_period = self.settings.vision_event_cooldown_sec
         while not self._stop_event.is_set():
             try:
                 seq_id, event_data, pil_img = await self._results_queue.get()
@@ -512,41 +566,11 @@ class ScreenShareManager:
             except Exception as e:
                 logger.error(f"Error in sequencer: {e}", exc_info=True)
 
-    def _trigger_turn_analysis(self, speech_event: Optional[Dict]):
-        self._last_activity_time = asyncio.get_event_loop().time()
-        if self._debounce_task and not self._debounce_task.done():
-            self._debounce_task.cancel()
-
-        async def _debounced_detection_runner(speech_event_for_turn: Optional[Dict]):
-            try:
-                await asyncio.sleep(self.settings.debounce_delay_sec)
-                logger.info("Debounce window ended. Starting detection.")
-                async with self._state_lock:
-                    visual_events = list(self._pending_vision_events)
-                    self._pending_vision_events.clear()
-                latest_frame = (
-                    self._frame_buffer[-1]
-                    if speech_event_for_turn
-                    and not visual_events
-                    and self._frame_buffer
-                    else None
-                )
-                turn_state = TurnState(
-                    speech_event=speech_event_for_turn,
-                    visual_events=visual_events,
-                    latest_frame=latest_frame,
-                )
-                if turn_state.speech_event or turn_state.visual_events:
-                    await self._detect_key_moments(turn_state)
-            except asyncio.CancelledError:
-                logger.info("Debounced detection was cancelled.")
-
-        self._debounce_task = asyncio.create_task(
-            _debounced_detection_runner(speech_event),
-        )
-
     @llm_retry_decorator(max_tries=3, base_delay=1.0)
     async def _detect_key_moments(self, turn_state: TurnState):
+        if not turn_state.speech_events and not turn_state.visual_events:
+            return
+
         consolidated_visual_events, frame_map = [], {}
         burst_events_info: List[str] = []
 
@@ -580,20 +604,23 @@ class ScreenShareManager:
                     burst_events_info.append(burst_info_str)
                 else:
                     consolidated_visual_events.extend(burst)
+        
+        if turn_state.speech_events and not consolidated_visual_events and self._frame_buffer:
+            turn_state.latest_frame = self._frame_buffer[-1]
 
         async with self._state_lock:
             current_summary = self._session_summary
         system_prompt = build_detection_prompt(
             current_summary,
-            turn_state.speech_event,
+            turn_state.speech_events,
             bool(consolidated_visual_events or turn_state.latest_frame),
             burst_events_info,
         )
         self._detection_client.set_system_message(system_prompt)
         text_prompts = []
-        if turn_state.speech_event:
+        for speech_event in turn_state.speech_events:
             text_prompts.append(
-                f"User speech at t={turn_state.speech_event['payload']['start_time']:.2f}s.",
+                f"User speech at t={speech_event['payload']['start_time']:.2f}s.",
             )
         for ve in consolidated_visual_events:
             text_prompts.append(f"Visual change at t={ve['timestamp']:.2f}s.")
@@ -616,7 +643,7 @@ class ScreenShareManager:
             if ts not in frame_map and self._frame_buffer:
                 _, closest_frame = min(self._frame_buffer, key=lambda x: abs(x[0] - ts))
                 frame_map[ts] = closest_frame
-        if turn_state.speech_event is None:
+        if not turn_state.speech_events:
             logger.info(f"Detected {len(key_moments)} silent visual events.")
             images_to_add, moment_map = [], {}
             for i, moment in enumerate(key_moments):
