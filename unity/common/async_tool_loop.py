@@ -1573,9 +1573,92 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
         # Default: name-only
         return _selector_matches_name(s, candidate_name)
 
-    async def _apply(h, node: dict | None, path: list[str]) -> None:
+    # ───── status helpers ──────────────────────────────────────────────────
+    def _merge_status(a: str, b: str) -> str:
+        try:
+            if a == b:
+                return a
+            if a == "full" or b == "full":
+                return "full"
+            if a == "partial" or b == "partial":
+                return "partial"
+            return "none"
+        except Exception:
+            return a or b or "none"
+
+    def _empty_status_node() -> dict:
+        return {"self": "none", "children": {}}
+
+    def _aggregate_nodes(nodes: list[dict]) -> dict:
+        if not nodes:
+            return _empty_status_node()
+        agg = _empty_status_node()
+        # self
+        for n in nodes:
+            try:
+                agg["self"] = _merge_status(agg["self"], str(n.get("self", "none")))
+            except Exception:
+                pass
+        # children
+        child_keys: set[str] = set()
+        for n in nodes:
+            try:
+                child_keys.update(n.get("children", {}).keys())
+            except Exception:
+                pass
+        for k in child_keys:
+            lst = []
+            for n in nodes:
+                try:
+                    ch = n.get("children", {}).get(k)
+                    if isinstance(ch, dict):
+                        lst.append(ch)
+                except Exception:
+                    continue
+            agg["children"][k] = _aggregate_nodes(lst)
+        return agg
+
+    def _record_status(flat_key: str, node_status: dict) -> None:
+        try:
+            children_view = {
+                k: (v.get("self") if isinstance(v, dict) else "none")
+                for k, v in (node_status.get("children", {}) or {}).items()
+            }
+            results.setdefault("status", {})[flat_key] = {
+                "self": node_status.get("self", "none"),
+                "children": children_view,
+            }
+        except Exception:
+            pass
+
+    def _lookup_path(node_status: dict, dotted: str) -> str:
+        try:
+            segs = [s for s in str(dotted).split(".") if s]
+        except Exception:
+            segs = []
+        cur = node_status
+        for s in segs:
+            try:
+                ch = cur.get("children", {}).get(s)
+            except Exception:
+                ch = None
+            if not isinstance(ch, dict):
+                return "none"
+            cur = ch
+        try:
+            return str(cur.get("self", "none"))
+        except Exception:
+            return "none"
+
+    async def _apply(
+        h,
+        node: dict | None,
+        path: list[str],
+        sel_path: list[str],
+    ) -> dict:
         node = node or {}
         steps = node.get("steps") or []
+        attempted_local = False
 
         # 1) Apply local steps in order
         if isinstance(steps, list) and steps:
@@ -1598,6 +1681,7 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                         for k in ("content", "message", "question", "reason")
                     ):
                         call_kwargs["content"] = args
+                    attempted_local = True
                     try:
                         await forward_handle_call(
                             h,
@@ -1637,8 +1721,6 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
 
         # 2) Recurse into matched children
         children = node.get("children") or {}
-        if not children:
-            return
 
         # Discover loop children via task_info when available
         task_info = {}
@@ -1647,57 +1729,202 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
 
         matched_any = False
         matched_selectors: set[str] = set()
-        if isinstance(task_info, dict) and task_info:
-            for sel, child_node in children.items():
-                for _t, _inf in list(task_info.items()):
-                    try:
-                        _name = getattr(_inf, "name", None)
-                        _cid = getattr(_inf, "call_id", None)
-                        _child = getattr(_inf, "handle", None)
-                    except Exception:
-                        _name, _cid, _child = None, None, None
-                    if (
-                        _name
-                        and _child is not None
-                        and _selector_hits(sel, _name, _cid)
-                    ):
-                        matched_any = True
+        per_selector_nodes: dict[str, list[dict]] = {}
+
+        if isinstance(children, dict) and children:
+            if isinstance(task_info, dict) and task_info:
+                for sel, child_node in children.items():
+                    for _t, _inf in list(task_info.items()):
                         try:
-                            matched_selectors.add(str(sel))
+                            _name = getattr(_inf, "name", None)
+                            _cid = getattr(_inf, "call_id", None)
+                            _child = getattr(_inf, "handle", None)
                         except Exception:
-                            pass
-                        try:
-                            _p = "/".join(str(p) for p in path)
-                            LOGGER.debug(
-                                f"↘️ [{label}] Descend: selector {sel!r} matched child {_name!r} at {_p}",
-                            )
-                        except Exception:
-                            pass
-                        await _apply(_child, child_node, path + [str(_name)])
-            if matched_any:
-                # Record any unmatched selectors at this level as skipped
-                try:
-                    for _sel in children.keys():
-                        if str(_sel) not in matched_selectors:
+                            _name, _cid, _child = None, None, None
+                        if (
+                            _name
+                            and _child is not None
+                            and _selector_hits(sel, _name, _cid)
+                        ):
+                            matched_any = True
                             try:
-                                results["skipped"].append(
-                                    {"path": list(path), "selector": str(_sel)},
+                                matched_selectors.add(str(sel))
+                            except Exception:
+                                pass
+                            try:
+                                _p = "/".join(str(p) for p in path)
+                                LOGGER.debug(
+                                    f"↘️ [{label}] Descend: selector {sel!r} matched child {_name!r} at {_p}",
                                 )
                             except Exception:
                                 pass
-                except Exception:
-                    pass
-                return
+                            child_status = await _apply(
+                                _child,
+                                child_node,
+                                path + [str(_name)],
+                                sel_path + [str(sel)],
+                            )
+                            per_selector_nodes.setdefault(str(sel), []).append(
+                                child_status,
+                            )
 
-        # If nothing matched, mark all selectors as skipped
-        if not matched_any:
+            # Record any unmatched selectors at this level as skipped
             try:
                 for _sel in children.keys():
-                    results["skipped"].append(
-                        {"path": list(path), "selector": str(_sel)},
-                    )
+                    if str(_sel) not in matched_selectors:
+                        try:
+                            results["skipped"].append(
+                                {"path": list(path), "selector": str(_sel)},
+                            )
+                        except Exception:
+                            pass
             except Exception:
                 pass
+
+        # Aggregate child statuses per selector
+        aggregated_children: dict[str, dict] = {}
+        for sel, lst in per_selector_nodes.items():
+            aggregated_children[sel] = _aggregate_nodes(lst)
+        # Ensure explicit selectors exist (even if no match)
+        for sel in (children.keys() if isinstance(children, dict) else []):
+            aggregated_children.setdefault(str(sel), _empty_status_node())
+
+        # Compute self status
+        if children:
+            # Based on direct child selectors' self statuses
+            direct = [
+                aggregated_children[s]["self"] for s in aggregated_children.keys()
+            ]
+            if direct and all(s == "full" for s in direct):
+                self_status = "full"
+            elif direct and (
+                "partial" in direct or ("full" in direct and "none" in direct)
+            ):
+                self_status = "partial"
+            elif direct:
+                # all none
+                self_status = "none"
+            else:
+                self_status = "none"
+        else:
+            # No children in spec: local steps attempted → full; else none
+            self_status = "full" if attempted_local else "none"
+
+        node_status = {"self": self_status, "children": aggregated_children}
+
+        # 3) Evaluate optional conditions at this node
+        conditions = node.get("conditions") or []
+
+        def _eval_when(expr: dict | None) -> bool:
+            if not isinstance(expr, dict):
+                return False
+            if "any" in expr:
+                arr = expr.get("any") or expr.get("or") or []
+                vals = [
+                    bool(_eval_when(e)) for e in (arr if isinstance(arr, list) else [])
+                ]
+                return any(vals)
+            if "all" in expr:
+                arr = expr.get("all") or expr.get("and") or []
+                vals = [
+                    bool(_eval_when(e)) for e in (arr if isinstance(arr, list) else [])
+                ]
+                return all(vals)
+            if "not" in expr:
+                return not _eval_when(expr.get("not"))
+            # leaf forms
+            try:
+                if "self" in expr:
+                    return str(node_status.get("self", "none")) == str(expr.get("self"))
+                if "selector" in expr:
+                    sel = str(expr.get("selector"))
+                    want = str(expr.get("status", "none"))
+                    got = str(
+                        (node_status.get("children", {}).get(sel) or {}).get(
+                            "self",
+                            "none",
+                        ),
+                    )
+                    return got == want
+                if "path" in expr:
+                    p = str(expr.get("path"))
+                    want = str(expr.get("status", "none"))
+                    got = _lookup_path(node_status, p)
+                    return got == want
+            except Exception:
+                return False
+            return False
+
+        if isinstance(conditions, list) and conditions:
+            for cond in conditions:
+                try:
+                    when = cond.get("when") if isinstance(cond, dict) else None
+                    decision = bool(_eval_when(when))
+                    applied_here: list[dict] = []
+                    alt_applied: list[dict] = []
+                    steps_to_apply = (
+                        cond.get("then") if decision else cond.get("else_then")
+                    )
+                    if isinstance(steps_to_apply, list):
+                        for step in steps_to_apply:
+                            try:
+                                method = step.get("method")
+                                args = step.get("args")
+                                kwargs = step.get("kwargs") or {}
+                            except Exception:
+                                method, args, kwargs = None, None, {}
+                            if not isinstance(method, str) or not method:
+                                continue
+                            call_kwargs = dict(kwargs)
+                            if args is not None and not any(
+                                k in call_kwargs
+                                for k in ("content", "message", "question", "reason")
+                            ):
+                                call_kwargs["content"] = args
+                            try:
+                                await forward_handle_call(
+                                    h,
+                                    method,
+                                    call_kwargs,
+                                    fallback_positional_keys=(
+                                        "content",
+                                        "message",
+                                        "question",
+                                        "reason",
+                                    ),
+                                )
+                                entry = {"path": list(path), "method": method}
+                                results["applied"].append(entry)
+                                applied_here.append(entry)
+                            except Exception:
+                                pass
+                    try:
+                        results.setdefault("conditions_fired", []).append(
+                            {
+                                "path": list(path),
+                                "when": when,
+                                "result": decision,
+                                "then_applied": applied_here if decision else [],
+                                "else_applied": [] if decision else alt_applied,
+                            },
+                        )
+                    except Exception:
+                        pass
+                except Exception:
+                    # ignore malformed condition
+                    pass
+
+        # Record flattened status entry for this selector path
+        try:
+            flat_key = ".".join([str(p) for p in path])
+            _record_status(flat_key, node_status)
+        except Exception:
+            pass
+
+        return node_status
+
+    await _apply(handle, spec or {}, [str(label)], [])
+    return results
 
     await _apply(handle, spec, [str(label)])
     return results
