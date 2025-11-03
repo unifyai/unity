@@ -325,6 +325,12 @@ async def async_tool_loop_inner(
         # Mirror to event bus (best-effort)
         with suppress(Exception):
             await to_event_bus(sys_msg, cfg)
+        # Log the injected time context for visibility in standard logs
+        try:
+            if logger.log_steps:
+                logger.info(f"{sys_msg['content']}", prefix="⏱️")
+        except Exception:
+            pass
         # Reset accumulator for the next turn
         try:
             completed_durations_since_last_llm.clear()
