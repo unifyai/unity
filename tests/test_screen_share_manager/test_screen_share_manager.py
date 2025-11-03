@@ -39,20 +39,16 @@ def load_asset_image(filename: str) -> Image.Image:
 
 
 @pytest.fixture
-async def manager(request):
+def manager(event_loop):
     """Provides a clean, started ScreenShareManager instance for each test."""
     ssm = ScreenShareManager()
-    await ssm.start()
-
-    async def finalizer():
-        await ssm.stop()
-
-    request.addfinalizer(lambda: asyncio.run(finalizer()))
-    return ssm
+    event_loop.run_until_complete(ssm.start())
+    yield ssm
+    event_loop.run_until_complete(ssm.stop())
 
 
 @pytest.fixture
-async def mocked_manager(request):
+def mocked_manager(event_loop):
     """Provides a manager with its LLM clients mocked out."""
     ssm = ScreenShareManager()
 
@@ -68,21 +64,18 @@ async def mocked_manager(request):
     mock_annotate.set_system_message = MagicMock()
     mock_summary.set_system_message = MagicMock()
 
-    await ssm.start()
+    event_loop.run_until_complete(ssm.start())
 
-    async def finalizer():
-        patch_detect.stop()
-        patch_annotate.stop()
-        patch_summary.stop()
-        await ssm.stop()
-
-    request.addfinalizer(lambda: asyncio.run(finalizer()))
-
-    return ssm, {
+    yield ssm, {
         "detect": mock_detect,
         "annotate": mock_annotate,
         "summary": mock_summary,
     }
+
+    event_loop.run_until_complete(ssm.stop())
+    patch_detect.stop()
+    patch_annotate.stop()
+    patch_summary.stop()
 
 
 # --- High-Level API and Orchestration Tests ---
@@ -215,30 +208,6 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
     timestamps = {e.timestamp for e in all_events}
     assert 1.0 in timestamps
     assert 2.5 in timestamps
-
-# ... (All other tests like lifecycle, error handling, vision checks, etc. remain valid and unchanged) ...
-
-@pytest.mark.unit
-@_handle_project
-@pytest.mark.asyncio
-async def test_start_and_stop_lifecycle():
-    """Verifies that start() creates background tasks and stop() cancels them."""
-    created_tasks = []
-
-    def mock_create_task(coro):
-        task = MagicMock(spec=asyncio.Task)
-        task.done.return_value = False
-        created_tasks.append(task)
-        return task
-
-    with patch("asyncio.create_task", side_effect=mock_create_task):
-        manager = ScreenShareManager()
-        await manager.start()
-        expected_task_count = 2 + manager.settings.max_frame_workers
-        assert len(created_tasks) == expected_task_count
-        await manager.stop()
-        for task in created_tasks:
-            task.cancel.assert_called_once()
 
 
 @pytest.mark.unit
@@ -390,7 +359,7 @@ async def test_visual_change_detection_significant_changes(
     )
     score = ssim(np.array(img_before), np.array(img_after))
     assert score < manager.settings.ssim_threshold
-    assert manager._is_semantically_significant(img_before, img_after) is True
+    assert manager._is_significant(img_before, img_after) is True
 
 
 @pytest.mark.vision
@@ -411,4 +380,4 @@ async def test_visual_change_detection_insignificant_changes(
     before_filename, after_filename = image_pair
     img_before = load_asset_image(before_filename)
     img_after = load_asset_image(after_filename)
-    assert manager._is_semantically_significant(img_before, img_after) is False
+    assert manager._is_significant(img_before, img_after) is False

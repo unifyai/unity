@@ -220,10 +220,14 @@ class ScreenShareManager:
             self._summary_update_task,
             *self._frame_workers,
         ]
-        for task in tasks:
-            if task and not task.done():
-                task.cancel()
-        await asyncio.sleep(0)
+
+        active_tasks = [t for t in tasks if t and not t.done()]
+        for task in active_tasks:
+            task.cancel()
+
+        if active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+
         self._cpu_executor.shutdown(wait=False, cancel_futures=True)
 
     def set_session_context(self, context_text: str):
@@ -392,7 +396,7 @@ class ScreenShareManager:
         )
         return err / (img1.size[0] * img1.size[1])
 
-    def _is_semantically_significant(
+    def _is_significant(
         self,
         img_before: Image.Image,
         img_after: Image.Image,
@@ -479,7 +483,7 @@ class ScreenShareManager:
                         )
                         if (
                             score < self.settings.ssim_threshold
-                            and self._is_semantically_significant(
+                            and self._is_significant(
                                 self._last_significant_frame_pil,
                                 pil_img,
                             )
