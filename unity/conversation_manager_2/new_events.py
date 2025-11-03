@@ -1,18 +1,20 @@
 import json
 import uuid
-from typing import Optional, Any
+from typing import Optional, Any, ClassVar
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
 
+from pydantic import BaseModel
 
-from typing import ClassVar
 
 
-def datetime_aware_dict_factory(kv):
+def custom_dict_factory(kv):
     d = {}
     for k, v in kv:
         if isinstance(v, datetime):
             d[k] = v.isoformat()
+        elif isinstance(v, BaseModel):
+            d[k] = v.model_dump()
         else:
             d[k] = v
     return d
@@ -31,7 +33,7 @@ class Event:
     def to_dict(self):
         return {
             "event_name": self.__class__.__name__,
-            "payload": asdict(self, dict_factory=datetime_aware_dict_factory),
+            "payload": asdict(self, dict_factory=custom_dict_factory),
         }
 
     def to_bus_event(self):
@@ -82,7 +84,7 @@ class Event:
 
 @dataclass
 class PhoneCallRecieved(Event):
-    contact: str
+    contact: dict
     conference_name: str = ""
 
 
@@ -90,14 +92,14 @@ class PhoneCallRecieved(Event):
 class UnifyCallReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
-    contact: int
+    contact: dict
     agent_name: str | None = None
     room_name: str | None = None
 
 
 @dataclass
 class PhoneCallStarted(Event):
-    contact: str
+    contact: dict
 
 
 @dataclass
@@ -107,12 +109,12 @@ class UnifyCallStarted(Event):
     "contact" should reference the boss/user contact id (typically 1).
     """
 
-    contact: int
+    contact: dict
 
 
 @dataclass
 class PhoneUtterance(Event):
-    contact: str
+    contact: dict
     content: str
 
 
@@ -120,47 +122,47 @@ class PhoneUtterance(Event):
 class UnifyCallUtterance(Event):
     """User utterance during a browser-based voice call session."""
 
-    contact: int
+    contact: dict
     content: str
 
 
 @dataclass
 class Interrupt(Event):
-    contact: str
+    contact: dict
 
 
 @dataclass
 class PhoneCallEnded(Event):
-    contact: str
+    contact: dict
 
 
 @dataclass
 class UnifyCallEnded(Event):
     """The browser-based voice call session has ended."""
 
-    contact: int
+    contact: dict
 
 
 @dataclass
 class SMSRecieved(Event):
-    contact: str
+    contact: dict
     content: str
 
 
 @dataclass
 class UnifyMessageRecieved(Event):
-    contact: str
+    contact: dict
     content: str
 
 
 @dataclass
 class PhoneCallSent(Event):
-    contact: str
+    contact: dict
 
 
 @dataclass
 class AssistantPhoneUtterance(Event):
-    contact: str
+    contact: dict
     content: str
 
 
@@ -168,13 +170,13 @@ class AssistantPhoneUtterance(Event):
 class AssistantUnifyCallUtterance(Event):
     """Assistant utterance during a browser-based voice call session."""
 
-    contact: int
+    contact: dict
     content: str
 
 
 @dataclass
 class EmailRecieved(Event):
-    contact: str
+    contact: dict
     subject: str
     body: str
     message_id: Optional[str] = None
@@ -183,19 +185,19 @@ class EmailRecieved(Event):
 # assistant events
 @dataclass
 class SMSSent(Event):
-    contact: str
+    contact: dict
     content: str
 
 
 @dataclass
 class UnifyMessageSent(Event):
-    contact: str
+    contact: dict
     content: str
 
 
 @dataclass
 class EmailSent(Event):
-    contact: str
+    contact: dict
     subject: str
     body: str
     message_id: str | None = None

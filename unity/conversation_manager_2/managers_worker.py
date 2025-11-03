@@ -9,6 +9,7 @@ import os
 from typing import Optional, Any, Callable
 import contextlib
 import redis.asyncio as redis
+import traceback
 
 load_dotenv()
 
@@ -148,6 +149,7 @@ class ManagersWorker:
                     key_fn=lambda e: e.payload.get("handle_id", ""),
                 )
                 bus_events_task = asyncio.create_task(self._get_bus_events())
+                EVENT_BUS.clear()
                 print("[ManagersWorker] EventBus configured")
 
                 # 2. Initialize ContactManager and get contacts
@@ -213,6 +215,7 @@ class ManagersWorker:
 
             except Exception as e:
                 print(f"[ManagersWorker] Error during initialization: {e}")
+                traceback.print_exc()
 
             await self._event_broker.publish(
                 self._publish_channel,

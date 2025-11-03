@@ -145,13 +145,14 @@ class CommsManager:
                 if thread == "email":
                     content = "Subject: " + event["subject"] + "\n\n" + event["body"]
                     topic = event["from"].split("<")[1][:-1]
+                    contact = next(c for c in contacts if c["email"] == topic)
                     task = asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:{thread}_message",
                             events_map[thread](
                                 subject=event["subject"],
                                 body=event["body"],
-                                contact=topic,
+                                contact=contact,
                                 message_id=event["message_id"],
                             ).to_json(),
                         ),
@@ -175,12 +176,13 @@ class CommsManager:
 
                 elif thread == "unify_message":
                     # No phone/email; boss contact id is always "1"
+                    contact = next(c for c in contacts if c["id"] == 1)
                     task = asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:{thread}_message",
                             events_map[thread](
                                 content=content,
-                                contact=event.get("contact_id", 1),
+                                contact=contact,
                             ).to_json(),
                         ),
                         self.loop,
@@ -189,6 +191,7 @@ class CommsManager:
                 else:
                     topic = event["from_number"].replace("whatsapp:", "").strip()
                     # Put the message in the queue instead of creating a task
+                    contact = next(c for c in contacts if c["phone_number"] == topic)
                     task = asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:{thread}_message",
