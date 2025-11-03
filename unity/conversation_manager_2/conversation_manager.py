@@ -219,7 +219,6 @@ class ConversationManager:
                 response_model,
                 "phone_utterance",
             ):
-                print("topic", f"app:{self.state.mode}:response_gen")
                 if event["type"] == "chunk":
                     if first_chunk:
                         await self.event_broker.publish(
@@ -749,7 +748,8 @@ class ConversationManager:
                         str(False),
                     ]
                 print(f"target_path: {target_path}, args: {args}")
-                self.call_proc = run_script(str(target_path), "dev", *args)
+                if not os.getenv("TEST"):
+                    self.call_proc = run_script(str(target_path), "dev", *args)
 
         elif isinstance(event, (PhoneCallStarted, UnifyCallStarted)):
             # self.mode = "call"
@@ -799,7 +799,8 @@ class ConversationManager:
             }
 
             await self.publish_startup()
-            asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
+            if not os.getenv("TEST"):
+                asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
 
         elif isinstance(event, AssistantUpdateEvent):
             await self.publish_contact_update(
