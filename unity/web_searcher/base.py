@@ -90,6 +90,41 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         raise NotImplementedError
 
     @abstractmethod
+    async def update(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+    ) -> SteerableToolHandle:
+        """
+        Apply a mutation request related to the WebSearcher configuration and
+        return a live SteerableToolHandle.
+
+        Purpose
+        -------
+        Use this method to create, edit, or delete configuration records owned
+        by the WebSearcher (e.g., entries in a `Websites` table capturing
+        websites of interest). This method must not answer web research
+        questions; it manages stored metadata only.
+
+        Clarifications
+        --------------
+        Do not ask users questions in the final answer. When a clarification
+        channel is provided, route follow‑ups there. If not provided, proceed
+        with sensible defaults and state assumptions when relevant.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A handle exposing pause/resume/interject/stop; await result() for
+            the final outcome summary.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def clear(self) -> None:
         raise NotImplementedError
 
