@@ -299,23 +299,29 @@ async def async_tool_loop_inner(
             since_start = max(0.0, time.perf_counter() - loop_start_monotonic)
         except Exception:
             since_start = 0.0
+        # Build structured JSON content; omit tools map when none have completed
         try:
+            payload = {
+                "time": str(current_time_txt),
+                "seconds_since_start": round(float(since_start), 2),
+            }
             if completed_durations_since_last_llm:
-                pairs = ", ".join(
-                    f"{name}={dur:.2f}s"
+                durations_map = {
+                    name: round(float(dur), 2)
                     for name, dur in completed_durations_since_last_llm
-                )
-            else:
-                pairs = "none"
+                }
+                payload["completed_tools_duration_seconds"] = durations_map
+            content_txt = json.dumps(payload, indent=2)
         except Exception:
-            pairs = "none"
+            # Fallback to simple text if anything goes wrong
+            content_txt = (
+                f'{{\n  "time": "{current_time_txt}",\n  '
+                f'"seconds_since_start": {since_start:.2f}\n}}'
+            )
 
         sys_msg = {
             "role": "system",
-            "content": (
-                f"Time: {current_time_txt} | since_start_s={since_start:.2f} | "
-                f"completed_tools_since_last_turn={pairs}"
-            ),
+            "content": content_txt,
         }
         # Persist in transcript immediately before every LLM turn
         try:
@@ -1585,8 +1591,6 @@ async def async_tool_loop_inner(
             ]
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
-            if log_steps:
-                logger.info(f"LLM thinking…", prefix="🔄")
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
@@ -1602,6 +1606,8 @@ async def async_tool_loop_inner(
 
                 # Inject a persistent time-context system message before the LLM turn
                 await _inject_time_context_system_message()
+                if log_steps:
+                    logger.info(f"LLM thinking…", prefix="🔄")
 
                 llm_task = asyncio.create_task(
                     generate_with_preprocess(
@@ -1790,6 +1796,8 @@ async def async_tool_loop_inner(
 
                     # Inject a persistent time-context system message before the LLM turn
                     await _inject_time_context_system_message()
+                    if log_steps:
+                        logger.info(f"LLM thinking…", prefix="🔄")
 
                     _result = await generate_with_preprocess(
                         client,
