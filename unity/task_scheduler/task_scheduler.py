@@ -1048,34 +1048,24 @@ class TaskScheduler(BaseTaskScheduler):
 
         return result
 
-    def _clone_task_instance(self, task_row: TaskBase) -> None:
+    def _clone_task_instance(self, task_row: Task) -> None:
         """
         Create a fresh row for the next instance of a triggerable or recurring task.
 
         Parameters
         ----------
-        task_row : dict
+        task_row : Task
             Existing task row used as the template. Copies user‑facing fields,
             keeps the same ``task_id``, omits ``instance_id`` so the backend auto‑increments it,
             and preserves the existing status (``triggerable`` or ``scheduled``).
         """
-        # TODO: Skip model_dump() when filtering
-        allowed = set(Task.model_json_schema()["properties"].keys())
-        clone_payload = {
-            k: v
-            for k, v in task_row.model_dump().items()
-            if k in allowed and k != "instance_id"
-        }
         # Do not carry over activation metadata to a fresh instance
-        clone_payload.pop("activated_by", None)
-        # Drop any internal bookkeeping injected by Unify (_id, _log_id …)
+        # Let the backend assign a new instance_id
+        clone_payload = task_row.model_dump(exclude={"instance_id", "activated_by"})
         self._view.create_one(entries=clone_payload, new=True)
         # Maintain cached total count (+1 new instance row)
-        try:
-            if self._num_tasks_cached is not None:
-                self._num_tasks_cached += 1
-        except Exception:
-            pass
+        if self._num_tasks_cached is not None:
+            self._num_tasks_cached += 1
 
     # Private Helpers #
     # ----------------#
