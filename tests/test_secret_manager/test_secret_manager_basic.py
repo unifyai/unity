@@ -10,27 +10,34 @@ from unity.secret_manager.secret_manager import SecretManager
 def test_create_secret(secret_manager_context):
     sm = SecretManager()
     out = sm._create_secret(
-        name="unify_key",
+        name="unify_test_key",
         value="sk-test-123",
         description="Unify API key",
     )
     assert out["outcome"] == "secret created"
 
     # Read path must never expose values
-    rows = sm._filter_secrets(filter="name == 'unify_key'")
-    assert rows and rows[0].name == "unify_key"
+    rows = sm._filter_secrets(filter="name == 'unify_test_key'")
+    assert rows and rows[0].name == "unify_test_key"
     assert rows[0].value == ""
+    # New: ensure secret_id is present and integer-assigned
+    assert isinstance(rows[0].secret_id, int) and rows[0].secret_id >= 0
 
 
 @pytest.mark.unit
 def test_update_secret(secret_manager_context):
     sm = SecretManager()
     sm._create_secret(name="db_password", value="abc", description="db pass")
+    # Capture secret_id before update
+    before = sm._filter_secrets(filter="name == 'db_password'")
+    before_id = before[0].secret_id
     out = sm._update_secret(name="db_password", value="xyz", description="rotated")
     assert out["outcome"] == "secret updated"
 
     rows = sm._filter_secrets(filter="name == 'db_password'")
     assert rows and rows[0].name == "db_password" and rows[0].description == "rotated"
+    # New: secret_id should remain stable across updates
+    assert rows[0].secret_id == before_id
 
 
 @pytest.mark.unit
