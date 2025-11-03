@@ -282,3 +282,95 @@ async def test_nested_steer_noop_when_child_selector_does_not_match():
                 inner.stop("cleanup")
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_nested_steer_applies_serial_steps_on_child():
+    """Verify that multiple serial steps (pause → resume → interject) apply on the same child loop."""
+
+    inner = ToyHandle()
+
+    async def Outer_spawn():  # type: ignore[valid-type]
+        return inner
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
+        "Then wait for it to complete before replying.",
+    )
+
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"Outer_spawn": Outer_spawn},
+    )
+
+    try:
+        await _wait_for_tool_request(client, "Outer_spawn")
+
+        async def _child_adopted():
+            try:
+                ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    return any(
+                        getattr(meta, "name", None) == "Outer_spawn"
+                        and getattr(meta, "handle", None) is not None
+                        for meta in ti.values()
+                    )
+            except Exception:
+                return False
+            return False
+
+        await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
+
+        msg = "serial-steps-info"
+        spec = {
+            "children": {
+                "Outer_spawn": {
+                    "steps": [
+                        {"method": "pause"},
+                        {"method": "resume"},
+                        {"method": "interject", "args": msg},
+                    ],
+                },
+            },
+        }
+
+        await outer.nested_steer(spec)  # type: ignore[attr-defined]
+
+        async def _serial_done():
+            try:
+                return (
+                    inner.paused >= 1
+                    and inner.resumed >= 1
+                    and (msg in inner.interjections)
+                )
+            except Exception:
+                return False
+
+        await _wait_for_condition(_serial_done, poll=0.01, timeout=30.0)
+
+        assert inner.paused >= 1, "pause step did not apply"
+        assert inner.resumed >= 1, "resume step did not apply"
+        assert msg in inner.interjections, "interject step did not apply"
+    finally:
+        try:
+            outer.stop("cleanup")
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(outer.result(), timeout=30.0)
+        except Exception:
+            pass
+        try:
+            if not inner.done():
+                inner.stop("cleanup")
+        except Exception:
+            pass
