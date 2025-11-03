@@ -50,7 +50,7 @@ from .images import (
 )
 from .formatting import sanitize_tool_msg_for_logging
 from ..llm_helpers import method_to_schema, _dumps
-from ..prompt_helpers import now
+from .. import prompt_helpers as _prompt_helpers
 from .loop_config import (
     LoopConfig,
     TOOL_LOOP_LINEAGE,
@@ -292,7 +292,7 @@ async def async_tool_loop_inner(
     async def _inject_time_context_system_message() -> None:
         """Append a minimal system message with current time and durations."""
         try:
-            current_time_txt = now(time_only=True)
+            current_time_txt = _prompt_helpers.now(time_only=True)
         except Exception:
             current_time_txt = ""
         try:
