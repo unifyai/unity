@@ -184,11 +184,12 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
 
     # Explicitly pause using nested_steer (independent of pause_actor)
     pause_spec = {
-        "method": "interject",
-        "args": "<Pausing actor for resume tests>",
+        "steps": [
+            {"method": "interject", "args": "<Pausing actor for resume tests>"},
+        ],
         "children": {
-            "TaskScheduler.execute": {"method": "pause"},
-            "Actor.act": {"method": "pause"},
+            "TaskScheduler.execute": {"steps": [{"method": "pause"}]},
+            "Actor.act": {"steps": [{"method": "pause"}]},
         },
     }
     await handle.nested_steer(pause_spec)
@@ -256,11 +257,12 @@ async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch
 
     # Explicitly pause using nested_steer (independent of pause_actor)
     pause_spec = {
-        "method": "interject",
-        "args": "<Pausing actor for resume tests>",
+        "steps": [
+            {"method": "interject", "args": "<Pausing actor for resume tests>"},
+        ],
         "children": {
-            "TaskScheduler.execute": {"method": "pause"},
-            "Actor.act": {"method": "pause"},
+            "TaskScheduler.execute": {"steps": [{"method": "pause"}]},
+            "Actor.act": {"steps": [{"method": "pause"}]},
         },
     }
     await handle.nested_steer(pause_spec)
