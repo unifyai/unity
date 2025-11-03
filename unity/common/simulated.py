@@ -953,32 +953,47 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Fallback – current canonical tool sets
+    # Fallback – EXACTLY mirror FileManager.__init__ tool exposure
     if kind == "ask":
         return methods_to_tool_dict(
-            FileManager.list,
-            FileManager.exists,
-            FileManager.parse,
+            # Retrieval helpers
+            FileManager._list_columns,
+            FileManager._tables_overview,
             FileManager._filter_files,
             FileManager._search_files,
-            FileManager._list_columns,
+            # Inventory listing
+            FileManager.list,
+            # Parse when missing (policy enforced in prompts)
+            FileManager.parse,
+            # Delegate to file-scoped Q&A when needed
+            FileManager.ask_about_file,
+            # Existence probe
+            FileManager._exists,
             include_class_name=False,
         )
     elif kind == "ask_about_file":
         return methods_to_tool_dict(
+            # Read-only helpers
             FileManager.parse,
-            # Lightweight adapter wrappers (_adapter_get, _adapter_open_bytes) would be here
-            # but we can't easily mirror them in a simulated context
+            FileManager._list_columns,
+            FileManager._tables_overview,
+            FileManager._filter_files,
+            FileManager._search_files,
+            # Join/multi-join tools for file-scoped analysis
+            FileManager._filter_join,
+            FileManager._search_join,
+            FileManager._filter_multi_join,
+            FileManager._search_multi_join,
+            FileManager._exists,
             include_class_name=False,
         )
     elif kind == "organize":
         return methods_to_tool_dict(
-            FileManager.list,
-            FileManager.exists,
-            FileManager._filter_files,
-            FileManager._search_files,
-            FileManager._list_columns,
-            # _rename_file and _move_file would be here but they require adapter
+            # Organize may call ask for discovery; mutations only here
+            FileManager.ask,
+            FileManager._rename_file,
+            FileManager._move_file,
+            FileManager._delete_file,
             include_class_name=False,
         )
     else:
@@ -1018,24 +1033,18 @@ def mirror_global_file_manager_tools(kind: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"mirror_global_file_manager_tools({kind}) failed: {e}")
 
-    # Fallback – current canonical tool sets
+    # Fallback – align with new delegation-only model
     if kind == "ask":
+        # Require listing filesystems first; no low-level ops exposed here
         return methods_to_tool_dict(
             GlobalFileManager._list_filesystems,
-            GlobalFileManager._list_columns,
-            GlobalFileManager._filter_files,
-            GlobalFileManager._search_files,
             include_class_name=False,
         )
     elif kind == "organize":
+        # Organize should have discovery via ask available
         return methods_to_tool_dict(
+            GlobalFileManager.ask,
             GlobalFileManager._list_filesystems,
-            GlobalFileManager._list_columns,
-            GlobalFileManager._filter_files,
-            GlobalFileManager._search_files,
-            GlobalFileManager._rename_file,
-            GlobalFileManager._move_file,
-            GlobalFileManager._delete_file,
             include_class_name=False,
         )
     else:
