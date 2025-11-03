@@ -6,7 +6,6 @@ Tests for communication flows (SMS, email, calls, etc.)
 """
 
 import asyncio
-import json
 import pytest
 
 from tests.test_conversation_manager.helpers import capture_stream_response
@@ -14,6 +13,7 @@ from unity.conversation_manager_2.new_events import (
     EmailRecieved,
     EmailSent,
     PhoneCallRecieved,
+    PhoneCallSent,
     PhoneCallStarted,
     PhoneUtterance,
     SMSRecieved,
@@ -138,6 +138,37 @@ async def test_sms_to_unify_message(test_redis_client, event_capture):
 
     print(f"✅ Got unify message response: {response.content[:100]}...")
     print(f"   Full response length: {len(response.content)} characters")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_sms_to_phone_call(test_redis_client, event_capture):
+    """
+    Test SMS to phone call flow: send an incoming SMS and receive a response.
+    """
+    # Clear any events from initialization
+    event_capture.clear()
+
+    contact_number = "+15555551111"
+    incoming_sms = SMSRecieved(
+        contact=contact_number,
+        content="Tell me a joke via phone call",
+    )
+
+    print(f"\n📱 Sending SMS from {contact_number}")
+    await test_redis_client.publish("app:comms:sms_received", incoming_sms.to_json())
+
+    # Wait for the assistant's response
+    print("⏳ Waiting for phone call response (timeout: 60s)...")
+    response = await event_capture.wait_for_event(
+        PhoneCallSent,
+        timeout=60.0,
+        contact=contact_number,
+    )
+
+    # Verify response
+    assert isinstance(response, PhoneCallSent)
+    assert response.contact == contact_number
 
 
 @pytest.mark.asyncio
@@ -267,6 +298,45 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_email_to_phone_call(test_redis_client, event_capture):
+    """
+    Test email to phone call flow: send an incoming email and receive a response.
+    """
+    # Clear any events from initialization
+    event_capture.clear()
+
+    # Send incoming email
+    contact_number = "+15555551111"
+    email_address = "test@contact.com"
+
+    # Send incoming email
+    incoming_email = EmailRecieved(
+        contact=email_address,
+        body="Tell me a joke via phone call",
+        subject="Test Subject",
+        message_id="test_message_id",
+    )
+
+    print(f"\n📧 Sending email from {email_address}")
+    await test_redis_client.publish(
+        "app:comms:email_received", incoming_email.to_json()
+    )
+
+    # Wait for the assistant's response
+    print("⏳ Waiting for phone call response (timeout: 60s)...")
+    response = await event_capture.wait_for_event(
+        PhoneCallSent,
+        timeout=60.0,
+        contact=contact_number,
+    )
+
+    # Verify response
+    assert isinstance(response, PhoneCallSent)
+    assert response.contact == contact_number
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_unify_message_to_unify_message(test_redis_client, event_capture):
     """
     Test unify message to unify message flow: send an incoming unify message and
@@ -379,6 +449,41 @@ async def test_unify_message_to_email(test_redis_client, event_capture):
 
     print(f"✅ Got email response: {response.body[:100]}...")
     print(f"   Full response length: {len(response.body)} characters")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_unify_message_to_phone_call(test_redis_client, event_capture):
+    """
+    Test unify message to phone call flow: send an incoming unify message and receive a response.
+    """
+    # Clear any events from initialization
+    event_capture.clear()
+
+    contact_number = "+15555551111"
+
+    # Send incoming unify message
+    incoming_unify_message = UnifyMessageRecieved(
+        contact=1,
+        content="Tell me a joke via phone call",
+    )
+
+    print(f"\n📧 Sending unify message from 1")
+    await test_redis_client.publish(
+        "app:comms:unify_message_received", incoming_unify_message.to_json()
+    )
+
+    # Wait for the assistant's response
+    print("⏳ Waiting for phone call response (timeout: 60s)...")
+    response = await event_capture.wait_for_event(
+        PhoneCallSent,
+        timeout=60.0,
+        contact=contact_number,
+    )
+
+    # Verify response
+    assert isinstance(response, PhoneCallSent)
+    assert response.contact == contact_number
 
 
 @pytest.mark.asyncio
