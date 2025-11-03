@@ -30,6 +30,7 @@ from .messages import (
     chat_context_repr,
     generate_with_preprocess,
     PENDING_PLACEHOLDER_TEXT,
+    forward_handle_call,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -350,6 +351,7 @@ async def async_tool_loop_inner(
         sys_msg = {
             "role": "system",
             "content": content_txt,
+            "_time_header": True,
         }
         # Persist in transcript immediately before every LLM turn
         try:
