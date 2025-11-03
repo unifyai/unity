@@ -133,7 +133,7 @@ class ActiveTask(BaseActiveTask):
         task_id: Optional[int] = None,
         instance_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
-        entrypoint_function_id: Optional[int] = None,
+        entrypoint: Optional[int] = None,
     ) -> "ActiveTask":
         """
         Create an ActiveTask by starting work on the provided ``actor``.
@@ -147,7 +147,7 @@ class ActiveTask(BaseActiveTask):
             _clarification_up_q=_clarification_up_q,
             _clarification_down_q=_clarification_down_q,
             # Always pass entrypoint to the actor so it can immediately run the function
-            entrypoint=entrypoint_function_id,
+            entrypoint=entrypoint,
             persist=False,  # Scheduler-run plans should complete instead of pausing for interjection
         )
         return cls(

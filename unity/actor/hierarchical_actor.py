@@ -1764,7 +1764,7 @@ class HierarchicalPlan(BaseActiveTask):
         max_local_retries: Optional[int] = None,
         persist: bool = True,
         images: Optional[dict[str, Any]] = None,
-        entrypoint_function_id: Optional[int] = None,
+        entrypoint: Optional[int] = None,
         dedicated_action_provider: Optional[ActionProvider] = None,
     ):
         """
@@ -1780,7 +1780,7 @@ class HierarchicalPlan(BaseActiveTask):
             max_local_retries: Max number of tactical retries for a function.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
             images: Optional mapping of source-scoped keys to ImageHandle objects.
-            entrypoint_function_id: Optional. If provided, bypasses LLM plan generation
+            entrypoint: Optional. If provided, bypasses LLM plan generation
                 and directly executes the function from the FunctionManager as the main plan.
             dedicated_action_provider: Optional. If provided, use this action provider for the plan.
             If not provided, use the actor's action provider instead.
@@ -1791,7 +1791,7 @@ class HierarchicalPlan(BaseActiveTask):
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.persist = persist
-        self.entrypoint_function_id = entrypoint_function_id
+        self.entrypoint = entrypoint
         self.dedicated_action_provider = dedicated_action_provider
 
         self.idempotency_cache: Dict[tuple, Any] = {}
@@ -1950,9 +1950,9 @@ class HierarchicalPlan(BaseActiveTask):
                 self._set_state(_HierarchicalPlanState.RUNNING)
 
             if self.plan_source_code is None:
-                if self.entrypoint_function_id is not None:
+                if self.entrypoint is not None:
                     self.action_log.append(
-                        f"Bypassing LLM generation. Using entrypoint function_id {self.entrypoint_function_id}.",
+                        f"Bypassing LLM generation. Using entrypoint function_id {self.entrypoint}.",
                     )
                     if not self.actor.function_manager:
                         raise ValueError(
@@ -1960,12 +1960,12 @@ class HierarchicalPlan(BaseActiveTask):
                         )
 
                     search_results = self.actor.function_manager.search_functions(
-                        filter=f"function_id == {self.entrypoint_function_id}",
+                        filter=f"function_id == {self.entrypoint}",
                         limit=1,
                     )
                     if not search_results:
                         raise ValueError(
-                            f"Entrypoint function_id {self.entrypoint_function_id} not found in FunctionManager.",
+                            f"Entrypoint function_id {self.entrypoint} not found in FunctionManager.",
                         )
 
                     entrypoint_func_data = search_results[0]
@@ -1974,7 +1974,7 @@ class HierarchicalPlan(BaseActiveTask):
 
                     if not entrypoint_code or not entrypoint_name:
                         raise ValueError(
-                            f"Invalid function data for entrypoint {self.entrypoint_function_id}.",
+                            f"Invalid function data for entrypoint {self.entrypoint}.",
                         )
 
                     synthetic_main = f"""
@@ -4266,7 +4266,7 @@ class HierarchicalActor(BaseActor):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         persist: bool = True,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
-        entrypoint_function_id: Optional[int] = None,
+        entrypoint: Optional[int] = None,
         new_session: bool = False,
         **kwargs,
     ) -> HierarchicalPlan:
@@ -4280,7 +4280,7 @@ class HierarchicalActor(BaseActor):
             clarification_down_q: Queue for receiving clarification answers.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
             images: Optional mapping of source-scoped keys to ImageHandle objects.
-            entrypoint_function_id: Optional. If provided, bypasses LLM plan generation
+            entrypoint: Optional. If provided, bypasses LLM plan generation
                 and directly executes the specified function from the FunctionManager.
             new_session: If True, creates a new browser/desktop session for this plan. If False (default), reuses the actor's shared session.
 
@@ -4308,7 +4308,7 @@ class HierarchicalActor(BaseActor):
             max_local_retries=self.max_local_retries,
             persist=persist,
             images=images,
-            entrypoint_function_id=entrypoint_function_id,
+            entrypoint=entrypoint,
             dedicated_action_provider=dedicated_action_provider,
         )
         setattr(plan_handle, "__passthrough__", True)
@@ -5600,5 +5600,5 @@ class HierarchicalActor(BaseActor):
         plan: HierarchicalPlan = None
         for plan in self._plan_handles:
             await plan.stop()
-        await self.action_provider.browser.stop()
+        self.action_provider.browser.stop()
         self._plan_handles.clear()
