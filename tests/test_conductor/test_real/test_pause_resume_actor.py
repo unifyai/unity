@@ -66,6 +66,10 @@ async def test_pause_actor_propagates_immediately_actor_path(monkeypatch):
 
     # Sanity: the nested steer summary should record a pause application
     assert any(rec.get("method") == "pause" for rec in (result.get("applied") or []))
+    # Interjection should be applied when pause actually applied to a child
+    assert any(
+        rec.get("method") == "interject" for rec in (result.get("applied") or [])
+    )
 
     handle.stop("done")
     await handle.result()
@@ -128,6 +132,10 @@ async def test_pause_actor_propagates_immediately_task_scheduler_path(monkeypatc
 
     # Sanity: the nested steer summary should include a pause application
     assert any(rec.get("method") == "pause" for rec in (result.get("applied") or []))
+    # Interjection should be applied when pause actually applied to a child
+    assert any(
+        rec.get("method") == "interject" for rec in (result.get("applied") or [])
+    )
 
     handle.stop("done")
     await handle.result()
@@ -197,8 +205,13 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
     await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
 
     # Now resume via the high-level helper; should be immediate
-    await handle.resume_actor("test-resume")
+    result = await handle.resume_actor("test-resume")
     await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
+
+    # Interjection should be applied when resume actually applied to a child
+    assert any(
+        rec.get("method") == "interject" for rec in (result.get("applied") or [])
+    )
 
     handle.stop("done")
     await handle.result()
@@ -270,8 +283,41 @@ async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch
     await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
 
     # Now resume via the high-level helper; should be immediate
-    await handle.resume_actor("maintenance-resume")
+    result = await handle.resume_actor("maintenance-resume")
     await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
+
+    # Interjection should be applied when resume actually applied to a child
+    assert any(
+        rec.get("method") == "interject" for rec in (result.get("applied") or [])
+    )
+
+    handle.stop("done")
+    await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_actor_no_interjection_for_read_only_contact_query():
+    """
+    When the Conductor handles a read-only flow (e.g., ContactManager.ask), calling
+    pause_actor should NOT emit the conductor interjection since no pause applies.
+    """
+
+    cond = SimulatedConductor()
+
+    # Ask a clearly read-only, contacts question to route to ContactManager.ask
+    handle = await cond.request(
+        "How many contacts are stored in my address book? Keep it brief.",
+    )
+
+    # Invoke pause_actor – since no Actor/TaskScheduler execution is in flight,
+    # the conditional interjection should not occur.
+    result = await handle.pause_actor("read-only")
+
+    # Ensure no interjection was applied at the root level
+    assert not any(
+        rec.get("method") == "interject" for rec in (result.get("applied") or [])
+    ), "Interjection should not be emitted for read-only ContactManager.ask flows"
 
     handle.stop("done")
     await handle.result()
