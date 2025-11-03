@@ -243,7 +243,7 @@ async def _main_async() -> None:
         logger.info("Image saving enabled.")
 
     # --- Setup Manager and Capture ---
-    screen_manager = ScreenShareManager()
+    screen_manager = ScreenShareManager(debug=args.debug)
     screen_manager.set_session_context(args.context)
     await screen_manager.start()
 

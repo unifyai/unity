@@ -10,6 +10,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from typing import Deque, List, Optional, Tuple, Dict
 from dataclasses import dataclass, field
+from textwrap import dedent
 
 import backoff
 import unify
@@ -145,6 +146,7 @@ class ScreenShareManager:
         detection_client: Optional[unify.AsyncUnify] = None,
         analysis_client: Optional[unify.AsyncUnify] = None,
         summary_client: Optional[unify.AsyncUnify] = None,
+        debug: bool = False,
     ):
         """
         Initializes the ScreenShareManager with configurable settings and injected dependencies.
@@ -155,16 +157,16 @@ class ScreenShareManager:
             detection_client: A Unify client for the fast detection stage.
             analysis_client: A Unify client for the rich annotation stage.
             summary_client: A Unify client for updating the session summary.
+            debug: Flag to toggle logging statements
         """
         self.settings = settings or ScreenShareManagerSettings()
-
+        self._debug = debug
         self._image_manager = image_manager or ImageManager()
         self._detection_client = detection_client or unify.AsyncUnify(
             "gpt-4o-mini@openai",
         )
         self._analysis_client = analysis_client or unify.AsyncUnify("gpt-4o@openai")
         self._summary_client = summary_client or unify.AsyncUnify("gpt-4o-mini@openai")
-
         self._cpu_executor = ThreadPoolExecutor(
             max_workers=self.settings.max_frame_workers,
         )
@@ -175,26 +177,21 @@ class ScreenShareManager:
         self._detection_queue = asyncio.Queue(
             maxsize=self.settings.detection_queue_size,
         )
-
         self._frame_workers: List[asyncio.Task] = []
         self._sequencer_task: Optional[asyncio.Task] = None
         self._inactivity_task: Optional[asyncio.Task] = None
-
         self._frame_buffer: Deque[Tuple[float, str]] = deque(
             maxlen=self.settings.frame_buffer_size,
         )
         self._pending_vision_events: List[Dict] = []
         self._stored_silent_detected_events: List[DetectedEvent] = []
-
         self._last_significant_frame_b64: Optional[str] = None
         self._last_significant_frame_pil: Optional[Image.Image] = None
         self._last_activity_time: float = 0.0
         self._last_vision_event_time: float = 0.0
-
         self._state_lock = asyncio.Lock()
         self._turn_in_progress: bool = False
         self._current_turn_speech_events: List[Dict] = []
-
         self._session_summary: str = "The session has just begun."
         self._recent_key_events: Deque[KeyEvent] = deque(maxlen=5)
         self._unsummarized_events: List[KeyEvent] = []
@@ -202,7 +199,8 @@ class ScreenShareManager:
         self._summary_update_task: Optional[asyncio.Task] = None
 
     async def start(self):
-        logger.info("ScreenShareManager starting background workers...")
+        if self._debug:
+            logger.debug("ScreenShareManager starting background workers...")
         self._last_activity_time = asyncio.get_event_loop().time()
         self._sequencer_task = asyncio.create_task(self._sequencer())
         self._frame_workers = [
@@ -212,7 +210,8 @@ class ScreenShareManager:
         self._inactivity_task = asyncio.create_task(self._inactivity_flush_loop())
 
     async def stop(self):
-        logger.info("ScreenShareManager stopping...")
+        if self._debug:
+            logger.debug("ScreenShareManager stopping...")
         self._stop_event.set()
         tasks = [
             self._sequencer_task,
@@ -223,15 +222,13 @@ class ScreenShareManager:
         for task in tasks:
             if task and not task.done():
                 task.cancel()
-
-        # Yield control to allow cancellation to propagate
         await asyncio.sleep(0)
-
         self._cpu_executor.shutdown(wait=False, cancel_futures=True)
 
     def set_session_context(self, context_text: str):
         self._session_summary = context_text.strip()
-        logger.info(f"Initial session context set: '{self._session_summary}'")
+        if self._debug:
+            logger.debug(f"Initial session context set: '{self._session_summary}'")
 
     async def push_frame(self, frame_b64: str, timestamp: float):
         if self._frame_queue.qsize() > (
@@ -251,11 +248,11 @@ class ScreenShareManager:
         )
 
     async def push_speech(self, content: str, start_time: float, end_time: float):
-        logger.info(f"Received speech event: '{content}'")
+        if self._debug:
+            logger.debug(f"Received speech event: '{content}'")
         if not self._turn_in_progress:
             logger.warning("Speech event received, but no turn is in progress. Ignoring.")
             return
-
         speech_event = {
             "payload": {
                 "content": content,
@@ -271,44 +268,35 @@ class ScreenShareManager:
         Starts a new analysis turn. All subsequent speech and visual events will
         be collected for this turn until end_turn() is called.
         """
-        logger.info("Starting a new manual analysis turn.")
+        if self._debug:
+            logger.debug("Starting a new manual analysis turn.")
         self._current_turn_speech_events = []
         self._pending_vision_events.clear()
         self._turn_in_progress = True
 
     def end_turn(self) -> asyncio.Task[List[DetectedEvent]]:
-        """
-        Ends the current turn, triggers analysis of all accumulated events,
-        and returns a Task to await the detection results.
-        """
         if not self._turn_in_progress:
             logger.warning("end_turn called but no turn is in progress. Returning an empty task.")
             async def empty_task():
                 return []
             return asyncio.create_task(empty_task())
-
-        logger.info(
-            f"Ending turn with {len(self._current_turn_speech_events)} speech event(s) and "
-            f"{len(self._pending_vision_events)} potential visual event(s)."
-        )
-
+        if self._debug:
+            logger.debug(
+                f"Ending turn with {len(self._current_turn_speech_events)} speech event(s) and "
+                f"{len(self._pending_vision_events)} potential visual event(s)."
+            )
         visual_events = list(self._pending_vision_events)
         speech_events = list(self._current_turn_speech_events)
-
         self._pending_vision_events.clear()
         self._current_turn_speech_events.clear()
         self._turn_in_progress = False
-
         latest_frame = self._frame_buffer[-1] if (speech_events and not visual_events and self._frame_buffer) else None
-
         turn_state = TurnState(
             speech_events=speech_events,
             visual_events=visual_events,
             latest_frame=latest_frame,
         )
-
         asyncio.create_task(self._detect_key_moments(turn_state))
-
         return self.detect_events()
 
     def detect_events(self) -> asyncio.Task[List[DetectedEvent]]:
@@ -319,16 +307,14 @@ class ScreenShareManager:
         """
         async def _detection_wrapper() -> List[DetectedEvent]:
             detected_events = await self._detection_queue.get()
-
             async with self._state_lock:
                 all_detected_events = self._stored_silent_detected_events + (detected_events or [])
                 self._stored_silent_detected_events = []
-
-            logger.info(
-                f"Returning {len(all_detected_events)} DetectedEvent objects for this turn.",
-            )
+            if self._debug:
+                logger.debug(
+                    f"Returning {len(all_detected_events)} DetectedEvent objects for this turn.",
+                )
             return all_detected_events
-
         return asyncio.create_task(_detection_wrapper())
 
     async def annotate_events(
@@ -338,9 +324,10 @@ class ScreenShareManager:
     ) -> List[ImageHandle]:
         if not events:
             return []
-        logger.info(
-            f"Starting sequential annotation for {len(events)} detected events.",
-        )
+        if self._debug:
+            logger.debug(
+                f"Starting sequential annotation for {len(events)} detected events.",
+            )
         annotated_handles: List[ImageHandle] = []
         annotations_so_far: List[str] = []
         key_events_for_summary: List[KeyEvent] = []
@@ -359,9 +346,10 @@ class ScreenShareManager:
                 annotations_so_far.append(annotation_text)
                 event.image_handle.annotation = annotation_text
                 annotated_handles.append(event.image_handle)
-                logger.debug(
-                    f"Attached annotation '{annotation_text}' to handle for timestamp {event.timestamp:.2f}s.",
-                )
+                if self._debug:
+                    logger.debug(
+                        f"Attached annotation '{annotation_text}' to handle for timestamp {event.timestamp:.2f}s.",
+                    )
                 key_event = KeyEvent(
                     timestamp=event.timestamp,
                     image_annotation=annotation_text,
@@ -379,9 +367,10 @@ class ScreenShareManager:
             async with self._state_lock:
                 self._unsummarized_events.extend(key_events_for_summary)
             self._trigger_summary_update()
-        logger.info(
-            f"Successfully annotated {len(annotated_handles)} of {len(events)} events sequentially.",
-        )
+        if self._debug:
+            logger.debug(
+                f"Successfully annotated {len(annotated_handles)} of {len(events)} events sequentially.",
+            )
         return annotated_handles
 
     def _strip_data_url_prefix(self, data_url: str) -> str:
@@ -427,13 +416,13 @@ class ScreenShareManager:
                 >= self.settings.inactivity_timeout_sec
                 and self._pending_vision_events
             ):
-                logger.info(
-                    "Inactivity timeout. Flushing pending vision events for silent detection.",
-                )
+                if self._debug:
+                    logger.debug(
+                        "Inactivity timeout. Flushing pending vision events for silent detection.",
+                    )
                 async with self._state_lock:
                     visual_events = list(self._pending_vision_events)
                     self._pending_vision_events.clear()
-
                 turn_state = TurnState(speech_events=[], visual_events=visual_events)
                 await self._detect_key_moments(turn_state)
 
@@ -470,7 +459,6 @@ class ScreenShareManager:
                     event_data["payload"]["frame_b64"],
                 )
                 self._frame_buffer.append((ts, b64))
-
                 if loop.time() - self._last_vision_event_time < cooldown_period:
                     (
                         self._last_significant_frame_b64,
@@ -478,7 +466,6 @@ class ScreenShareManager:
                     ) = (b64, pil_img)
                     next_seq_id += 1
                     continue
-
                 if self._last_significant_frame_pil:
                     if (
                         self._calculate_mse(pil_img, self._last_significant_frame_pil)
@@ -497,9 +484,10 @@ class ScreenShareManager:
                                 pil_img,
                             )
                         ):
-                            logger.debug(
-                                f"Sequencer detected significant visual change at t={ts:.2f}s.",
-                            )
+                            if self._debug:
+                                logger.debug(
+                                    f"Sequencer detected significant visual change at t={ts:.2f}s.",
+                                )
                             async with self._state_lock:
                                 self._pending_vision_events.append(
                                     {
@@ -508,9 +496,7 @@ class ScreenShareManager:
                                         "after_frame_b64": b64,
                                     },
                                 )
-
                             self._last_vision_event_time = loop.time()
-
                             (
                                 self._last_significant_frame_b64,
                                 self._last_significant_frame_pil,
@@ -520,7 +506,6 @@ class ScreenShareManager:
                         self._last_significant_frame_b64,
                         self._last_significant_frame_pil,
                     ) = (b64, pil_img)
-
                 next_seq_id += 1
                 while next_seq_id in results_buffer:
                     _, _, _ = results_buffer.pop(next_seq_id, (None, None, None))
@@ -535,11 +520,9 @@ class ScreenShareManager:
         if not turn_state.speech_events and not turn_state.visual_events and not turn_state.latest_frame:
             await self._detection_queue.put([])
             return
-
         burst_events_info: List[str] = []
         timestamp_to_handle_map: Dict[float, ImageHandle] = {}
-        consolidated_visual_events: List[Dict] = []
-
+        all_handles: List[ImageHandle] = []
         if turn_state.visual_events:
             turn_state.visual_events.sort(key=lambda x: x["timestamp"])
             bursts: List[List[Dict]] = []
@@ -555,7 +538,7 @@ class ScreenShareManager:
                         bursts.append(current_burst)
                         current_burst = [turn_state.visual_events[i]]
                 bursts.append(current_burst)
-
+            consolidated_visual_events: List[Dict] = []
             for burst in bursts:
                 if len(burst) > self.settings.visual_event_sampling_threshold:
                     final_event = burst[-1]
@@ -566,7 +549,6 @@ class ScreenShareManager:
                     )
                 else:
                     consolidated_visual_events.extend(burst)
-
             items_to_add = [
                 {
                     "data": self._strip_data_url_prefix(event["after_frame_b64"]),
@@ -580,11 +562,11 @@ class ScreenShareManager:
                     items_to_add,
                     synchronous=False, return_handles=True,
                 )
+                all_handles.extend(h for h in handles if h)
                 for i, handle in enumerate(handles):
                     if handle:
                         ts = consolidated_visual_events[i]["timestamp"]
                         timestamp_to_handle_map[ts] = handle
-
         if turn_state.latest_frame:
             ts, b64 = turn_state.latest_frame
             [handle] = await asyncio.to_thread(
@@ -594,18 +576,31 @@ class ScreenShareManager:
             )
             if handle:
                 timestamp_to_handle_map[ts] = handle
+        if all_handles:
+            if self._debug:
+                logger.debug(f"Awaiting {len(all_handles)} auto-caption(s)...")
+            await asyncio.gather(*[h.wait_for_caption(timeout=5.0) for h in all_handles], return_exceptions=True)
 
         visual_events_info = []
         for ts, handle in timestamp_to_handle_map.items():
             caption = handle.caption
             if caption:
-                visual_events_info.append(f"Visual change at t={ts:.2f}s, showing: \"{caption}\"")
+                visual_events_info.append(f'Visual change at t={ts:.2f}s, showing: "{caption}"')
             else:
                 visual_events_info.append(f"Visual change at t={ts:.2f}s.")
-
         async with self._state_lock:
             current_summary = self._session_summary
-
+        if self._debug:
+            logger.debug(
+                dedent(f"""
+                --- PROMPT INPUTS: build_detection_prompt ---
+                - current_summary: "{current_summary}"
+                - speech_events: {json.dumps(turn_state.speech_events, indent=2)}
+                - visual_events_info: {json.dumps(visual_events_info, indent=2)}
+                - burst_events_info: {json.dumps(burst_events_info, indent=2)}
+                ---------------------------------------------
+                """)
+            )
         system_prompt = build_detection_prompt(
             current_summary,
             turn_state.speech_events,
@@ -613,23 +608,19 @@ class ScreenShareManager:
             burst_events_info,
         )
         self._detection_client.set_system_message(system_prompt)
-
         response_str = await self._detection_client.generate(
             user_message="Identify key moments based on the context provided.",
         )
         result = json.loads(response_str)
         key_moments = result.get("moments", [])
-
         final_events: List[DetectedEvent] = []
         for moment in key_moments:
             ts = moment["timestamp"]
             handle = timestamp_to_handle_map.get(ts)
-
             if not handle and timestamp_to_handle_map:
                 closest_ts = min(timestamp_to_handle_map.keys(), key=lambda k: abs(k - ts))
                 handle = timestamp_to_handle_map[closest_ts]
                 ts = closest_ts
-
             if handle:
                 final_events.append(
                     DetectedEvent(
@@ -638,9 +629,9 @@ class ScreenShareManager:
                         image_handle=handle,
                     )
                 )
-
         if not turn_state.speech_events:
-            logger.info(f"Detected {len(final_events)} silent visual events.")
+            if self._debug:
+                logger.debug(f"Detected {len(final_events)} silent visual events.")
             async with self._state_lock:
                 self._stored_silent_detected_events.extend(final_events)
         else:
@@ -656,6 +647,18 @@ class ScreenShareManager:
         async with self._state_lock:
             current_summary = self._session_summary
             recent_events = self._recent_key_events
+        if self._debug:
+            recent_events_list = [evt.model_dump() for evt in recent_events]
+            logger.debug(
+                dedent(f"""
+                --- PROMPT INPUTS: build_single_annotation_prompt ---
+                - current_summary: "{current_summary}"
+                - consumer_context: "{consumer_context}"
+                - previous_annotations_in_turn: {json.dumps(previous_annotations_in_turn, indent=2)}
+                - recent_key_events: {json.dumps(recent_events_list, indent=2)}
+                -------------------------------------------------------
+                """)
+            )
         system_prompt = build_single_annotation_prompt(
             current_summary,
             consumer_context,
@@ -674,12 +677,14 @@ class ScreenShareManager:
             {"type": "image_url", "image_url": {"url": data_url}},
         ]
         try:
-            logger.debug(
-                f"Calling annotation LLM for image at timestamp {event_to_annotate.timestamp:.2f}s...",
-            )
+            if self._debug:
+                logger.debug(
+                    f"Calling annotation LLM for image at timestamp {event_to_annotate.timestamp:.2f}s...",
+                )
             response = await self._analysis_client.generate(user_message=user_content)
             if isinstance(response, str) and response.strip():
-                logger.debug(f"Annotation LLM returned: '{response.strip()}'")
+                if self._debug:
+                    logger.debug(f"Annotation LLM returned: '{response.strip()}'")
                 previous_annotations_in_turn.append(response.strip())
                 return response.strip()
             return None
@@ -706,12 +711,24 @@ class ScreenShareManager:
                 self._unsummarized_events.clear()
                 current_summary = self._session_summary
             try:
+                if self._debug:
+                    events_list = [evt.model_dump() for evt in events]
+                    logger.debug(
+                        dedent(f"""
+                        --- PROMPT INPUTS: build_summary_update_prompt ---
+                        - current_summary: "{current_summary}"
+                        - new_events: {json.dumps(events_list, indent=2)}
+                        --------------------------------------------------
+                        """
+                        )
+                    )
                 prompt = build_summary_update_prompt(current_summary, events)
                 new_summary = await self._summary_client.generate(prompt)
                 if new_summary and isinstance(new_summary, str):
                     async with self._state_lock:
                         self._session_summary = new_summary.strip()
-                    logger.info("Session summary updated.")
+                    if self._debug:
+                        logger.debug("Session summary updated.")
             except Exception as e:
                 logger.error(f"Error updating summary: {e}", exc_info=True)
                 async with self._state_lock:
