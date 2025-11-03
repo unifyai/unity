@@ -44,7 +44,6 @@ from .types.activated_by import ActivatedBy
 ScheduleLike = Optional[Union[Schedule, Dict[str, Any]]]
 TriggerLike = Optional[Union[Trigger, Dict[str, Any]]]
 RepeatLike = Optional[List[Union[RepeatPattern, Dict[str, Any]]]]
-TaskRow = Dict[str, Any]
 ToolsDict = Dict[str, Callable]
 
 # Contact manager import (lazy at module level to avoid cycles in other modules)
