@@ -104,11 +104,8 @@ def detach_from_queue_for_activation(
     # Batch-fetch log objects for all relevant task_ids in one backend call (reuse scheduler helper)
     needed_ids: list[int] = []
     for _tid in (task_id, prev_tid, next_tid):
-        try:
-            if isinstance(_tid, int):
-                needed_ids.append(int(_tid))
-        except Exception:
-            continue
+        if _tid is not None:
+            needed_ids.append(_tid)
     try:
         log_objs = scheduler._get_logs_by_task_ids(  # type: ignore[attr-defined]
             task_ids=needed_ids,
