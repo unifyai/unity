@@ -386,8 +386,7 @@ class SimulatedFileManager(BaseFileManager):
     @functools.wraps(BaseFileManager.ask, updated=())
     async def ask(
         self,
-        filename: str,
-        question: str,
+        text: str,
         *,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: list[dict] | None = None,
@@ -400,19 +399,13 @@ class SimulatedFileManager(BaseFileManager):
         should_log = self._log_events or log_events
         call_id = None  # No EventBus publishing for simulated managers
 
-        # Check if file exists in simulated storage
-        if filename not in self._files:
-            raise FileNotFoundError(f"File '{filename}' not found in simulated storage")
-
+        # Provide inventory summary to make simulated answers coherent
+        inventory = sorted(list(self._files.keys()))
         instruction = build_simulated_method_prompt(
             "ask",
-            f"File: {filename}\nQuestion: {question}",
+            json.dumps({"question": text, "inventory": inventory}, indent=2),
             parent_chat_context=_parent_chat_context,
         )
-
-        # Add file context
-        file_info = self._files[filename]
-        instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
 
         handle = _SimulatedFileHandle(
             self._llm,
@@ -428,8 +421,7 @@ class SimulatedFileManager(BaseFileManager):
             "SimulatedFileManager.ask",
             "ask",
             {
-                "filename": filename,
-                "question": question,
+                "question": text,
                 "requests_clarification": _requests_clarification,
             },
         )
@@ -466,9 +458,9 @@ class SimulatedFileManager(BaseFileManager):
                 results[filename] = {
                     "status": "success",
                     "records": file_data.get("records", []),
-                    "metadata": file_data.get("metadata", {}),
-                    "full_text": file_data.get("full_text", ""),
-                    "description": file_data.get("description", ""),
+                    "file_path": filename,
+                    "summary": file_data.get("description", ""),
+                    "file_type": file_data.get("metadata", {}).get("file_type"),
                     "error": None,
                 }
             else:
@@ -476,9 +468,8 @@ class SimulatedFileManager(BaseFileManager):
                     "status": "error",
                     "error": f"File '{filename}' not found",
                     "records": [],
-                    "metadata": {},
-                    "full_text": "",
-                    "description": "",
+                    "file_path": filename,
+                    "summary": "",
                 }
 
         return results
@@ -493,9 +484,10 @@ class SimulatedFileManager(BaseFileManager):
         question: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _requests_clarification: bool = False,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
@@ -504,7 +496,7 @@ class SimulatedFileManager(BaseFileManager):
         instruction = build_simulated_method_prompt(
             "ask_about_file",
             f"File: {filename}\nQuestion: {question}",
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         file_info = self._files[filename]
         instruction += f"\n\nFile information: {json.dumps(file_info, indent=2)}"
@@ -512,9 +504,9 @@ class SimulatedFileManager(BaseFileManager):
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=False,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            _requests_clarification=_requests_clarification,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
         return handle
 
@@ -527,9 +519,10 @@ class SimulatedFileManager(BaseFileManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: asyncio.Queue[str] | None = None,
-        clarification_down_q: asyncio.Queue[str] | None = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _requests_clarification: bool = False,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
@@ -543,15 +536,15 @@ class SimulatedFileManager(BaseFileManager):
         instruction = build_simulated_method_prompt(
             "organize",
             json.dumps(prompt_body, indent=2),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         handle = _SimulatedFileHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=False,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            _requests_clarification=_requests_clarification,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
         return handle
 
@@ -873,6 +866,25 @@ class SimulatedFileManager(BaseFileManager):
 
         raise ValueError(f"No file found with file_id {file_id} to delete.")
 
+    @functools.wraps(BaseFileManager.clear, updated=())
+    def clear(self) -> None:  # type: ignore[override]
+        """Re-initialise the simulated manager and reset stateful LLM."""
+        type(self).__init__(
+            self,
+            description=getattr(
+                self,
+                "_description",
+                "nothing fixed, make up some imaginary scenario",
+            ),
+            log_events=getattr(self, "_log_events", False),
+            rolling_summary_in_prompts=getattr(
+                self,
+                "_rolling_summary_in_prompts",
+                True,
+            ),
+            simulation_guidance=getattr(self, "_simulation_guidance", None),
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Simulated GlobalFileManager
@@ -882,13 +894,12 @@ class SimulatedFileManager(BaseFileManager):
 class SimulatedGlobalFileManager(BaseGlobalFileManager):
     """
     Simulated counterpart to GlobalFileManager that produces plausible
-    answers without invoking real tools. It aggregates multiple
-    SimulatedFileManager instances under aliases and exposes the
-    BaseGlobalFileManager public contract.
+    answers without invoking real tools. Aggregates multiple FileManagers
+    and exposes the BaseGlobalFileManager public contract.
     """
 
-    def __init__(self, managers_by_alias: Dict[str, BaseFileManager]):
-        self._managers: Dict[str, BaseFileManager] = dict(managers_by_alias)
+    def __init__(self, managers: List[BaseFileManager]):
+        self._managers: List[BaseFileManager] = list(managers)
         self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
@@ -896,34 +907,28 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
             stateful=True,
         )
 
-        # Mirror the real global file manager's tool exposure programmatically
-        try:
-            from ..common.simulated import mirror_global_file_manager_tools
+        # Build prompt tool lists to mirror class-named exposure
+        def _lf() -> List[str]:
+            names = [
+                getattr(m.__class__, "__name__", "FileManager") for m in self._managers
+            ]
+            return sorted(set(names))
 
-            ask_tools = mirror_global_file_manager_tools("ask")
-        except (ImportError, AttributeError) as e:
-            # Fallback if mirror function doesn't exist yet
-            ask_tools = {
-                "_list_filesystems": {"description": "List available filesystems"},
-                "_list_columns": {"description": "List global table columns"},
-                "_filter_files": {"description": "Filter files across filesystems"},
-                "_search_files": {"description": "Semantic search across filesystems"},
-            }
+        ask_tools: Dict[str, Any] = {"GlobalFileManager_list_filesystems": _lf}
+        for mgr in self._managers:
+            cname = getattr(mgr.__class__, "__name__", "FileManager")
+            ask_tools[f"{cname}_ask"] = (
+                lambda text, _c=cname: None
+            )  # placeholder signature
+            ask_tools[f"{cname}_ask_about_file"] = (
+                lambda filename, question, _c=cname: None
+            )
 
-        try:
-            from ..common.simulated import mirror_global_file_manager_tools
+        organize_tools: Dict[str, Any] = {"GlobalFileManager_ask": (lambda text: None)}
+        for mgr in self._managers:
+            cname = getattr(mgr.__class__, "__name__", "FileManager")
+            organize_tools[f"{cname}_organize"] = lambda text, _c=cname: None
 
-            organize_tools = mirror_global_file_manager_tools("organize")
-        except (ImportError, AttributeError):
-            # Fallback if mirror function doesn't exist yet
-            organize_tools = {
-                "_list_filesystems": {"description": "List available filesystems"},
-                "_list_columns": {"description": "List global table columns"},
-                "_filter_files": {"description": "Filter files across filesystems"},
-                "_search_files": {"description": "Semantic search across filesystems"},
-            }
-
-        # Build a global prompt once
         ask_sys = build_global_file_manager_ask_prompt(
             ask_tools,
             num_filesystems=len(self._managers),
@@ -943,143 +948,11 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
             f"'organize' (global) system message:\n{org_sys}",
         )
 
-    @staticmethod
-    def _strip_filesystem_prefix(path: str, filesystem: str) -> str:
-        """
-        Strip filesystem namespace prefix from a path.
-
-        Examples:
-            _strip_filesystem_prefix("/local/file.txt", "local") -> "file.txt"
-            _strip_filesystem_prefix("local/file.txt", "local") -> "file.txt"
-            _strip_filesystem_prefix("file.txt", "local") -> "file.txt"
-        """
-        path = str(path).lstrip("/")
-        prefix = f"{filesystem}/"
-        if path.startswith(prefix):
-            return path[len(prefix) :]
-        return path
-
-    def _rename_file(
-        self,
-        *,
-        filesystem: str,
-        target_id_or_path: str,
-        new_name: str,
-    ) -> Dict[str, Any]:
-        if filesystem not in self._managers:
-            raise ValueError(f"Filesystem '{filesystem}' not found.")
-        manager = self._managers[filesystem]
-        if not hasattr(manager, "_rename_file"):
-            raise NotImplementedError(
-                f"'_rename_file' is not implemented for filesystem '{filesystem}'",
-            )
-        # Strip filesystem namespace prefix before delegating
-        clean_path = self._strip_filesystem_prefix(target_id_or_path, filesystem)
-        return manager._rename_file(
-            target_id_or_path=clean_path,
-            new_name=new_name,
-        )
-
-    def _move_file(
-        self,
-        *,
-        filesystem: str,
-        target_id_or_path: str,
-        new_parent_path: str,
-    ) -> Dict[str, Any]:
-        if filesystem not in self._managers:
-            raise ValueError(f"Filesystem '{filesystem}' not found.")
-        manager = self._managers[filesystem]
-        if not hasattr(manager, "_move_file"):
-            raise NotImplementedError(
-                f"'_move_file' is not implemented for filesystem '{filesystem}'",
-            )
-        # Strip filesystem namespace prefix from both paths before delegating
-        clean_path = self._strip_filesystem_prefix(target_id_or_path, filesystem)
-        clean_parent = self._strip_filesystem_prefix(new_parent_path, filesystem)
-        return manager._move_file(
-            target_id_or_path=clean_path,
-            new_parent_path=clean_parent,
-        )
-
-    # ----------------- Aggregated retrieval (simulated) ----------------- #
-    def _list_columns(self, *, include_types: bool = True):  # type: ignore[override]
-        cols: Dict[str, Any] = {}
-        for _, mgr in self._managers.items():
-            try:
-                cols = mgr._list_columns(include_types=True)  # type: ignore[attr-defined]
-                break
-            except Exception:
-                continue
-        if include_types:
-            out = dict(cols or {})
-            out["source_filesystem"] = "str"
-            return out
-        keys = list((cols or {}).keys())
-        if "source_filesystem" not in keys:
-            keys.append("source_filesystem")
-        return keys
-
-    def _filter_files(self, *, filter: str = "") -> List[Dict[str, Any]]:  # type: ignore[override]
-        """Simulate filtering files across multiple filesystems."""
-        all_results = []
-        for alias, mgr in self._managers.items():
-            if not hasattr(mgr, "_filter_files"):
-                continue
-
-            try:
-                # Each manager returns a list of file-like dicts
-                results = mgr._filter_files(filter=filter)  # type: ignore[attr-defined]
-                for r in results:
-                    # Add namespace to filename and a source column (must match GlobalFileManager format)
-                    fname = r.get("filename", "")
-                    if isinstance(fname, str):
-                        r["filename"] = f"/{alias}/{fname}"
-                    r["source_filesystem"] = alias
-                all_results.extend(results)
-            except Exception:
-                # In case a manager's filter fails, just skip it
-                continue
-        return all_results
-
-    def _search_files(
-        self,
-        *,
-        references: Dict[str, str] | None = None,
-        k: int = 5,
-    ) -> List[Dict[str, Any]]:  # type: ignore[override]
-        """Simulate a semantic search across multiple filesystems."""
-        all_results = []
-        for alias, mgr in self._managers.items():
-            if not hasattr(mgr, "_search_files"):
-                continue
-
-            try:
-                # Each manager returns a list of file-like dicts
-                results = mgr._search_files(references=references, k=k)  # type: ignore[attr-defined]
-                for r in results:
-                    # Add namespace to filename and a source column (must match GlobalFileManager format)
-                    fname = r.get("filename", "")
-                    if isinstance(fname, str):
-                        r["filename"] = f"/{alias}/{fname}"
-                    r["source_filesystem"] = alias
-                all_results.extend(results)
-            except Exception:
-                continue
-
-        # In a real search, we would re-rank the aggregated results.
-        # Here, we just truncate to k.
-        return all_results[:k]
-
-    def _delete_file(self, *, filesystem: str, file_id: int) -> Dict[str, Any]:
-        if filesystem not in self._managers:
-            raise ValueError(f"Filesystem '{filesystem}' not found.")
-        manager = self._managers[filesystem]
-        if not hasattr(manager, "_delete_file"):
-            raise NotImplementedError(
-                f"'_delete_file' is not implemented for filesystem '{filesystem}'",
-            )
-        return manager._delete_file(file_id=file_id)
+    def _list_filesystems(self) -> List[str]:
+        names = [
+            getattr(m.__class__, "__name__", "FileManager") for m in self._managers
+        ]
+        return sorted(set(names))
 
     # ------------------------------ Public API ------------------------------ #
     @functools.wraps(BaseGlobalFileManager.ask, updated=())
@@ -1088,30 +961,38 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _requests_clarification: bool = False,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         # Provide a compact inventory snapshot to the simulator
-        inventory = {alias: getattr(mgr, "list", lambda: [])() for alias, mgr in self._managers.items()}  # type: ignore
+        inventory = {
+            getattr(m.__class__, "__name__", "FileManager"): getattr(
+                m,
+                "list",
+                lambda: [],
+            )()
+            for m in self._managers
+        }
         body = {
             "action": "global.ask",
             "request": text,
-            "filesystems": list(self._managers.keys()),
+            "filesystems": self._list_filesystems(),
             "inventory": inventory,
         }
         instruction = build_simulated_method_prompt(
             "global_ask",
             json.dumps(body, indent=2),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         handle = _SimulatedFileHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=False,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            _requests_clarification=_requests_clarification,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
         return handle
 
@@ -1121,38 +1002,29 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         text: str,
         *,
         _return_reasoning_steps: bool = False,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _requests_clarification: bool = False,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         # Build a simple plan description and return a handle
         plan = {
             "action": "global.organize",
             "request": text,
-            "filesystems": list(self._managers.keys()),
+            "filesystems": self._list_filesystems(),
         }
-        # Include a reference system prompt for organize as well
-        org_msg = build_global_file_manager_organize_prompt(
-            {"_list_filesystems": lambda: None},
-            num_filesystems=len(self._managers),
-            include_activity=True,
-        )
-        self._llm.set_system_message(
-            "You are a *simulated* global organizer.\n\nReference (real global organize):\n"
-            + org_msg,
-        )
         instruction = build_simulated_method_prompt(
             "global_organize",
             json.dumps(plan, indent=2),
-            parent_chat_context=parent_chat_context,
+            parent_chat_context=_parent_chat_context,
         )
         handle = _SimulatedFileHandle(
             self._llm,
             instruction,
             _return_reasoning_steps=_return_reasoning_steps,
-            _requests_clarification=False,
-            clarification_up_q=clarification_up_q,
-            clarification_down_q=clarification_down_q,
+            _requests_clarification=_requests_clarification,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
         )
         return handle
 
@@ -1189,3 +1061,22 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
     def clear_simulated_files(self) -> None:
         """Clear all simulated files."""
         self._files.clear()
+
+    @functools.wraps(BaseGlobalFileManager.clear, updated=())
+    def clear(self) -> None:  # type: ignore[override]
+        """Re-initialise the simulated manager and reset stateful LLM."""
+        type(self).__init__(
+            self,
+            description=getattr(
+                self,
+                "_description",
+                "nothing fixed, make up some imaginary scenario",
+            ),
+            log_events=getattr(self, "_log_events", False),
+            rolling_summary_in_prompts=getattr(
+                self,
+                "_rolling_summary_in_prompts",
+                True,
+            ),
+            simulation_guidance=getattr(self, "_simulation_guidance", None),
+        )

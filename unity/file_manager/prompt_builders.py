@@ -51,9 +51,9 @@ def build_file_manager_ask_prompt(
     sig_json = json.dumps(_sig_dict(tools), indent=4)
     columns = columns or {}
 
-    list_fname = _tool_name(tools, "list")
     exists_fname = _tool_name(tools, "exists")
     parse_fname = _tool_name(tools, "parse")
+    list_fname = _tool_name(tools, "list")
     filter_files_fname = _tool_name(tools, "_filter_files") or _tool_name(
         tools,
         "filter_files",
@@ -86,7 +86,11 @@ def build_file_manager_ask_prompt(
 
     # Require only the core read tools; search/filter are recommended when present
     _require_tools(
-        {"list": list_fname, "exists": exists_fname, "parse": parse_fname},
+        {
+            "exists": exists_fname,
+            "parse": parse_fname,
+            "list": list_fname,
+        },
         tools,
     )
 
@@ -112,11 +116,18 @@ def build_file_manager_ask_prompt(
     ]
     if list_columns_fname:
         usage_lines.append(f"  `{list_columns_fname}()`")
+    # Inventory listing
+    usage_lines += [
+        "",
+        "─ Inventory ─",
+        "• List available files",
+    ]
+    if list_fname:
+        usage_lines.append(f"  `{list_fname}()`")
     usage_lines += [
         "",
         "─ Tool selection (read carefully) ─",
         f"• Use `{exists_fname}` to check file availability before operations.",
-        f"• Use `{list_fname}` for file inventory when no search criteria provided.",
     ]
     if search_files_fname:
         usage_lines.append(
@@ -156,25 +167,25 @@ def build_file_manager_ask_prompt(
                 f"• Multi-step semantic search: `{search_mjoin_fname}(...)`",
             )
 
-    # Add parse guidance
+    # Add parse guidance (no direct byte opening)
     usage_lines += [
         "",
         f"─ Parsing Strategy (IMPORTANT: parsing is expensive) ─",
-        f"• BEFORE calling `{parse_fname}`, check if parsed data already exists:",
+        f"• BEFORE calling `{parse_fname}`, check if parsed data already exists using retrieval tools:",
     ]
     if filter_files_fname:
         usage_lines.append(
-            f"  - Use `{filter_files_fname}` to check if the file has parsed records",
+            f"  - `{filter_files_fname}` to check for existing records",
         )
     if search_files_fname:
         usage_lines.append(
-            f"  - Use `{search_files_fname}` to query existing parsed content",
+            f"  - `{search_files_fname}` to query existing parsed content",
         )
     usage_lines += [
         f"• ONLY call `{parse_fname}` if:",
         "  - No parsed data exists in the system, OR",
-        "  - User explicitly requests a fresh parse (e.g., 'reparse', 'contents changed')",
-        f"• When parsed data exists, use search/filter tools instead of `{parse_fname}`",
+        "  - The user explicitly requests parsing",
+        f"• When parsed data exists, prefer search/filter/join tools instead of `{parse_fname}`",
     ]
 
     if clarification_block:
@@ -257,10 +268,6 @@ def build_file_manager_ask_about_file_prompt(
     )
 
     parse_fname = _tool_name(tools, "parse")
-    adapter_open_bytes_fname = _tool_name(tools, "_adapter_open_bytes") or _tool_name(
-        tools,
-        "adapter_open_bytes",
-    )
 
     parse_guidance_lines = []
     if parse_fname:
@@ -268,22 +275,13 @@ def build_file_manager_ask_about_file_prompt(
             "",
             "Parsing Strategy (IMPORTANT: parsing is expensive)",
             "─────────────────────────────────────────────────",
-            f"• Parsing with `{parse_fname}` is time and compute intensive",
-            "• BEFORE parsing, check if you already have the data you need:",
-            (
-                f"  - Try reading the file with `{adapter_open_bytes_fname}` first"
-                if adapter_open_bytes_fname
-                else ""
-            ),
-            "  - Check if parsed content already exists in the system",
+            f"• Parsing with `{parse_fname}` is compute intensive",
+            "• BEFORE parsing, check if you already have the data you need via retrieval tools:",
+            "  - Use filter/search/join against existing contexts",
             f"• ONLY call `{parse_fname}` if:",
             "  - You need structured/extracted data that doesn't exist yet, OR",
-            "  - User explicitly requests parsing (e.g., 'parse', 'extract data', 'reparse')",
-            "• For simple questions about file content, reading the file directly is usually sufficient",
+            "  - The user explicitly requests parsing (e.g., 'parse', 'extract data')",
         ]
-        parse_guidance_lines = [
-            line for line in parse_guidance_lines if line
-        ]  # Remove empty strings
 
     # Add join/search/filter guidance for file-scoped questions
     filter_join_fname = _tool_name(tools, "_filter_join") or _tool_name(
@@ -365,26 +363,14 @@ def build_file_manager_organize_prompt(
     sig_json = json.dumps(_sig_dict(tools), indent=4)
     columns = columns or {}
 
-    list_fname = _tool_name(tools, "list")
-    exists_fname = _tool_name(tools, "exists")
-    filter_files_fname = _tool_name(tools, "_filter_files") or _tool_name(
-        tools,
-        "filter_files",
-    )
-    search_files_fname = _tool_name(tools, "_search_files") or _tool_name(
-        tools,
-        "search_files",
-    )
-    list_columns_fname = _tool_name(tools, "_list_columns") or _tool_name(
-        tools,
-        "list_columns",
-    )
+    ask_fname = _tool_name(tools, "ask")
     rename_file_fname = _tool_name(tools, "rename_file") or _tool_name(tools, "rename")
     move_file_fname = _tool_name(tools, "move_file") or _tool_name(tools, "move")
     request_clar_fname = _tool_name(tools, "request_clarification")
 
     # Core read tools are required; mutation tools are optional per backend capabilities
-    _require_tools({"list": list_fname, "exists": exists_fname}, tools)
+    # Only require ask for discovery; organize is mutation-focused
+    _require_tools({"ask": ask_fname}, tools)
 
     clarification_block = (
         "\n".join(
@@ -417,24 +403,10 @@ def build_file_manager_organize_prompt(
         "Examples",
         "--------",
         "",
-        "─ Columns ─",
+        "─ Discovery via ask() (read-only) ─",
+        f"• Delegate discovery to `{ask_fname}` to identify targets before mutating.",
+        f"  `{ask_fname}(text='Which files under /docs mention quarterly reports?')`",
     ]
-    if list_columns_fname:
-        usage_lines.append(f"• Inspect schema\n  `{list_columns_fname}()`")
-    usage_lines += [
-        "",
-        "─ Tool selection (read carefully) ─",
-        f"• Use `{exists_fname}` to check file availability.",
-        f"• Use `{list_fname}` for file inventory.",
-    ]
-    if search_files_fname:
-        usage_lines.append(
-            f"• Use `{search_files_fname}` to find files by topic/reference when available.",
-        )
-    if filter_files_fname:
-        usage_lines.append(
-            f"• Use `{filter_files_fname}` for exact filters on filename/metadata.",
-        )
 
     usage_lines += [
         "",
@@ -466,11 +438,10 @@ def build_file_manager_organize_prompt(
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the goal and choose the best approach yourself.",
             clar_sentence,
             "You should attempt to fulfill the organization goal as best you can, even if it seems out of scope.",
-            "Use the tools provided to see if you can find any missing context *before* asking the user for clarifications.",
+            "Use the ask() tool to discover targets before mutating; do not run read-only tools directly in organize.",
             "Please always mention the relevant filename(s) or folder(s) in your response.",
             "",
-            f"There are currently {num_files} files stored in a table with the following columns:",
-            json.dumps(columns, indent=4),
+            f"There are currently {num_files} files indexed.",
             "",
             "Tables overview",
             "----------------",
@@ -518,14 +489,40 @@ def build_global_file_manager_ask_prompt(
         else ""
     )
 
+    # Discover class-named per-manager tools dynamically for examples
+    ask_tool_example = next(
+        (
+            n
+            for n in tools
+            if n.lower().endswith("_ask") and "globalfilemanager_" not in n.lower()
+        ),
+        None,
+    )
+    ask_about_file_example = next(
+        (
+            n
+            for n in tools
+            if n.lower().endswith("_ask_about_file")
+            and "globalfilemanager_" not in n.lower()
+        ),
+        None,
+    )
     usage_examples = "\n".join(
         [
             "Examples",
             "--------",
             "─ Filesystem Discovery ─",
-            "• List available filesystems: `_list_filesystems()`",
-            "• Ask a specific filesystem: `ask__local(text='What are the largest files?')`",
-            "• Ask about a file: `ask_about_file__local(filename='report.pdf', question='Summarize this.')`",
+            "• List available filesystems: `GlobalFileManager_list_filesystems()`",
+            (
+                f"• Ask a specific filesystem: `{ask_tool_example}(text='What are the largest files?')`"
+                if ask_tool_example
+                else "• Ask a specific filesystem: `<SomeFileManager>_ask(text='What are the largest files?')`"
+            ),
+            (
+                f"• Ask about a file: `{ask_about_file_example}(filename='report.pdf', question='Summarize this.')`"
+                if ask_about_file_example
+                else "• Ask about a file: `<SomeFileManager>_ask_about_file(filename='report.pdf', question='Summarize this.')`"
+            ),
         ],
     )
 
@@ -597,13 +594,26 @@ def build_global_file_manager_organize_prompt(
         else ""
     )
 
+    # Discover class-named per-manager organize tool for examples
+    organize_tool_example = next(
+        (
+            n
+            for n in tools
+            if n.lower().endswith("_organize") and "globalfilemanager_" not in n.lower()
+        ),
+        None,
+    )
     usage_examples = "\n".join(
         [
             "Examples",
             "--------",
-            "─ Filesystem Discovery ─",
-            "• List available filesystems: `_list_filesystems()`",
-            "• Organize a specific filesystem: `organize__local(text='group by year-month')`",
+            "─ Filesystem Discovery via ask() (read‑only) ─",
+            "• Delegate discovery to `GlobalFileManager_ask(text='Which files mention invoices?')`",
+            (
+                f"• Organize a specific filesystem: `{organize_tool_example}(text='group by year-month')`"
+                if organize_tool_example
+                else "• Organize a specific filesystem: `<SomeFileManager>_organize(text='group by year-month')`"
+            ),
         ],
     )
 
@@ -673,7 +683,7 @@ def build_simulated_method_prompt(
             )
         if m == "global_ask":
             specifics.append(
-                "Operate at the aggregated, cross-filesystem level. If you mention files, include their aliased, namespaced paths (e.g. '/local/report.pdf').",
+                "Operate at the aggregated, cross-filesystem level. If you mention a filesystem, refer to it by manager class name (e.g. 'LocalFileManager'). Do not rely on alias-prefixed paths.",
             )
         behaviour = " ".join(
             [
@@ -689,7 +699,7 @@ def build_simulated_method_prompt(
         ]
         if m == "global_organize":
             specifics.append(
-                "Treat file paths as namespaced by their filesystem aliases and keep re-organisation within a single root.",
+                "Operate across manager class names (e.g. 'LocalFileManager') and keep re-organisation within a single root.",
             )
         behaviour = " ".join(
             [
