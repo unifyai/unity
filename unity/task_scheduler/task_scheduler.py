@@ -3635,8 +3635,7 @@ class TaskScheduler(BaseTaskScheduler):
         _trigger_provided = trigger is not _UNSET
 
         # Fetch current row for invariants/derivations
-        row = self._get_single_row_or_raise(int(task_id))
-        current_sched = row.schedule
+        task = self._get_single_row_or_raise(task_id)
 
         # No-op guard – allow updates when at least one field is provided OR when
         # the caller explicitly provided 'trigger' (even if None, meaning clear it).
@@ -3658,7 +3657,7 @@ class TaskScheduler(BaseTaskScheduler):
             # If the update itself adds a start_at or the current schedule is present, reject
             if start_at is not None:
                 raise ValueError("Cannot set a trigger alongside a start_at schedule.")
-            if row.schedule is not None:
+            if task.schedule is not None:
                 raise ValueError(
                     "Cannot add a trigger while a schedule exists. Remove schedule first.",
                 )
@@ -3668,12 +3667,12 @@ class TaskScheduler(BaseTaskScheduler):
         if start_at is not None:
             # Disallow start_at when the task is trigger-based
             # Allow when the update explicitly clears the trigger in the same call
-            if row.trigger is not None and not (_trigger_provided and trigger is None):
+            if task.trigger is not None and not (_trigger_provided and trigger is None):
                 raise ValueError(
                     "Cannot add/update *start_at* – the task is trigger-based.",
                 )
             # Guard-rail: tasks with a predecessor cannot own start_at
-            if _q_prev(current_sched) is not None:
+            if task.schedule_prev is not None:
                 raise ValueError(
                     "Cannot set 'start_at' when the task has 'prev_task'. Move it to the queue head first.",
                 )
@@ -3684,8 +3683,8 @@ class TaskScheduler(BaseTaskScheduler):
                 except Exception:
                     pass
             schedule_payload = {
-                "prev_task": _q_prev(current_sched),
-                "next_task": _q_next(current_sched),
+                "prev_task": task.schedule_prev,
+                "next_task": task.schedule_next,
                 "start_at": start_at,
             }
 
@@ -3712,9 +3711,9 @@ class TaskScheduler(BaseTaskScheduler):
         # Validate queue/schedule invariants when status or start_at provided
         if desired_status is not None or schedule_payload is not None:
             self._validate_scheduled_invariants(
-                status=(desired_status if desired_status is not None else row.status),
+                status=(desired_status if desired_status is not None else task.status),
                 schedule=(
-                    schedule_payload if schedule_payload is not None else current_sched
+                    schedule_payload if schedule_payload is not None else task.schedule
                 ),
                 err_prefix=f"While updating task {task_id}:",
             )
@@ -3765,7 +3764,7 @@ class TaskScheduler(BaseTaskScheduler):
             _trigger_provided
             and (trigger is None)
             and (status is None)
-            and self._to_status(row.status) == Status.triggerable
+            and task.status == Status.triggerable
         ):
             # Downgrade to queued when trigger removed (and not setting start_at)
             if schedule_payload is None:
@@ -3775,21 +3774,19 @@ class TaskScheduler(BaseTaskScheduler):
         if ("schedule" in entries) or ("status" in entries):
             # Provide queue_id when we know it to avoid an extra guard read and ensure consistency
             if ("schedule" in entries) and ("queue_id" not in entries):
-                try:
-                    _qid = row.queue_id
-                    if isinstance(_qid, int):
-                        entries["queue_id"] = int(_qid)
-                except Exception:
-                    pass
+                qid = task.queue_id
+                if qid is not None:
+                    entries["queue_id"] = qid
             # When we did not change adjacency (prev/next unchanged), skip neighbour sync and cross-queue guard
             _skip_sync = False
             _skip_cross_guard = False
             try:
                 if "schedule" in entries and isinstance(entries.get("schedule"), dict):
                     _new = entries["schedule"]
-                    _skip_sync = _new.get("prev_task") == _q_prev(
-                        current_sched,
-                    ) and _new.get("next_task") == _q_next(current_sched)
+                    _skip_sync = (
+                        _new.get("prev_task") == task.schedule_prev
+                        and _new.get("next_task") == task.schedule_next
+                    )
                     _skip_cross_guard = _skip_sync
             except Exception:
                 _skip_sync = False
@@ -3799,7 +3796,7 @@ class TaskScheduler(BaseTaskScheduler):
                 entries=entries,
                 err_prefix=f"While updating task {task_id}:",
                 # Reuse the row we already fetched in this tool call to avoid a second backend read
-                current_row=row,
+                current_row=task,
                 skip_sync=_skip_sync,
                 skip_cross_queue_guard=_skip_cross_guard,
             )
