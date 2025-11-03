@@ -7,6 +7,9 @@ from unity.conversation_manager_2.new_events import (
     PhoneCallStarted,
     PhoneUtterance,
     SMSRecieved,
+    UnifyCallReceived,
+    UnifyCallStarted,
+    UnifyCallUtterance,
     UnifyMessageRecieved,
 )
 
@@ -54,33 +57,43 @@ async def send_incoming_unify_message(
     )
 
 
-async def send_incoming_phone_call(
+async def send_incoming_call(
     test_redis_client,
-    contact_number: str,
+    contact: str | int,
     conference_name: str,
     user_utterance: str,
+    mode: str = "call",
 ):
-    # Send PhoneCallReceived
-    incoming_call = PhoneCallRecieved(
-        contact=contact_number,
-        conference_name=conference_name,
+    # Send call received event
+    if mode == "call":
+        incoming_call = PhoneCallRecieved(
+            contact=contact,
+            conference_name=conference_name,
+        )
+    else:
+        incoming_call = UnifyCallReceived(contact=contact)
+    print(f"\n📞 Sending {incoming_call.to_dict()['event_name']} from {contact}")
+    await test_redis_client.publish(
+        f"app:comms:{mode}_recieved", incoming_call.to_json()
     )
-    print(f"\n📞 Sending PhoneCallReceived from {contact_number}")
-    await test_redis_client.publish("app:comms:call_recieved", incoming_call.to_json())
     await asyncio.sleep(0.5)
 
     # Subscribe to the response streaming channel
-    print("📞 Step 2: Subscribing to app:call:response_gen channel")
+    print(f"📞 Subscribing to app:{mode}:response_gen channel")
     pubsub = test_redis_client.pubsub()
-    await pubsub.subscribe("app:call:response_gen")
+    await pubsub.subscribe(f"app:{mode}:response_gen")
     await asyncio.sleep(0.5)
 
-    # Send PhoneCallStarted
-    call_started = PhoneCallStarted(contact=contact_number)
-    print(f"📞 Sending PhoneCallStarted from {contact_number}")
-    await test_redis_client.publish(
-        "app:comms:phone_call_started", call_started.to_json()
-    )
+    # Send call started event
+    print(f"📞 Sending call started event from {contact}")
+    if mode == "call":
+        await test_redis_client.publish(
+            "app:comms:phone_call_started", PhoneCallStarted(contact=contact).to_json()
+        )
+    else:
+        await test_redis_client.publish(
+            "app:comms:unify_call_started", UnifyCallStarted(contact=contact).to_json()
+        )
     await asyncio.sleep(0.5)
 
     # Capture the initial greeting
@@ -91,11 +104,17 @@ async def send_incoming_phone_call(
     assert end1, "Should receive end_gen for initial greeting"
 
     # Send a user utterance
-    user_utterance = PhoneUtterance(contact=contact_number, content=user_utterance)
-    print(f"📞 Sending user utterance from {contact_number}")
-    await test_redis_client.publish(
-        "app:comms:phone_utterance", user_utterance.to_json()
-    )
+    print(f"📞 Sending user utterance from {contact}")
+    if mode == "call":
+        await test_redis_client.publish(
+            "app:comms:phone_utterance",
+            PhoneUtterance(contact=contact, content=user_utterance).to_json(),
+        )
+    else:
+        await test_redis_client.publish(
+            "app:comms:unify_call_utterance",
+            UnifyCallUtterance(contact=contact, content=user_utterance).to_json(),
+        )
     print(f"   Exchange 1 (Initial greeting): {len(''.join(chunks1))} characters")
     return pubsub
 
