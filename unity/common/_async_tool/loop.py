@@ -30,7 +30,6 @@ from .messages import (
     chat_context_repr,
     generate_with_preprocess,
     PENDING_PLACEHOLDER_TEXT,
-    forward_handle_call,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -50,7 +49,6 @@ from .images import (
 )
 from .formatting import sanitize_tool_msg_for_logging
 from ..llm_helpers import method_to_schema, _dumps
-from .. import prompt_helpers as _prompt_helpers
 from .loop_config import (
     LoopConfig,
     TOOL_LOOP_LINEAGE,
@@ -60,9 +58,13 @@ from .messages import (
     insert_tool_message_after_assistant,
     ensure_placeholders_for_pending,
     propagate_stop_once,
+    forward_handle_call,
+    schedule_missing_for_message,
+    build_helper_ack_content,
 )
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
+from . import semantic_cache as sc
 
 # Single per-run LLM I/O debug file path (set on first use)
 _LLM_IO_FILE_PATH: str | None = None
@@ -281,98 +283,6 @@ async def async_tool_loop_inner(
     # Independent, centrally-configured LLM I/O logging flag
     llm_io_debug = bool(LLM_IO_DEBUG)
 
-    # ── persistent time perception helpers ───────────────────────────────────
-    loop_start_txt: str = _prompt_helpers.now(time_only=False)
-    completed_durations_since_last_llm: list[tuple[str, int]] = []
-
-    def _parse_now_to_datetime(txt: str):
-        """Parse a now() string (with timezone label) into a tz-aware datetime."""
-        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-
-        try:
-            base, label = txt.rsplit(" ", 1)
-        except Exception:
-            base, label = txt, "UTC"
-        try:
-            if label == "UTC":
-                offset = _td(0)
-            elif label.startswith("UTC+") or label.startswith("UTC-"):
-                sign = 1 if "+" in label else -1
-                hhmm = label.split("UTC", 1)[1]
-                hh, mm = hhmm[1:].split(":")
-                offset = _td(hours=sign * int(hh), minutes=sign * int(mm))
-            else:
-                offset = _td(0)
-        except Exception:
-            offset = _td(0)
-        tz = _tz(offset)
-        # Try full timestamp first, fall back to time-only
-        try:
-            dt = _dt.strptime(base, "%Y-%m-%d %H:%M:%S").replace(tzinfo=tz)
-            return dt
-        except Exception:
-            pass
-        try:
-            t = _dt.strptime(base, "%H:%M:%S")
-            dt = _dt(1970, 1, 1, t.hour, t.minute, t.second, tzinfo=tz)
-            return dt
-        except Exception:
-            return _dt(1970, 1, 1, 0, 0, 0, tzinfo=tz)
-
-    async def _inject_time_context_system_message() -> None:
-        """Append a minimal system message with current time and durations."""
-        try:
-            current_time_txt = _prompt_helpers.now(time_only=True)
-        except Exception:
-            current_time_txt = ""
-        try:
-            _now_full = _prompt_helpers.now(time_only=False)
-            now_dt = _parse_now_to_datetime(_now_full)
-            start_dt = _parse_now_to_datetime(loop_start_txt)
-            since_start = int(max(0, (now_dt - start_dt).total_seconds()))
-        except Exception:
-            since_start = 0
-        # Build structured JSON content; omit tools map when none have completed
-        try:
-            payload = {
-                "time": str(current_time_txt),
-                "seconds_since_start": int(since_start),
-            }
-            if completed_durations_since_last_llm:
-                durations_map = {
-                    name: int(dur) for name, dur in completed_durations_since_last_llm
-                }
-                payload["completed_tools_duration_seconds"] = durations_map
-            content_txt = json.dumps(payload, indent=2)
-        except Exception:
-            # Fallback to simple text if anything goes wrong
-            content_txt = f'{{\n  "time": "{current_time_txt}",\n  "seconds_since_start": {int(since_start)}\n}}'
-
-        sys_msg = {
-            "role": "system",
-            "content": content_txt,
-            "_time_header": True,
-        }
-        # Persist in transcript immediately before every LLM turn
-        try:
-            client.append_messages([sys_msg])
-        except Exception:
-            pass
-        # Mirror to event bus (best-effort)
-        with suppress(Exception):
-            await to_event_bus(sys_msg, cfg)
-        # Log the injected time context for visibility in standard logs
-        try:
-            if logger.log_steps:
-                logger.info(f"{sys_msg['content']}", prefix="⏱️")
-        except Exception:
-            pass
-        # Reset accumulator for the next turn
-        try:
-            completed_durations_since_last_llm.clear()
-        except Exception:
-            pass
-
     # File sink for LLM I/O: single per-run file under hidden folder, named by SESSION_ID
     _llm_io_file: str | None = None
     if llm_io_debug:
@@ -582,11 +492,6 @@ async def async_tool_loop_inner(
                 for m in message
             ]
         await _msg_dispatcher.append_msgs(seeded_batch)
-        # More accurate start point: first user message appended
-        try:
-            loop_start_txt = _prompt_helpers.now(time_only=False)
-        except Exception:
-            pass
         # Inject an initial snapshot of live images (if any) immediately by
         # appending assistant→tool messages directly to the client transcript.
         try:
@@ -887,11 +792,6 @@ async def async_tool_loop_inner(
         else:
             initial_user_msg = {"role": "user", "content": message}
         await _msg_dispatcher.append_msgs([initial_user_msg])
-        # More accurate start point: first user message appended
-        try:
-            loop_start_txt = _prompt_helpers.now(time_only=False)
-        except Exception:
-            pass
         # Inject an initial snapshot of live images (if any)
         try:
             if has_live_images_context():
@@ -930,59 +830,6 @@ async def async_tool_loop_inner(
     # ── small local helpers to dedupe repeated logic ─────────────────────────
     def _pretty(tool_name: str, payload: Any) -> str:
         return ToolsData._pretty_tool_payload(tool_name, payload)
-
-    def _record_completed_task_duration(task: asyncio.Task) -> None:
-        """Track how long a completed tool took since scheduling (best-effort)."""
-        try:
-            _inf = tools_data.info.get(task)
-            if _inf is not None and getattr(_inf, "scheduled_at", None):
-                end_txt = _prompt_helpers.now(time_only=False)
-                # Reuse the inline parser from the injection helper
-                from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-
-                def _parse_now_to_datetime(txt: str):
-                    try:
-                        base, label = txt.rsplit(" ", 1)
-                    except Exception:
-                        base, label = txt, "UTC"
-                    try:
-                        if label == "UTC":
-                            offset = _td(0)
-                        elif label.startswith("UTC+") or label.startswith("UTC-"):
-                            sign = 1 if "+" in label else -1
-                            hhmm = label.split("UTC", 1)[1]
-                            hh, mm = hhmm[1:].split(":")
-                            offset = _td(hours=sign * int(hh), minutes=sign * int(mm))
-                        else:
-                            offset = _td(0)
-                    except Exception:
-                        offset = _td(0)
-                    tz = _tz(offset)
-                    try:
-                        return _dt.strptime(base, "%Y-%m-%d %H:%M:%S").replace(
-                            tzinfo=tz,
-                        )
-                    except Exception:
-                        try:
-                            t = _dt.strptime(base, "%H:%M:%S")
-                            return _dt(
-                                1970,
-                                1,
-                                1,
-                                t.hour,
-                                t.minute,
-                                t.second,
-                                tzinfo=tz,
-                            )
-                        except Exception:
-                            return _dt(1970, 1, 1, 0, 0, 0, tzinfo=tz)
-
-                end_dt = _parse_now_to_datetime(end_txt)
-                start_dt = _parse_now_to_datetime(_inf.scheduled_at)
-                dur_s = int(max(0, (end_dt - start_dt).total_seconds()))
-                completed_durations_since_last_llm.append((_inf.name, dur_s))
-        except Exception:
-            pass
 
     async def _handle_clarification(
         src_task: asyncio.Task,
@@ -1162,7 +1009,6 @@ async def async_tool_loop_inner(
 
                     # tool finished?
                     for t in done & tools_data.pending:
-                        _record_completed_task_duration(t)
                         await tools_data.process_completed_task(
                             task=t,
                             consecutive_failures=consecutive_failures,
@@ -1506,7 +1352,6 @@ async def async_tool_loop_inner(
                 needs_turn = False
                 # Only process completion for actual tool tasks; exclude helper waiters
                 for task in done & tools_data.pending:  # finished tool(s)
-                    _record_completed_task_duration(task)
                     if await tools_data.process_completed_task(
                         task=task,
                         consecutive_failures=consecutive_failures,
@@ -1660,6 +1505,8 @@ async def async_tool_loop_inner(
             ]
 
             # ── D.  Ask the LLM what to do next  ────────────────────────────
+            if log_steps:
+                logger.info(f"LLM thinking…", prefix="🔄")
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
@@ -1672,11 +1519,6 @@ async def async_tool_loop_inner(
                 }
                 if max_parallel_tool_calls is not None:
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
-
-                # Inject a persistent time-context system message before the LLM turn
-                await _inject_time_context_system_message()
-                if log_steps:
-                    logger.info(f"LLM thinking…", prefix="🔄")
 
                 llm_task = asyncio.create_task(
                     generate_with_preprocess(
@@ -1765,7 +1607,6 @@ async def async_tool_loop_inner(
                     # — handle each newly-finished task exactly as branch A does
                     needs_turn = False
                     for task in done & pending_snapshot:
-                        _record_completed_task_duration(task)
                         if await tools_data.process_completed_task(
                             task=task,
                             consecutive_failures=consecutive_failures,
@@ -1862,11 +1703,6 @@ async def async_tool_loop_inner(
                     }
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
-
-                    # Inject a persistent time-context system message before the LLM turn
-                    await _inject_time_context_system_message()
-                    if log_steps:
-                        logger.info(f"LLM thinking…", prefix="🔄")
 
                     _result = await generate_with_preprocess(
                         client,

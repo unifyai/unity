@@ -28,7 +28,6 @@ class ToolCallMetadata:
     notification_queue: asyncio.Queue[dict] | None = None
     pause_event: asyncio.Event | None = None
     scheduled_time: float = field(default_factory=time.perf_counter)
-    scheduled_at: str | None = None
     # Whether this task's handle is running in passthrough mode. When true,
     # outer-loop programmatic interject/ask should be propagated downwards,
     # and upward events (clarifications/notifications) should bubble to the
