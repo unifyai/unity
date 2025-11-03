@@ -8,6 +8,7 @@ from tests.helpers import _handle_project
 from tests.test_screen_share_manager.conftest import PNG_RED_B64
 from unittest.mock import MagicMock, patch
 
+
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
@@ -16,13 +17,15 @@ async def test_annotate_events_should_trigger_summary_update(mocked_manager):
     manager, mocks = mocked_manager
     manager.set_session_context("Initial summary.")
     red_b64 = PNG_RED_B64.split(",", 1)[1]
-    handles = manager._image_manager.add_images([{"data": red_b64}], synchronous=True, return_handles=True)
+    handles = manager._image_manager.add_images(
+        [{"data": red_b64}], synchronous=True, return_handles=True
+    )
     detected_events = [DetectedEvent(1.0, "test", handles[0])]
 
     mocks["annotate"].generate.return_value = "A new event happened."
     mocks["summary"].generate.return_value = "Updated summary including the new event."
     await manager.annotate_events(detected_events, "test context")
-    
+
     summary_task = manager._summary_update_task
     assert summary_task is not None, "Summary update task was not created"
     await summary_task

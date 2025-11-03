@@ -2,6 +2,7 @@ import pytest
 from unity.screen_share_manager.screen_share_manager import ScreenShareManager
 from tests.helpers import _handle_project
 
+
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio

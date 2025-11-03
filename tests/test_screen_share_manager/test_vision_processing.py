@@ -26,9 +26,14 @@ async def test_frame_handling_should_drop_frames_when_queue_is_full(caplog):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "image_pair",
-    [("modal_before.png", "modal_after.png"), ("button_active_before.png", "button_active_after.png")],
+    [
+        ("modal_before.png", "modal_after.png"),
+        ("button_active_before.png", "button_active_after.png"),
+    ],
 )
-async def test_vision_should_detect_significant_changes(manager: ScreenShareManager, image_pair):
+async def test_vision_should_detect_significant_changes(
+    manager: ScreenShareManager, image_pair
+):
     """Tests that the vision pipeline correctly identifies significant UI changes."""
     before_filename, after_filename = image_pair
     img_before = load_asset_image(before_filename)
@@ -41,9 +46,14 @@ async def test_vision_should_detect_significant_changes(manager: ScreenShareMana
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "image_pair",
-    [("blinking_caret_before.png", "blinking_caret_after.png"), ("cursor_move_before.png", "cursor_move_after.png")],
+    [
+        ("blinking_caret_before.png", "blinking_caret_after.png"),
+        ("cursor_move_before.png", "cursor_move_after.png"),
+    ],
 )
-async def test_vision_should_ignore_insignificant_changes(manager: ScreenShareManager, image_pair):
+async def test_vision_should_ignore_insignificant_changes(
+    manager: ScreenShareManager, image_pair
+):
     """Tests that the vision pipeline correctly ignores insignificant visual noise."""
     before_filename, after_filename = image_pair
     img_before = load_asset_image(before_filename)

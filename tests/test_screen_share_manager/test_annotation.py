@@ -5,10 +5,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from unity.image_manager.image_manager import ImageHandle
-from unity.screen_share_manager.screen_share_manager import ScreenShareManager, TurnState, KeyEvent
+from unity.screen_share_manager.screen_share_manager import (
+    ScreenShareManager,
+    TurnState,
+    KeyEvent,
+)
 from unity.screen_share_manager.types import DetectedEvent
 from tests.helpers import _handle_project
-from tests.test_screen_share_manager.conftest import PNG_RED_B64, PNG_BLUE_B64, PNG_GREEN_B64
+from tests.test_screen_share_manager.conftest import (
+    PNG_RED_B64,
+    PNG_BLUE_B64,
+    PNG_GREEN_B64,
+)
 
 
 @pytest.mark.unit
@@ -40,16 +48,22 @@ async def test_annotation_prompt_combines_all_contexts(mocked_manager):
     manager.set_session_context("This is the long-term session summary.")
     consumer_context = "The user is trying to log in."
     manager._recent_key_events.append(
-        KeyEvent(timestamp=0.5, image_annotation="A previous key event.", representative_timestamp=0.5)
+        KeyEvent(
+            timestamp=0.5,
+            image_annotation="A previous key event.",
+            representative_timestamp=0.5,
+        )
     )
-    
+
     # 2. Prepare the event to be annotated
-    handle = manager._image_manager.add_images([{"data": PNG_RED_B64.split(",", 1)[1]}], return_handles=True)[0]
+    handle = manager._image_manager.add_images(
+        [{"data": PNG_RED_B64.split(",", 1)[1]}], return_handles=True
+    )[0]
     detected_event = DetectedEvent(1.0, "test", handle)
-    
+
     # 3. Annotate and capture the prompt
     await manager.annotate_events([detected_event], consumer_context)
-    
+
     mocks["annotate"].set_system_message.assert_called_once()
     prompt = mocks["annotate"].set_system_message.call_args.args[0]
 
@@ -69,19 +83,23 @@ async def test_successful_annotation_triggers_summary_update(mocked_manager):
     triggers the summary update mechanism.
     """
     manager, mocks = mocked_manager
-    handle = manager._image_manager.add_images([{"data": PNG_RED_B64.split(",", 1)[1]}], return_handles=True)[0]
+    handle = manager._image_manager.add_images(
+        [{"data": PNG_RED_B64.split(",", 1)[1]}], return_handles=True
+    )[0]
     detected_event = DetectedEvent(1.0, "test", handle)
     mocks["annotate"].generate.return_value = "A new thing happened."
-    
+
     # Patch the trigger method to confirm it gets called
     with patch.object(manager, "_trigger_summary_update") as mock_trigger:
         await manager.annotate_events([detected_event], "context")
-        
+
         # Assertions
         mock_trigger.assert_called_once()
         # Also verify the event was added to the list of events to be summarized
         assert len(manager._unsummarized_events) == 1
-        assert manager._unsummarized_events[0].image_annotation == "A new thing happened."
+        assert (
+            manager._unsummarized_events[0].image_annotation == "A new thing happened."
+        )
 
 
 @pytest.mark.unit
@@ -95,10 +113,14 @@ async def test_annotation_handles_empty_llm_response_gracefully(mocked_manager):
     """
     manager, mocks = mocked_manager
     h1, h2 = manager._image_manager.add_images(
-        [{"data": PNG_RED_B64.split(",", 1)[1]}, {"data": PNG_BLUE_B64.split(",", 1)[1]}], return_handles=True
+        [
+            {"data": PNG_RED_B64.split(",", 1)[1]},
+            {"data": PNG_BLUE_B64.split(",", 1)[1]},
+        ],
+        return_handles=True,
     )
     events = [DetectedEvent(1.0, "r1", h1), DetectedEvent(2.0, "r2", h2)]
-    
+
     # First call succeeds, second returns an empty string
     mocks["annotate"].generate.side_effect = ["Valid annotation.", "  "]
 
@@ -121,7 +143,11 @@ async def test_annotations_are_added_to_recent_key_events_for_next_turn(mocked_m
     """
     manager, mocks = mocked_manager
     h1, h2 = manager._image_manager.add_images(
-        [{"data": PNG_RED_B64.split(",", 1)[1]}, {"data": PNG_BLUE_B64.split(",", 1)[1]}], return_handles=True
+        [
+            {"data": PNG_RED_B64.split(",", 1)[1]},
+            {"data": PNG_BLUE_B64.split(",", 1)[1]},
+        ],
+        return_handles=True,
     )
     event_turn_1 = DetectedEvent(1.0, "turn1", h1)
     event_turn_2 = DetectedEvent(5.0, "turn2", h2)
@@ -137,7 +163,7 @@ async def test_annotations_are_added_to_recent_key_events_for_next_turn(mocked_m
     # --- Turn 2 ---
     mocks["annotate"].generate.return_value = "Annotation from turn 2."
     await manager.annotate_events([event_turn_2], "Context for turn 2")
-    
+
     # Assert that the prompt for turn 2 contained context from turn 1
     prompt_turn_2 = mocks["annotate"].set_system_message.call_args.args[0]
     assert "Recent Key Events" in prompt_turn_2

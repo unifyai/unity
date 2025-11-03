@@ -165,6 +165,7 @@ Following the user's action, a dropdown menu for 'Context' has opened, showing '
 """
     return prompt + f"\n\nCurrent UTC time is {now()}."
 
+
 def build_summary_update_prompt(
     current_summary: str,
     new_events: List[KeyEvent],
