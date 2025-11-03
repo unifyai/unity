@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import copy
 import re
+import time
 
 from typing import (
     Dict,
@@ -49,6 +50,7 @@ from .images import (
 )
 from .formatting import sanitize_tool_msg_for_logging
 from ..llm_helpers import method_to_schema, _dumps
+from ..prompt_helpers import now
 from .loop_config import (
     LoopConfig,
     TOOL_LOOP_LINEAGE,
@@ -283,6 +285,52 @@ async def async_tool_loop_inner(
     # Independent, centrally-configured LLM I/O logging flag
     llm_io_debug = bool(LLM_IO_DEBUG)
 
+    # ── persistent time perception helpers ───────────────────────────────────
+    loop_start_monotonic: float = time.perf_counter()
+    completed_durations_since_last_llm: list[tuple[str, float]] = []
+
+    async def _inject_time_context_system_message() -> None:
+        """Append a minimal system message with current time and durations."""
+        try:
+            current_time_txt = now(time_only=True)
+        except Exception:
+            current_time_txt = ""
+        try:
+            since_start = max(0.0, time.perf_counter() - loop_start_monotonic)
+        except Exception:
+            since_start = 0.0
+        try:
+            if completed_durations_since_last_llm:
+                pairs = ", ".join(
+                    f"{name}={dur:.2f}s"
+                    for name, dur in completed_durations_since_last_llm
+                )
+            else:
+                pairs = "none"
+        except Exception:
+            pairs = "none"
+
+        sys_msg = {
+            "role": "system",
+            "content": (
+                f"Time: {current_time_txt} | since_start_s={since_start:.2f} | "
+                f"completed_tools_since_last_turn={pairs}"
+            ),
+        }
+        # Persist in transcript immediately before every LLM turn
+        try:
+            client.append_messages([sys_msg])
+        except Exception:
+            pass
+        # Mirror to event bus (best-effort)
+        with suppress(Exception):
+            await to_event_bus(sys_msg, cfg)
+        # Reset accumulator for the next turn
+        try:
+            completed_durations_since_last_llm.clear()
+        except Exception:
+            pass
+
     # File sink for LLM I/O: single per-run file under hidden folder, named by SESSION_ID
     _llm_io_file: str | None = None
     if llm_io_debug:
@@ -492,6 +540,11 @@ async def async_tool_loop_inner(
                 for m in message
             ]
         await _msg_dispatcher.append_msgs(seeded_batch)
+        # More accurate start point: first user message appended
+        try:
+            loop_start_monotonic = time.perf_counter()
+        except Exception:
+            pass
         # Inject an initial snapshot of live images (if any) immediately by
         # appending assistant→tool messages directly to the client transcript.
         try:
@@ -792,6 +845,11 @@ async def async_tool_loop_inner(
         else:
             initial_user_msg = {"role": "user", "content": message}
         await _msg_dispatcher.append_msgs([initial_user_msg])
+        # More accurate start point: first user message appended
+        try:
+            loop_start_monotonic = time.perf_counter()
+        except Exception:
+            pass
         # Inject an initial snapshot of live images (if any)
         try:
             if has_live_images_context():
@@ -830,6 +888,20 @@ async def async_tool_loop_inner(
     # ── small local helpers to dedupe repeated logic ─────────────────────────
     def _pretty(tool_name: str, payload: Any) -> str:
         return ToolsData._pretty_tool_payload(tool_name, payload)
+
+    def _record_completed_task_duration(task: asyncio.Task) -> None:
+        """Track how long a completed tool took since scheduling (best-effort)."""
+        try:
+            _inf = tools_data.info.get(task)
+            if _inf is not None:
+                completed_durations_since_last_llm.append(
+                    (
+                        _inf.name,
+                        max(0.0, time.perf_counter() - _inf.scheduled_time),
+                    ),
+                )
+        except Exception:
+            pass
 
     async def _handle_clarification(
         src_task: asyncio.Task,
@@ -1009,6 +1081,7 @@ async def async_tool_loop_inner(
 
                     # tool finished?
                     for t in done & tools_data.pending:
+                        _record_completed_task_duration(t)
                         await tools_data.process_completed_task(
                             task=t,
                             consecutive_failures=consecutive_failures,
@@ -1352,6 +1425,7 @@ async def async_tool_loop_inner(
                 needs_turn = False
                 # Only process completion for actual tool tasks; exclude helper waiters
                 for task in done & tools_data.pending:  # finished tool(s)
+                    _record_completed_task_duration(task)
                     if await tools_data.process_completed_task(
                         task=task,
                         consecutive_failures=consecutive_failures,
@@ -1520,6 +1594,9 @@ async def async_tool_loop_inner(
                 if max_parallel_tool_calls is not None:
                     _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
 
+                # Inject a persistent time-context system message before the LLM turn
+                await _inject_time_context_system_message()
+
                 llm_task = asyncio.create_task(
                     generate_with_preprocess(
                         client,
@@ -1607,6 +1684,7 @@ async def async_tool_loop_inner(
                     # — handle each newly-finished task exactly as branch A does
                     needs_turn = False
                     for task in done & pending_snapshot:
+                        _record_completed_task_duration(task)
                         if await tools_data.process_completed_task(
                             task=task,
                             consecutive_failures=consecutive_failures,
@@ -1703,6 +1781,9 @@ async def async_tool_loop_inner(
                     }
                     if max_parallel_tool_calls is not None:
                         _gen_kwargs["max_tool_calls"] = max_parallel_tool_calls
+
+                    # Inject a persistent time-context system message before the LLM turn
+                    await _inject_time_context_system_message()
 
                     _result = await generate_with_preprocess(
                         client,
