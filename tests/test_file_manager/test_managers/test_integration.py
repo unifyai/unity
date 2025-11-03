@@ -61,12 +61,14 @@ async def test_parse_all_supported_formats(file_manager, supported_file_examples
         # Parse the file
         result = fm.parse(display_name)
 
-        # Check result structure
+        # Check result structure (flattened fields)
         assert display_name in result
         file_result = result[display_name]
         assert file_result["status"] == "success"
         assert "records" in file_result
-        assert "metadata" in file_result
+        # flattened top-level file metadata
+        assert "file_type" in file_result
+        assert "file_size" in file_result
 
         # Check content was parsed - combine all record content
         all_content = " ".join(

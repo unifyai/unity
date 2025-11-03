@@ -245,3 +245,117 @@ async def test_ask_multiple_files_integration(file_manager, fm_root, tmp_path: P
     assert (
         verdict.lower().strip().startswith("correct")
     ), f"Judge deemed multi-file ask incorrect. Verdict: {verdict}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_about_file_triggers_filter_join_via_loop(
+    file_manager,
+    tmp_path: Path,
+):
+    """Ensure ask_about_file calls into filter-join when needed (simulated LLM loop)."""
+    fm = file_manager
+    p = tmp_path / "join_src.txt"
+    p.write_text("seed to create file record")
+    name = fm.import_file(p)
+    fm.parse(name)
+
+    # Track tool invocations
+    calls = {"filter_join": 0}
+
+    def _stub_loop(client, text, tools, **kwargs):  # type: ignore[override]
+        # Wrap filter_join to record invocation and return a canned result
+        orig_filter_join = tools.get("_filter_join")
+
+        def _wrapped_filter_join(**kw):
+            calls["filter_join"] += 1
+            # Return structure matching tool contract: mapping ctx->rows
+            return {"Derived": [{"product": "Alpha", "total": 3}]}
+
+        # Inject wrapper
+        tools = dict(tools)
+        if orig_filter_join is not None:
+            tools["_filter_join"] = _wrapped_filter_join
+
+        class _Handle:
+            async def result(self):
+                # Simulate the LLM deciding to use filter_join
+                _ = tools["_filter_join"](
+                    tables=["A", "B"],
+                    join_expr="A.id == B.id",
+                    select={"A.name": "product", "B.qty": "total"},
+                )
+                return "Answer: Alpha total 3"
+
+        return _Handle()
+
+    with patch(
+        "unity.file_manager.managers.file_manager.start_async_tool_loop",
+        side_effect=_stub_loop,
+    ):
+        handle = await fm.ask_about_file(
+            name,
+            "Compute total orders per product by joining tables",
+        )
+        ans = await handle.result()
+        assert "Alpha" in ans and "3" in ans
+        assert calls["filter_join"] >= 1
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_about_file_triggers_search_multi_join_via_loop(
+    file_manager,
+    tmp_path: Path,
+):
+    """Ensure ask_about_file can chain multi-join search (simulated)."""
+    fm = file_manager
+    p = tmp_path / "multi_join_src.txt"
+    p.write_text("seed")
+    name = fm.import_file(p)
+    fm.parse(name)
+
+    calls = {"search_multi_join": 0}
+
+    def _stub_loop(client, text, tools, **kwargs):  # type: ignore[override]
+        def _wrapped_search_multi_join(**kw):
+            calls["search_multi_join"] += 1
+            # Return list of rows (per contract)
+            return [{"product": "Beta", "score": 0.99}]
+
+        tools = dict(tools)
+        tools["_search_multi_join"] = _wrapped_search_multi_join
+
+        class _Handle:
+            async def result(self):
+                _ = tools["_search_multi_join"](
+                    joins=[
+                        {
+                            "tables": ["A", "B"],
+                            "join_expr": "A.id == B.id",
+                            "select": {"A.name": "product"},
+                        },
+                        {
+                            "tables": ["$prev", "C"],
+                            "join_expr": "product == C.name",
+                            "select": {"product": "product"},
+                        },
+                    ],
+                    references={"product": "Beta"},
+                    k=1,
+                )
+                return "Answer: Beta"
+
+        return _Handle()
+
+    with patch(
+        "unity.file_manager.managers.file_manager.start_async_tool_loop",
+        side_effect=_stub_loop,
+    ):
+        handle = await fm.ask_about_file(
+            name,
+            "Find the best matching product via multi-join search",
+        )
+        ans = await handle.result()
+        assert "Beta" in ans
+        assert calls["search_multi_join"] >= 1
