@@ -189,7 +189,7 @@ class TasksStore:
 
         Only the requested fields are returned in each row's entries payload to
         reduce payload size and backend processing time. The returned objects
-        still include their underlying log ids.
+        still include their underlying log ids. The log always includes task_id.
         """
         singular = isinstance(task_ids, int)
         original_id = task_ids if singular else None
