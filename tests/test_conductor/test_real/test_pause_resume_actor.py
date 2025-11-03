@@ -22,6 +22,8 @@ async def test_pause_actor_propagates_immediately_actor_path(monkeypatch):
     # Signal when Actor.act is scheduled and when pause() is invoked on the actor handle
     scheduled_evt = asyncio.Event()
     paused_evt = asyncio.Event()
+    interjected_evt = asyncio.Event()
+    captured_msgs: list[str] = []
 
     # Wrap SimulatedActor.act to notify when the actor handle is created/scheduled
     _orig_act = SimulatedActor.act
@@ -45,6 +47,23 @@ async def test_pause_actor_propagates_immediately_actor_path(monkeypatch):
 
     monkeypatch.setattr(SimulatedActorHandle, "pause", _wrapped_pause, raising=True)
 
+    # Wrap SimulatedActorHandle.interject to capture the child interjection message
+    _orig_interject = SimulatedActorHandle.interject
+
+    async def _wrapped_interject(self: SimulatedActorHandle, instruction: str):
+        try:
+            captured_msgs.append(instruction)
+            interjected_evt.set()
+        finally:
+            return await _orig_interject(self, instruction)
+
+    monkeypatch.setattr(
+        SimulatedActorHandle,
+        "interject",
+        _wrapped_interject,
+        raising=True,
+    )
+
     # Use a running simulated actor (no step auto-complete) so the session remains in-flight
     actor = SimulatedActor(steps=None, duration=20)
     cond = SimulatedConductor(actor=actor)
@@ -63,6 +82,14 @@ async def test_pause_actor_propagates_immediately_actor_path(monkeypatch):
 
     # The pause must be observed without LLM turns (tight timeout)
     await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
+
+    # The child interjection should arrive promptly after pausing
+    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
+
+    # Verify child-level interjection content
+    assert any(
+        "execution was paused due to test" in m for m in captured_msgs
+    ), "Expected child interjection after pause"
 
     # Sanity: the nested steer summary should record a pause application
     assert any(rec.get("method") == "pause" for rec in (result.get("applied") or []))
@@ -85,6 +112,8 @@ async def test_pause_actor_propagates_immediately_task_scheduler_path(monkeypatc
 
     scheduled_evt = asyncio.Event()
     paused_evt = asyncio.Event()
+    interjected_evt = asyncio.Event()
+    captured_msgs: list[str] = []
 
     # Wrap SimulatedActor.act to signal when the actor session starts under the scheduler
     _orig_act = SimulatedActor.act
@@ -108,6 +137,23 @@ async def test_pause_actor_propagates_immediately_task_scheduler_path(monkeypatc
 
     monkeypatch.setattr(SimulatedActorHandle, "pause", _wrapped_pause, raising=True)
 
+    # Capture interjections forwarded via ActiveTask → Actor path
+    _orig_interject = SimulatedActorHandle.interject
+
+    async def _wrapped_interject(self: SimulatedActorHandle, instruction: str):
+        try:
+            captured_msgs.append(instruction)
+            interjected_evt.set()
+        finally:
+            return await _orig_interject(self, instruction)
+
+    monkeypatch.setattr(
+        SimulatedActorHandle,
+        "interject",
+        _wrapped_interject,
+        raising=True,
+    )
+
     # Create a scheduler with the simulated actor and seed a runnable task
     actor = SimulatedActor(steps=None, duration=20)
     ts = TaskScheduler(actor=actor)
@@ -129,6 +175,14 @@ async def test_pause_actor_propagates_immediately_task_scheduler_path(monkeypatc
 
     # Confirm the pause reached the actor quickly (no extra LLM steps)
     await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
+
+    # Confirm the child interjection arrived shortly after
+    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
+
+    # Verify child-level interjection content
+    assert any(
+        "execution was paused due to maintenance" in m for m in captured_msgs
+    ), "Expected child interjection after pause (scheduler path)"
 
     # Sanity: the nested steer summary should include a pause application
     assert any(rec.get("method") == "pause" for rec in (result.get("applied") or []))
@@ -152,6 +206,9 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
     scheduled_evt = asyncio.Event()
     paused_evt = asyncio.Event()
     resumed_evt = asyncio.Event()
+    interjected_evt = asyncio.Event()
+    captured_msgs: list[str] = []
+    timestamps: dict[str, float] = {}
 
     _orig_act = SimulatedActor.act
 
@@ -174,12 +231,31 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
 
     def _wrapped_resume(self: SimulatedActorHandle, *a, **kw):
         try:
+            timestamps["resume"] = __import__("time").monotonic()
             resumed_evt.set()
         finally:
             return _orig_resume(self, *a, **kw)
 
     monkeypatch.setattr(SimulatedActorHandle, "pause", _wrapped_pause, raising=True)
     monkeypatch.setattr(SimulatedActorHandle, "resume", _wrapped_resume, raising=True)
+
+    # Capture child interjection and timestamp it
+    _orig_interject = SimulatedActorHandle.interject
+
+    async def _wrapped_interject(self: SimulatedActorHandle, instruction: str):
+        try:
+            captured_msgs.append(instruction)
+            timestamps["interject"] = __import__("time").monotonic()
+            interjected_evt.set()
+        finally:
+            return await _orig_interject(self, instruction)
+
+    monkeypatch.setattr(
+        SimulatedActorHandle,
+        "interject",
+        _wrapped_interject,
+        raising=True,
+    )
 
     actor = SimulatedActor(steps=None, duration=20)
     cond = SimulatedConductor(actor=actor)
@@ -206,12 +282,23 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
 
     # Now resume via the high-level helper; should be immediate
     result = await handle.resume_actor("test-resume")
+    # Interjection to child should occur before resume
+    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
     await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
 
     # Interjection should be applied when resume actually applied to a child
     assert any(
         rec.get("method") == "interject" for rec in (result.get("applied") or [])
     )
+
+    # Verify child-level interjection content and ordering (interject before resume)
+    assert any(
+        "execution was resumed due to test-resume" in m for m in captured_msgs
+    ), "Expected child interjection before resume"
+    if "interject" in timestamps and "resume" in timestamps:
+        assert (
+            timestamps["interject"] <= timestamps["resume"]
+        ), "Child interjection should precede resume"
 
     handle.stop("done")
     await handle.result()
@@ -228,6 +315,9 @@ async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch
     scheduled_evt = asyncio.Event()
     paused_evt = asyncio.Event()
     resumed_evt = asyncio.Event()
+    interjected_evt = asyncio.Event()
+    captured_msgs: list[str] = []
+    timestamps: dict[str, float] = {}
 
     _orig_act = SimulatedActor.act
 
@@ -250,12 +340,31 @@ async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch
 
     def _wrapped_resume(self: SimulatedActorHandle, *a, **kw):
         try:
+            timestamps["resume"] = __import__("time").monotonic()
             resumed_evt.set()
         finally:
             return _orig_resume(self, *a, **kw)
 
     monkeypatch.setattr(SimulatedActorHandle, "pause", _wrapped_pause, raising=True)
     monkeypatch.setattr(SimulatedActorHandle, "resume", _wrapped_resume, raising=True)
+
+    # Capture child interjection and timestamp it (scheduler path)
+    _orig_interject = SimulatedActorHandle.interject
+
+    async def _wrapped_interject(self: SimulatedActorHandle, instruction: str):
+        try:
+            captured_msgs.append(instruction)
+            timestamps["interject"] = __import__("time").monotonic()
+            interjected_evt.set()
+        finally:
+            return await _orig_interject(self, instruction)
+
+    monkeypatch.setattr(
+        SimulatedActorHandle,
+        "interject",
+        _wrapped_interject,
+        raising=True,
+    )
 
     actor = SimulatedActor(steps=None, duration=20)
     ts = TaskScheduler(actor=actor)
@@ -284,12 +393,22 @@ async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch
 
     # Now resume via the high-level helper; should be immediate
     result = await handle.resume_actor("maintenance-resume")
+    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
     await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
 
     # Interjection should be applied when resume actually applied to a child
     assert any(
         rec.get("method") == "interject" for rec in (result.get("applied") or [])
     )
+
+    # Verify child-level interjection content and ordering (interject before resume)
+    assert any(
+        "execution was resumed due to maintenance-resume" in m for m in captured_msgs
+    ), "Expected child interjection before resume (scheduler path)"
+    if "interject" in timestamps and "resume" in timestamps:
+        assert (
+            timestamps["interject"] <= timestamps["resume"]
+        ), "Child interjection should precede resume (scheduler path)"
 
     handle.stop("done")
     await handle.result()
