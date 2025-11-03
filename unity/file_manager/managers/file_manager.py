@@ -8,7 +8,7 @@ from typing import AsyncIterator
 
 import unify
 
-from unity.common.tool_spec import manager_tool
+from unity.common.tool_spec import manager_tool, read_only
 from unity.file_manager.base import BaseFileManager
 from unity.file_manager.parser.base import BaseParser
 from unity.file_manager.parser.docling_parser import DoclingParser
@@ -26,8 +26,8 @@ from unity.file_manager.prompt_builders import (
 )
 from unity.common.llm_helpers import (
     methods_to_tool_dict,
-    make_request_clarification_tool,
 )
+from unity.common.clarification_tools import add_clarification_tool_with_events
 from unity.common.async_tool_loop import (
     TOOL_LOOP_LINEAGE,
     SteerableToolHandle,
@@ -37,7 +37,6 @@ from unity.constants import is_readonly_ask_guard_enabled
 from unity.constants import is_semantic_cache_enabled
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from unity.events.manager_event_logging import log_manager_call
-from unity.events.event_bus import EVENT_BUS, Event
 from unity.common.context_store import TableStore
 from unity.common.model_to_fields import model_to_fields
 from unity.common.filter_utils import normalize_filter_expr
@@ -173,18 +172,22 @@ class FileManager(BaseFileManager):
         self._BUILTIN_FIELDS: tuple[str, ...] = tuple(FileRecord.model_fields.keys())
 
         # Public tool dictionaries, mirroring other managers
+        # Ask/AskAboutFile tool surfaces (read-only). Ask has the same tools as
+        # ask_about_file, minus low-level adapter byte/open helpers.
         ask_tools: Dict[str, Callable] = methods_to_tool_dict(
-            # Unify-backed retrieval helpers
+            # Retrieval helpers
             self._list_columns,
             self._tables_overview,
             self._filter_files,
             self._search_files,
-            # Basic helpers
+            # Inventory listing
             self.list,
-            self._exists,
+            # Parse when missing (policy enforced in prompts)
             self.parse,
-            # Allow ask() to delegate specific-file questions directly
+            # Delegate to file-scoped Q&A when needed
             self.ask_about_file,
+            # Simple existence probe (JSON-safe)
+            self._exists,
             include_class_name=False,
         )
         self.add_tools("ask", ask_tools)
@@ -204,9 +207,6 @@ class FileManager(BaseFileManager):
             self._tables_overview,
             self._filter_files,
             self._search_files,
-            # Adapter wrappers for file-specific inspection
-            self._adapter_get,
-            self._adapter_open_bytes,
             # Join/multi-join tools for file-scoped analysis
             self._filter_join,
             self._search_join,
@@ -216,15 +216,10 @@ class FileManager(BaseFileManager):
             include_class_name=False,
         )
         self.add_tools("ask_about_file", ask_about_file_tools)
+        # Organize is mutation-focused. It may call ask() to gather context,
+        # but should not receive direct read-only retrieval tools itself.
         organize_tools: Dict[str, Callable] = methods_to_tool_dict(
-            # Retrieval surface
-            self._list_columns,
-            self._tables_overview,
-            self._filter_files,
-            self._search_files,
-            # Inventory helpers
-            self.list,
-            self._exists,
+            self.ask,
             self._rename_file,
             self._move_file,
             self._delete_file,
@@ -334,6 +329,7 @@ class FileManager(BaseFileManager):
         return _ops_per_file_ctx(self, filename=filename)
 
     # ---------- Join helpers (delegations to search module) ------------------- #
+    @read_only
     def _resolve_table_ref(self, ref: str) -> str:
         """
         Resolve a table reference to a fully-qualified Unify context.
@@ -400,6 +396,7 @@ class FileManager(BaseFileManager):
         )
 
     # ---------- Adapter wrappers (bytes + identifiers only) ----------------- #
+    @read_only
     def _adapter_list(self) -> List[str]:
         """
         Return adapter file paths/ids for this filesystem.
@@ -489,6 +486,7 @@ class FileManager(BaseFileManager):
             return self._adapter.open_bytes(filename)
         raise FileNotFoundError(f"Unable to resolve file bytes for '{filename}'")
 
+    @read_only
     def _exists(self, *, filename: str) -> Dict[str, Any]:
         """
         Check if a file exists in the filesystem and return a JSON-safe payload.
@@ -1406,18 +1404,24 @@ class FileManager(BaseFileManager):
                                     document=document,
                                     config=cfg,
                                 )
-                            except Exception:
-                                continue
-                    except Exception:
-                        pass
+                            except Exception as e:
+                                results[name] = _Doc.error_result(
+                                    name,
+                                    f"post-parse hook failed: {e}",
+                                )
+                    except Exception as e:
+                        results[name] = _Doc.error_result(
+                            name,
+                            f"post-parse hooks failed: {e}",
+                        )
                     result = document.to_parse_result(
                         name,
                         auto_counting=cfg.ingest.auto_counting_per_file,
                         document_index=idx,
                     )
-                except Exception as e:
-                    result = _Doc.error_result(name, f"result build failed: {e}")
                     results[name] = result
+                except Exception as e:
+                    results[name] = _Doc.error_result(name, f"parse failed: {e}")
 
                 # Ingest (index + content + tables) and then embed
                 inserted_ids = self._ingest(
@@ -1515,10 +1519,17 @@ class FileManager(BaseFileManager):
                                         document=document,
                                         config=cfg,
                                     )
-                                except Exception:
+                                except Exception as e:
+                                    yield _Doc.error_result(
+                                        name,
+                                        f"post-parse hook failed: {e}",
+                                    )
                                     continue
                         except Exception:
-                            pass
+                            yield _Doc.error_result(
+                                name,
+                                f"post-parse hooks failed: {e}",
+                            )
                         result = document.to_parse_result(
                             name,
                             auto_counting=cfg.ingest.auto_counting_per_file,
@@ -1585,6 +1596,7 @@ class FileManager(BaseFileManager):
                     pass
 
     # ---------- Unify table helpers (schema + retrieval) ------------------ #
+    @read_only
     def _get_columns(self) -> Dict[str, str]:
         """
         Return a mapping of column names to their Unify data types for the index.
@@ -1596,6 +1608,7 @@ class FileManager(BaseFileManager):
         """
         return _storage_get_columns(self)
 
+    @read_only
     def _tables_overview(
         self,
         *,
@@ -1626,6 +1639,7 @@ class FileManager(BaseFileManager):
             file=file,
         )
 
+    @read_only
     def _num_files(self) -> int:
         """
         Return the total number of files present in the index context.
@@ -1645,6 +1659,7 @@ class FileManager(BaseFileManager):
         except Exception:
             return 0
 
+    @read_only
     def _list_columns(
         self,
         *,
@@ -1694,6 +1709,7 @@ class FileManager(BaseFileManager):
                 allowed.append(b)
         return allowed
 
+    @read_only
     def _filter_files(
         self,
         *,
@@ -1746,6 +1762,7 @@ class FileManager(BaseFileManager):
             self._data_store.put(lg.entries)
         return rows
 
+    @read_only
     def _search_files(
         self,
         *,
@@ -1794,6 +1811,7 @@ class FileManager(BaseFileManager):
         return [FileRecord(**r) for r in rows]
 
     # ---------- Per-file join and multi-join tools (read-only) -------------- #
+    @read_only
     def _filter_join(
         self,
         *,
@@ -1847,6 +1865,7 @@ class FileManager(BaseFileManager):
             result_offset=result_offset,
         )
 
+    @read_only
     def _search_join(
         self,
         *,
@@ -1900,6 +1919,7 @@ class FileManager(BaseFileManager):
             filter=filter,
         )
 
+    @read_only
     def _filter_multi_join(
         self,
         *,
@@ -1937,6 +1957,7 @@ class FileManager(BaseFileManager):
             result_offset=result_offset,
         )
 
+    @read_only
     def _search_multi_join(
         self,
         *,
@@ -2046,28 +2067,25 @@ class FileManager(BaseFileManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """
-        Require specific discovery tools on the first step; auto thereafter.
+        """Require search_files on the first step; auto thereafter."""
+        if step_index < 1 and "search_files" in current_tools:
+            return (
+                "required",
+                {"search_files": current_tools["search_files"]},
+            )
+        return ("auto", current_tools)
 
-        Parameters
-        ----------
-        step_index : int
-            Zero-based step counter in the tool loop.
-        current_tools : dict[str, Any]
-            Tool name → tool spec mapping available at this step.
-
-        Returns
-        -------
-        tuple[str, dict]
-            Policy mode ("required" or "auto") and possibly reduced tool mapping.
-        """
-        if step_index < 1:
-            required = {}
-            for name in ("_search_files",):
-                if name in current_tools:
-                    required[name] = current_tools[name]
-            if required:
-                return ("required", required)
+    @staticmethod
+    def _default_ask_about_file_tool_policy(
+        step_index: int,
+        current_tools: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        """Require search_files on the first step; auto thereafter."""
+        if step_index < 1 and "search_files" in current_tools:
+            return (
+                "required",
+                {"search_files": current_tools["search_files"]},
+            )
         return ("auto", current_tools)
 
     @staticmethod
@@ -2075,28 +2093,9 @@ class FileManager(BaseFileManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """
-        Prefer targeted search/filter tools on the first step; auto thereafter.
-
-        Parameters
-        ----------
-        step_index : int
-            Zero-based step counter in the tool loop.
-        current_tools : dict[str, Any]
-            Tool name → tool spec mapping available at this step.
-
-        Returns
-        -------
-        tuple[str, dict]
-            Policy mode ("required" or "auto") and possibly reduced tool mapping.
-        """
-        if step_index < 1:
-            required = {}
-            for name in ("_search_files", "_filter_files"):
-                if name in current_tools:
-                    required[name] = current_tools[name]
-            if required:
-                return ("required", required)
+        """Require ask on the first step; auto thereafter."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
     # ---------- High-level importers (delegated to adapter) ---------------- #
@@ -2230,52 +2229,18 @@ class FileManager(BaseFileManager):
         """
         client = new_llm_client()
         tools = dict(self.get_tools("ask"))
+
         # Expose join/multi-join tools for cross-context retrieval
-        try:
-            tools.update(dict(self.get_tools("ask.multi_table")))
-        except Exception:
-            pass
+        tools.update(dict(self.get_tools("ask.multi_table")))
+
         if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "FileManager",
-                                "method": "ask",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            async def _on_answer(ans: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "FileManager",
-                                "method": "ask",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 _clarification_up_q,
                 _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="FileManager",
+                method="ask",
+                call_id=_call_id,
             )
 
         include_activity = (
@@ -2362,46 +2327,13 @@ class FileManager(BaseFileManager):
         client = new_llm_client()
         tools = dict(self.get_tools("ask_about_file"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "FileManager",
-                                "method": "ask_about_file",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            async def _on_answer(ans: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "FileManager",
-                                "method": "ask_about_file",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 _clarification_up_q,
                 _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="FileManager",
+                method="ask_about_file",
+                call_id=_call_id,
             )
         include_activity = (
             self._rolling_summary_in_prompts
@@ -2421,6 +2353,11 @@ class FileManager(BaseFileManager):
             indent=2,
         )
         use_semantic_cache = "both" if is_semantic_cache_enabled() else None
+        tool_policy_fn = (
+            None
+            if use_semantic_cache in ("read", "both")
+            else self._default_ask_about_file_tool_policy
+        )
         handle = start_async_tool_loop(
             client,
             user_blob,
@@ -2428,11 +2365,7 @@ class FileManager(BaseFileManager):
             loop_id=f"{self.__class__.__name__}.ask_about_file",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            tool_policy=(
-                None
-                if use_semantic_cache in ("read", "both")
-                else (lambda i, t: ("auto", t))
-            ),
+            tool_policy=tool_policy_fn,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
@@ -2482,46 +2415,13 @@ class FileManager(BaseFileManager):
         client = new_llm_client()
         tools = dict(self.get_tools("organize"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "FileManager",
-                                "method": "organize",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            async def _on_answer(ans: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "FileManager",
-                                "method": "organize",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 _clarification_up_q,
                 _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="FileManager",
+                method="organize",
+                call_id=_call_id,
             )
         include_activity = (
             self._rolling_summary_in_prompts
