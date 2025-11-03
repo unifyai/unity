@@ -1177,7 +1177,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_ids: Union[int, List[int]],
-        return_ids_only: Literal[True],
+        return_ids_only: Literal[True] = True,
     ) -> List[int]: ...
 
     @overload
