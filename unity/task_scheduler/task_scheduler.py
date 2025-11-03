@@ -14,7 +14,7 @@ import unify
 import asyncio
 import functools
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Union, Callable
+from typing import Dict, List, Any, Optional, Union, Callable, Tuple
 from typing import Literal, overload
 from dataclasses import dataclass
 from pydantic import BaseModel, Field
@@ -303,7 +303,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Registry of corrective plans per active task so we can restore their
         # original position on defer stop. Map: task_id -> ReintegrationPlan
-        self._reintegration_plans: dict[int, "ReintegrationPlan"] = {}
+        self._reintegration_plans: Dict[Tuple[int, int], "ReintegrationPlan"] = {}
         self._reintegration_manager = ReintegrationManager(self)
         # Queue index, log-id memoization and id allocator are centralized in
         # LocalTaskView.
