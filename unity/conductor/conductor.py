@@ -53,6 +53,7 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..constants import is_semantic_cache_enabled
+from .concurrency_guard import ActiveSessionRegistry
 
 
 class Conductor(BaseConductor):
@@ -165,6 +166,7 @@ class Conductor(BaseConductor):
 
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore
+        self._session_guard = ActiveSessionRegistry()
 
         # These two dicts are rebuilt lazily before every ask/request
         """Re-compute passive / active tool maps based on current active task."""
@@ -216,31 +218,42 @@ class Conductor(BaseConductor):
 
         # Enforce mutual exclusion between Actor.act and TaskScheduler.execute by
         # tracking a single active handle and masking both tools while one is active.
-        def _wrap_and_track(orig_callable):
+        def _wrap_and_track(orig_callable, *, kind: str):
             @functools.wraps(orig_callable)
             async def _wrapper(*args, **kwargs):
+                # 1) Reserve the global interactive slot
+                kind_norm = "actor" if kind == "actor" else "execute"
+                reserved = await self._session_guard.try_reserve(kind_norm)
+                if not reserved:
+                    return (
+                        "An interactive session is already in progress. "
+                        "Use interject/ask/stop on the current session instead of starting a new one."
+                    )
+
+                # 2) Call underlying tool and adopt the handle
                 res = orig_callable(*args, **kwargs)
                 if asyncio.iscoroutine(res):
                     res = await res
-                try:
-                    from unity.common.async_tool_loop import SteerableToolHandle  # type: ignore
+                from unity.common.async_tool_loop import SteerableToolHandle  # type: ignore
 
-                    if isinstance(res, SteerableToolHandle):
-                        self._active_task = res  # type: ignore[assignment]
+                if isinstance(res, SteerableToolHandle):
+                    # Track on Conductor and registry for masking and steering
+                    self._active_task = res  # type: ignore[assignment]
+                    await self._session_guard.adopt(res, kind_norm)
 
-                        async def _clear_when_done(h):
-                            try:
-                                await h.result()
-                            except Exception:
-                                pass
-                            finally:
-                                if getattr(self, "_active_task", None) is h:
-                                    self._active_task = None  # type: ignore[assignment]
+                    async def _clear_when_done(h):
+                        try:
+                            await h.result()
+                        finally:
+                            # Clear both registry and Conductor state if still owned by this handle
+                            await self._session_guard.release_if(h)
+                            if getattr(self, "_active_task", None) is h:
+                                self._active_task = None  # type: ignore[assignment]
 
-                        asyncio.create_task(_clear_when_done(res))
-                except Exception:
-                    # Best-effort tracking only; never break the tool call
-                    pass
+                    asyncio.create_task(_clear_when_done(res))
+                else:
+                    # No handle returned – release reservation immediately
+                    await self._session_guard.release_if(None)
                 return res
 
             # Preserve original signature/annotations so tool schema stays accurate
@@ -257,7 +270,13 @@ class Conductor(BaseConductor):
             return _wrapper
 
         # Locate canonical keys for the two entry-points (names include class prefixes)
-        actor_key = next((k for k in active if "actor_act" in k.lower()), None)
+        # Actor: accept any key that looks like Actor_*act (robust to monkeypatch-renamed methods)
+        actor_candidates = [
+            k
+            for k in active
+            if k.lower().startswith("actor_") and k.lower().endswith("act")
+        ]
+        actor_key = actor_candidates[0] if actor_candidates else None
         exec_key = next(
             (k for k in active if "taskscheduler_execute" in k.lower()),
             None,
@@ -267,23 +286,26 @@ class Conductor(BaseConductor):
             _orig = active[actor_key]
             if isinstance(_orig, ToolSpec):
                 active[actor_key] = ToolSpec(
-                    fn=_wrap_and_track(_orig.fn),
+                    fn=_wrap_and_track(_orig.fn, kind="actor"),
                     max_concurrent=_orig.max_concurrent,
                     max_total_calls=_orig.max_total_calls,
                 )
             else:
-                active[actor_key] = _wrap_and_track(_orig)  # type: ignore[arg-type]
+                active[actor_key] = _wrap_and_track(_orig, kind="actor")  # type: ignore[arg-type]
+            # Provide a stable alias 'Actor_act' so the LLM consistently recognizes the entry-point
+            if actor_key != "Actor_act" and "Actor_act" not in active:
+                active["Actor_act"] = active[actor_key]
 
         if exec_key is not None:
             _orig = active[exec_key]
             if isinstance(_orig, ToolSpec):
                 active[exec_key] = ToolSpec(
-                    fn=_wrap_and_track(_orig.fn),
+                    fn=_wrap_and_track(_orig.fn, kind="execute"),
                     max_concurrent=_orig.max_concurrent,
                     max_total_calls=_orig.max_total_calls,
                 )
             else:
-                active[exec_key] = _wrap_and_track(_orig)  # type: ignore[arg-type]
+                active[exec_key] = _wrap_and_track(_orig, kind="execute")  # type: ignore[arg-type]
 
         self.add_tools("request", active)
 
@@ -606,10 +628,11 @@ class Conductor(BaseConductor):
                 active = getattr(self, "_active_task", None)
                 if active is not None and not active.done():
                     # Remove both entry-points from the base toolkit; dynamic helpers remain available
-                    actor_key = next(
-                        (k for k in list(filtered) if "actor_act" in k.lower()),
-                        None,
-                    )
+                    actor_keys = [
+                        k
+                        for k in list(filtered)
+                        if k.lower().startswith("actor_") and k.lower().endswith("act")
+                    ]
                     exec_key = next(
                         (
                             k
@@ -618,8 +641,8 @@ class Conductor(BaseConductor):
                         ),
                         None,
                     )
-                    if actor_key:
-                        filtered.pop(actor_key, None)
+                    for ak in actor_keys:
+                        filtered.pop(ak, None)
                     if exec_key:
                         filtered.pop(exec_key, None)
             except Exception:
