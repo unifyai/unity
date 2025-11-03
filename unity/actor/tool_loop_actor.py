@@ -593,7 +593,7 @@ class ToolLoopPlan(BaseActiveTask):
         message: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
-        image_refs: list | None = None,
+        images: list | None = None,
     ) -> str:
         if not self._is_valid_method("interject"):
             if self.done():
@@ -619,7 +619,7 @@ class ToolLoopPlan(BaseActiveTask):
             await self._loop_handle.interject(
                 message=message,
                 parent_chat_context_cont=parent_chat_context_cont,
-                image_refs=image_refs,
+                images=images,
             )
         except TypeError:
             await self._loop_handle.interject(message)

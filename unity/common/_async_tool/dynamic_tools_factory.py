@@ -10,7 +10,7 @@ from .tools_data import ToolsData
 from .messages import forward_handle_call
 from .tools_utils import ToolCallMetadata
 from .images import (
-    append_image_refs_with_source,
+    append_images_with_source,
 )
 from .utils import maybe_await
 from unity.image_manager.types.image_refs import ImageRefs
@@ -184,7 +184,7 @@ class DynamicToolFactory:
                 )
             # Append any provided images into the live registry/log
             try:
-                append_image_refs_with_source(_kw.get("images"))
+                append_images_with_source(_kw.get("images"))
             except Exception:
                 pass
             if not task.done():
@@ -243,7 +243,7 @@ class DynamicToolFactory:
                     )
                 # Append any provided images into the live registry/log
                 try:
-                    append_image_refs_with_source(_kw.get("images"))
+                    append_images_with_source(_kw.get("images"))
                 except Exception:
                     pass
                 return {
@@ -286,7 +286,7 @@ class DynamicToolFactory:
                 await task_info.interject_queue.put(actual)
                 # Append any provided images into the live registry/log
                 try:
-                    append_image_refs_with_source(images)
+                    append_images_with_source(images)
                 except Exception:
                     pass
                 return {
@@ -394,7 +394,7 @@ class DynamicToolFactory:
 
         async def _clarify(answer: str, images: ImageRefs | None = None) -> Dict[str, str]:  # type: ignore[valid-type]
             try:
-                append_image_refs_with_source(images)
+                append_images_with_source(images)
             except Exception:
                 pass
             return {

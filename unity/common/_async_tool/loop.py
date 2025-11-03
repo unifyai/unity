@@ -40,7 +40,7 @@ from .images import (
     set_live_images_context,
     reset_live_images_context,
     build_live_image_tools,
-    append_image_refs_with_source,
+    append_images_with_source,
     get_image_log_entries,
     has_live_images_context,
     LIVE_IMAGES_REGISTRY,
@@ -366,7 +366,7 @@ async def async_tool_loop_inner(
         nonlocal image_log_last_len
         with suppress(Exception):
             prev_len = image_log_last_len
-            append_image_refs_with_source(images_any)
+            append_images_with_source(images_any)
             try:
                 _logs = get_image_log_entries()
                 for _iid, _annotation in _logs[image_log_last_len:]:
@@ -960,7 +960,7 @@ async def async_tool_loop_inner(
         with suppress(Exception):
             images_from_child = None
             if isinstance(payload, dict):
-                images_from_child = payload.get("images", payload.get("image_refs"))
+                images_from_child = payload.get("images", payload.get("images"))
             if _append_and_log_images_safely(images_from_child):
                 await _inject_live_images_overview("notification_images")
 
@@ -1151,7 +1151,7 @@ async def async_tool_loop_inner(
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
                     _ctx_cont = extra.get("parent_chat_context_continuted")
-                    _incoming_images = extra.get("image_refs")
+                    _incoming_images = extra.get("images")
                     with suppress(Exception):
                         _ctx_str = (
                             json.dumps(_ctx_cont, indent=2)
@@ -1924,7 +1924,7 @@ async def async_tool_loop_inner(
                             except Exception:
                                 reason_txt = ""
                             if _append_and_log_images_safely(
-                                payload.get("images", payload.get("image_refs")),
+                                payload.get("images", payload.get("images")),
                             ):
                                 await _inject_live_images_overview("stop_helper_images")
 
@@ -2086,7 +2086,7 @@ async def async_tool_loop_inner(
                             if _append_and_log_images_safely(
                                 (args.get("images") if isinstance(args, dict) else None)
                                 or (
-                                    args.get("image_refs")
+                                    args.get("images")
                                     if isinstance(args, dict)
                                     else None
                                 ),
@@ -2164,7 +2164,7 @@ async def async_tool_loop_inner(
                         # Record any images provided with the interjection helper
                         with suppress(Exception):
                             if _append_and_log_images_safely(
-                                payload.get("images", payload.get("image_refs")),
+                                payload.get("images", payload.get("images")),
                             ):
                                 await _inject_live_images_overview(
                                     "interject_helper_images",
