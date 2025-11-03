@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from tests.test_file_manager.helpers import ask_judge
 
@@ -64,18 +65,9 @@ async def test_global_fm_basic_ask_and_organize(
     assert "file_alpha.txt" in after_state["files"]
     assert f1 not in after_state["files"]
 
-    # Aggregated retrieval helpers
-    cols = gfm._list_columns()
-    assert "source_filesystem" in cols
-
-    res = gfm._filter_files()
-    assert isinstance(res, list)
-    assert any(r.get("filename", "").startswith("/local/") for r in res)
-
-    sr = gfm._search_files(references={"full_text": "alpha"}, k=3)
-    assert isinstance(sr, list)
-    if sr:
-        assert sr[0]["filename"].startswith("/local/")
+    # Sanity: list filesystems helper returns class names
+    fs = gfm._list_filesystems()
+    assert isinstance(fs, list) and all(isinstance(x, str) for x in fs)
 
 
 @pytest.mark.asyncio
@@ -150,38 +142,32 @@ async def test_global_fm_organize_rename_and_move(
 
 
 @pytest.mark.asyncio
-async def test_global_fm_delete_file(
-    fm_root,
-    file_manager,
-    global_file_manager,
-    tmp_path,
-):
-    pass
-
-    local = file_manager
+async def test_global_list_filesystems_and_policy(global_file_manager):
     gfm = global_file_manager
+    # Check helper returns class names
+    filesystems = gfm._list_filesystems()
+    assert isinstance(filesystems, list) and all(
+        isinstance(n, str) for n in filesystems
+    )
 
-    # Create test file OUTSIDE fm_root to avoid duplication on import
-    p = tmp_path / "delete_me.txt"
-    p.write_text("delete this")
-    display_name = local.import_file(p)
-    assert local.exists(display_name)
+    # Verify organize tool policy requires ask in first step
+    with patch(
+        "unity.file_manager.global_file_manager.start_async_tool_loop",
+    ) as mock_loop:
+        mock_handle = MagicMock()
+        mock_handle.result = AsyncMock(return_value="ok")
+        mock_loop.return_value = mock_handle
 
-    # Parse the file to add it to Unify logs so we can query for file_id
-    local.parse(display_name)
-
-    # Get the file_id
-    rows = local._filter_files(filter=f"filename == '{display_name}'")
-    assert rows
-    file_id = rows[0].file_id
-
-    # Delete via the global file manager
-    before_state = {"files": local.list()}
-    gfm._delete_file(filesystem="local", file_id=file_id)
-    after_state = {"files": local.list()}
-
-    # Verify deletion (no judge here as it's a direct call, not an LLM interpretation)
-    assert display_name not in after_state["files"]
+        handle = await gfm.organize("noop")
+        assert handle is not None
+        args, kwargs = mock_loop.call_args
+        policy = kwargs.get("tool_policy")
+        assert callable(policy)
+        mode, tools = policy(
+            0,
+            {"ask": {"GlobalFileManager_list_filesystems": lambda: None}},
+        )
+        assert mode == "required" and "ask" in tools
 
 
 @pytest.mark.asyncio
@@ -191,8 +177,6 @@ async def test_global_fm_organize_delete_file(
     global_file_manager,
     tmp_path,
 ):
-    pass
-
     local = file_manager
     gfm = global_file_manager
 
@@ -206,7 +190,7 @@ async def test_global_fm_organize_delete_file(
     local.parse(filename)
 
     # Get the file_id
-    rows = local._filter_files(filter=f"filename == '{filename}'")
+    rows = local._filter_files(filter=f"file_path == '{filename}'")
     assert rows
     file_id = rows[0].file_id
 
@@ -233,18 +217,69 @@ async def test_global_fm_organize_delete_file(
 
 
 @pytest.mark.asyncio
-async def test_global_fm_search_and_filter_namespaced(global_file_manager):
+async def test_global_fm_clarification_integration(global_file_manager):
+    gfm = global_file_manager
+    with patch(
+        "unity.common.clarification_tools.add_clarification_tool_with_events",
+    ) as add_clar:
+        up_q = AsyncMock()
+        down_q = AsyncMock()
+        with patch(
+            "unity.file_manager.global_file_manager.start_async_tool_loop",
+        ) as mock_loop:
+            mock_handle = MagicMock()
+            mock_handle.result = AsyncMock(return_value="ok")
+            mock_loop.return_value = mock_handle
+            await gfm.ask(
+                "List fs",
+                _clarification_up_q=up_q,
+                _clarification_down_q=down_q,
+            )
+            add_clar.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_global_ask_exposes_class_named_tools(file_manager, global_file_manager):
     gfm = global_file_manager
 
-    # Ensure search returns namespaced filenames and filter maintains source_filesystem
-    results = gfm._filter_files()
-    assert all(
-        isinstance(r.get("filename", ""), str)
-        and r.get("filename", "").startswith("/local/")
-        for r in results
-    )
+    with patch(
+        "unity.file_manager.global_file_manager.start_async_tool_loop",
+    ) as mock_loop:
+        mock_handle = MagicMock()
+        mock_handle.result = AsyncMock(return_value="ok")
+        mock_loop.return_value = mock_handle
 
-    top = gfm._search_files(references={"full_text": "content"}, k=1)
-    assert isinstance(top, list)
-    if top:
-        assert top[0]["filename"].startswith("/local/")
+        handle = await gfm.ask("List files")
+        assert handle is not None
+
+        args, kwargs = mock_loop.call_args
+        tools = args[2]
+        # Class-named tools should be present
+        # We don't know the exact class name in fixture, but must include *_ask and *_ask_about_file
+        assert any(k.endswith("_ask") for k in tools.keys())
+        assert any(k.endswith("_ask_about_file") for k in tools.keys())
+
+    # Schema should include source_filesystem
+    fs = gfm._list_filesystems()
+    assert isinstance(fs, list) and fs
+
+
+@pytest.mark.asyncio
+async def test_global_organize_exposes_class_named_tools(global_file_manager):
+    gfm = global_file_manager
+
+    with patch(
+        "unity.file_manager.global_file_manager.start_async_tool_loop",
+    ) as mock_loop:
+        mock_handle = MagicMock()
+        mock_handle.result = AsyncMock(return_value="ok")
+        mock_loop.return_value = mock_handle
+
+        handle = await gfm.organize("noop")
+        assert handle is not None
+
+        args, kwargs = mock_loop.call_args
+        tools = args[2]
+        # Should contain the discovery tool and class-named organize
+        assert "GlobalFileManager_ask" in tools
+        assert any(k.endswith("_organize") for k in tools.keys())

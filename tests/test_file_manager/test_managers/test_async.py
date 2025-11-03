@@ -15,13 +15,13 @@ async def test_parse_async_single_file(file_manager, supported_file_examples: di
     filename, example_data = next(iter(supported_file_examples.items()))
     display_name = file_manager.import_file(example_data["path"])  # new API
 
-    # Parse asynchronously
+    # Parse asynchronously (defaults)
     results = []
     async for result in file_manager.parse_async(display_name):
         results.append(result)
 
     assert len(results) == 1
-    assert results[0]["filename"] == display_name
+    assert results[0]["file_path"] == display_name
     assert results[0]["status"] == "success"
 
 
@@ -39,7 +39,7 @@ async def test_parse_async_multiple_files(file_manager, supported_file_examples:
     filenames_seen = set()
     async for result in file_manager.parse_async(imported):
         results.append(result)
-        filenames_seen.add(result["filename"])
+        filenames_seen.add(result["file_path"])
 
     # Should get result for each file
     assert len(results) == len(imported)
@@ -60,9 +60,12 @@ async def test_parse_async_with_batch_size(file_manager, supported_file_examples
         display_name = file_manager.import_file(example_data["path"])  # new API
         imported.append(display_name)
 
-    # Parse with small batch size
+    # Parse with small batch size via config
+    from unity.file_manager.types.config import FilePipelineConfig, ParseConfig
+
+    cfg = FilePipelineConfig(parse=ParseConfig(batch_size=2))
     results = []
-    async for result in file_manager.parse_async(imported, batch_size=2):
+    async for result in file_manager.parse_async(imported, config=cfg):
         results.append(result)
 
     assert len(results) == len(imported)
@@ -112,14 +115,17 @@ async def test_parse_async_with_options(file_manager, supported_file_examples: d
         display_name = file_manager.import_file(example_data["path"])  # new API
         imported.append(display_name)
 
-    # Parse with options
+    # Parse with options via config
+    from unity.file_manager.types.config import FilePipelineConfig, ParseConfig
+
+    cfg = FilePipelineConfig(
+        parse=ParseConfig(
+            batch_size=3,
+            parser_kwargs={"max_chunk_size": 100, "chunk_overlap": 20},
+        ),
+    )
     results = []
-    async for result in file_manager.parse_async(
-        imported,
-        batch_size=3,
-        max_chunk_size=100,
-        chunk_overlap=20,
-    ):
+    async for result in file_manager.parse_async(imported, config=cfg):
         results.append(result)
 
     assert len(results) == len(imported)

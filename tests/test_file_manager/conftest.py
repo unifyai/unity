@@ -131,7 +131,7 @@ def file_manager(fm_root: str) -> LocalFileManager:
 def global_file_manager(file_manager):
     """Return the singleton GlobalFileManager configured with the local manager."""
     local = file_manager
-    gfm = GlobalFileManager({"local": local})
+    gfm = GlobalFileManager([local])
     return gfm
 
 
