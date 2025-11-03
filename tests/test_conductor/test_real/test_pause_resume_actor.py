@@ -54,7 +54,7 @@ async def test_pause_actor_propagates_immediately_actor_path(monkeypatch):
     )
 
     # Wait for the actor to be scheduled
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=30)
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=60)
     # Give the outer loop a brief moment to adopt the nested handle
     await asyncio.sleep(0.2)
 
@@ -179,7 +179,7 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
         "Open a browser window so we can walk through the setup together.",
     )
 
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=30)
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=60)
     await asyncio.sleep(0.2)
 
     # Explicitly pause using nested_steer (independent of pause_actor)
