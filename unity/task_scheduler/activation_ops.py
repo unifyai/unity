@@ -81,10 +81,7 @@ def detach_from_queue_for_activation(
         head_start_at = start_at.isoformat() if start_at is not None else None
     else:
         # Prefer LocalTaskView for a single-step head start_at resolution.
-        try:
-            _qid = task_row.queue_id
-        except Exception:
-            _qid = None
+        _qid = task_row.queue_id
         if isinstance(_qid, int):
             try:
                 head_start_at = scheduler._view.get_head_start_at(int(_qid))  # type: ignore[attr-defined]
@@ -161,10 +158,6 @@ def detach_from_queue_for_activation(
     # regardless of execution scope. This enables queue execution with later
     # reinstatement to the original position when requested.
     # Capture current queue_id from the row (top-level), never from schedule
-    try:
-        queue_id = task_row.queue_id
-    except Exception:
-        queue_id = None
 
     plan = ReintegrationPlan(
         task_id=task_id,
@@ -175,7 +168,7 @@ def detach_from_queue_for_activation(
         was_head=prev_tid is None,
         original_status=task_row.status,
         head_start_at=head_start_at,
-        queue_id=queue_id,
+        queue_id=task_row.queue_id,
     )
     # Store per-instance plan (single source of truth)
     key = (
