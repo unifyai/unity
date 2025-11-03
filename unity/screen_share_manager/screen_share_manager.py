@@ -561,7 +561,7 @@ class ScreenShareManager:
             for event in consolidated_visual_events:
                  items_to_add.append({
                     "data": self._strip_data_url_prefix(event["after_frame_b64"]),
-                    "auto_caption": True,
+                    "auto_caption": self.settings.use_auto_captions,
                     "_timestamp": event["timestamp"],
                 })
 
@@ -569,7 +569,7 @@ class ScreenShareManager:
             ts, b64 = turn_state.latest_frame
             items_to_add.append({
                 "data": self._strip_data_url_prefix(b64), 
-                "auto_caption": True,
+                "auto_caption": self.settings.use_auto_captions,
                 "_timestamp": ts
             })
 

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 from unittest.mock import patch, AsyncMock, MagicMock
 from pathlib import Path
@@ -91,6 +92,7 @@ async def test_full_api_flow_detection_and_annotation(mocked_manager):
     manager, mocks = mocked_manager
 
     mock_handle = MagicMock(spec=ImageHandle)
+    mock_handle.raw.return_value = base64.b64decode(PNG_RED_B64.split(",", 1)[1])
     await manager._detection_queue.put([
         DetectedEvent(timestamp=1.5, detection_reason="visual_change", image_handle=mock_handle)
     ])
@@ -163,7 +165,7 @@ async def test_summary_update_triggered_after_annotation(mocked_manager):
     manager.set_session_context("Initial summary.")
     red_b64 = PNG_RED_B64.split(",", 1)[1]
     handles = manager._image_manager.add_images(
-        [{"data": red_b64}],
+        [{"data": red_b64, "auto_caption": False}],
         synchronous=True,
         return_handles=True,
     )
