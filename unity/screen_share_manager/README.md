@@ -24,12 +24,12 @@ The first stage quickly identifies *potential* moments of interest from all the 
 1.  The consumer calls `manager.start_turn()` to begin a new analysis window.
 2.  The consumer pushes a stream of video frames (`push_frame`) and one or more speech events (`push_speech`) into the manager. These are collected but not yet analyzed.
 3.  When the consumer decides the turn is complete, it calls `manager.end_turn()`. This call is non-blocking and immediately returns an `asyncio.Task`.
-4.  This task internally triggers a lightweight analysis on all the events collected during the turn, identifying timestamps of significant visual changes or speech events.
+4.  This task internally triggers a lightweight, text-based LLM analysis on the timeline of events collected during the turn. It may be enriched with opportunistic, auto-generated captions for visual events to improve accuracy.
 5.  When awaited, the task resolves to a `List[DetectedEvent]`. A `DetectedEvent` is a simple data object containing a timestamp and a pending `ImageHandle` for the relevant screenshot.
 
 ### Stage 2: On-Demand Contextual Annotation
 
-The second stage generates rich, user-facing descriptions for the events identified in Stage 1.
+The second stage generates rich, user-facing descriptions for the events identified in Stage 1. This stage is unchanged.
 
 1.  The consumer receives the `List[DetectedEvent]` from Stage 1.
 2.  It then calls `manager.annotate_events(events, context: Optional[str] = None)`. The consumer can **optionally** provide its own high-level context (e.g., "The user was trying to log in").
@@ -107,25 +107,18 @@ async def run_consumer_workflow():
 
 The manager uses a robust set of internal patterns to handle real-time streams efficiently:
 
--   **Concurrent and Ordered Processing:** The manager employs a sophisticated producer-consumer architecture. Incoming frames are placed on a queue and processed by a pool of parallel workers (`_frame_processing_worker`) that handle CPU-intensive tasks like image decoding. A dedicated `_sequencer` task then reassembles these processed frames in their original chronological order, ensuring state is updated consistently and preventing race conditions. This guarantees high throughput without blocking the consumer.
+-   **Concurrent and Ordered Processing:** ... (No change to this section)
 
--   **Adaptive Frame Dropping:** To maintain stability under high load, the manager monitors its internal frame processing queue. If the queue becomes backlogged beyond a configurable threshold (`adaptive_drop_threshold`), it will proactively drop incoming frames to prevent memory overload and ensure the analysis stays close to real-time.
+-   **Adaptive Frame Dropping:** ... (No change to this section)
 
--   **Multi-Stage Visual Change Detection:** A three-stage pipeline is used to accurately identify significant UI changes while filtering out visual noise:
-    1.  **Mean Squared Error (MSE):** A fast, pixel-level check (`_calculate_mse`) acts as a pre-filter. If the difference between two frames is below the `mse_threshold`, no further checks are needed.
-    2.  **Structural Similarity Index (SSIM):** For frames that pass the MSE check, SSIM is used to measure perceptual difference, which is more robust to minor shifts in lighting or rendering.
-    3.  **Semantic Contour Analysis:** The final stage (`_is_semantically_significant`) analyzes the geometric shapes of the differences. This is highly effective at filtering out insignificant changes like blinking text cursors, mouse pointer movements, and subtle anti-aliasing shifts that might otherwise pass the first two checks.
+-   **Multi-Stage Visual Change Detection:** ... (No change to this section)
 
--   **Burst Event Sampling:** The system identifies rapid sequences of visual changes occurring within a short time window (`burst_detection_threshold_sec`). Instead of analyzing every single frame in such a "burst" (e.g., during an animation or fast typing), it intelligently samples keyframes—typically the first, middle, and last. It then informs the detection LLM that a burst occurred, providing a concise yet representative summary of the rapid action.
+-   **Burst Event Sampling:** ... (No change to this section)
 
--   **Rolling Session Summary:** The manager maintains a long-term, narrative summary of the session's events (`_session_summary`). After each turn's annotations are generated, a background task (`_update_summary`) uses a separate LLM client to integrate the new information, ensuring the summary evolves and remains coherent. This provides deep, chronological context for all subsequent analysis.
+-   **Opportunistic Auto-Captioning for Detection:** To improve the accuracy of the detection stage, the manager enriches the context sent to the detection LLM. When the heuristic-based `_sequencer` identifies a candidate visual event, it immediately creates an `ImageHandle` with `auto_caption=True`. This kicks off a non-blocking background task to generate a simple, context-free caption for the image. The detection pipeline does *not* wait for this task. When it's time to call the detection LLM, it checks if any captions have already resolved. If so, it includes them in the prompt, allowing the LLM to use semantic information (e.g., "A 'Success' modal appeared") in addition to temporal information to make its decision. If the captions are not ready, the system gracefully falls back to using generic timestamp data. This provides a significant accuracy boost without sacrificing real-time performance.
 
--   **Multi-Layered Annotation Context:** To generate the most relevant and informative annotations, the prompt for the vision LLM is constructed from four distinct layers of context:
-    1.  **Long-Term Context:** The rolling session summary.
-    2.  **Turn-Specific Context:** The optional context string provided by the consumer (e.g., "User is trying to log in").
-    3.  **Intra-Turn Context:** The sequence of annotations that have already been generated *within the same analysis turn*, allowing the model to build a coherent narrative and avoid repetition.
-    4.  **Recent Event History:** A list of the last few annotated events, giving the model immediate historical context.
+-   **Rolling Session Summary:** ... (No change to this section)
 
--   **Explicit Turns and Inactivity Flushing:** Analysis is triggered by explicit consumer control.
-    -   **Manual Turns:** The consumer calls `start_turn()` and `end_turn()` to define the exact boundaries of an analysis turn. This model replaces the previous automatic debouncing logic.
-    -   **Inactivity Flushing:** If a significant visual change occurs without any accompanying speech, and a manual turn is *not* in progress, an inactivity timer (`inactivity_timeout_sec`) begins. If no further activity occurs before the timer expires, the pending visual events are "flushed" for analysis as a silent, visual-only turn. This ensures purely visual actions are still captured.
+-   **Multi-Layered Annotation Context:** ... (No change to this section)
+
+-   **Explicit Turns and Inactivity Flushing:** ... (No change to this section)

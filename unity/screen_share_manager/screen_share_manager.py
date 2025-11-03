@@ -255,7 +255,7 @@ class ScreenShareManager:
         if not self._turn_in_progress:
             logger.warning("Speech event received, but no turn is in progress. Ignoring.")
             return
-            
+
         speech_event = {
             "payload": {
                 "content": content,
@@ -265,7 +265,6 @@ class ScreenShareManager:
         }
         self._current_turn_speech_events.append(speech_event)
         self._last_activity_time = asyncio.get_event_loop().time()
-
 
     def start_turn(self):
         """
@@ -300,15 +299,17 @@ class ScreenShareManager:
         self._current_turn_speech_events.clear()
         self._turn_in_progress = False
 
+        latest_frame = self._frame_buffer[-1] if (speech_events and not visual_events and self._frame_buffer) else None
+
         turn_state = TurnState(
             speech_events=speech_events,
             visual_events=visual_events,
+            latest_frame=latest_frame,
         )
 
         asyncio.create_task(self._detect_key_moments(turn_state))
 
         return self.detect_events()
-
 
     def detect_events(self) -> asyncio.Task[List[DetectedEvent]]:
         """
@@ -316,55 +317,19 @@ class ScreenShareManager:
         for a turn that has been initiated. The consumer must `await` this
         task to get the list of candidate events.
         """
-        async def _analysis_wrapper() -> List[DetectedEvent]:
-            detection_result = await self._detection_queue.get()
-            if not detection_result:
-                return []
-
-            key_moments, frame_map = detection_result
-            logger.debug(f"Detection result received with {len(key_moments)} moments.")
+        async def _detection_wrapper() -> List[DetectedEvent]:
+            detected_events = await self._detection_queue.get()
 
             async with self._state_lock:
-                all_detected_events = self._stored_silent_detected_events
+                all_detected_events = self._stored_silent_detected_events + (detected_events or [])
                 self._stored_silent_detected_events = []
 
-            events_to_return, images_to_add, moment_map = [], [], {}
-            for i, moment in enumerate(key_moments):
-                screenshot_data_url = frame_map.get(moment["timestamp"])
-                if screenshot_data_url:
-                    raw_b64 = self._strip_data_url_prefix(screenshot_data_url)
-                    images_to_add.append(
-                        {"data": raw_b64, "caption": "Detected screen event"},
-                    )
-                    moment_map[i] = moment
-
-            if not images_to_add:
-                return all_detected_events
-
-            handles = await asyncio.to_thread(
-                self._image_manager.add_images,
-                images_to_add,
-                synchronous=False,
-                return_handles=True,
-            )
-
-            for i, handle in enumerate(handles):
-                if handle and i in moment_map:
-                    moment = moment_map[i]
-                    all_detected_events.append(
-                        DetectedEvent(
-                            timestamp=moment["timestamp"],
-                            detection_reason=moment.get("reason", "visual_change"),
-                            image_handle=handle,
-                        ),
-                    )
-
             logger.info(
-                f"Created/retrieved {len(all_detected_events)} DetectedEvent objects for this turn.",
+                f"Returning {len(all_detected_events)} DetectedEvent objects for this turn.",
             )
             return all_detected_events
 
-        return asyncio.create_task(_analysis_wrapper())
+        return asyncio.create_task(_detection_wrapper())
 
     async def annotate_events(
         self,
@@ -468,10 +433,9 @@ class ScreenShareManager:
                 async with self._state_lock:
                     visual_events = list(self._pending_vision_events)
                     self._pending_vision_events.clear()
-                
+
                 turn_state = TurnState(speech_events=[], visual_events=visual_events)
                 await self._detect_key_moments(turn_state)
-
 
     async def _frame_processing_worker(self):
         loop = asyncio.get_running_loop()
@@ -568,11 +532,13 @@ class ScreenShareManager:
 
     @llm_retry_decorator(max_tries=3, base_delay=1.0)
     async def _detect_key_moments(self, turn_state: TurnState):
-        if not turn_state.speech_events and not turn_state.visual_events:
+        if not turn_state.speech_events and not turn_state.visual_events and not turn_state.latest_frame:
+            await self._detection_queue.put([])
             return
 
-        consolidated_visual_events, frame_map = [], {}
         burst_events_info: List[str] = []
+        timestamp_to_handle_map: Dict[float, ImageHandle] = {}
+        consolidated_visual_events: List[Dict] = []
 
         if turn_state.visual_events:
             turn_state.visual_events.sort(key=lambda x: x["timestamp"])
@@ -592,93 +558,93 @@ class ScreenShareManager:
 
             for burst in bursts:
                 if len(burst) > self.settings.visual_event_sampling_threshold:
-                    logger.info(
-                        f"Detected a burst of {len(burst)} events. Consolidating to a single event.",
-                    )
-                    final_event_in_burst = burst[-1]
-                    consolidated_visual_events.append(final_event_in_burst)
-                    burst_info_str = (
+                    final_event = burst[-1]
+                    consolidated_visual_events.append(final_event)
+                    burst_events_info.append(
                         f"A rapid sequence of {len(burst)} visual changes occurred, "
-                        f"ending at t={final_event_in_burst['timestamp']:.2f}s. This is the final state of that action."
+                        f"ending at t={final_event['timestamp']:.2f}s."
                     )
-                    burst_events_info.append(burst_info_str)
                 else:
                     consolidated_visual_events.extend(burst)
-        
-        if turn_state.speech_events and not consolidated_visual_events and self._frame_buffer:
-            turn_state.latest_frame = self._frame_buffer[-1]
+
+            items_to_add = [
+                {
+                    "data": self._strip_data_url_prefix(event["after_frame_b64"]),
+                    "auto_caption": True,
+                }
+                for event in consolidated_visual_events
+            ]
+            if items_to_add:
+                handles = await asyncio.to_thread(
+                    self._image_manager.add_images,
+                    items_to_add,
+                    synchronous=False, return_handles=True,
+                )
+                for i, handle in enumerate(handles):
+                    if handle:
+                        ts = consolidated_visual_events[i]["timestamp"]
+                        timestamp_to_handle_map[ts] = handle
+
+        if turn_state.latest_frame:
+            ts, b64 = turn_state.latest_frame
+            [handle] = await asyncio.to_thread(
+                self._image_manager.add_images,
+                [{"data": self._strip_data_url_prefix(b64), "auto_caption": True}],
+                synchronous=False, return_handles=True,
+            )
+            if handle:
+                timestamp_to_handle_map[ts] = handle
+
+        visual_events_info = []
+        for ts, handle in timestamp_to_handle_map.items():
+            caption = handle.caption
+            if caption:
+                visual_events_info.append(f"Visual change at t={ts:.2f}s, showing: \"{caption}\"")
+            else:
+                visual_events_info.append(f"Visual change at t={ts:.2f}s.")
 
         async with self._state_lock:
             current_summary = self._session_summary
+
         system_prompt = build_detection_prompt(
             current_summary,
             turn_state.speech_events,
-            bool(consolidated_visual_events or turn_state.latest_frame),
+            visual_events_info,
             burst_events_info,
         )
         self._detection_client.set_system_message(system_prompt)
-        text_prompts = []
-        for speech_event in turn_state.speech_events:
-            text_prompts.append(
-                f"User speech at t={speech_event['payload']['start_time']:.2f}s.",
-            )
-        for ve in consolidated_visual_events:
-            text_prompts.append(f"Visual change at t={ve['timestamp']:.2f}s.")
-            frame_map[ve["timestamp"]] = ve["after_frame_b64"]
-        if turn_state.latest_frame:
-            frame_map[turn_state.latest_frame[0]] = turn_state.latest_frame[1]
-        if not text_prompts:
-            await self._detection_queue.put(([], {}))
-            return
 
-        logger.debug("Calling detection LLM...")
         response_str = await self._detection_client.generate(
             user_message="Identify key moments based on the context provided.",
         )
         result = json.loads(response_str)
         key_moments = result.get("moments", [])
-        key_moments.sort(key=lambda x: x["timestamp"])
+
+        final_events: List[DetectedEvent] = []
         for moment in key_moments:
             ts = moment["timestamp"]
-            if ts not in frame_map and self._frame_buffer:
-                _, closest_frame = min(self._frame_buffer, key=lambda x: abs(x[0] - ts))
-                frame_map[ts] = closest_frame
-        if not turn_state.speech_events:
-            logger.info(f"Detected {len(key_moments)} silent visual events.")
-            images_to_add, moment_map = [], {}
-            for i, moment in enumerate(key_moments):
-                if frame_map.get(moment["timestamp"]):
-                    images_to_add.append(
-                        {
-                            "data": self._strip_data_url_prefix(
-                                frame_map[moment["timestamp"]],
-                            ),
-                            "caption": "Silent screen event",
-                        },
+            handle = timestamp_to_handle_map.get(ts)
+
+            if not handle and timestamp_to_handle_map:
+                closest_ts = min(timestamp_to_handle_map.keys(), key=lambda k: abs(k - ts))
+                handle = timestamp_to_handle_map[closest_ts]
+                ts = closest_ts
+
+            if handle:
+                final_events.append(
+                    DetectedEvent(
+                        timestamp=ts,
+                        detection_reason=moment.get("reason", "unknown"),
+                        image_handle=handle,
                     )
-                    moment_map[i] = moment
-            if images_to_add:
-                handles = await asyncio.to_thread(
-                    self._image_manager.add_images,
-                    images_to_add,
-                    synchronous=False,
-                    return_handles=True,
                 )
-                async with self._state_lock:
-                    for i, handle in enumerate(handles):
-                        if handle and i in moment_map:
-                            self._stored_silent_detected_events.append(
-                                DetectedEvent(
-                                    timestamp=moment_map[i]["timestamp"],
-                                    detection_reason=moment_map[i].get(
-                                        "reason",
-                                        "visual_change",
-                                    ),
-                                    image_handle=handle,
-                                ),
-                            )
+
+        if not turn_state.speech_events:
+            logger.info(f"Detected {len(final_events)} silent visual events.")
+            async with self._state_lock:
+                self._stored_silent_detected_events.extend(final_events)
         else:
-            await self._detection_queue.put((key_moments, frame_map))
+            await self._detection_queue.put(final_events)
 
     @llm_retry_decorator(max_tries=3, base_delay=1.0)
     async def _get_llm_annotation_for_event(

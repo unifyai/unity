@@ -7,7 +7,7 @@ from ..common.prompt_helpers import now
 def build_detection_prompt(
     current_summary: str,
     speech_events: List[Dict],
-    has_visual_events: bool,
+    visual_events_info: List[str],
     burst_events_info: List[str],
 ) -> str:
     """
@@ -24,11 +24,12 @@ def build_detection_prompt(
     else:
         speech_text = "No user speech occurred during this turn."
 
-    visual_text = (
-        "Key visual frames representing screen changes were also provided."
-        if has_visual_events
-        else "No significant visual changes were detected."
-    )
+    if visual_events_info:
+        visual_details = "\n".join([f"- {info}" for info in visual_events_info])
+        visual_text = f"Visual Changes:\n{visual_details}"
+    else:
+        visual_text = "No significant visual changes were detected."
+
     burst_section = ""
     if burst_events_info:
         burst_details = "\n- ".join(burst_events_info)
@@ -69,7 +70,7 @@ CONTEXT:
 
 YOUR CURRENT TURN CONTEXT:
 - Session Summary: {current_summary}
-- This Turn: {speech_text} {visual_text}
+- This Turn: {speech_text}\n{visual_text}
 {burst_section}
 
 CRITICAL RULES:

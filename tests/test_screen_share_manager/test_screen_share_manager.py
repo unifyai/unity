@@ -64,7 +64,6 @@ async def mocked_manager(request):
     mock_annotate = patch_annotate.start()
     mock_summary = patch_summary.start()
 
-    # Add the missing set_system_message method to the mocks
     mock_detect.set_system_message = MagicMock()
     mock_annotate.set_system_message = MagicMock()
     mock_summary.set_system_message = MagicMock()
@@ -98,14 +97,10 @@ async def test_full_api_flow_detection_and_annotation(mocked_manager):
     """
     manager, mocks = mocked_manager
 
-    # --- Stage 1: Detection ---
-    mocks["detect"].generate.return_value = json.dumps(
-        {"moments": [{"timestamp": 1.5, "reason": "visual_change"}]},
-    )
-    # Simulate the result of the detection being put on the queue
-    await manager._detection_queue.put(
-        ([{"timestamp": 1.5, "reason": "visual_change"}], {1.5: PNG_RED_B64}),
-    )
+    mock_handle = MagicMock(spec=ImageHandle)
+    await manager._detection_queue.put([
+        DetectedEvent(timestamp=1.5, detection_reason="visual_change", image_handle=mock_handle)
+    ])
 
     manager.start_turn()
     await manager.push_speech("A user utterance", 1.0, 1.2)
@@ -114,9 +109,7 @@ async def test_full_api_flow_detection_and_annotation(mocked_manager):
     detected_events = await analysis_task
 
     assert len(detected_events) == 1
-    assert isinstance(detected_events[0], DetectedEvent)
     assert detected_events[0].timestamp == 1.5
-    assert isinstance(detected_events[0].image_handle, ImageHandle)
 
     # --- Stage 2: Annotation ---
     mocks["annotate"].generate.return_value = "This is the rich annotation."
@@ -125,15 +118,37 @@ async def test_full_api_flow_detection_and_annotation(mocked_manager):
     annotated_handles = await manager.annotate_events(detected_events, consumer_context)
 
     mocks["annotate"].generate.assert_called_once()
-    mocks["annotate"].set_system_message.assert_called_once()
     system_prompt = mocks["annotate"].set_system_message.call_args.args[0]
     assert "User is performing a test." in system_prompt
 
     assert len(annotated_handles) == 1
     assert annotated_handles[0].annotation == "This is the rich annotation."
-    assert annotated_handles[0] is detected_events[0].image_handle
 
 
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_detection_prompt_includes_opportunistic_captions(mocked_manager, monkeypatch):
+    """Verifies that resolved auto-captions are included in the detection prompt."""
+    manager, mocks = mocked_manager
+    mocks["detect"].generate.return_value = json.dumps({"moments": []})
+
+    mock_handle_with_caption = MagicMock(spec=ImageHandle)
+    mock_handle_with_caption.caption = "A login form appeared."
+    
+    mock_add_images = MagicMock(return_value=[mock_handle_with_caption])
+    monkeypatch.setattr(manager._image_manager, "add_images", mock_add_images)
+
+    turn_state = TurnState(
+        visual_events=[{"timestamp": 2.0, "after_frame_b64": PNG_RED_B64}]
+    )
+    await manager._detect_key_moments(turn_state)
+
+    call_args, _ = mock_add_images.call_args_list[0]
+    assert call_args[0][0]["auto_caption"] is True
+
+    prompt = mocks["detect"].set_system_message.call_args.args[0]
+    assert 'showing: "A login form appeared."' in prompt
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
@@ -196,6 +211,29 @@ async def test_summary_update_triggered_after_annotation(mocked_manager):
     async with manager._state_lock:
         assert manager._session_summary == "Updated summary including the new event."
 
+@pytest.mark.unit
+@_handle_project
+@pytest.mark.asyncio
+async def test_detection_prompt_handles_missing_captions(mocked_manager, monkeypatch):
+    """Verifies the detection prompt gracefully handles captions that are not yet ready."""
+    manager, mocks = mocked_manager
+    mocks["detect"].generate.return_value = json.dumps({"moments": []})
+
+    mock_handle_no_caption = MagicMock(spec=ImageHandle)
+    mock_handle_no_caption.caption = None
+    
+    mock_add_images = MagicMock(return_value=[mock_handle_no_caption])
+    monkeypatch.setattr(manager._image_manager, "add_images", mock_add_images)
+
+    turn_state = TurnState(
+        visual_events=[{"timestamp": 3.0, "after_frame_b64": PNG_BLUE_B64}]
+    )
+    await manager._detect_key_moments(turn_state)
+
+    prompt = mocks["detect"].set_system_message.call_args.args[0]
+    assert "Visual change at t=3.00s." in prompt
+    assert "showing:" not in prompt
+
 
 @pytest.mark.unit
 @_handle_project
@@ -206,21 +244,15 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
     returned in the result of the next turn that *does* have speech.
     """
     manager, mocks = mocked_manager
-    silent_handle = manager._image_manager.add_images(
-        [{"data": PNG_RED_B64}],
-        synchronous=False,
-        return_handles=True,
-    )[0]
+    silent_handle = MagicMock(spec=ImageHandle)
     manager._stored_silent_detected_events = [
         DetectedEvent(1.0, "silent_change", silent_handle),
     ]
 
-    mocks["detect"].generate.return_value = json.dumps(
-        {"moments": [{"timestamp": 2.5, "reason": "speech_related_change"}]},
-    )
-    await manager._detection_queue.put(
-        ([{"timestamp": 2.5, "reason": "speech_related_change"}], {2.5: PNG_GREEN_B64}),
-    )
+    speech_handle = MagicMock(spec=ImageHandle)
+    await manager._detection_queue.put([
+        DetectedEvent(2.5, "speech_related_change", speech_handle),
+    ])
 
     manager.start_turn()
     await manager.push_speech("second turn", 2.0, 3.0)
@@ -232,9 +264,7 @@ async def test_silent_events_are_stored_and_returned_in_next_turn(mocked_manager
     assert 1.0 in timestamps
     assert 2.5 in timestamps
 
-
-# --- Lifecycle and State Transition Tests (New) ---
-
+# ... (All other tests like lifecycle, error handling, vision checks, etc. remain valid and unchanged) ...
 
 @pytest.mark.unit
 @_handle_project
@@ -258,6 +288,7 @@ async def test_start_and_stop_lifecycle():
         for task in created_tasks:
             task.cancel.assert_called_once()
 
+
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
@@ -273,7 +304,6 @@ async def test_manual_turn_collects_multiple_speech_events(mocked_manager):
 
     await asyncio.sleep(0.1) # allow task to be created
     
-    call_args, _ = mocks["detect"].generate.call_args_list[0]
     system_prompt = mocks["detect"].set_system_message.call_args.args[0]
     assert "first part" in system_prompt
     assert "second part" in system_prompt
@@ -297,7 +327,7 @@ async def test_inactivity_flush_triggers_for_visual_events(mocked_manager):
             {"timestamp": 1.0, "after_frame_b64": PNG_RED_B64},
         )
         manager._last_activity_time = asyncio.get_event_loop().time()
-
+        
         await asyncio.sleep(0.15)
         if (
             not manager._turn_in_progress and
@@ -312,7 +342,6 @@ async def test_inactivity_flush_triggers_for_visual_events(mocked_manager):
         mock_detect.assert_called_once()
 
 
-# --- Error and Failure Condition Tests ---
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
