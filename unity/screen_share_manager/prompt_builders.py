@@ -6,23 +6,30 @@ from ..common.prompt_helpers import now
 
 def build_detection_prompt(
     current_summary: str,
-    speech_event: Optional[Dict],
-    has_visual_events: bool,
+    speech_events: List[Dict],
+    visual_events_info: List[str],
     burst_events_info: List[str],
 ) -> str:
     """
     Builds a lightweight system prompt for the *detection* stage.
     """
-    speech_text = (
-        f"User Speech: \"{speech_event['payload']['content']}\""
-        if speech_event
-        else "No user speech occurred."
-    )
-    visual_text = (
-        "Key visual frames representing screen changes were also provided."
-        if has_visual_events
-        else "No significant visual changes were detected."
-    )
+    if speech_events:
+        speech_details = "\n".join(
+            [
+                f"- At t={evt['payload']['start_time']:.2f}s: \"{evt['payload']['content']}\""
+                for evt in speech_events
+            ]
+        )
+        speech_text = f"User Speech:\n{speech_details}"
+    else:
+        speech_text = "No user speech occurred during this turn."
+
+    if visual_events_info:
+        visual_details = "\n".join([f"- {info}" for info in visual_events_info])
+        visual_text = f"Visual Changes:\n{visual_details}"
+    else:
+        visual_text = "No significant visual changes were detected."
+
     burst_section = ""
     if burst_events_info:
         burst_details = "\n- ".join(burst_events_info)
@@ -63,13 +70,14 @@ CONTEXT:
 
 YOUR CURRENT TURN CONTEXT:
 - Session Summary: {current_summary}
-- This Turn: {speech_text} {visual_text}
+- This Turn: {speech_text}\n{visual_text}
 {burst_section}
 
 CRITICAL RULES:
 1.  **Prioritize Outcomes:** Always favor the visual result of an action over the spoken intent when they refer to the same event.
-2.  **Be Selective with Animations:** For a single action that causes multiple visual changes (like an animation or a window opening), **only return the timestamp for the final, stable frame of that action.**
-3.  **Handle Multi-Step Actions:** If a user's speech implies multiple distinct steps, it is appropriate to return a moment for the outcome of each step.
+2.  **Preserve Speech Without Visuals:** If a speech event occurs but has NO corresponding visual change within the turn, the speech event ITSELF IS the key moment. **Do NOT discard it.** Return a moment with the speech event's timestamp.
+3.  **Be Selective with Animations:** For a single action that causes multiple visual changes (like an animation or a window opening), **only return the timestamp for the final, stable frame of that action.**
+4.  **Handle Multi-Step Actions:** If a user's speech implies multiple distinct steps, it is appropriate to return a moment for the outcome of each step.
 
 Respond with a JSON object containing a single key "moments", which is a list of objects. Each object must have a "timestamp" (float) and a "reason" (string). Provide ONLY the JSON object.
 
@@ -108,7 +116,7 @@ def build_single_annotation_prompt(
     previous_annotations_section = ""
     if previous_annotations_in_turn:
         previous_annotations_section = f"""
-3.  **Previous Annotations from this Turn:** Descriptions of what has already been noted in the last few seconds.
+3.  **Previous Annotations from this Turn:** Descriptions of what has already been noted in this specific analysis turn.
     <previous_annotations>
     {json.dumps(previous_annotations_in_turn, indent=2)}
     </previous_annotations>
@@ -120,14 +128,14 @@ def build_single_annotation_prompt(
         else "No recent events have been identified."
     )
     recent_events_section = f"""
-4.  **Recent Key Events:** A list of the last 5 events that were identified.
+4.  **Recent Key Events:** A list of the last events that were identified.
     <recent_events>
     {recent_events_formatted}
     </recent_events>
 """
 
     prompt = f"""
-You are an expert AI assistant specializing in analyzing screen share sessions. Your task is to view a single image and write a clear, descriptive annotation for it.
+You are an expert AI assistant specializing in analyzing screen share sessions. Your task is to view a single image and write a clear, narrative annotation that builds upon previous events.
 
 CONTEXT PROVIDED:
 ----------------
@@ -142,16 +150,18 @@ CONTEXT PROVIDED:
 
 YOUR TASK:
 ----------
-- Write a single, clear annotation string for the image.
-- Your annotation must describe what the screenshot visually contains and explain its significance relative to the available context.
+- Examine the Key Image and compare it to the description of the 'Immediately Preceding Event'.
+- Write a single, clear annotation string that describes what is new or different in the current image. Your annotation must create a narrative flow.
 
 CRITICAL RULES:
 ---------------
-1.  **Be Informative:** Your annotation must provide new information. Focus on what has changed or what the outcome of the user's last action is. While you should avoid repeating old information verbatim, you can briefly reference it to provide context. For example, instead of "The user clicked submit," a better annotation for the next frame would be "Following the click, a confirmation modal appeared..
-2.  **Raw String Output:** Your entire response must be ONLY the annotation text, as a raw string. Do NOT wrap it in JSON or markdown.
+1.  **Focus on the Delta:** Your primary goal is to explain the change. For example, instead of "The screen shows a file tree," a better annotation is "The user has now expanded the 'unity' folder in the file tree, revealing its subdirectories."
+2.  **Be Informative and Concise:** Explain the significance of the change in relation to the overall context.
+3.  **Handle First Event:** If this is the first event, it's okay to provide a complete description of the scene as a baseline.
+4.  **Raw String Output:** Your entire response must be ONLY the annotation text, as a raw string. Do NOT wrap it in JSON or markdown.
 
-Example of a GOOD response:
-The user has clicked on the 'Context' dropdown menu, revealing a list of available options including 'Sandbox' and 'Default'.
+Example of a GOOD, narrative response:
+Following the user's action, a dropdown menu for 'Context' has opened, showing 'Sandbox' and 'Default' as available options.
 """
     return prompt + f"\n\nCurrent UTC time is {now()}."
 

@@ -105,7 +105,11 @@ async def _capture_and_push_frames(
 
 
 async def _process_turn_analysis(
-    screen_manager: ScreenShareManager, utterance: str, turn_counter: int, args
+    screen_manager: ScreenShareManager,
+    utterance: str,
+    turn_counter: int,
+    session_start_time: float,
+    args,
 ):
     """
     Runs the full detection and annotation pipeline for a single turn in the background.
@@ -113,11 +117,14 @@ async def _process_turn_analysis(
     logger.info(f"--- Turn #{turn_counter} ---")
 
     # --- Stage 1: Detection ---
-    start_time, end_time = time.time() - 5, time.time()
-    await screen_manager.push_speech(utterance, start_time, end_time)
+    turn_timestamp = time.time() - session_start_time
+
+    screen_manager.start_turn()
+    await screen_manager.push_speech(utterance, turn_timestamp, turn_timestamp)
     logger.info(f"Pushed speech event for turn #{turn_counter}. Triggering analysis.")
 
-    analysis_task = screen_manager.analyze_turn()
+    await asyncio.sleep(0.5)
+    analysis_task = screen_manager.end_turn()
 
     print(f"\n[Turn #{turn_counter}] 🔍 Detecting key events...")
     logger.info(f"[Turn #{turn_counter}] Awaiting detection task...")
@@ -236,7 +243,7 @@ async def _main_async() -> None:
         logger.info("Image saving enabled.")
 
     # --- Setup Manager and Capture ---
-    screen_manager = ScreenShareManager()
+    screen_manager = ScreenShareManager(debug=args.debug)
     screen_manager.set_session_context(args.context)
     await screen_manager.start()
 
@@ -246,6 +253,8 @@ async def _main_async() -> None:
         "width": args.width,
         "height": args.height,
     }
+
+    session_start_time = time.time()
     capture_task = asyncio.create_task(
         _capture_and_push_frames(screen_manager, capture_monitor, args.fps)
     )
@@ -292,7 +301,9 @@ async def _main_async() -> None:
 
             # Schedule the entire turn processing to run in the background.
             task = asyncio.create_task(
-                _process_turn_analysis(screen_manager, utterance, turn_counter, args)
+                _process_turn_analysis(
+                    screen_manager, utterance, turn_counter, session_start_time, args
+                )
             )
             background_tasks.append(task)
 
