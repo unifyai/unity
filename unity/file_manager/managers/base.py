@@ -6,11 +6,10 @@ from typing import Any, Dict, List, Optional, Union
 
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.common.global_docstrings import CLEAR_METHOD_DOCSTRING
-from unity.singleton_registry import SingletonABCMeta
 from unity.common.state_managers import BaseStateManager
 
 
-class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
+class BaseFileManager(BaseStateManager):
     """
     Public contract that every concrete file-manager must satisfy.
 
@@ -301,26 +300,61 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Interrogate the existing filesystem (read-only) and obtain a steerable LLM handle.
+        Interrogate the **existing filesystem** (read‑only) and obtain a live
+        :class:`SteerableToolHandle`.
 
         Purpose
         -------
-        Use this method to ask semantic questions that may consider multiple files/folders,
-        perform semantic search over parsed contents, aggregate/summarise results, or shortlist
-        relevant files. This call must never create or delete files.
+        Use this method to locate and inspect files that already exist in the
+        store: perform semantic searches over parsed content, aggregate or
+        summarise results, compare documents, or shortlist files/folders for a
+        subsequent organization pass. This call must never create, modify or
+        delete files.
 
         Clarifications
         --------------
-        Do not ask the human in the final response; when clarification is required and a
-        clarification tool is available, push a question to the up-queue and read from the
-        down-queue. If no clarification channel exists, proceed with sensible defaults/best guesses
-        and state assumptions in the outer response.
+        Do not use this method to ask the human follow‑up questions. If the
+        caller needs clarification about what to retrieve (e.g., which folder,
+        which filename, which topic), route the question via a dedicated
+        ``request_clarification`` tool when available. If no clarification
+        channel exists, proceed with sensible defaults/best‑guess values and
+        state those assumptions in the outer loop's final reply.
+
+        Do not request how the question should be answered; just ask the
+        question in natural language and allow this method to determine the
+        best method to answer it (e.g., filter/search/join, parse‑if‑missing
+        when explicitly requested).
+
+        Examples
+        --------
+        • Good: "Which PDFs mention ISO 27001 under /reports?"
+          → shortlist files and cite their paths where possible.
+        • Bad:  "Open each file and tell me which tool to call." → too
+          prescriptive; let the tool loop decide the best approach.
+
+        Parameters
+        ----------
+        text : str
+            Plain‑English question about existing files/folders.
+        _return_reasoning_steps : bool, default ``False``
+            When ``True`` the handle's :pyfunc:`~SteerableToolHandle.result`
+            yields ``(answer, messages)`` – the first element is the
+            assistant's reply, the second the hidden chain‑of‑thought (useful
+            for debugging).
+        _parent_chat_context : list[dict] | None
+            Optional read‑only chat history that will be provided to all nested
+            tool calls.
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
+            Duplex channels enabling interactive clarification questions. If
+            supplied the LLM may push a follow‑up question onto
+            *_clarification_up_q* and must read the human's answer from
+            *_clarification_down_q*.
 
         Returns
         -------
         SteerableToolHandle
-            A handle controlling the interactive tool-use loop. Call ``await handle.result()``
-            to get the final answer.
+            Handle that eventually yields the answer text (and optionally the
+            hidden reasoning steps).
         """
 
     # ------------------------------------------------------------------ #
@@ -338,22 +372,35 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Answer a question about a single file (read-only) and obtain a steerable LLM handle.
+        Interrogate **one specific file** (read‑only) and obtain a live
+        :class:`SteerableToolHandle`.
 
-        Use when the caller already knows which file is relevant and wants a focused analysis
-        (e.g., summarise this PDF, extract key data points from this document).
+        Purpose
+        -------
+        Use this method when the caller already knows which file is relevant
+        and wants a focused analysis (e.g., summarise this PDF, extract a key
+        value from a document).
+
+        Clarifications
+        --------------
+        Do not use this method to ask the human follow‑up questions. If the
+        filename is ambiguous and a clarification tool is available, route a
+        targeted question via ``request_clarification``; if no channel exists,
+        proceed with sensible defaults/best‑guess values and state assumptions
+        in the outer reply.
 
         Parameters
         ----------
         filename : str
             Logical identifier/path of the target file.
         question : str
-            Natural-language question about the specific file.
+            Natural‑language question about the specific file.
 
         Returns
         -------
         SteerableToolHandle
-            A handle controlling the interactive tool-use loop for file-scoped queries.
+            Handle that eventually yields the answer text (and optionally the
+            hidden reasoning steps) for this file‑scoped query.
         """
 
     # ------------------------------------------------------------------ #
@@ -370,17 +417,37 @@ class BaseFileManager(BaseStateManager, metaclass=SingletonABCMeta):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Restructure/organize the filesystem (rename/move only) using an LLM-driven tool loop.
+        Apply a **re‑organization** request – rename/move only – and obtain a
+        steerable :class:`SteerableToolHandle` for the tool loop.
 
-        This method runs an async tool loop similar to other managers' `update`/`refactor`, exposing
-        safe, capability-gated tools (e.g., rename/move) and read-only discovery tools. The loop
-        returns a steerable handle; the final result contains a natural-language summary of the
-        reorganization plan and actions executed (if any).
+        Behaviour and constraints
+        -------------------------
+        - Only rename and move are permitted; do not create or delete files.
+        - Mutations are capability‑guarded by the underlying adapter.
+        - Use read‑only discovery (``ask``) to identify targets before
+          mutating when helpful.
+
+        Clarifications
+        --------------
+        Do not use the final response to ask the human questions. If the
+        request is underspecified (e.g., grouping criteria, destination) and a
+        clarification tool is available, route a focused follow‑up; otherwise
+        proceed with sensible defaults and state assumptions in the final
+        summary.
+
+        Parameters
+        ----------
+        text : str
+            High‑level English description of the desired re‑organization.
+        _return_reasoning_steps, _parent_chat_context,
+        _clarification_up_q, _clarification_down_q
+            Same purpose and semantics as in :py:meth:`ask`.
 
         Returns
         -------
         SteerableToolHandle
-            Handle controlling the interactive tool-use loop for reorganization.
+            Handle that eventually yields a natural‑language summary of the
+            operations performed (and optionally hidden reasoning steps).
         """
 
     @abstractmethod

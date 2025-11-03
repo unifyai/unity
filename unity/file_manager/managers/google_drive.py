@@ -4,9 +4,10 @@ from typing import Optional, Any
 
 from unity.file_manager.fs_adapters.google_drive_adapter import GoogleDriveAdapter
 from unity.file_manager.managers.file_manager import FileManager
+from unity.singleton_registry import SingletonABCMeta
 
 
-class GoogleDriveFileManager(FileManager):
+class GoogleDriveFileManager(FileManager, metaclass=SingletonABCMeta):
     """
     File manager for Google Drive storage.
 
