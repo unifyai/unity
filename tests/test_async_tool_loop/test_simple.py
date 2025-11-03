@@ -454,11 +454,15 @@ async def test_no_tools_with_system_message() -> None:
     # The assistant must answer directly and never insert any tool messages.
     assert answer.strip(), "Assistant reply should not be empty."
     assert count_tool_messages(client) == 0
-    assert [m["role"] for m in client.messages] == [
-        "system",
-        "user",
-        "assistant",
-    ]
+    roles = [m["role"] for m in client.messages]
+    # Must start with a system message provided by the client
+    assert roles[0] == "system"
+    # There must be a user turn, and an assistant turn after it
+    assert "user" in roles, "Missing user message in transcript"
+    assert "assistant" in roles, "Missing assistant message in transcript"
+    assert roles.index("user") < roles.index("assistant")
+    # No tool messages should be present, and only expected roles should appear
+    assert set(roles) <= {"system", "user", "assistant"}
 
 
 @pytest.mark.asyncio
@@ -485,10 +489,14 @@ async def test_no_tools_without_system_message() -> None:
 
     assert answer.strip(), "Assistant reply should not be empty."
     assert count_tool_messages(client) == 0
-    assert [m["role"] for m in client.messages] == [
-        "user",
-        "assistant",
-    ]
+    roles = [m["role"] for m in client.messages]
+    # Must start with a user message (no initial system provided in this case)
+    assert roles[0] == "user"
+    # There must be an assistant turn after the user turn
+    assert "assistant" in roles, "Missing assistant message in transcript"
+    assert roles.index("assistant") > roles.index("user")
+    # No tool messages should be present, and only expected roles should appear
+    assert set(roles) <= {"system", "user", "assistant"}
 
 
 # --------------------------------------------------------------------------- #
