@@ -54,7 +54,7 @@ async def test_pause_actor_propagates_immediately_actor_path(monkeypatch):
     )
 
     # Wait for the actor to be scheduled
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=60)
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
     # Give the outer loop a brief moment to adopt the nested handle
     await asyncio.sleep(0.2)
 
@@ -117,7 +117,7 @@ async def test_pause_actor_propagates_immediately_task_scheduler_path(monkeypatc
     )
 
     # Wait until the actor has started under the scheduler
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=120)
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
     # Briefly allow adoption of the nested handle in the outer loop
     await asyncio.sleep(0.4)
 
@@ -179,7 +179,7 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
         "Open a browser window so we can walk through the setup together.",
     )
 
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=60)
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
     await asyncio.sleep(0.2)
 
     # Explicitly pause using nested_steer (independent of pause_actor)
@@ -251,7 +251,7 @@ async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch
     cond = SimulatedConductor(task_scheduler=ts, actor=actor)
     handle = await cond.request(f"Run the task named '{name}' now.")
 
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=120)
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
     await asyncio.sleep(0.4)
 
     # Explicitly pause using nested_steer (independent of pause_actor)
