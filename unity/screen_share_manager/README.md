@@ -29,7 +29,7 @@ The first stage quickly identifies *potential* moments of interest from all the 
 
 ### Stage 2: On-Demand Contextual Annotation
 
-The second stage generates rich, user-facing descriptions for the events identified in Stage 1. This stage is unchanged.
+The second stage generates rich, user-facing descriptions for the events identified in Stage 1.
 
 1.  The consumer receives the `List[DetectedEvent]` from Stage 1.
 2.  It then calls `manager.annotate_events(events, context: Optional[str] = None)`. The consumer can **optionally** provide its own high-level context (e.g., "The user was trying to log in").
@@ -38,7 +38,7 @@ The second stage generates rich, user-facing descriptions for the events identif
 
 ## End-to-End Consumer Example
 
-This example shows how a consumer would use the new manual turn-based API.
+This example shows how a consumer would use the manual turn-based API.
 
 ```python
 from __future__ import annotations
@@ -79,10 +79,9 @@ async def run_consumer_workflow():
 
     # --- Stage 2: Annotation (Concurrent) ---
     annotation_context = "The user is filling out a profile form and just stated their intent to submit."
-    annotation_task = asyncio.create_task(
-        screen_manager.annotate_events(detected_events, annotation_context)
+    final_annotated_handles = await screen_manager.annotate_events(
+        detected_events, annotation_context
     )
-    final_annotated_handles = await annotation_task
 
     for handle in final_annotated_handles:
         print(f"  - Image (Pending ID: {handle.image_id}): {handle.annotation}")
@@ -107,18 +106,22 @@ async def run_consumer_workflow():
 
 The manager uses a robust set of internal patterns to handle real-time streams efficiently:
 
--   **Concurrent and Ordered Processing:** ... (No change to this section)
+-   **Concurrent and Ordered Processing:** Incoming frames are pushed into a queue and processed by a pool of worker threads. A dedicated `_sequencer` task reassembles the processed frames in their original order, ensuring that visual change detection operates on a correct timeline, even if individual frames take different amounts of time to process.
 
--   **Adaptive Frame Dropping:** ... (No change to this section)
+-   **Adaptive Frame Dropping:** To prevent memory backlogs during high-activity periods, the manager monitors its internal frame queue. If the queue becomes too full, it proactively drops incoming frames until the processing workers can catch up, prioritizing system stability over processing every single frame.
 
--   **Multi-Stage Visual Change Detection:** ... (No change to this section)
+-   **Multi-Stage Visual Change Detection:** A simple, fast heuristic (Mean Squared Error) is used to quickly reject identical or nearly-identical frames. Frames that pass this initial check are then subjected to more sophisticated, perceptually-aware algorithms (like Structural Similarity Index and histogram correlation) to determine if the change is significant enough to be considered a potential event.
 
--   **Burst Event Sampling:** ... (No change to this section)
+-   **Burst Event Consolidation:** To reduce noise from animations or rapid UI transitions, the manager groups consecutive visual events that occur within a short time window into a single "burst." Instead of reporting every frame of an animation, it intelligently samples the burst, typically focusing on the final, stable frame as the representative moment for the entire sequence.
 
--   **Opportunistic Auto-Captioning for Detection:** To improve the accuracy of the detection stage, the manager enriches the context sent to the detection LLM. When the heuristic-based `_sequencer` identifies a candidate visual event, it immediately creates an `ImageHandle` with `auto_caption=True`. This kicks off a non-blocking background task to generate a simple, context-free caption for the image. The detection pipeline does *not* wait for this task. When it's time to call the detection LLM, it checks if any captions have already resolved. If so, it includes them in the prompt, allowing the LLM to use semantic information (e.g., "A 'Success' modal appeared") in addition to temporal information to make its decision. If the captions are not ready, the system gracefully falls back to using generic timestamp data. This provides a significant accuracy boost without sacrificing real-time performance.
+-   **Opportunistic Auto-Captioning for Detection:** To improve the accuracy of the detection stage, the manager enriches the context sent to the detection LLM. When a candidate visual event is identified, it immediately creates an `ImageHandle` with `auto_caption=True`. This kicks off a non-blocking background task to generate a simple caption. The detection pipeline does *not* wait for this task. When it's time to call the detection LLM, it checks if any captions have already resolved. If so, it includes them in the prompt (e.g., "A 'Success' modal appeared"), allowing the LLM to use semantic information in its decision. If not, the system gracefully falls back to using generic timestamp data, providing an accuracy boost without sacrificing latency.
 
--   **Rolling Session Summary:** ... (No change to this section)
+-   **Rolling Session Summary:** The manager maintains a long-term, narrative summary of the session. After each turn's annotations are generated, a separate, lightweight LLM call updates this summary to incorporate the new events, ensuring that future analysis has a coherent and up-to-date backstory.
 
--   **Multi-Layered Annotation Context:** ... (No change to this section)
+-   **Multi-Layered Annotation Context:** The annotation prompt is dynamically built from multiple sources to provide the richest possible context to the vision LLM. It includes:
+    1.  The long-term **session summary**.
+    2.  The immediate **consumer context** provided in the `annotate_events` call.
+    3.  A list of **previous annotations** from within the current turn, creating a narrative flow.
+    4.  A list of the most **recent key events** from previous turns.
 
--   **Explicit Turns and Inactivity Flushing:** ... (No change to this section)
+-   **Explicit Turns and Inactivity Flushing:** While turns are primarily controlled via `start_turn`/`end_turn`, the manager includes a safety net. If visual events are detected without any accompanying speech (a "silent turn"), they are temporarily held. If no new turn is started after a configurable timeout, these pending silent events are automatically flushed for detection to ensure they are not lost.
