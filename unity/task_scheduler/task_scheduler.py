@@ -1733,7 +1733,7 @@ class TaskScheduler(BaseTaskScheduler):
                     try:
                         self._update_task_status(
                             task_ids=r.task_id,
-                            new_status="queued",
+                            new_status=Status.queued,
                         )
                     except Exception:
                         pass
@@ -1771,7 +1771,10 @@ class TaskScheduler(BaseTaskScheduler):
                         raise ValueError(
                             "Queue 'order' must include at least one task to mark head as primed.",
                         )
-                    self._update_task_status(task_ids=order_ids[0], new_status="primed")
+                    self._update_task_status(
+                        task_ids=order_ids[0],
+                        new_status=Status.primed,
+                    )
                 queues_report.append(
                     {
                         "relative_queue_index": rel_qidx,
@@ -3547,7 +3550,7 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         task_ids: Union[int, List[int]],
-        new_status: str,
+        new_status: Status,
     ) -> Dict[str, str]:
         """
         Change the **lifecycle status** of one or many tasks.
@@ -3557,8 +3560,7 @@ class TaskScheduler(BaseTaskScheduler):
           exclusively by the execution path (execute / execute_by_id).
         """
         # Forbid making anything active (unless explicitly allowed)
-        new_status_enum = self._to_status(new_status)
-        if new_status_enum == Status.active:
+        if new_status == Status.active:
             raise ValueError(
                 "Direct status changes to 'active' are not allowed; use the dedicated activation method.",
             )
@@ -3568,17 +3570,17 @@ class TaskScheduler(BaseTaskScheduler):
         self._ensure_not_active_task(task_ids)
 
         # Invariant checks for queue/schedule-sensitive statuses
-        if new_status_enum in {Status.scheduled, Status.queued}:
+        if new_status in {Status.scheduled, Status.queued}:
             rows = self._filter_tasks(filter=f"task_id in {task_ids}")
             for row in rows:
                 self._validate_scheduled_invariants(
-                    status=new_status_enum,
+                    status=new_status,
                     schedule=row.schedule,
                     err_prefix=f"While changing status of task {row.task_id}:",
                 )
 
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
-        entries: Dict[str, Any] = {"status": new_status_enum}
+        entries: Dict[str, Any] = {"status": new_status}
         return self._write_log_entries(logs=log_ids, entries=entries, overwrite=True)
 
     def _update_task(
