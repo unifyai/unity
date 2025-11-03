@@ -114,10 +114,11 @@ async def test_nested_steer_targets_child_and_applies_method():
 
         # Apply nested steer: interject at root, pause the child by matching tool name
         spec = {
-            "method": "interject",
-            "args": "root-info",  # informational only
+            "steps": [
+                {"method": "interject", "args": "root-info"},  # informational only
+            ],
             "children": {
-                "Outer_spawn": {"method": "pause"},
+                "Outer_spawn": {"steps": [{"method": "pause"}]},
             },
         }
 
@@ -246,7 +247,7 @@ async def test_nested_steer_noop_when_child_selector_does_not_match():
             "children": {
                 "Wrapper_run": {
                     "children": {
-                        "IGNORED": {"method": "pause"},
+                        "IGNORED": {"steps": [{"method": "pause"}]},
                     },
                 },
             },

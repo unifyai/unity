@@ -30,11 +30,12 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
 
         message = f"<Actor has been paused due to {reason}>"
         spec: Dict[str, Any] = {
-            "method": "interject",
-            "args": message,
+            "steps": [
+                {"method": "interject", "args": message},
+            ],
             "children": {
-                "TaskScheduler.execute": {"method": "pause"},
-                "Actor.act": {"method": "pause"},
+                "TaskScheduler.execute": {"steps": [{"method": "pause"}]},
+                "Actor.act": {"steps": [{"method": "pause"}]},
             },
         }
         return await self.nested_steer(spec)
@@ -56,11 +57,12 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
 
         message = f"<Actor has been resumed due to {reason}>"
         spec: Dict[str, Any] = {
-            "method": "interject",
-            "args": message,
+            "steps": [
+                {"method": "interject", "args": message},
+            ],
             "children": {
-                "TaskScheduler.execute": {"method": "resume"},
-                "Actor.act": {"method": "resume"},
+                "TaskScheduler.execute": {"steps": [{"method": "resume"}]},
+                "Actor.act": {"steps": [{"method": "resume"}]},
             },
         }
         return await self.nested_steer(spec)
