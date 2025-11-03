@@ -320,7 +320,7 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
         ]
     )
     await temp_client.publish("app:comms:contacts", contacts_event.to_json())
-    await asyncio.sleep(2)  # Let contacts be processed
+    await asyncio.sleep(4)  # Let contacts be processed
 
     print("✅ System initialized and ready")
 
