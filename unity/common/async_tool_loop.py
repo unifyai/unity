@@ -753,14 +753,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         Programmatic (no LLM) and best‑effort: unknown or missing children are
         silently ignored and traversal stops naturally when no child is found.
 
-        Spec schema (all keys optional):
-        - method: str – handle method to invoke (e.g., "pause", "resume", "stop",
-          "interject", "ask").
-        - args: any – convenience single argument; mapped to a common content key if
-          not provided in ``kwargs``.
-        - kwargs: dict – keyword arguments for the method; merged with ``args``.
-        - children: dict[str, dict] – mapping of selector → node to apply on matched
-          in‑flight child handles.
+        Spec schema (keys optional; omitted treated as None):
+        - steps: list[dict] – ordered actions to apply on the current handle.
+          Each step is a dict with keys:
+            - method: str – method name to invoke (e.g., "pause", "resume",
+              "interject", "stop", "ask").
+            - args: any – convenience single argument; mapped to a common
+              content key if not otherwise provided in ``kwargs``.
+            - kwargs: dict – keyword arguments to pass to the method.
+        - children: dict[str, dict] – mapping of selector → node to apply on
+          matched in‑flight child handles.
 
         Selector matching (case‑insensitive):
         - Matches against in‑flight tool names at this level (e.g., "TaskScheduler_execute").
@@ -1445,14 +1447,18 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
     """Apply a nested steering spec to any compatible handle without LLM calls.
 
     Node schema (keys optional; omitted treated as None):
-      - method: str – method name to invoke on the current handle (e.g., "pause", "resume", "interject", "stop", "ask").
-      - args: any – convenience single argument; mapped to a common content key if not otherwise provided in kwargs.
-      - kwargs: dict – keyword arguments to pass to the method.
+      - steps: list[dict] – ordered actions to apply on the current handle. Each
+        step supports:
+          - method: str – method name to invoke (e.g., "pause", "resume",
+            "interject", "stop", "ask").
+          - args: any – convenience single argument; mapped to a common content
+            key if not otherwise provided in kwargs.
+          - kwargs: dict – keyword arguments to pass to the method.
       - children: dict[str, dict] – mapping of selector → child node, where selector
         is matched against in-flight tool names at this level (from task_info metadata).
 
     Behaviour:
-      - Apply the local method first (when present), using robust forwarding.
+      - Apply the local steps in order (when present), using robust forwarding.
       - Discover loop-children via _task.task_info and recurse into matched child handles.
       - If no loop-children matched, fall back to common wrapper attributes ("_actor_handle",
         "_current_handle") when exactly one child node is provided.
@@ -1475,18 +1481,20 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
         label = "handle"
 
     try:
-        root_method = None
+        steps_count = 0
         children_count = 0
         try:
             if isinstance(spec, dict):
-                root_method = spec.get("method")
+                steps = spec.get("steps") or []
+                if isinstance(steps, list):
+                    steps_count = len(steps)
                 children = spec.get("children") or {}
                 if isinstance(children, dict):
                     children_count = len(children)
         except Exception:
-            root_method, children_count = None, 0
+            steps_count, children_count = 0, 0
         LOGGER.info(
-            f"🎯 [{label}] Nested steer requested – method={root_method or '-'} children={children_count}",
+            f"🎯 [{label}] Nested steer requested – steps={steps_count} children={children_count}",
         )
     except Exception:
         pass
@@ -1567,46 +1575,64 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
 
     async def _apply(h, node: dict | None, path: list[str]) -> None:
         node = node or {}
-        method = node.get("method")
-        args = node.get("args")
-        kwargs = node.get("kwargs") or {}
+        steps = node.get("steps") or []
 
-        # 1) Apply local method if requested
-        if isinstance(method, str) and method:
-            call_kwargs = dict(kwargs)
-            if args is not None and not any(
-                k in call_kwargs for k in ("content", "message", "question", "reason")
-            ):
-                call_kwargs["content"] = args
-            try:
-                await forward_handle_call(
-                    h,
-                    method,
-                    call_kwargs,
-                    fallback_positional_keys=(
-                        "content",
-                        "message",
-                        "question",
-                        "reason",
-                    ),
-                )
+        # 1) Apply local steps in order
+        if isinstance(steps, list) and steps:
+            for step in steps:
                 try:
-                    results["applied"].append({"path": list(path), "method": method})
+                    method = None
+                    args = None
+                    kwargs = {}
+                    try:
+                        method = step.get("method")
+                        args = step.get("args")
+                        kwargs = step.get("kwargs") or {}
+                    except Exception:
+                        method, args, kwargs = None, None, {}
+                    if not isinstance(method, str) or not method:
+                        continue
+                    call_kwargs = dict(kwargs)
+                    if args is not None and not any(
+                        k in call_kwargs
+                        for k in ("content", "message", "question", "reason")
+                    ):
+                        call_kwargs["content"] = args
+                    try:
+                        await forward_handle_call(
+                            h,
+                            method,
+                            call_kwargs,
+                            fallback_positional_keys=(
+                                "content",
+                                "message",
+                                "question",
+                                "reason",
+                            ),
+                        )
+                        try:
+                            results["applied"].append(
+                                {"path": list(path), "method": method},
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            _p = "/".join(str(p) for p in path)
+                            LOGGER.debug(
+                                f"✅ [{label}] Applied method '{method}' at path {_p}",
+                            )
+                        except Exception:
+                            pass
+                    except Exception:
+                        try:
+                            _p = "/".join(str(p) for p in path)
+                            LOGGER.debug(
+                                f"⚠️  [{label}] Failed to apply '{method}' at path {_p}",
+                            )
+                        except Exception:
+                            pass
                 except Exception:
-                    pass
-                try:
-                    _p = "/".join(str(p) for p in path)
-                    LOGGER.debug(f"✅ [{label}] Applied method '{method}' at path {_p}")
-                except Exception:
-                    pass
-            except Exception:
-                # Steering failures are best-effort; continue traversal
-                try:
-                    _p = "/".join(str(p) for p in path)
-                    LOGGER.debug(
-                        f"⚠️  [{label}] Failed to apply '{method}' at path {_p}",
-                    )
-                except Exception:
+                    # Continue to next step
                     pass
 
         # 2) Recurse into matched children
