@@ -11,6 +11,7 @@ dotenv.config();
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+import { randomUUID } from 'crypto';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -241,9 +242,29 @@ async function auth(req: Request, res: Response, next: Function) {
 
 app.use(auth);
 
-let agentMode: string | null = null;
-let browserAgent: BrowserAgent | null = null;
-let desktopBrowserAgent: BrowserAgent | null = null;
+// Session registry: maps sessionId to BrowserAgent
+interface SessionInfo {
+  agent: BrowserAgent;
+  mode: 'browser' | 'desktop';
+  createdAt: Date;
+  lastAccessed: Date;
+}
+
+const activeSessions = new Map<string, SessionInfo>();
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+// Cleanup inactive sessions periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [sessionId, session] of activeSessions.entries()) {
+    if (now - session.lastAccessed.getTime() > SESSION_TIMEOUT_MS) {
+      console.log(`Cleaning up inactive session: ${sessionId}`);
+      session.agent.stop().catch((err: unknown) => console.error(`Error stopping session ${sessionId}:`, err));
+      activeSessions.delete(sessionId);
+    }
+  }
+}, 5 * 60 * 1000); // Check every 5 minutes
+
 const port = process.env.PORT || 3000;
 
 // --- WebSocket Log Broadcasting Logic ---
@@ -331,9 +352,15 @@ app.listen(port, () => {
 });
 
 const isAgentReady = (req: Request, res: Response, next: Function) => {
-  if (!browserAgent) {
-    return res.status(503).json({ error: 'agent_not_ready', message: 'BrowserAgent is not yet initialized.' });
+  const sessionId = req.body.sessionId;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId is required.' });
   }
+  const session = activeSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Session ${sessionId} not found.` });
+  }
+  session.lastAccessed = new Date();
   next();
 };
 
@@ -395,25 +422,38 @@ const startBrowser = (headless: boolean) => {
 // --- API Endpoints ---
 app.post('/start', async (req: Request, res: Response) => {
   const { headless, mode } = req.body;
-  if (!mode || (mode !== "desktop" && mode !== "browser")) return res.status(400).json({ error: 'bad_request', message: 'Mode is required and must be either "desktop" or "browser".' });
-  agentMode = mode;
+  if (!mode || (mode !== "desktop" && mode !== "browser")) {
+    return res.status(400).json({ error: 'bad_request', message: 'Mode is required and must be either "desktop" or "browser".' });
+  }
+
+  const sessionId = randomUUID();
   try {
-    if (agentMode === "desktop") {
-      startDesktop();
+    let agent: BrowserAgent;
+    if (mode === "desktop") {
+      agent = await startDesktop(sessionId);
     } else {
-      startBrowser(headless);
+      agent = await startBrowser(headless ?? false, sessionId);
     }
-    res.json({ status: 'started' });
+
+    activeSessions.set(sessionId, {
+      agent,
+      mode,
+      createdAt: new Date(),
+      lastAccessed: new Date(),
+    });
+
+    res.json({ status: 'started', sessionId });
   } catch (err) {
     handleAgentError(err, res);
   }
 });
 
 app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
-  const { url } = req.body;
+  const { url, sessionId } = req.body;
   if (!url) return res.status(400).json({ error: 'bad_request', message: 'URL is required.' });
   try {
-    await browserAgent!.nav(url);
+    const session = activeSessions.get(sessionId)!;
+    await session.agent.nav(url);
     res.json({ status: 'navigated', url });
   } catch (err) {
     handleAgentError(err, res);
@@ -421,10 +461,11 @@ app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/act', isAgentReady, async (req: Request, res: Response) => {
-  const { task } = req.body;
+  const { task, sessionId } = req.body;
   if (!task) return res.status(400).json({ error: 'bad_request', message: 'Task description is required.' });
   try {
-    await browserAgent!.act(task);
+    const session = activeSessions.get(sessionId)!;
+    await session.agent.act(task);
     res.json({ status: 'success', message: `Task "${task}" completed.` });
   } catch (err) {
     handleAgentError(err, res);
@@ -432,7 +473,7 @@ app.post('/act', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
-  const { instructions, schema, bypassDomProcessing } = req.body;
+  const { instructions, schema, bypassDomProcessing, sessionId } = req.body;
   if (!instructions) {
     return res.status(400).json({ error: 'bad_request', message: 'Extraction instructions are required.' });
   }
@@ -442,15 +483,16 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const zodSchema = schema ? jsonSchemaToZod(schema) : z.string();
+      const session = activeSessions.get(sessionId)!;
 
       // If bypassDomProcessing is true, use screenshot-only extraction
       if (bypassDomProcessing === true) {
-        const screenshot = await browserAgent!.require(BrowserConnector).getHarness().screenshot();
-        const data = await browserAgent!.models.extract(instructions, zodSchema as ZodTypeAny, screenshot, '');
+        const screenshot = await session.agent.require(BrowserConnector).getHarness().screenshot();
+        const data = await session.agent.models.extract(instructions, zodSchema as ZodTypeAny, screenshot, '');
         return res.json({ data });
       } else {
         // Use the standard extraction method with DOM processing
-        const data = await browserAgent!.extract(instructions, zodSchema as ZodTypeAny);
+        const data = await session.agent.extract(instructions, zodSchema as ZodTypeAny);
         return res.json({ data });
       }
     } catch (err: unknown) {
@@ -473,13 +515,14 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/query', isAgentReady, async (req: Request, res: Response) => {
-  const { query, schema } = req.body;
+  const { query, schema, sessionId } = req.body;
   if (!query) {
     return res.status(400).json({ error: 'bad_request', message: 'Query is required.' });
   }
   try {
     const zodSchema: ZodTypeAny = schema ? jsonSchemaToZod(schema) : z.any();
-    const queryFn = (browserAgent as unknown as { query: (q: unknown, s: ZodTypeAny) => Promise<unknown> }).query;
+    const session = activeSessions.get(sessionId)!;
+    const queryFn = (session.agent as unknown as { query: (q: unknown, s: ZodTypeAny) => Promise<unknown> }).query;
     const dataUnknown: unknown = await queryFn(query, zodSchema);
     res.json({ data: dataUnknown });
   } catch (err) {
@@ -487,9 +530,11 @@ app.post('/query', isAgentReady, async (req: Request, res: Response) => {
   }
 });
 
-app.get('/screenshot', isAgentReady, async (_req: Request, res: Response) => {
+app.post('/screenshot', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
   try {
-    const harness = browserAgent!.require(BrowserConnector).getHarness();
+    const session = activeSessions.get(sessionId)!;
+    const harness = session.agent.require(BrowserConnector).getHarness();
     const image = await harness.screenshot();
     const base64Image = await image.toBase64();
     res.json({ screenshot: base64Image });
@@ -498,9 +543,11 @@ app.get('/screenshot', isAgentReady, async (_req: Request, res: Response) => {
   }
 });
 
-app.get('/state', isAgentReady, async (_req: Request, res: Response) => {
+app.post('/state', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
   try {
-    const page = browserAgent!.page;
+    const session = activeSessions.get(sessionId)!;
+    const page = session.agent.page;
     const url = page.url();
     const title = await page.title();
     res.json({ url, title });
@@ -509,50 +556,66 @@ app.get('/state', isAgentReady, async (_req: Request, res: Response) => {
   }
 });
 
-app.post('/stop', isAgentReady, async (_req: Request, res: Response) => {
+app.post('/stop', async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
+  if (!sessionId) {
+    return res.status(400).json({ error: 'bad_request', message: 'sessionId is required.' });
+  }
+
+  const session = activeSessions.get(sessionId);
+  if (!session) {
+    return res.status(404).json({ error: 'session_not_found', message: `Session ${sessionId} not found.` });
+  }
+
   try {
-    if (agentMode === "desktop") {
-      await desktopBrowserAgent!.stop();
-      desktopBrowserAgent = null;
-      console.log("Desktop BrowserAgent stopped.");
-    }
-    await browserAgent!.stop();
-    browserAgent = null;
-    agentMode = null;
+    await session.agent.stop();
+    activeSessions.delete(sessionId);
     res.json({ status: 'stopped' });
-    console.log("BrowserAgent stopped.");
+    console.log(`BrowserAgent stopped for session ${sessionId}.`);
   } catch (err) {
     handleAgentError(err, res, 'stop_failed');
   }
 });
 
-app.post('/interrupt_action', isAgentReady, async (_req: Request, res: Response) => {
+app.post('/interrupt_action', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId } = req.body;
   try {
-    if (browserAgent) {
-      browserAgent.interrupt();
-      res.json({ status: 'interrupted', message: 'The current agent action has been interrupted.' });
-    } else {
-      res.status(404).json({ error: 'agent_not_found', message: 'No active agent to interrupt.' });
-    }
+    const session = activeSessions.get(sessionId)!;
+    session.agent.interrupt();
+    res.json({ status: 'interrupted', message: 'The current agent action has been interrupted.' });
   } catch (err) {
     handleAgentError(err, res, 'interrupt_failed');
   }
 });
 
 
+
+app.get('/sessions', auth, async (_req: Request, res: Response) => {
+  const sessions = Array.from(activeSessions.entries()).map(([sessionId, session]) => ({
+    sessionId,
+    mode: session.mode,
+    createdAt: session.createdAt,
+    lastAccessed: session.lastAccessed,
+  }));
+  res.json({ sessions });
+});
+
+
 function handleAgentError(err: unknown, res: Response, defaultErrorType = 'unknown') {
   if (err instanceof AgentError) {
-    console.error(`AgentError (${err.options.variant}): ${err.message}`);
+    const agentErr = err as Error & { options: { variant: string; adaptable?: boolean } };
+    console.error(`AgentError (${agentErr.options.variant}): ${agentErr.message}`);
     res.status(400).json({
-      error: err.options.variant,
-      message: err.message,
-      adaptable: err.options.adaptable
+      error: agentErr.options.variant,
+      message: agentErr.message,
+      adaptable: agentErr.options.adaptable
     });
   } else {
-    console.error(`Unknown Error: ${String(err)}`);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`Unknown Error: ${errorMessage}`);
     res.status(500).json({
       error: defaultErrorType,
-      message: String(err)
+      message: errorMessage
     });
   }
 }
