@@ -1,5 +1,5 @@
 from typing import Dict, Callable
-from ..common.prompt_helpers import clarification_guidance, now
+from ..common.prompt_helpers import clarification_guidance, now, sig_dict
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 
@@ -94,6 +94,46 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     # Early exit policy for mutation-intent requests reaching ask()
     lines += ["", read_only_ask_mutation_exit_block()]
     # Current time (for reproducibility and deterministic caching in tests)
+    lines += ["", f"Current UTC time is {now()}."]
+
+    return "\n".join(lines)
+
+
+def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
+    """Return the system prompt used by WebSearcher.update formatted as sections."""
+    sig_json = __import__("json").dumps(sig_dict(tools), indent=4)
+
+    lines: list[str] = []
+    # Purpose
+    lines += [
+        "Purpose",
+        "-------",
+        "- You manage mutations to the WebSearcher configuration.",
+        "- Specifically, you create, list, find, and delete entries in the Websites table.",
+        "- Do not answer general web research questions here.",
+    ]
+
+    # General rules
+    lines += [
+        "",
+        "General Rules",
+        "-------------",
+        "- Treat `host` as the natural unique key for a website entry.",
+        "- After any mutation (create/delete), verify results using list/find tools.",
+        "- Prefer minimal, targeted tool calls; handle multiple entries comprehensively when requested.",
+    ]
+
+    # Tools
+    lines += [
+        "",
+        "Tools (name → argspec):",
+        sig_json,
+    ]
+
+    # Clarification guidance (conditionally references request_clarification when available)
+    lines += ["", clarification_guidance(tools)]
+
+    # Time for deterministic caching in tests
     lines += ["", f"Current UTC time is {now()}."]
 
     return "\n".join(lines)

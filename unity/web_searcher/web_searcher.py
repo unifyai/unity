@@ -21,6 +21,12 @@ from unity.events.manager_event_logging import log_manager_call
 from unity.events.event_bus import EVENT_BUS, Event
 from unity.web_searcher import prompt_builders
 from .base import BaseWebSearcher
+from ..common.tool_outcome import ToolOutcome
+from ..common.context_store import TableStore
+from ..common.model_to_fields import model_to_fields
+from ..common.embed_utils import ensure_vector_column
+from ..common.filter_utils import normalize_filter_expr
+from .types.website import Website
 
 
 class WebSearcher(BaseWebSearcher):
@@ -31,6 +37,22 @@ class WebSearcher(BaseWebSearcher):
     def __init__(self):
         super().__init__()
         self.tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+        # Resolve context for Websites table (single-table store)
+        ctxs = unify.get_active_context()
+        read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
+        if not read_ctx:
+            try:
+                from .. import ensure_initialised as _ensure_initialised
+
+                _ensure_initialised()
+                ctxs = unify.get_active_context()
+                read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
+            except Exception:
+                pass
+        assert (
+            read_ctx == write_ctx
+        ), "read and write contexts must match for WebSearcher."
+        self._websites_ctx = f"{read_ctx}/Websites"
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
             self._search,
@@ -40,6 +62,17 @@ class WebSearcher(BaseWebSearcher):
             include_class_name=False,
         )
         self.add_tools("ask", ask_tools)
+        update_tools: Dict[str, Any] = {
+            **methods_to_tool_dict(
+                self.ask,
+                self._create_website,
+                self._list_websites,
+                self._find_websites,
+                self._delete_website,
+                include_class_name=False,
+            ),
+        }
+        self.add_tools("update", update_tools)
         # Ensure any internal caches/storage are present
         self._provision_storage()
 
@@ -131,12 +164,9 @@ class WebSearcher(BaseWebSearcher):
 
     def _provision_storage(self) -> None:
         """
-        Ensure internal, process-local caches/storage exist (idempotent).
+        Ensure internal caches and the Websites table exist (idempotent).
 
-        This mirrors the pattern used by other managers which prepare their
-        storage upfront. WebSearcher does not maintain a remote context, but we
-        keep lightweight caches for recent operations to support future
-        optimisations and easy resets via `clear`.
+        Caches are kept process-local. Websites are persisted via Unify.
         """
         try:
             # Simple placeholders for last operation snapshots
@@ -151,6 +181,26 @@ class WebSearcher(BaseWebSearcher):
                 self._last_crawls: Dict[str, Any] = {}
             if not hasattr(self, "_last_maps"):
                 self._last_maps: Dict[str, Any] = {}
+            # Provision Websites store
+            self._websites_store = TableStore(
+                self._websites_ctx,
+                unique_keys={"website_id": "int", "host": "str"},
+                auto_counting={"website_id": None},
+                description=(
+                    "Catalog of websites of interest for WebSearcher routing/policies."
+                ),
+                fields=model_to_fields(Website),
+            )
+            self._websites_store.ensure_context()
+            try:
+                ensure_vector_column(
+                    self._websites_ctx,
+                    embed_column="notes_emb",
+                    source_column="notes",
+                    derived_expr=None,
+                )
+            except Exception:
+                pass
         except Exception:
             # Best-effort only; callers operate without caches if needed
             pass
@@ -176,7 +226,222 @@ class WebSearcher(BaseWebSearcher):
             pass
 
         # Re-provision storage to a clean slate
+        try:
+            unify.delete_context(self._websites_ctx)
+        except Exception:
+            pass
+
         self._provision_storage()
+
+        # Attempt to ensure context visibility before reads
+        try:
+            import time as _time
+
+            for _ in range(3):
+                try:
+                    unify.get_fields(context=self._websites_ctx)
+                    break
+                except Exception:
+                    _time.sleep(0.05)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
+    #  Public update orchestration                                       #
+    # ------------------------------------------------------------------ #
+
+    @functools.wraps(BaseWebSearcher.update, updated=())
+    @log_manager_call("WebSearcher", "update", payload_key="request")
+    async def update(
+        self,
+        text: str,
+        *,
+        _return_reasoning_steps: bool = False,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
+        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        _call_id: Optional[str] = None,
+    ) -> SteerableToolHandle:
+        client = self._new_llm_client("gpt-5@openai")
+
+        tools = dict(self.get_tools("update"))
+        if _clarification_up_q is not None and _clarification_down_q is not None:
+
+            async def _on_request(q: str):
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "WebSearcher",
+                            "method": "update",
+                            "action": "clarification_request",
+                            "question": q,
+                        },
+                    ),
+                )
+
+            async def _on_answer(ans: str):
+                await EVENT_BUS.publish(
+                    Event(
+                        type="ManagerMethod",
+                        calling_id=_call_id,
+                        payload={
+                            "manager": "WebSearcher",
+                            "method": "update",
+                            "action": "clarification_answer",
+                            "answer": ans,
+                        },
+                    ),
+                )
+
+            tools["request_clarification"] = make_request_clarification_tool(
+                _clarification_up_q,
+                _clarification_down_q,
+                on_request=_on_request,
+                on_answer=_on_answer,
+            )
+
+        client.set_system_message(
+            prompt_builders.build_update_prompt(tools=tools),
+        )
+
+        handle = start_async_tool_loop(
+            client,
+            text,
+            tools,
+            loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
+            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
+            parent_chat_context=_parent_chat_context,
+        )
+
+        if _return_reasoning_steps:
+            original_result = handle.result
+
+            async def wrapped_result():
+                answer = await original_result()
+                return answer, client.messages
+
+            handle.result = wrapped_result  # type: ignore[attr-defined]
+
+        return handle
+
+    # ------------------------------------------------------------------ #
+    #  Websites table tools                                              #
+    # ------------------------------------------------------------------ #
+
+    def _create_website(
+        self,
+        *,
+        host: str,
+        gated: bool,
+        subscribed: bool,
+        credentials: Optional[List[int]] = None,
+        actor_entrypoint: Optional[int] = None,
+        notes: str = "",
+    ) -> ToolOutcome:
+        """Create a new Website row (unique by host)."""
+        assert host, "host is required"
+
+        existing = unify.get_logs(
+            context=self._websites_ctx,
+            filter=f"host == {host!r}",
+            limit=1,
+            return_ids_only=True,
+        )
+        assert not existing, f"Website with host '{host}' already exists."
+
+        entries: Dict[str, Any] = {
+            "host": host,
+            "gated": bool(gated),
+            "subscribed": bool(subscribed),
+            "credentials": credentials if credentials else None,
+            "actor_entrypoint": actor_entrypoint,
+            "notes": notes or "",
+        }
+        unify.log(context=self._websites_ctx, **entries, new=True, mutable=True)
+        return {"outcome": "website created", "details": {"host": host}}
+
+    def _list_websites(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> List[Website]:
+        """Return Website rows matching an optional boolean filter."""
+        normalized = normalize_filter_expr(filter)
+        logs = unify.get_logs(
+            context=self._websites_ctx,
+            filter=normalized,
+            offset=offset,
+            limit=limit,
+        )
+        result: List[Website] = []
+        for lg in logs:
+            ent = lg.entries or {}
+            result.append(
+                Website(
+                    website_id=(
+                        int(ent.get("website_id"))
+                        if ent.get("website_id") is not None
+                        else -1
+                    ),
+                    host=ent.get("host"),
+                    gated=bool(ent.get("gated", False)),
+                    subscribed=bool(ent.get("subscribed", False)),
+                    credentials=ent.get("credentials"),
+                    actor_entrypoint=ent.get("actor_entrypoint"),
+                    notes=ent.get("notes", ""),
+                ),
+            )
+        return result
+
+    def _find_websites(
+        self,
+        *,
+        host: Optional[str] = None,
+        website_id: Optional[int] = None,
+    ) -> List[Website]:
+        """Find Website rows by `host` or `website_id`. Returns a list (may be empty)."""
+        exprs: List[str] = []
+        if host is not None:
+            exprs.append(f"host == {host!r}")
+        if website_id is not None:
+            exprs.append(f"website_id == {int(website_id)}")
+        filt = " and ".join(exprs) if exprs else None
+        return self._list_websites(filter=filt)
+
+    def _delete_website(
+        self,
+        *,
+        host: Optional[str] = None,
+        website_id: Optional[int] = None,
+    ) -> ToolOutcome:
+        """Delete a single Website row identified by host or website_id."""
+        exprs: List[str] = []
+        if host is not None:
+            exprs.append(f"host == {host!r}")
+        if website_id is not None:
+            exprs.append(f"website_id == {int(website_id)}")
+        filt = " and ".join(exprs) if exprs else None
+
+        ids = unify.get_logs(
+            context=self._websites_ctx,
+            filter=filt,
+            limit=2,
+            return_ids_only=True,
+        )
+        if not ids:
+            raise ValueError("No website found matching the provided identifier.")
+        if len(ids) > 1:
+            raise RuntimeError("Multiple websites match the provided identifier.")
+
+        unify.delete_logs(context=self._websites_ctx, logs=ids[0])
+        return {
+            "outcome": "website deleted",
+            "details": {"host": host, "website_id": website_id},
+        }
 
     def _search(
         self,
