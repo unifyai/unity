@@ -2668,13 +2668,14 @@ class TaskScheduler(BaseTaskScheduler):
                 "details": {"queue_id": queue_id, "order": []},
             }
 
-        rows = self._filter_tasks(filter=f"task_id in {order}")
+        rows: List[Task] = self._filter_tasks(filter=f"task_id in {order}")
         ids_found = {r.task_id for r in rows}
         missing = [tid for tid in order if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
         for r in rows:
-            st = self._to_status(r.status)
-            assert st not in self._TERMINAL_STATUSES, f"Task {r.task_id} is terminal"
+            assert (
+                r.status not in self._TERMINAL_STATUSES
+            ), f"Task {r.task_id} is terminal"
         # Reject placing trigger-based tasks into a runnable queue
         for r in rows:
             if r.trigger is not None:
@@ -2682,7 +2683,7 @@ class TaskScheduler(BaseTaskScheduler):
                     f"Task {r.task_id} is trigger-based and cannot be placed in the queue.",
                 )
         # Build a one-shot rows map for reuse throughout this tool call
-        rows_by_id: Dict[int, Task] = {int(r.task_id): r for r in rows}
+        rows_by_id: Dict[int, Task] = {r.task_id: r for r in rows}
         # Allow editing a queue that includes the currently active task; preserve its status below
         active_tid: Optional[int] = None
         try:
@@ -2717,7 +2718,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Remove any other members currently in the target queue (strict by queue_id)
         current_members: List[int] = []
-        current_rows_by_id: Dict[int, Dict[str, Any]] = {}
+        current_rows_by_id: Dict[int, Task] = {}
 
         # Prefer a single filtered read of the target queue to derive both:
         # - existing head start_at (when queue_start_at not provided), and
@@ -2735,8 +2736,8 @@ class TaskScheduler(BaseTaskScheduler):
                 rows_in_queue = []
 
             # Derive current members and by-id map from the same read
-            current_members = [int(r.task_id) for r in rows_in_queue]
-            current_rows_by_id = {int(r.task_id): r for r in rows_in_queue}
+            current_members: List[int] = [r.task_id for r in rows_in_queue]
+            current_rows_by_id: Dict[int, Task] = {r.task_id: r for r in rows_in_queue}
 
             # Compute existing head start_at locally to avoid an unfiltered scan
             if queue_start_at is None and existing_head_start is None:
@@ -2764,7 +2765,7 @@ class TaskScheduler(BaseTaskScheduler):
             except Exception:
                 pass
 
-        to_remove = [tid for tid in current_members if tid not in order]
+        to_remove: List[int] = [tid for tid in current_members if tid not in order]
 
         if to_remove:
             # Detach removed tasks in a single backend call: neutral schedule, queued status, no queue_id
@@ -2781,13 +2782,11 @@ class TaskScheduler(BaseTaskScheduler):
             except Exception:
                 # Fallback to per-task validated writes if batch update fails for any reason
                 for tid in to_remove:
-                    row = current_rows_by_id.get(
-                        int(tid),
-                    ) or self._get_single_row_or_raise(
-                        int(tid),
+                    row = current_rows_by_id.get(tid) or self._get_single_row_or_raise(
+                        tid,
                     )
                     self._validated_write(
-                        task_id=int(tid),
+                        task_id=tid,
                         entries={
                             "schedule": {},
                             "status": Status.queued,
