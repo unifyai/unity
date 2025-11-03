@@ -104,8 +104,7 @@ class TasksStore:
             return {}
 
     def get_metric_count(self, *, key: str) -> int:
-        # ret = unify.get_logs_metric(metric="count", key=key, context=self._ctx)
-        ret = len(unify.get_logs(context=self._ctx, return_ids_only=True))
+        ret = unify.get_logs_metric(metric="count", key=key, context=self._ctx)
         return 0 if ret is None else int(ret)
 
     def get_metric_max(self, *, key: str) -> int:
