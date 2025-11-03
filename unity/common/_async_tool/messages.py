@@ -10,7 +10,7 @@ from .utils import maybe_await
 from ...constants import LOGGER
 from contextlib import suppress
 from .tools_utils import create_tool_call_message
-from .images import append_image_refs_with_source
+from .images import append_images_with_source
 
 
 # TODO: Some of these helpers should not be placed here, but in utils.py or their own files
@@ -604,8 +604,8 @@ async def schedule_missing_for_message(
                     )
                     imgs = payload.get("images") if isinstance(payload, dict) else None
                     if imgs is None and isinstance(payload, dict):
-                        imgs = payload.get("image_refs")
-                    append_image_refs_with_source(imgs)
+                        imgs = payload.get("images")
+                    append_images_with_source(imgs)
 
                 # Other helpers: acknowledge but do not execute during backfill
                 try:

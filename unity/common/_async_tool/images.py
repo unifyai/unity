@@ -54,8 +54,8 @@ def extract_alignment_text_from_value(value: Any) -> str:
 parse_source_scoped_span = None
 
 
-def append_image_refs_with_source(
-    image_refs: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
+def append_images_with_source(
+    images: ImageRefs | List[RawImageRef | AnnotatedImageRef] | None,
 ) -> None:
     """
     Append a batch of ImageRefs into the loop context.
@@ -64,10 +64,10 @@ def append_image_refs_with_source(
     - Records a log entry per image with its annotation (if any).
     """
     try:
-        if image_refs is None:
+        if images is None:
             return
         # Support ImageRefs, AnnotatedImageRefs, RawImageRefs, or plain list via duck typing on `root`
-        items = getattr(image_refs, "root", image_refs) or []
+        items = getattr(images, "root", images) or []
         refs: List[RawImageRef | AnnotatedImageRef] = list(items)
 
         reg = LIVE_IMAGES_REGISTRY.get()
@@ -536,7 +536,7 @@ async def align_images_for(
     args: dict,
     hints: list[dict],
 ) -> dict:  # deprecated helper retained for compatibility
-    return {"image_refs": []}
+    return {"images": []}
 
 
 def refresh_overview_doc_if_present(normalized_tools: dict) -> None:
