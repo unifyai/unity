@@ -2818,8 +2818,8 @@ class TaskScheduler(BaseTaskScheduler):
                 cur_qid = row.queue_id
                 cur_status = row.status
                 same_sched = (
-                    row.schedule_prev == sched.prev_task
-                    and row.schedule_next == sched.next_task
+                    row.schedule_prev == sched["prev_task"]
+                    and row.schedule_next == sched["next_task"]
                     and (row.schedule_start_at == sched.get("start_at"))
                 )
                 same_qid = cur_qid == target_qid
