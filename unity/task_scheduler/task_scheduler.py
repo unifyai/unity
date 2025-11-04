@@ -2281,26 +2281,26 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Fast-path via LocalTaskView when membership is known.
         try:
-            qid_cached = self._view.get_queue_id_for_task(int(task_id))
+            qid_cached = self._view.get_queue_id_for_task(task_id)
         except Exception:
             qid_cached = None
-        if isinstance(qid_cached, int):
-            members = list(self._view.get_member_ids(int(qid_cached)) or [])
-            if int(task_id) in members:
+        if qid_cached is not None:
+            members = self._view.get_member_ids(qid_cached)
+            if task_id in members:
                 return self._get_queue(queue_id=qid_cached)
 
         # Fallback: resolve via storage
         try:
-            row = self._get_single_row_or_raise(int(task_id))
+            row = self._get_single_row_or_raise(task_id)
         except Exception:
             return []
 
         qid = row.queue_id
-        if isinstance(qid, int):
+        if qid is not None:
             return self._get_queue(queue_id=qid)
 
         # No numeric queue_id – follow the linked chain defensively
-        return self._walk_queue_from_task(task_id=int(task_id))
+        return self._walk_queue_from_task(task_id=task_id)
 
     def _reorder_queue(
         self,
