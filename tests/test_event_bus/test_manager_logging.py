@@ -64,6 +64,46 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
         return None
 
 
+class _PrivateAttrHandle(SteerableToolHandle):
+    """Handle exposing private/dunder attributes to verify proxy forwarding."""
+
+    def __init__(self) -> None:
+        self._internal_flag = 123
+        self.__opaque_flag__ = "ok"
+        self._done = True
+
+    # Minimal interface – inert stubs
+    async def ask(self, question: str, *, parent_chat_context_cont: list[dict] | None = None) -> "SteerableToolHandle":  # type: ignore[override]
+        return self
+
+    async def interject(self, message: str, *, parent_chat_context_cont: list[dict] | None = None) -> None:  # type: ignore[override]
+        return None
+
+    def stop(self, reason: str | None = None, *, parent_chat_context_cont: list[dict] | None = None):  # type: ignore[override]
+        return "stopped"
+
+    def pause(self):  # type: ignore[override]
+        return "paused"
+
+    def resume(self):  # type: ignore[override]
+        return "resumed"
+
+    def done(self):  # type: ignore[override]
+        return self._done
+
+    async def result(self):  # type: ignore[override]
+        return ""
+
+    async def next_clarification(self) -> dict:  # type: ignore[override]
+        return {}
+
+    async def next_notification(self) -> dict:  # type: ignore[override]
+        return {}
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:  # type: ignore[override]
+        return None
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_manager_logging_sanitizes_iterable_answer_to_string():
@@ -393,3 +433,16 @@ async def test_logged_wrapper_logs_custom_method_calls():
     )
 
     assert len(events) == 1
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_logged_wrapper_forwards_private_attributes():
+    """Private (single-underscore) and dunder attributes must be forwarded to the inner handle."""
+    inner = _PrivateAttrHandle()
+    logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
+
+    # Access private attribute via proxy – should reflect inner value
+    assert getattr(logged, "_internal_flag") == 123
+    # Access a dunder-style attribute (non-mangled)
+    assert getattr(logged, "__opaque_flag__") == "ok"
