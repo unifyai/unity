@@ -588,6 +588,70 @@ class ManagersWorker:
             ).to_json(),
         )
 
+    async def _handle_conductor_pause_actor(self, event: ConductorPauseActor) -> None:
+        """Handle ConductorPauseActor by pausing all active handles."""
+        print("handle_conductor_pause_actor", event.to_dict())
+        reason = getattr(event, "reason", "")
+        affected: list[int] = []
+        for hid, data in list(self._handle_registry.items()):
+            handle = data.get("handle")
+            if handle is None:
+                continue
+
+            try:
+                if hasattr(handle, "pause_actor"):
+                    await handle.pause_actor(reason)
+                    affected.append(int(hid))
+            except Exception as e:
+                print(f"[ManagersWorker] Failed to pause handle {hid}: {e}")
+
+        # Notify per handle without triggering LLM runs
+        for hid in affected:
+            try:
+                await self._event_broker.publish(
+                    self._publish_channel,
+                    ConductorNotification(
+                        handle_id=int(hid),
+                        response=f"Actor paused: {reason}",
+                    ).to_json(),
+                )
+            except Exception as e:
+                print(
+                    f"[ManagersWorker] Failed to publish pause notification for {hid}: {e}",
+                )
+
+    async def _handle_conductor_resume_actor(self, event: ConductorResumeActor) -> None:
+        """Handle ConductorResumeActor by resuming all active handles."""
+        print("handle_conductor_resume_actor", event.to_dict())
+        reason = getattr(event, "reason", "")
+        affected: list[int] = []
+        for hid, data in list(self._handle_registry.items()):
+            handle = data.get("handle")
+            if handle is None:
+                continue
+
+            try:
+                if hasattr(handle, "resume_actor"):
+                    await handle.resume_actor(reason)
+                    affected.append(int(hid))
+            except Exception as e:
+                print(f"[ManagersWorker] Failed to resume handle {hid}: {e}")
+
+        # Notify per handle without triggering LLM runs
+        for hid in affected:
+            try:
+                await self._event_broker.publish(
+                    self._publish_channel,
+                    ConductorNotification(
+                        handle_id=int(hid),
+                        response=f"Actor resumed: {reason}",
+                    ).to_json(),
+                )
+            except Exception as e:
+                print(
+                    f"[ManagersWorker] Failed to publish resume notification for {hid}: {e}",
+                )
+
     # ──────────────────────────────────────────────────────────────────
     # Message Routing Workers (ingress/egress)
     # ──────────────────────────────────────────────────────────────────
@@ -612,7 +676,13 @@ class ManagersWorker:
             return ("memory_manager", lambda: self._memory_manager is not None)
         if isinstance(
             event,
-            (ConductorRequest, ConductorHandleRequest, ConductorClarificationResponse),
+            (
+                ConductorRequest,
+                ConductorHandleRequest,
+                ConductorClarificationResponse,
+                ConductorPauseActor,
+                ConductorResumeActor,
+            ),
         ):
             return ("conductor", lambda: self._conductor is not None)
         if isinstance(event, (GetBusEventsRequest, PublishBusEventRequest)):
@@ -669,6 +739,10 @@ class ManagersWorker:
                         asyncio.create_task(self._handle_conductor_request(ev))
                     case ConductorHandleRequest():
                         asyncio.create_task(self._handle_conductor_handle_request(ev))
+                    case ConductorPauseActor():
+                        asyncio.create_task(self._handle_conductor_pause_actor(ev))
+                    case ConductorResumeActor():
+                        asyncio.create_task(self._handle_conductor_resume_actor(ev))
                     case ConductorClarificationResponse():
                         asyncio.create_task(
                             self._handle_conductor_clarification_response(ev),
