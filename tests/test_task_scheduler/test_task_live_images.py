@@ -269,10 +269,10 @@ async def test_taskscheduler_update_live_images_reorder_three_tasks() -> None:
 
     # After update, verify the queue order is Invitation → Organize → Image Edits
     row0 = ts._filter_tasks(filter="task_id == 0")[0]
-    qid = row0.get("queue_id")
+    qid = row0.queue_id
     chain = (
         ts._get_queue(queue_id=qid)
-        if isinstance(qid, int)
+        if qid is not None
         else ts._get_queue_for_task(task_id=0)
     )
     queue = [t.task_id for t in chain]
