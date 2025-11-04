@@ -2205,7 +2205,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         # Locate the starting row
         try:
-            cur_row = self._get_single_row_or_raise(int(task_id))
+            cur_row = self._get_single_row_or_raise(task_id)
         except Exception:
             return []
 
@@ -2217,7 +2217,7 @@ class TaskScheduler(BaseTaskScheduler):
                 if prev_id is None:
                     break
                 prev_rows = self._filter_tasks(
-                    filter=f"task_id == {int(prev_id)}",
+                    filter=f"task_id == {prev_id}",
                     limit=1,
                 )
                 head = prev_rows[0] if prev_rows else None
@@ -2229,25 +2229,21 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Walk forward using next_task pointers; include terminal rows for context
         ordered: List[Task] = []
-        node = head
+        node: Task | None = head
         seen: set[int] = set()
         while node is not None:
             tid = node.task_id
-            try:
-                tid_int = int(tid) if tid is not None else None
-            except Exception:
-                tid_int = None  # type: ignore[assignment]
-            if tid_int is not None and tid_int in seen:
+            if tid is not None and tid in seen:
                 break
-            if tid_int is not None:
-                seen.add(tid_int)
+            if tid is not None:
+                seen.add(tid)
             # Strip stale activation metadata on non-active rows
             _row = self._sanitize_activation(dict(node))
             ordered.append(Task(**_row))
             nxt_id = node.schedule_next
             if nxt_id is None:
                 break
-            nxt_rows = self._filter_tasks(filter=f"task_id == {int(nxt_id)}", limit=1)
+            nxt_rows = self._filter_tasks(filter=f"task_id == {nxt_id}", limit=1)
             node = nxt_rows[0] if nxt_rows else None
 
         return ordered
