@@ -1,4 +1,3 @@
-import asyncio
 from typing import TYPE_CHECKING, Union
 
 from unity.conversation_manager_2.new_events import *
@@ -36,19 +35,30 @@ class EventHandler:
 async def _(event: StartupEvent):
     ...
 
-CallEvents = Union[PhoneCallRecieved, PhoneCallSent, PhoneCallEnded, UnifyCallReceived]
+CallEvents = Union[PhoneCallRecieved, PhoneCallSent, UnifyCallReceived]
 
 @EventHandler.register(
-        (PhoneCallRecieved, PhoneCallSent, PhoneCallEnded, UnifyCallReceived)
+        (PhoneCallRecieved, PhoneCallSent, UnifyCallReceived)
         )
 async def _(event: CallEvents, cm: 'ConversationManager', *args, **kwargs):
     if cm.mode in ["phone", "gmeet", "unify_call"]:
         # can't make call
+        # TODO: we should handle this somehow tbh
         ...
     else:
         # update state
-        cm.notification_bar.push_notification(event.notification())
-        cm.contact_index.push_message(event.contact.id, "phone", event.thread_message())
+        message_content = None
+        notif_content = None
+        match event:
+            case PhoneCallRecieved():
+                ...
+            case PhoneCallSent():
+                ...
+            case UnifyCallReceived():
+                ...
+
+        cm.notifications_bar.push_notification(...)
+        cm.contact_index.push_message(event.contact["contact_id"], "phone", )
 
         # start call process
         cm.call_manager.start_call()
@@ -89,27 +99,47 @@ async def _(event, cm: 'ConversationManager', *args, **kwargs):
     message_content = None
     subject = None
     body = None
+    notif_content = None
+
+    contact = cm.contact_index.get_contact(event.contact["contact_id"])
 
     match event:
-        case SMSSent() | SMSRecieved():
+        case SMSSent():
             thread = "sms"
             message_content = event.content
-        case EmailSent() | EmailRecieved():
+            notif_content = f"SMS sent to {contact.full_name}"
+        case SMSRecieved():
+            thread = "sms"
+            message_content = event.content
+            notif_content = f"SMS recieved from {contact.full_name}"
+        case EmailSent():
             thread = "email"
             subject = event.subject
             body = event.body
-        case UnifyMessageSent() | UnifyMessageRecieved():
+            notif_content = f"Email sent to {contact.full_name}"
+        case EmailRecieved():
+            thread = "email"
+            subject = event.subject
+            body = event.body
+            notif_content = f"Email recieved from {contact.full_name}"
+        case UnifyMessageSent():
             thread = "unify"
             message_content = event.content
+            notif_content = f"Unify message sent to {contact.full_name}"
+        case UnifyMessageRecieved():
+            thread = "unify"
+            message_content = event.content
+            notif_content = f"Unify message from {contact.full_name}"
+            
     
     message_content = event.content
-    print("CONTACT ->", event.contact)
     cm.contact_index.push_message(event.contact, thread, message_content=message_content, subject=subject, body=body, timestamp=event.timestamp)
-    # cm.notifications_bar.push_notif(...)
+    cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
     
     # run llm (TODO: add cancel running if not on a call)
     await cm.run_llm(delay=2)
 
+# TODO: put all managers in the cm and move start up logic from managers worker to here
 @EventHandler.register(
     (
         ManagersStartupResponse

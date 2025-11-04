@@ -50,7 +50,7 @@ class ContactIndex:
         return Contact(**self.contacts.get(1))
     
     # is this supposed to fail for any reason?
-    def push_message(self, contact: Contact, thread_name, message_content=None, subject=None, body=None, timestamp=None):
+    def push_message(self, contact: dict, thread_name, message_content=None, subject=None, body=None, timestamp=None):
         if not timestamp: timestamp = datetime.now()
         contact_id = contact["contact_id"]
         if contact_id not in self.active_conversations:

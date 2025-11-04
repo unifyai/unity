@@ -12,6 +12,7 @@ from unity.conversation_manager_2.event_broker import (
     get_event_broker,
     create_event_broker,
 )
+from unity.conversation_manager_2.conversation_manager import ConversationManager
 
 
 stop = None
@@ -39,14 +40,6 @@ def signal_handler(signum, frame):
 
 async def main(use_realtime=False, project_name: str = "Assistants"):
     global conversation_manager, managers_worker, stop
-    if use_realtime:
-        from unity.conversation_manager_2.conversation_manager_realtime import (
-            ConversationManager,
-        )
-    else:
-        from unity.conversation_manager_2.conversation_manager import (
-            ConversationManager,
-        )
 
     # Set up signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
@@ -96,6 +89,9 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
         project_name=project_name,
         stop=stop,
         user_turn_end_callback=None,
+
+        # whether to use realtime settings or not
+        realtime=use_realtime
     )
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker

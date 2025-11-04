@@ -120,6 +120,7 @@ def build_dynamic_response_models(
     include_email: bool = True,
     include_sms: bool = True,
     include_call: bool = True,
+    realtime=False
 ):
     """
     Dynamically create response models with conditional actions based on available contact info.
@@ -159,13 +160,23 @@ def build_dynamic_response_models(
     )
 
     # Dynamically create ResponsePhone model for call/gmeet modes
-    DynamicResponsePhone = create_model(
-        "DynamicResponsePhone",
-        thoughts=(str, ...),
-        phone_utterance=(str, ...),
-        actions=(Optional[list[ActionsUnion]], ...),
-        __base__=BaseModel,
-    )
+    if not realtime:
+        DynamicResponsePhone = create_model(
+            "DynamicResponsePhone",
+            thoughts=(str, ...),
+            phone_utterance=(str, ...),
+            actions=(Optional[list[ActionsUnion]], ...),
+            __base__=BaseModel,
+        )
+    else:
+        DynamicResponsePhone = create_model(
+            "DynamicResponsePhone",
+            thoughts=(str, ...),
+            phone_guidance=(str, ...),
+            actions=(Optional[list[ActionsUnion]], ...),
+            __base__=BaseModel,
+        )
+
 
     return {
         "call": DynamicResponsePhone,

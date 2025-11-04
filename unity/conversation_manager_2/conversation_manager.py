@@ -40,8 +40,6 @@ if not logger.handlers:
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
-    SYS = f.read()
 
 
 MAX_CONV_MANAGER_MSGS = 50
@@ -75,6 +73,7 @@ class ConversationManager:
         project_name: str = "Assistants",
         stop: asyncio.Event = None,
         user_turn_end_callback: Optional[Callable[[list[dict]], str]] = None,
+        realtime=False
     ):
         # assistant details
         self.job_name = job_name
@@ -118,7 +117,7 @@ class ConversationManager:
         self.debouncer = Debouncer()
 
         # call manager
-        self.call_manager = LivekitCallManager()
+        self.call_manager = LivekitCallManager(realtime=realtime)
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -126,8 +125,17 @@ class ConversationManager:
         # state - TODO: put the state into a dict or state class
         # access is as a propery with a lock, that is locked when an llm run
         # such that you can never modify state while the LLM is running (so actions do not break)
+        if not realtime:
+            with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
+                self.system_prompt = f.read()
+        else:
+            # This prompt needs to have the conductor stuff inserted
+            with open(Path(__file__).parent.resolve() / "prompts" / "realtime.md") as f:
+                self.system_prompt = f.read()
+
         
         self.mode = "text"
+        self.realtime = realtime
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
@@ -140,6 +148,8 @@ class ConversationManager:
     
     def commit(self):
         self.last_snapshot = self._current_snapshot
+        notifs = self.notifications_bar.notifications
+        self.notifications_bar.notifications = [n for n in notifs if n.pinned]
     
     # this is non-blocking, it will quickly submit the 
     # coro and return
@@ -153,7 +163,7 @@ class ConversationManager:
         print(prompt)
         input_message = {"role": "user", "content": prompt}
         boss_contact = self.contact_index.boss_contact
-        system_prompt = Template(SYS).render(
+        system_prompt = Template(self.system_prompt).render(
             contact_id=boss_contact.contact_id,
             first_name=boss_contact.first_name,
             surname=boss_contact.surname,
@@ -166,28 +176,40 @@ class ConversationManager:
             include_email=self.assistant_email not in [None, ""],
             include_sms=self.assistant_number not in [None, ""],
             include_call=self.assistant_number not in [None, ""],
+            realtime=self.realtime
         )
         response_model = dynamic_response_models[self.mode]
-        out = await self.llm.run(system_prompt=system_prompt, messages=self.chat_history + [input_message],
-                                stream_to_call=self.mode in ["call", "unify_call", "gmeet"],
+        out = await self.llm.run(system_prompt=system_prompt, 
+                                messages=self.chat_history + [input_message],
+                                
+                                # realtime model will handle the call so no need to stream anything to the call
+                                stream_to_call=self.mode in ["call", "unify_call", "gmeet"] and not self.realtime,
                                 response_model=response_model)
         parsed_out = json.loads(out)
         if "call" in self.mode:
-            if self.mode == "unify_call":
-                topic = "app:comms:unify_call_utterance"
-                event = AssistantUnifyCallUtterance(1, parsed_out["phone_utterance"])
+            if not self.realtime:
+                if self.mode == "unify_call":
+                    topic = "app:comms:unify_call_utterance"
+                    event = AssistantUnifyCallUtterance(1, parsed_out["phone_utterance"])
+                else:
+                    topic = "app:comms:phone_utterance"
+                    event = AssistantPhoneUtterance(
+                        self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
+                    )
+                await self.event_broker.publish(topic, event.to_json())
+
             else:
-                topic = "app:comms:phone_utterance"
-                event = AssistantPhoneUtterance(
-                    self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
-                )
-            await self.event_broker.publish(topic, event.to_json())
+                if parsed_out.get("phone_guidance"):
+                    await self.event_broker.publish(
+                        "app:call:call_notifs",
+                        json.dumps({"content": parsed_out["phone_guidance"]}),
+                    )
 
         print(f"parsed_out {parsed_out}")
         actions = parsed_out.get("actions", [])
         for action in actions:
             print("taking actions...")
-            Action.take_action(action.pop("action_name"), **action)
+            Action.take_action(action.pop("action_name"), **action, realtime=self.realtime)
             print("done taking actions...")
         self.commit()
         print("commiting...")
@@ -220,7 +242,7 @@ class ConversationManager:
                 self.last_activity_time = self.loop.time()
                 # process events
                 event = Event.from_json(msg["data"])
-                await EventHandler.handle_event(event, self)
+                await EventHandler.handle_event(event, self, realtime=self.realtime)
 
     async def publish_startup(self):
         print("publishing startup")
