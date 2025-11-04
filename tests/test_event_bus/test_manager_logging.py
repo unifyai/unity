@@ -242,9 +242,6 @@ async def test_logged_wrapper_stop_invokes_inner_and_records_reason():
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.xfail(
-    reason="logging wrapper does not forward custom kwargs or unknown kw like images on interject",
-)
 async def test_logged_wrapper_interject_forwards_custom_kwargs():
     """Interject kwargs should be forwarded; current wrapper passes only images kw (expected to fail)."""
     inner = _CustomArgsHandle()
@@ -257,9 +254,6 @@ async def test_logged_wrapper_interject_forwards_custom_kwargs():
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.xfail(
-    reason="logging wrapper pause/resume do not accept or forward custom kwargs",
-)
 async def test_logged_wrapper_pause_resume_forward_kwargs():
     """Pause/Resume kwargs should be forwarded; current wrapper drops them (expected to fail)."""
     inner = _CustomArgsHandle()
@@ -282,9 +276,6 @@ async def test_logged_wrapper_pause_resume_forward_kwargs():
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.xfail(
-    reason="Python resolves __class__ directly from the instance type (bypassing __getattribute__), so the proxy cannot reliably spoof __class__; use __wrapped__ for reflection instead.",
-)
 async def test_logged_handle_reports_same_class_name():
     """Proxy should present the same class via __class__ spoofing for reflection."""
     inner = _CustomArgsHandle()
@@ -352,9 +343,6 @@ async def test_logged_handle_preserves_doc_and_signature_for_unwrapped_methods()
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.xfail(
-    reason="proxy overrides methods without copying inner docstrings/signatures",
-)
 async def test_logged_handle_doc_and_signature_match_for_overridden_methods():
     """Overridden methods should also mirror doc/signature (current behavior expected to fail)."""
     inner = _CustomArgsHandle()

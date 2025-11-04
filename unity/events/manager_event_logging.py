@@ -92,102 +92,19 @@ def wrap_handle_with_logging(
     method_name: str,
 ) -> SteerableToolHandle:
     """
-    Return a SteerableToolHandle proxy which emits a **ManagerMethod** event every
-    time the user interacts with the handle (pause/resume/…/result).
+    Return a proxy that logs every callable on the inner handle generically (pre-call action,
+    post-call outgoing with sanitized return value) while preserving signatures/docs.
     """
 
-    # --- normalize legacy handles that lack a 'cancel' kwarg on stop() -------
-    try:
-        import inspect as _inspect
+    import functools as _functools
+    import inspect as _inspect
 
-        _sig = _inspect.signature(getattr(inner, "stop"))
-        _has_cancel = any(
-            p.kind
-            in (
-                _inspect.Parameter.KEYWORD_ONLY,
-                _inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            )
-            and p.name == "cancel"
-            for p in _sig.parameters.values()
-        )
-    except Exception:
-        _has_cancel = True  # be permissive when unsure
-
-    if not _has_cancel:
-
-        class _StopAdapter(SteerableToolHandle):  # type: ignore[misc]
-            __slots__ = ("_inner",)
-
-            def __init__(self, _h: SteerableToolHandle) -> None:
-                self._inner = _h
-
-            # delegate public API, but adapt stop signature
-            async def interject(self, message: str, *, images: object | None = None):
-                return await self._inner.interject(message, images=images)
-
-            def pause(self):
-                return self._inner.pause()
-
-            def resume(self):
-                return self._inner.resume()
-
-            def done(self):
-                return self._inner.done()
-
-            async def result(self):
-                return await self._inner.result()
-
-            async def ask(self, question: str, *a, **kw):
-                return await self._inner.ask(question, *a, **kw)
-
-            def stop(self, reason: str | None = None, *, cancel: bool | None = None):
-                # Default cancel when omitted
-                _cancel_flag: bool = True if cancel is None else bool(cancel)
-                try:
-                    return self._inner.stop(cancel=_cancel_flag, reason=reason)  # type: ignore[misc]
-                except TypeError:
-                    try:
-                        return self._inner.stop(reason=reason)  # type: ignore[misc]
-                    except TypeError:
-                        if reason is not None:
-                            return self._inner.stop(reason)  # type: ignore[misc]
-                        return self._inner.stop()  # type: ignore[misc]
-
-            def __getattr__(self, item):
-                return getattr(self._inner, item)
-
-            def serialize(self) -> dict:  # type: ignore[override]
-                return self._inner.serialize()
-
-            # --- event APIs -------------------------------------------------
-            async def next_clarification(self) -> dict:
-                try:
-                    return await self._inner.next_clarification()
-                except Exception:
-                    return {}
-
-            async def next_notification(self) -> dict:
-                try:
-                    return await self._inner.next_notification()
-                except Exception:
-                    return {}
-
-            async def answer_clarification(self, call_id: str, answer: str) -> None:
-                try:
-                    return await self._inner.answer_clarification(call_id, answer)
-                except Exception:
-                    return None
-
-        inner = _StopAdapter(inner)
-
-    class _LoggedHandle(SteerableToolHandle):  # type: ignore[misc]
+    class _LoggedHandle:  # duck-typed proxy
         __slots__ = ("_inner",)
 
-        # ---------- lifecycle ------------------------------------------------
-        def __init__(self, _h: SteerableToolHandle):
+        def __init__(self, _h):
             self._inner = _h
 
-        # ---------- private helper -------------------------------------------
         async def _publish(self, **payload):
             await publish_manager_method_event(
                 call_id,
@@ -196,92 +113,76 @@ def wrap_handle_with_logging(
                 **payload,
             )
 
-        # ---------- public API mirror ----------------------------------------
-        async def interject(self, message: str, *, images: object | None = None):
-            await self._publish(action="interject", content=message)
-            return await self._inner.interject(message, images=images)
-
-        def pause(self):
-            asyncio.create_task(self._publish(action="pause"))
-            return self._inner.pause()
-
-        def resume(self):
-            asyncio.create_task(self._publish(action="resume"))
-            return self._inner.resume()
-
-        def stop(self, reason: str | None = None, *, cancel: bool | None = None):
-            asyncio.create_task(
-                self._publish(action="stop", reason=reason, cancel=cancel),
-            )
-            # Canonical semantics: cancel defaults to True when omitted.
-            _cancel_flag: bool = True if cancel is None else bool(cancel)
-            # Adapt to legacy implementations that may not accept the 'cancel' kwarg.
+        def __dir__(self):
             try:
-                return self._inner.stop(cancel=_cancel_flag, reason=reason)  # type: ignore[misc]
-            except TypeError:
+                return sorted(set(dir(self._inner)) | set(super().__dir__()))
+            except Exception:
+                return super().__dir__()
+
+        @property
+        def __wrapped__(self):  # type: ignore[override]
+            return self._inner
+
+        def __getattribute__(self, name: str):
+            if name == "__class__":
                 try:
-                    # Older signature: stop(reason=...)
-                    return self._inner.stop(reason=reason)  # type: ignore[misc]
-                except TypeError:
+                    inner = object.__getattribute__(self, "_inner")
+                    return inner.__class__
+                except Exception:
+                    return object.__getattribute__(self, "__class__")
+
+            if name.startswith("_") and name != "__class__":
+                return object.__getattribute__(self, name)
+
+            try:
+                inner = object.__getattribute__(self, "_inner")
+                target = getattr(inner, name)
+            except Exception:
+                return object.__getattribute__(self, name)
+
+            if not callable(target):
+                return target
+
+            is_async = _inspect.iscoroutinefunction(target)
+            if is_async:
+
+                @_functools.wraps(target)
+                async def _wrapped(*args, **kwargs):
                     try:
-                        # Oldest signature: positional reason
-                        if reason is not None:
-                            return self._inner.stop(reason)  # type: ignore[misc]
-                        return self._inner.stop()  # type: ignore[misc]
+                        await self._publish(action=name)
                     except Exception:
-                        # Last resort: call without args
-                        return self._inner.stop()  # type: ignore[misc]
+                        pass
+                    result = await target(*args, **kwargs)
+                    try:
+                        await self._publish(
+                            phase="outgoing",
+                            answer=_coerce_text_value(result),
+                        )
+                    except Exception:
+                        pass
+                    return result
 
-        def done(self):
-            return self._inner.done()
+            else:
 
-        async def result(self):
-            answer = await self._inner.result()
-            # Preserve original return value to callers, but ensure logged payload is a string.
-            safe_answer = _coerce_text_value(answer)
-            await self._publish(phase="outgoing", answer=safe_answer)
-            return answer
+                @_functools.wraps(target)
+                def _wrapped(*args, **kwargs):
+                    try:
+                        asyncio.create_task(self._publish(action=name))
+                    except Exception:
+                        pass
+                    result = target(*args, **kwargs)
+                    try:
+                        asyncio.create_task(
+                            self._publish(
+                                phase="outgoing",
+                                answer=_coerce_text_value(result),
+                            ),
+                        )
+                    except Exception:
+                        pass
+                    return result
 
-        async def ask(self, question: str, *a, **kw):
-            await self._publish(action="ask", question=question)
-            return await self._inner.ask(question, *a, **kw)
-
-        def serialize(self) -> dict:
-            return self._inner.serialize()
-
-        # fallback for everything else
-        def __getattr__(self, item):
-            return getattr(self._inner, item)
-
-        # --- event APIs -----------------------------------------------------
-        async def next_clarification(self) -> dict:
-            try:
-                evt = await self._inner.next_clarification()
-                asyncio.create_task(
-                    self._publish(action="next_clarification", event=evt),
-                )
-                return evt
-            except Exception:
-                return {}
-
-        async def next_notification(self) -> dict:
-            try:
-                evt = await self._inner.next_notification()
-                asyncio.create_task(
-                    self._publish(action="next_notification", event=evt),
-                )
-                return evt
-            except Exception:
-                return {}
-
-        async def answer_clarification(self, call_id: str, answer: str) -> None:
-            asyncio.create_task(
-                self._publish(action="answer_clarification", call_id=call_id),
-            )
-            try:
-                return await self._inner.answer_clarification(call_id, answer)
-            except Exception:
-                return None
+            return _wrapped
 
     return _LoggedHandle(inner)
 
