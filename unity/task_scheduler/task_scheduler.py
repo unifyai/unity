@@ -1463,14 +1463,13 @@ class TaskScheduler(BaseTaskScheduler):
         # ------------------  write log immediately  ------------------ #
         log = self._view.create_one(entries=task_details, new=True)
         task_id = log.entries["task_id"]
-        task_details["task_id"] = task_id
         # Keep the monotonic queue-id allocator in sync with the id we just
         # materialized (if any). This ensures preview calls to
         # _allocate_new_queue_id() do not consume ids and tests that capture a
         # queue id before creation continue to pass.
         try:
-            if isinstance(derived_qid, int):
-                self._view.sync_max_queue_id_seen(int(derived_qid))
+            if derived_qid is not None:
+                self._view.sync_max_queue_id_seen(derived_qid)
         except Exception:
             pass
 
