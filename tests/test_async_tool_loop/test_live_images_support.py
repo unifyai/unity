@@ -661,3 +661,103 @@ async def test_overview_injected_before_first_llm_step(monkeypatch) -> None:
     # Allow the LLM to proceed and complete
     proceed.set()
     await h.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_loop_injects_overview_and_exposes_helpers(monkeypatch) -> None:
+    """
+    Calling handle.ask(..., images=...) should start an inspection loop that:
+      - injects a synthetic live_images_overview tool result containing the image id and caption
+      - exposes dynamic helpers (ask_image, attach_image_raw)
+    """
+
+    import asyncio
+    from unity.common._async_tool import loop as _loop
+
+    # Spy tool exposures for the helper loop
+    tools_snapshots: list[list[dict]] = []
+    orig_gwp = getattr(_loop, "generate_with_preprocess")
+
+    async def _spy_gwp(client, preprocess_msgs, **gen_kwargs):  # noqa: D401
+        tools = gen_kwargs.get("tools") or []
+        tools_snapshots.append(tools)
+        return await orig_gwp(client, preprocess_msgs, **gen_kwargs)
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "In your FIRST assistant turn, call `wait_forever` and wait.",
+    )
+
+    async def wait_forever(*, _notification_up_q: asyncio.Queue[dict]):
+        await _notification_up_q.put({"message": "started"})
+        await asyncio.Event().wait()
+        return {"ok": False}
+
+    # Seed registry so overview includes caption
+    LIVE_IMAGES_REGISTRY.set(
+        {
+            42: DummyImageHandle(
+                image_id=42,
+                caption="cat on mat",
+                raw_bytes=_solid_png_bytes(),
+            ),
+        },
+    )
+
+    outer = start_async_tool_loop(
+        client=client,
+        message="start",
+        tools={"wait_forever": wait_forever},
+        tool_policy=lambda step, available: (
+            ("required", {"wait_forever": available["wait_forever"]})
+            if step == 0
+            else ("auto", {})
+        ),
+    )
+
+    # Deterministically wait until wait_forever is requested
+    from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
+
+    await _wait_for_tool_request(client, "wait_forever")
+
+    # Ask with images – runs in an inspection loop
+    images = ImageRefs(
+        [
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=42),
+                annotation="from ask",
+            ),
+        ],
+    )
+    helper = await outer.ask("What images are visible?", images=images)
+    await helper.result()
+
+    # The helper loop transcript should include a live_images_overview tool result
+    msgs = helper.get_history()
+    assert any(
+        m.get("role") == "tool"
+        and m.get("name") == "live_images_overview"
+        and '"image_id": 42' in (m.get("content") or "")
+        and '"caption": "cat on mat"' in (m.get("content") or "")
+        for m in msgs
+    ), "Expected live_images_overview in helper transcript"
+
+    # At least one exposure set should include ask_image and attach_image_raw
+    assert any(
+        {"ask_image", "attach_image_raw"}.issubset(
+            set(t.get("function", {}).get("name") for t in snap),
+        )
+        for snap in tools_snapshots
+    ), "Expected helper loop to expose image helpers"
+
+    # Clean up outer loop
+    outer.stop("done")
