@@ -68,6 +68,7 @@ class SteerableHandle(ABC):
         question: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
     ) -> "SteerableHandle":
         """
         Ask a question to the running process.
@@ -82,6 +83,10 @@ class SteerableHandle(ABC):
             provided, implementations should thread this into the LLM input. The
             user message should be packaged as a dict content containing keys
             "parent_chat_context_continuted" and "message".
+        images : list | dict | None, optional
+            Live image references to make available during this ask flow.
+            Implementations should forward these to any nested asks so inner
+            loops can attach/ask about images (optionally with new annotations).
         """
 
     @abstractmethod
@@ -367,6 +372,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         question: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
         """
@@ -377,6 +383,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         packaged as a dict with keys {"parent_chat_context_continuted", "message"}
         to clearly signal the continuation of the parent conversation since the
         start of this loop.
+
+        If ``images`` are provided, the spawned inspection loop receives live
+        images (helpers exposed, synthetic overview injected) and any nested asks
+        can receive images (with optional new annotations).
         """
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"❓ [{_label}] Ask requested: {question}")
@@ -420,6 +430,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
                 async def ask(self, question: str) -> "SteerableToolHandle":
                     return self
+
+                # Inert stubs for required abstract event APIs
+                async def next_clarification(self) -> dict:
+                    return {}
+
+                async def next_notification(self) -> dict:
+                    return {}
+
+                async def answer_clarification(self, call_id: str, answer: str) -> None:
+                    return None
 
             return _StaticHandle()  # pragma: no cover
 
@@ -475,10 +495,20 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
             async def _proxy(
                 _q: str,
+                images: dict | list | None = None,
                 _h=h,  # capture now
             ) -> str:
-                nested = await _h.ask(_q)
-                return await nested.result()
+                # Robust forward with kwargs normalisation; tolerate older signatures
+                nested = await forward_handle_call(
+                    _h,
+                    "ask",
+                    {"question": _q, "images": images},
+                    fallback_positional_keys=("question", "content"),
+                )
+                try:
+                    return await nested.result()  # type: ignore[union-attr]
+                except Exception:
+                    return ""
 
             # tool name encodes the call-id so collisions are impossible
             _cid = None
@@ -495,6 +525,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             {
                 "question": question,
                 "parent_chat_context_cont": parent_chat_context_cont,
+                "images": images,
             },
         )
 
@@ -538,6 +569,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
             timeout=60,
+            images=images,
         )
 
         # Monkey-patch result() to record the assistant answer when available
