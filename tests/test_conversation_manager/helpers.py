@@ -2,6 +2,10 @@ import asyncio
 import json
 
 from unity.conversation_manager_2.new_events import (
+    ConductorClarificationRequest,
+    ConductorClarificationResponse,
+    ConductorHandleRequest,
+    ConductorRequest,
     EmailRecieved,
     EmailSent,
     PhoneCallRecieved,
@@ -237,3 +241,121 @@ async def capture_stream_response(pubsub, label: str, timeout: float = 60.0):
             continue
 
     return got_start, chunks, got_end
+
+
+async def capture_conductor_request(
+    event_capture,
+    action_name: str,
+    timeout: float = 60.0,
+):
+    """Wait for and capture a ConductorRequest event"""
+    print(f"⏳ Waiting for Conductor {action_name} request (timeout: 60s)...")
+    request = await event_capture.wait_for_event(
+        ConductorRequest,
+        timeout=timeout,
+        action_name=action_name,
+    )
+
+    assert isinstance(request, ConductorRequest)
+    assert request.action_name == action_name
+    assert len(request.query) > 0
+    assert request.parent_chat_context is not None
+
+    print(f"✅ Got Conductor {action_name} request")
+    print(f"   Query: {request.query[:100]}...")
+    return request
+
+
+async def capture_conductor_handle_request(
+    event_capture,
+    handle_id: int,
+    action_name: str,
+    timeout: float = 60.0,
+):
+    """Wait for and capture a ConductorHandleRequest event"""
+    print(f"⏳ Waiting for Conductor handle {action_name} request (timeout: 60s)...")
+    request = await event_capture.wait_for_event(
+        ConductorHandleRequest,
+        timeout=timeout,
+        handle_id=handle_id,
+        action_name=action_name,
+    )
+
+    assert isinstance(request, ConductorHandleRequest)
+    assert request.handle_id == handle_id
+    assert request.action_name == action_name
+    assert len(request.query) > 0
+    assert request.parent_chat_context is not None
+
+    print(f"✅ Got Conductor handle {action_name} request: handle_id={handle_id}")
+    print(f"   Query: {request.query[:100]}...")
+    return request
+
+
+async def send_conductor_response(
+    test_redis_client,
+    handle_id: int,
+    action_name: str,
+    query: str,
+):
+    """Manually send a ConductorResponse event (simulating conductor responding)"""
+    from unity.conversation_manager_2.new_events import ConductorResponse
+
+    conductor_response = ConductorResponse(
+        handle_id=handle_id,
+        action_name=action_name,
+        query=query,
+        response=f"Started: {query}",
+    )
+    print(f"\n✓ Sending ConductorResponse: handle_id={handle_id}, action={action_name}")
+    await test_redis_client.publish(
+        "app:conductor:output_events",
+        conductor_response.to_json(),
+    )
+
+
+async def send_conductor_clarification_request(
+    test_redis_client,
+    handle_id: int,
+    query: str,
+    call_id: str,
+):
+    """Manually send a ConductorClarificationRequest event"""
+    clarification_request = ConductorClarificationRequest(
+        handle_id=handle_id,
+        query=query,
+        call_id=call_id,
+    )
+    print(
+        f"\n❓ Sending ConductorClarificationRequest: handle_id={handle_id}, call_id={call_id}",
+    )
+    print(f"   Query: {query}")
+    await test_redis_client.publish(
+        "app:conductor:output_events",
+        clarification_request.to_json(),
+    )
+
+
+async def capture_conductor_clarification_response(
+    event_capture,
+    handle_id: int,
+    call_id: str,
+    timeout: float = 60.0,
+):
+    """Wait for and capture a ConductorClarificationResponse event"""
+    print(f"⏳ Waiting for Conductor clarification response (timeout: 60s)...")
+    response = await event_capture.wait_for_event(
+        ConductorClarificationResponse,
+        timeout=timeout,
+        handle_id=handle_id,
+        call_id=call_id,
+    )
+
+    assert isinstance(response, ConductorClarificationResponse)
+    assert response.handle_id == handle_id
+    assert response.call_id == call_id
+    assert len(response.response) > 0
+
+    print(f"✅ Got Conductor clarification response: handle_id={handle_id}")
+    print(f"   Response: {response.response[:100]}...")
+    return response
