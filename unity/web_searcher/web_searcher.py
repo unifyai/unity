@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional, Type
 from pydantic import BaseModel
 import asyncio
 import unify
+from pathlib import Path
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
     SteerableToolHandle,
@@ -37,6 +38,9 @@ class WebSearcher(BaseWebSearcher):
     def __init__(self):
         super().__init__()
         self.tavily_client = TavilyClient(api_key=os.environ.get("TAVILY_API_KEY"))
+        self._hierarchical_actor = None
+        self._default_function_id = None
+
         # Resolve context for Websites table (single-table store)
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
@@ -75,6 +79,46 @@ class WebSearcher(BaseWebSearcher):
         self.add_tools("update", update_tools)
         # Ensure any internal caches/storage are present
         self._provision_storage()
+
+    @property
+    def hierarchical_actor(self):
+        """Lazily initialize and return the HierarchicalActor instance."""
+        if self._hierarchical_actor is None:
+            from ..actor.hierarchical_actor import HierarchicalActor
+
+            self._hierarchical_actor = HierarchicalActor()
+            self._ensure_default_function_exists()
+        return self._hierarchical_actor
+
+    def _ensure_default_function_exists(self) -> None:
+        """Ensure the default website entrypoint exists and record its function_id.
+
+        On any error, sets ``self._default_function_id`` to ``None``.
+        """
+        try:
+            fm = self.hierarchical_actor.function_manager
+            results = fm.search_functions(
+                filter="name == 'search_website_for_info'",
+                limit=1,
+            )
+            if results:
+                self._default_function_id = int(results[0].get("function_id"))
+                return
+
+            fn_path = Path(__file__).parent / "functions" / "search_website_for_info.py"
+            source = fn_path.read_text(encoding="utf-8")
+            fm.add_functions(implementations=[source], overwrite=False)
+            # Re-check presence and set id if now present
+            check = fm.search_functions(
+                filter="name == 'search_website_for_info'",
+                limit=1,
+            )
+            self._default_function_id = (
+                int(check[0].get("function_id")) if check else None
+            )
+            print("default function id:", self._default_function_id)
+        except Exception:
+            self._default_function_id = None
 
     @functools.wraps(BaseWebSearcher.ask, updated=())
     @log_manager_call("WebSearcher", "ask", payload_key="question")
