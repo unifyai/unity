@@ -32,9 +32,9 @@ python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --
 
 # The same, but with voice input/output enabled
 python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --voice
-    
-# Example with local image saving enabled 
-python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --save-images 
+
+# Example with local image saving enabled
+python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --save-images
 
 # Example with initial context
 python -m sandboxes.screen_share_manager.sandbox --x 100 --y 150 --width 1280 --height 720 --context "User is trying to log into a web portal."

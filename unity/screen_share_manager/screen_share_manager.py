@@ -265,7 +265,7 @@ class ScreenShareManager:
             logger.debug(f"Received speech event: '{content}'")
         if not self._turn_in_progress:
             logger.warning(
-                "Speech event received, but no turn is in progress. Ignoring."
+                "Speech event received, but no turn is in progress. Ignoring.",
             )
             return
         speech_event = {
@@ -291,7 +291,7 @@ class ScreenShareManager:
     def end_turn(self) -> asyncio.Task[List[DetectedEvent]]:
         if not self._turn_in_progress:
             logger.warning(
-                "end_turn called but no turn is in progress. Returning an empty task."
+                "end_turn called but no turn is in progress. Returning an empty task.",
             )
 
             async def empty_task():
@@ -301,7 +301,7 @@ class ScreenShareManager:
         if self._debug:
             logger.debug(
                 f"Ending turn with {len(self._current_turn_speech_events)} speech event(s) and "
-                f"{len(self._pending_vision_events)} potential visual event(s)."
+                f"{len(self._pending_vision_events)} potential visual event(s).",
             )
         visual_events = list(self._pending_vision_events)
         speech_events = list(self._current_turn_speech_events)
@@ -413,7 +413,9 @@ class ScreenShareManager:
             raise ValueError("Invalid image data") from e
 
     def _is_significant_visual_change(
-        self, img_before: Image.Image, img_after: Image.Image
+        self,
+        img_before: Image.Image,
+        img_after: Image.Image,
     ) -> bool:
         before = np.array(img_before, dtype=np.uint8)
         after = np.array(img_after, dtype=np.uint8)
@@ -517,7 +519,8 @@ class ScreenShareManager:
                     continue
                 if self._last_significant_frame_pil:
                     if self._is_significant_visual_change(
-                        self._last_significant_frame_pil, pil_img
+                        self._last_significant_frame_pil,
+                        pil_img,
                     ):
                         if self._debug:
                             logger.debug(
@@ -588,7 +591,7 @@ class ScreenShareManager:
                     consolidated_visual_events.append(final_event)
                     burst_events_info.append(
                         f"A rapid sequence of {len(burst)} visual changes occurred, "
-                        f"ending at t={final_event['timestamp']:.2f}s."
+                        f"ending at t={final_event['timestamp']:.2f}s.",
                     )
                 else:
                     consolidated_visual_events.extend(burst)
@@ -599,7 +602,7 @@ class ScreenShareManager:
                         "data": self._strip_data_url_prefix(event["after_frame_b64"]),
                         "auto_caption": self.settings.use_auto_captions,
                         "_timestamp": event["timestamp"],
-                    }
+                    },
                 )
 
         if turn_state.latest_frame:
@@ -609,7 +612,7 @@ class ScreenShareManager:
                     "data": self._strip_data_url_prefix(b64),
                     "auto_caption": self.settings.use_auto_captions,
                     "_timestamp": ts,
-                }
+                },
             )
 
         if items_to_add:
@@ -639,7 +642,7 @@ class ScreenShareManager:
             caption = handle.caption
             if caption:
                 visual_events_info.append(
-                    f'Visual change at t={ts:.2f}s, showing: "{caption}"'
+                    f'Visual change at t={ts:.2f}s, showing: "{caption}"',
                 )
             else:
                 visual_events_info.append(f"Visual change at t={ts:.2f}s.")
@@ -655,8 +658,8 @@ class ScreenShareManager:
                 - visual_events_info: {json.dumps(visual_events_info, indent=2)}
                 - burst_events_info: {json.dumps(burst_events_info, indent=2)}
                 ---------------------------------------------
-                """
-                )
+                """,
+                ),
             )
         system_prompt = build_detection_prompt(
             current_summary,
@@ -676,7 +679,8 @@ class ScreenShareManager:
             handle = timestamp_to_handle_map.get(ts)
             if not handle and timestamp_to_handle_map:
                 closest_ts = min(
-                    timestamp_to_handle_map.keys(), key=lambda k: abs(k - ts)
+                    timestamp_to_handle_map.keys(),
+                    key=lambda k: abs(k - ts),
                 )
                 handle = timestamp_to_handle_map[closest_ts]
                 ts = closest_ts
@@ -686,7 +690,7 @@ class ScreenShareManager:
                         timestamp=ts,
                         detection_reason=moment.get("reason", "unknown"),
                         image_handle=handle,
-                    )
+                    ),
                 )
         if not turn_state.speech_events:
             if self._debug:
@@ -717,8 +721,8 @@ class ScreenShareManager:
                 - previous_annotations_in_turn: {json.dumps(previous_annotations_in_turn, indent=2)}
                 - recent_key_events: {json.dumps(recent_events_list, indent=2)}
                 -------------------------------------------------------
-                """
-                )
+                """,
+                ),
             )
         system_prompt = build_single_annotation_prompt(
             current_summary,
@@ -774,8 +778,8 @@ class ScreenShareManager:
                         - current_summary: "{current_summary}"
                         - new_events: {json.dumps(events_list, indent=2)}
                         --------------------------------------------------
-                        """
-                        )
+                        """,
+                        ),
                     )
                 prompt = build_summary_update_prompt(current_summary, events)
                 new_summary = await self._summary_client.generate(prompt)

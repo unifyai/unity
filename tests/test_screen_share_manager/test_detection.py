@@ -5,19 +5,14 @@ from unity.screen_share_manager.screen_share_manager import (
     ScreenShareManager,
     TurnState,
 )
-from unity.screen_share_manager.types import DetectedEvent
 from tests.helpers import _handle_project
 
-import base64
 import json
-from unittest.mock import AsyncMock
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 
 from unity.image_manager.image_manager import ImageHandle
 from tests.test_screen_share_manager.conftest import (
-    PNG_RED_B64,
-    PNG_BLUE_B64,
     PNG_GREEN_B64,
 )
 
@@ -30,7 +25,7 @@ async def test_detection_should_handle_empty_turn():
     manager = ScreenShareManager()
     await manager.start()
     await manager._detect_key_moments(
-        TurnState(speech_events=[], visual_events=[], latest_frame=None)
+        TurnState(speech_events=[], visual_events=[], latest_frame=None),
     )
     result = await manager._detection_queue.get()
     assert result == []
@@ -53,7 +48,7 @@ async def test_detection_should_retry_on_llm_failure(mocked_manager):
     ]
 
     await manager._detect_key_moments(
-        TurnState(speech_events=[{"payload": {"content": "test", "start_time": 0.0}}])
+        TurnState(speech_events=[{"payload": {"content": "test", "start_time": 0.0}}]),
     )
 
     assert mocks["detect"].generate.call_count == 3
@@ -71,8 +66,8 @@ async def test_detection_should_handle_invalid_llm_json(mocked_manager):
     with pytest.raises(json.JSONDecodeError):
         await manager._detect_key_moments(
             TurnState(
-                speech_events=[{"payload": {"content": "test", "start_time": 0.0}}]
-            )
+                speech_events=[{"payload": {"content": "test", "start_time": 0.0}}],
+            ),
         )
 
     assert manager._detection_queue.empty()
@@ -89,7 +84,7 @@ async def test_detection_should_handle_llm_timeouts(mocked_manager):
     # The retry decorator will raise the final exception after retries.
     with pytest.raises(asyncio.TimeoutError):
         await manager._detect_key_moments(
-            TurnState(speech_events=[{"payload": {"content": "x", "start_time": 0.0}}])
+            TurnState(speech_events=[{"payload": {"content": "x", "start_time": 0.0}}]),
         )
 
     assert mocks["detect"].generate.call_count >= 1
@@ -110,12 +105,12 @@ async def test_detection_consolidates_speech_with_subsequent_visual_outcome(
 
     # Mock the LLM to return the consolidated event
     mocks["detect"].generate.return_value = json.dumps(
-        {"moments": [{"timestamp": 10.5, "reason": "user_speech"}]}
+        {"moments": [{"timestamp": 10.5, "reason": "user_speech"}]},
     )
     with patch.object(manager._image_manager, "add_images", return_value=[mock_handle]):
         turn_state = TurnState(
             speech_events=[
-                {"payload": {"content": "clicking submit", "start_time": 10.0}}
+                {"payload": {"content": "clicking submit", "start_time": 10.0}},
             ],
             visual_events=[{"timestamp": 10.5, "after_frame_b64": PNG_GREEN_B64}],
         )
