@@ -124,6 +124,7 @@ def wrap_handle_with_logging(
             return self._inner
 
         def __getattribute__(self, name: str):
+            # Spoof class to look like the inner handle for reflection
             if name == "__class__":
                 try:
                     inner = object.__getattribute__(self, "_inner")
@@ -131,13 +132,15 @@ def wrap_handle_with_logging(
                 except Exception:
                     return object.__getattribute__(self, "__class__")
 
-            if name.startswith("_") and name != "__class__":
-                return object.__getattribute__(self, name)
-
+            # Always try inner first (including private/dunder attributes);
+            # fall back to proxy attributes only if inner lookup fails.
+            target = None
             try:
                 inner = object.__getattribute__(self, "_inner")
                 target = getattr(inner, name)
             except Exception:
+                pass
+            if target is None:
                 return object.__getattribute__(self, name)
 
             if not callable(target):
