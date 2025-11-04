@@ -1156,6 +1156,75 @@ async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_active_queue_emits_notifications(monkeypatch):
+    """
+    Verify that ActiveQueue emits queue-level notifications for task lifecycle:
+    - queue.task.completed for each task
+    - queue.task.started for followers
+    - queue.completed at the end
+    """
+
+    # Immediate completion per task to make notification collection deterministic
+    class _Immediate(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw.pop("duration", None)
+            super().__init__(steps=0, duration=None, *a, **kw)
+
+    monkeypatch.setattr(
+        "unity.actor.simulated.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    # Create a simple 2-task queue so we see a follower 'started' event
+    a_name, b_name = "N_notif_A", "N_notif_B"
+    a_id, b_id = await _make_ordered_queue(ts, [a_name, b_name])  # type: ignore[misc]
+
+    h = await ts.execute(text=str(a_id))
+
+    # Collect notifications until we observe queue.completed.
+    # Tolerate inert/empty dicts from inner handles and skip them.
+    events: list[dict] = []
+    completed_seen = False
+    for _ in range(30):
+        evt = await asyncio.wait_for(h.next_notification(), timeout=30)
+        if not (isinstance(evt, dict) and evt.get("type")):
+            # Skip inert notifications (e.g., inner stub returning {}). Keep waiting.
+            continue
+        events.append(evt)
+        if evt.get("type") == "queue.completed":
+            completed_seen = True
+            break
+
+    assert (
+        completed_seen
+    ), f"queue.completed not observed; got types: {[e.get('type') for e in events]}"
+
+    types = [e.get("type") for e in events]
+    # At least: completed for A and B, started for B, and final queue.completed
+    assert "queue.completed" in types
+    assert types.count("queue.task.completed") >= 2
+    assert types.count("queue.task.started") >= 1
+
+    # Validate names on completed events match our tasks
+    completed_names = [
+        e.get("name") for e in events if e.get("type") == "queue.task.completed"
+    ]
+    assert any(a_name in str(n) for n in completed_names)
+    assert any(b_name in str(n) for n in completed_names)
+
+    # Ensure handle finalizes cleanly
+    await h.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_inner_task_clarification_bubbles_up_to_outer(monkeypatch):
     """
     Verify that an inner task can request clarification and that the question
