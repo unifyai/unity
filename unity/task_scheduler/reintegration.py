@@ -49,16 +49,12 @@ class ReintegrationManager:
         rows = self._s._filter_tasks(filter=f"task_id == {neighbour_tid}", limit=1)
         if not rows:
             return False
-        return self._s._to_status(rows[0].status) not in self._s._TERMINAL_STATUSES
+        return rows[0].status not in self._s._TERMINAL_STATUSES
 
     def apply(self, *, task_id: int, allow_active: bool = False) -> ToolOutcome:
         # Locate plan (prefer non-terminal instance)
         rows = self._s._filter_tasks(filter=f"task_id == {task_id}", limit=10)
-        live = [
-            r
-            for r in rows
-            if self._s._to_status(r.status) not in self._s._TERMINAL_STATUSES
-        ]
+        live = [r for r in rows if r.status not in self._s._TERMINAL_STATUSES]
         instance_id = None
         plan: Optional[ReintegrationPlan] = None
         if live:
@@ -89,7 +85,7 @@ class ReintegrationManager:
         cur_row = cur_rows[0] if cur_rows else None
 
         if cur_row is not None and (
-            self._s._to_status(cur_row.status) == Status.active and not allow_active
+            cur_row.status == Status.active and not allow_active
         ):
             raise RuntimeError(
                 "Cannot reinstate while the task is active. Stop/defer first.",
@@ -185,8 +181,7 @@ class ReintegrationManager:
                     if (
                         next_row.schedule_prev is not None
                         and (next_row.schedule_start_at is None)
-                        and self._s._to_status(next_row.status)
-                        in {Status.scheduled, Status.primed}
+                        and next_row.status in {Status.scheduled, Status.primed}
                     ):
                         self._s._update_task_status_instance(
                             task_id=final_next,
