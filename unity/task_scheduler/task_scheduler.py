@@ -1873,9 +1873,9 @@ class TaskScheduler(BaseTaskScheduler):
         # Validate none of the referenced tasks are already completed
         try:
             completed_ids = {
-                int(getattr(lg, "entries", {}).get("task_id"))
+                int(lg.entries["task_id"])
                 for lg in logs
-                if str(getattr(lg, "entries", {}).get("status")) == "completed"
+                if str(lg.entries.get("status")) == "completed"
             }
         except Exception:
             completed_ids = set()
