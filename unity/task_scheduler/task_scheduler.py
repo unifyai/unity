@@ -3491,9 +3491,15 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         task_id: int,
         allow_active: bool = False,
-    ) -> Dict[str, str]:
+    ) -> ToolOutcome:
         # Facade retained for internal callers; the update tool exposes
         # `_reinstate_task_to_previous_queue`, which carries the full docstring.
+        """
+        Public facade to restore a task to its prior queue/schedule position.
+
+        Delegates to the internal `_reinstate_task_to_previous_queue` and maps
+        the `allow_active` flag to the private `_allow_active` parameter.
+        """
         return self._reintegration_manager.apply(
             task_id=task_id,
             allow_active=allow_active,
