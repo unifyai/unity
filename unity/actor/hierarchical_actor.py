@@ -4861,12 +4861,12 @@ class HierarchicalActor(BaseActor):
 
                                 break
 
-                            except _ControlledInterruptionException:
+                            except _ControlledInterruptionException as e:
                                 plan.action_log.append(
-                                    f"{diag_prefix} Retrying '{func_name}' after user interjection.",
+                                    f"{diag_prefix} Retrying '{func_name}' Reason: {e}",
                                 )
                                 logger.info(
-                                    f"{diag_prefix} Retrying '{func_name}' after user interjection.",
+                                    f"{diag_prefix} Retrying '{func_name}' Reason: {e}",
                                 )
                                 local_interactions.clear()
                                 continue
