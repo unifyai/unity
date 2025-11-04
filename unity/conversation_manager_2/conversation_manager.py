@@ -83,11 +83,6 @@ class ConversationManager:
         self.current_response: asyncio.Task | None = None
         self.scheduled_response: asyncio.Task | None = None
 
-        # switches to "True" when in a call
-
-        # conductor
-        self.conductor = ...
-
         # logging
         self.loop = asyncio.get_event_loop()
         self.project_name = project_name
