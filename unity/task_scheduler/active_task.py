@@ -17,6 +17,7 @@ from typing import Optional, Dict, TYPE_CHECKING, List, Any
 from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
+from .types.status import Status
 from .llm import new_llm_client
 import logging
 from ..common.handle_wrappers import HandleWrapperMixin
@@ -265,7 +266,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                                     else ""
                                 )
                                 target_status = (
-                                    prior_status if prior_status else "queued"
+                                    prior_status if prior_status else Status.queued
                                 )
                                 if self._instance_id is not None:
                                     self._scheduler._update_task_status_instance(  # type: ignore[attr-defined]

@@ -166,7 +166,7 @@ class ReintegrationManager:
             self._s._update_task_status_instance(
                 task_id=tid,
                 instance_id=plan.instance_id,
-                new_status=str(desired_status),
+                new_status=desired_status,
             )
 
         if was_head and final_next is not None:
@@ -186,7 +186,7 @@ class ReintegrationManager:
                         self._s._update_task_status_instance(
                             task_id=final_next,
                             instance_id=next_row.instance_id,
-                            new_status="queued",
+                            new_status=Status.queued,
                         )
 
             _best_effort(_fix_next_status)

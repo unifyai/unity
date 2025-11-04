@@ -812,7 +812,7 @@ class TaskScheduler(BaseTaskScheduler):
         self._update_task_status_instance(
             task_id=task_id,
             instance_id=task_row.instance_id,
-            new_status="active",
+            new_status=Status.active,
             activated_by=reason,
         )
         if self._primed_task and self._primed_task.task_id == task_id:
@@ -994,7 +994,7 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         task_id: int,
         instance_id: int,
-        new_status: str,
+        new_status: str | Status,
         activated_by: Optional["ActivatedBy"] = None,
     ) -> Dict[str, str]:
         """
