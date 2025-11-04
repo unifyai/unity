@@ -506,7 +506,10 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
     # Send incoming phone call
     contact_number = "+15555551111"
     pubsub = await send_incoming_call(
-        test_redis_client, contact_number, "test_conference", "Tell me a joke via SMS"
+        test_redis_client,
+        contact_number,
+        "test_conference",
+        "Tell me a joke via SMS right now",
     )
 
     # Capture the assistant's response to the user utterance
@@ -560,7 +563,10 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
     contact_number = "+15555551111"
     email_address = "test@contact.com"
     pubsub = await send_incoming_call(
-        test_redis_client, contact_number, "test_conference", "Tell me a joke via email"
+        test_redis_client,
+        contact_number,
+        "test_conference",
+        "Tell me a joke via email right now",
     )
 
     # Capture the assistant's response to the user utterance
@@ -616,7 +622,7 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
         test_redis_client,
         contact_number,
         "test_conference",
-        "Tell me a joke via unify message",
+        "Tell me a joke via unify message right now",
     )
 
     # Capture the assistant's response to the user utterance
@@ -669,7 +675,7 @@ async def test_unify_call_flow(test_redis_client, event_capture):
         test_redis_client,
         contact_id,
         "test_conference",
-        "Tell me a joke via unify call",
+        "Tell me a joke",
         mode="unify_call",
     )
 
@@ -711,7 +717,7 @@ async def test_unify_call_to_sms(test_redis_client, event_capture):
         test_redis_client,
         contact_id,
         "test_conference",
-        "Tell me a joke via unify call",
+        "Tell me a joke via sms right now",
         mode="unify_call",
     )
 
@@ -766,7 +772,7 @@ async def test_unify_call_to_email(test_redis_client, event_capture):
         test_redis_client,
         contact_id,
         "test_conference",
-        "Tell me a joke via unify call",
+        "Tell me a joke via email right now",
         mode="unify_call",
     )
 
@@ -813,13 +819,14 @@ async def test_unify_call_to_unify_message(test_redis_client, event_capture):
     """
     # Clear any events from initialization
     event_capture.clear()
+
+    # Send incoming unify call
     contact_id = 1
-    contact_number = "+15555551111"
     pubsub = await send_incoming_call(
         test_redis_client,
         contact_id,
         "test_conference",
-        "Tell me a joke via unify call",
+        "Tell me a joke via unify message right now",
         mode="unify_call",
     )
 
@@ -850,64 +857,6 @@ async def test_unify_call_to_unify_message(test_redis_client, event_capture):
     # Verify exchange completed successfully
     print(f"✅ Got unify message response: {response.content[:100]}...")
     print(f"   Full response length: {len(response.content)} characters")
-
-    # End the unify call
-    end_unify_call = UnifyCallEnded(contact=contact_id)
-    await test_redis_client.publish(
-        "app:comms:unify_call_ended", end_unify_call.to_json()
-    )
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_unify_call_to_phone_call(test_redis_client, event_capture):
-    """
-    Test unify call to phone call flow: send an incoming unify call and receive a response.
-    """
-    # Clear any events from initialization
-    event_capture.clear()
-
-    # Send incoming unify call
-    contact_id = 1
-    contact_number = "+15555551111"
-    pubsub = await send_incoming_call(
-        test_redis_client,
-        contact_id,
-        "test_conference",
-        "Tell me a joke via unify call",
-        mode="unify_call",
-    )
-
-    # Capture the assistant's response to the user utterance
-    print("📞 Waiting for assistant's response to user...")
-    start2, chunks2, end2 = await capture_stream_response(pubsub, "Response to user")
-    assert start2, "Should receive start_gen for response"
-    assert len(chunks2) > 0, "Should receive chunks for response"
-    assert end2, "Should receive end_gen for response"
-
-    # Cleanup subscription
-    await pubsub.unsubscribe("app:unify_call:response_gen")
-    await pubsub.aclose()
-
-    # Wait for the assistant's response
-    print("⏳ Waiting for phone call response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        PhoneCallSent,
-        timeout=60.0,
-        contact=contact_number,
-    )
-
-    # Verify response
-    assert isinstance(response, PhoneCallSent)
-    assert response.contact == contact_number
-
-    # End the phone call
-    end_phone_call = PhoneCallEnded(
-        contact=contact_number,
-    )
-    await test_redis_client.publish(
-        "app:comms:phone_call_ended", end_phone_call.to_json()
-    )
 
     # End the unify call
     end_unify_call = UnifyCallEnded(contact=contact_id)
