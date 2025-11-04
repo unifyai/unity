@@ -326,3 +326,32 @@ async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
     await handle.result()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 11. next_notification emits progress and consumes a step                    #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_next_notification_emits_and_consumes_step():
+    actor = SimulatedActor(steps=2, duration=None)
+    handle = await actor.act("Quick simulated task.")
+
+    # Capture remaining steps before
+    before = handle.get_remaining_steps()
+    assert isinstance(before, int) and before == 2
+
+    # next_notification should return a real event and consume one step
+    evt = await asyncio.wait_for(handle.next_notification(), timeout=30)
+    assert isinstance(evt, dict)
+    assert evt.get("type") == "notification"
+    assert evt.get("tool_name") == "simulated_actor"
+    assert isinstance(evt.get("message"), str) and evt.get("message").strip()
+
+    after = handle.get_remaining_steps()
+    assert isinstance(after, int) and after == before - 1
+
+    # Complete the simulation and ensure result is available
+    handle.simulate_step()
+    res = await asyncio.wait_for(handle.result(), timeout=30)
+    assert isinstance(res, str) and res.strip()
