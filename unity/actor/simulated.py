@@ -219,7 +219,7 @@ class SimulatedActorHandle(SteerableToolHandle):
 
     async def interject(
         self,
-        instruction: str,
+        message: str,
         *,
         images: object | None = None,
     ) -> None:
@@ -229,7 +229,7 @@ class SimulatedActorHandle(SteerableToolHandle):
 
         # Build a content list for a user message that includes the instruction and any attached images.
         # Images are resolved to handles and added as image_url blocks (data URLs or signed URLs where available).
-        content_blocks: list[dict] = [{"type": "text", "text": str(instruction)}]
+        content_blocks: list[dict] = [{"type": "text", "text": str(message)}]
 
         # Best-effort image resolution and block construction
         if images is not None:
