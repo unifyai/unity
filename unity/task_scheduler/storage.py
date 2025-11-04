@@ -689,25 +689,6 @@ class LocalTaskView:
             head_start_at=head_start_at,
         )
 
-    def on_tasks_removed_from_queue(
-        self,
-        *,
-        queue_id: int,
-        removed_ids: List[int],
-    ) -> None:
-        try:
-            for t in removed_ids:
-                self._task_to_queue.pop(int(t), None)
-            # If we know the queue, also drop removed ids from the forward index
-            if isinstance(queue_id, int):
-                cur = list(self._queue_index.get(int(queue_id)) or [])
-                if cur:
-                    self._queue_index[int(queue_id)] = [
-                        x for x in cur if x not in removed_ids
-                    ]
-        except Exception:
-            pass
-
     # ------------------------ Queue id allocation -------------------------
     def allocate_new_queue_id(self) -> int:
         """
