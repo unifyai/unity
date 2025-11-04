@@ -703,3 +703,131 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
 
     # Inner finished successfully and the outer returned a non-empty result
     assert isinstance(final, str) and final, "Outer result should be a non-empty string"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch):
+    """
+    Programmatic outer.ask(..., images=...) should be forwarded to all active
+    passthrough handles' ask methods, carrying the images payload.
+    """
+
+    from unity.image_manager.types import ImageRefs, RawImageRef
+
+    class MockPassthrough(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+            self.ask_payloads: list[object | None] = []
+
+        async def ask(
+            self,
+            question: str,
+            *,
+            images: object | None = None,
+            parent_chat_context_cont: list[dict] | None = None,
+        ) -> "SteerableToolHandle":
+            self.ask_payloads.append(images)
+            return self
+
+        async def interject(self, message: str, **_):
+            return None
+
+        def stop(self, *_, **__):
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *_, **__):
+            return "paused"
+
+        def resume(self, *_, **__):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    h1 = MockPassthrough()
+    h2 = MockPassthrough()
+
+    async def d1():  # type: ignore[valid-type]
+        return h1
+
+    async def d2():  # type: ignore[valid-type]
+        return h2
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call both tools `d1` and `d2` "
+        "with no arguments, then wait for completion before replying.",
+    )
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"d1": d1, "d2": d2},
+    )
+
+    # Deterministically wait until both delegates were requested
+    from tests.test_async_tool_loop.async_helpers import (
+        _wait_for_tool_request,
+        _wait_for_condition,
+    )
+
+    await _wait_for_tool_request(client, "d1")
+    await _wait_for_tool_request(client, "d2")
+
+    # Wait until both passthrough handles are registered in task_info
+    async def _wait_for_passthrough_handles(timeout: float = 5.0):
+        import time as _time
+
+        start = _time.perf_counter()
+        while _time.perf_counter() - start < timeout:
+            try:
+                ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    pts = [
+                        _inf
+                        for _inf in ti.values()
+                        if getattr(_inf, "handle", None) is not None
+                        and getattr(_inf, "is_passthrough", False)
+                    ]
+                    if len(pts) >= 2:
+                        return
+            except Exception:
+                pass
+            await asyncio.sleep(0)
+        raise TimeoutError("timeout waiting for passthrough handles to register")
+
+    await _wait_for_passthrough_handles()
+
+    imgs = ImageRefs([RawImageRef(image_id=123)])
+    # Forward ask with images – multicasts to all passthrough handles
+    await outer.ask("STATUS?", images=imgs)
+
+    async def _both_received():
+        return len(h1.ask_payloads) >= 1 and len(h2.ask_payloads) >= 1
+
+    await _wait_for_condition(_both_received, poll=0.01, timeout=60.0)
+
+    assert len(h1.ask_payloads) == 1 and len(h2.ask_payloads) == 1
+    assert h1.ask_payloads[0] is not None and h2.ask_payloads[0] is not None
