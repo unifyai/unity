@@ -115,6 +115,10 @@ class _CustomArgsHandle(SteerableToolHandle):
         self.stop_calls: list[dict] = []
         self.ask_calls: list[dict] = []
 
+    # Custom async method to verify logging of non-standard methods via awaited publish
+    async def ping(self, *, note: str | None = None) -> str:
+        return "pong"
+
     # Read-only ask with extra kwarg
     async def ask(
         self,
@@ -356,3 +360,36 @@ async def test_logged_handle_doc_and_signature_match_for_overridden_methods():
         logged_fn = getattr(logged, name)
         assert _inspect.getdoc(logged_fn) == _inspect.getdoc(inner_fn)
         assert str(_inspect.signature(logged_fn)) == str(_inspect.signature(inner_fn))
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_logged_wrapper_logs_custom_method_calls():
+    """Custom async handle methods should emit ManagerMethod events with action=method name."""
+    inner = _CustomArgsHandle()
+    logged = wrap_handle_with_logging(
+        inner,
+        new_call_id(),
+        "UnitTestManager",
+        "execute",
+    )
+
+    # Invoke a custom, non-standard ASYNC method to avoid scheduling races
+    pong = await logged.ping(note="ensure-logged")  # type: ignore[attr-defined]
+    assert pong == "pong"
+
+    # Ensure all async publish tasks complete before querying the event log
+    EVENT_BUS.join_published()
+
+    # Verify that a ManagerMethod event was recorded for this custom action
+    events = await EVENT_BUS.search(
+        filter=(
+            'type == "ManagerMethod" and '
+            'payload["manager"] == "UnitTestManager" and '
+            'payload["method"] == "execute" and '
+            'payload.get("action") == "ping"'
+        ),
+        limit=1,
+    )
+
+    assert len(events) == 1
