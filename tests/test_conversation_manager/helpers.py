@@ -3,14 +3,18 @@ import json
 
 from unity.conversation_manager_2.new_events import (
     EmailRecieved,
+    EmailSent,
     PhoneCallRecieved,
+    PhoneCallSent,
     PhoneCallStarted,
     PhoneUtterance,
     SMSRecieved,
+    SMSSent,
     UnifyCallReceived,
     UnifyCallStarted,
     UnifyCallUtterance,
     UnifyMessageRecieved,
+    UnifyMessageSent,
 )
 
 
@@ -122,6 +126,76 @@ async def send_incoming_call(
         )
     print(f"   Exchange 1 (Initial greeting): {len(''.join(chunks1))} characters")
     return pubsub
+
+
+async def capture_outgoing_sms(event_capture, contact: str):
+    # Wait for the assistant's response
+    print("⏳ Waiting for SMS response (timeout: 60s)...")
+    response = await event_capture.wait_for_event(
+        SMSSent,
+        timeout=60.0,
+        contact=contact,
+    )
+
+    # Verify response
+    assert isinstance(response, SMSSent)
+    assert response.contact == contact
+    assert len(response.content) > 0
+
+    print(f"✅ Got SMS response: {response.content[:100]}...")
+    print(f"   Full response length: {len(response.content)} characters")
+
+
+async def capture_outgoing_email(event_capture, contact: str, message_id: str = None):
+    # Wait for the assistant's response
+    print("⏳ Waiting for email response (timeout: 60s)...")
+    response = await event_capture.wait_for_event(
+        EmailSent,
+        timeout=60.0,
+        contact=contact,
+    )
+
+    # Verify response
+    assert isinstance(response, EmailSent)
+    assert response.contact == contact
+    if message_id:
+        assert response.message_id == message_id
+    assert len(response.body) > 0
+
+    print(f"✅ Got email response: {response.body[:100]}...")
+    print(f"   Full response length: {len(response.body)} characters")
+
+
+async def capture_outgoing_unify_message(event_capture, contact: int):
+    # Wait for the assistant's response
+    print("⏳ Waiting for unify message response (timeout: 60s)...")
+    response = await event_capture.wait_for_event(
+        UnifyMessageSent,
+        timeout=60.0,
+        contact=contact,
+    )
+
+    # Verify response
+    assert isinstance(response, UnifyMessageSent)
+    assert response.contact == contact
+    assert len(response.content) > 0
+
+    print(f"✅ Got unify message response: {response.content[:100]}...")
+    print(f"   Full response length: {len(response.content)} characters")
+
+
+async def capture_outgoing_phone_call(event_capture, contact: str):
+    # Wait for the assistant's response
+    print("⏳ Waiting for phone call response (timeout: 60s)...")
+    response = await event_capture.wait_for_event(
+        PhoneCallSent,
+        timeout=60.0,
+        contact=contact,
+    )
+
+    # Verify response
+    assert isinstance(response, PhoneCallSent)
+    assert response.contact == contact
 
 
 async def capture_stream_response(pubsub, label: str, timeout: float = 60.0):
