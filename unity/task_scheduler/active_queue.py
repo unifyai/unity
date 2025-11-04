@@ -1125,3 +1125,142 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
                 return None
 
         return _AnswerHandle(answer)
+
+    # ----------------------------
+    # Queue steering: append tail
+    # ----------------------------
+    def append_to_queue(self, task_id: int) -> Optional[str]:
+        """Append an existing runnable task to the back of the current chain.
+
+        Behaviour
+        ---------
+        - If the active chain belongs to a numeric ``queue_id``, move the
+          given task to that queue's tail using the scheduler's move helper.
+        - If the active chain has no numeric ``queue_id`` (isolated/linked),
+          first materialize the current chain into a new queue (preserving
+          order) and then move the given task to the new queue's tail.
+        - When the task is already a member of the current chain, this is a
+          no-op and a notification is emitted with reason ``already_member``.
+
+        Returns a short human-readable summary string on success or no-op.
+        Raises assertion/value errors from scheduler helpers for invalid ids
+        or terminal/trigger-based tasks.
+        """
+
+        # Resolve the live chain view (head→tail)
+        try:
+            queue_rows: list[dict] | list[Any] = (
+                self._s._get_queue_for_task(  # type: ignore[attr-defined]
+                    task_id=int(self._current_task_id),
+                )
+                or []
+            )
+        except Exception:
+            queue_rows = []
+
+        # Derive current order and queue_id (if any)
+        current_order: list[int] = []
+        current_qid: Optional[int] = None
+        try:
+            for r in queue_rows:
+                try:
+                    tid_val = getattr(r, "task_id", None)
+                    if tid_val is not None:
+                        current_order.append(int(tid_val))
+                except Exception:
+                    continue
+            if queue_rows:
+                qid_val = getattr(queue_rows[0], "queue_id", None)
+                if qid_val is not None:
+                    current_qid = int(qid_val)
+        except Exception:
+            current_qid = None
+
+        append_tid = int(task_id)
+
+        # No-op when already present
+        if append_tid in current_order:
+            try:
+                self._emit_notification(
+                    {
+                        "type": "queue.appended.skipped",
+                        "task_id": append_tid,
+                        "reason": "already_member",
+                        "queue_id": current_qid,
+                    },
+                )
+            except Exception:
+                pass
+            return f"Task {append_tid} is already a member of the current chain."
+
+        # Branch on presence of a numeric queue_id for the current chain
+        if isinstance(current_qid, int):
+            # Use move helper to detach from any source queue and append to tail
+            res = self._s._move_tasks_to_queue(  # type: ignore[attr-defined]
+                task_ids=[append_tid],
+                queue_id=int(current_qid),
+                position="back",
+            )
+            # Disable singleton passthrough permanently after growth
+            try:
+                self._passthrough_enabled = False
+            except Exception:
+                pass
+            try:
+                self._emit_notification(
+                    {
+                        "type": "queue.appended",
+                        "task_id": append_tid,
+                        "position": "tail",
+                        "queue_id": res.get("details", {}).get("queue_id", current_qid),
+                    },
+                )
+            except Exception:
+                pass
+            return f"Appended task {append_tid} to queue {int(current_qid)}."
+
+        # No numeric queue_id → materialize current chain, then append via move
+        base_order = list(current_order)
+        if not base_order:
+            try:
+                base_order = [int(self._current_task_id)]
+            except Exception:
+                base_order = []
+
+        set_res = self._s._set_queue(  # type: ignore[attr-defined]
+            queue_id=None,
+            order=base_order,
+        )
+        try:
+            new_qid = set_res.get("details", {}).get("queue_id")
+        except Exception:
+            new_qid = None
+
+        move_res = self._s._move_tasks_to_queue(  # type: ignore[attr-defined]
+            task_ids=[append_tid],
+            queue_id=new_qid,
+            position="back",
+        )
+
+        try:
+            self._passthrough_enabled = False
+        except Exception:
+            pass
+
+        try:
+            q_emit = move_res.get("details", {}).get("queue_id", new_qid)
+        except Exception:
+            q_emit = new_qid
+        try:
+            self._emit_notification(
+                {
+                    "type": "queue.appended",
+                    "task_id": append_tid,
+                    "position": "tail",
+                    "queue_id": q_emit,
+                },
+            )
+        except Exception:
+            pass
+
+        return f"Appended task {append_tid} to queue {q_emit}."
