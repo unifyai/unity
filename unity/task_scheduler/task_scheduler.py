@@ -1995,12 +1995,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Single-pass index for constant-time next lookups within this tool call
         rows_by_id: Dict[int, Task] = {}
         for r in rows:
-            try:
-                tid = r.task_id
-                if isinstance(tid, int):
-                    rows_by_id[tid] = r
-            except Exception:
-                pass
+            rows_by_id[r.task_id] = r
 
         # Heads are rows with prev_task == None
         heads: list[Task] = [
@@ -2101,7 +2096,7 @@ class TaskScheduler(BaseTaskScheduler):
             return []
 
         # Fast-path via LocalTaskView with a single minimal read.
-        if isinstance(queue_id, int):
+        if queue_id is not None:
             member_ids = list(self._view.get_member_ids(queue_id) or [])
         else:
             member_ids = []
