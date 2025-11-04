@@ -8,20 +8,17 @@ Tests for communication flows (SMS, email, calls, etc.)
 import pytest
 from tests.helpers import _handle_project
 from tests.test_conversation_manager.helpers import (
+    capture_outgoing_email,
+    capture_outgoing_phone_call,
+    capture_outgoing_sms,
+    capture_outgoing_unify_message,
     capture_stream_response,
     send_incoming_email,
     send_incoming_call,
     send_incoming_sms,
     send_incoming_unify_message,
 )
-from unity.conversation_manager_2.new_events import (
-    EmailSent,
-    PhoneCallEnded,
-    PhoneCallSent,
-    SMSSent,
-    UnifyCallEnded,
-    UnifyMessageSent,
-)
+from unity.conversation_manager_2.new_events import PhoneCallEnded, UnifyCallEnded
 
 
 @pytest.mark.asyncio
@@ -43,21 +40,8 @@ async def test_sms_to_sms(test_redis_client, event_capture):
     contact_number = "+15555551111"
     await send_incoming_sms(test_redis_client, contact_number, "Tell me a joke")
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for SMS response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        SMSSent,
-        timeout=60.0,
-        contact=contact_number,
-    )
-
-    # Verify response
-    assert isinstance(response, SMSSent)
-    assert response.contact == contact_number
-    assert len(response.content) > 0
-
-    print(f"✅ Got SMS response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing SMS and verify response
+    await capture_outgoing_sms(event_capture, contact_number)
 
 
 @pytest.mark.asyncio
@@ -78,21 +62,8 @@ async def test_sms_to_email(test_redis_client, event_capture):
         "Tell me a joke via email",
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for email response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        EmailSent,
-        timeout=60.0,
-        contact=email_address,
-    )
-
-    # Verify response
-    assert isinstance(response, EmailSent)
-    assert response.contact == email_address
-    assert len(response.body) > 0
-
-    print(f"✅ Got email response: {response.body[:100]}...")
-    print(f"   Full response length: {len(response.body)} characters")
+    # Capture outgoing email and verify response
+    await capture_outgoing_email(event_capture, email_address)
 
 
 @pytest.mark.asyncio
@@ -113,21 +84,8 @@ async def test_sms_to_unify_message(test_redis_client, event_capture):
         "Tell me a joke via unify message",
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for unify message response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        UnifyMessageSent,
-        timeout=60.0,
-        contact=contact_id,
-    )
-
-    # Verify response
-    assert isinstance(response, UnifyMessageSent)
-    assert response.contact == contact_id
-    assert len(response.content) > 0
-
-    print(f"✅ Got unify message response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing unify message and verify response
+    await capture_outgoing_unify_message(event_capture, contact_id)
 
 
 @pytest.mark.asyncio
@@ -147,25 +105,13 @@ async def test_sms_to_phone_call(test_redis_client, event_capture):
         "Tell me a joke via phone call",
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for phone call response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        PhoneCallSent,
-        timeout=60.0,
-        contact=contact_number,
-    )
-
-    # Verify response
-    assert isinstance(response, PhoneCallSent)
-    assert response.contact == contact_number
+    # Capture outgoing phone call and verify response
+    await capture_outgoing_phone_call(event_capture, contact_number)
 
     # End the phone call
-    end_phone_call = PhoneCallEnded(
-        contact=contact_number,
-    )
     await test_redis_client.publish(
         "app:comms:phone_call_ended",
-        end_phone_call.to_json(),
+        PhoneCallEnded(contact=contact_number).to_json(),
     )
 
 
@@ -195,22 +141,8 @@ async def test_email_to_email(test_redis_client, event_capture):
         message_id,
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for email response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        EmailSent,
-        timeout=60.0,
-        contact=contact_email,
-    )
-
-    # Verify response
-    assert isinstance(response, EmailSent)
-    assert response.message_id == message_id
-    assert response.contact == contact_email
-    assert len(response.body) > 0
-
-    print(f"✅ Got email response: {response.body[:100]}...")
-    print(f"   Full response length: {len(response.body)} characters")
+    # Capture outgoing email and verify response
+    await capture_outgoing_email(event_capture, contact_email, message_id)
 
 
 @pytest.mark.asyncio
@@ -233,21 +165,8 @@ async def test_email_to_sms(test_redis_client, event_capture):
         "test_message_id",
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for SMS response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        SMSSent,
-        timeout=60.0,
-        contact=contact_number,
-    )
-
-    # Verify response
-    assert isinstance(response, SMSSent)
-    assert response.contact == contact_number
-    assert len(response.content) > 0
-
-    print(f"✅ Got SMS response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing SMS and verify response
+    await capture_outgoing_sms(event_capture, contact_number)
 
 
 @pytest.mark.asyncio
@@ -269,21 +188,8 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
         "test_message_id",
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for unify message response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        UnifyMessageSent,
-        timeout=60.0,
-        contact=1,
-    )
-
-    # Verify response
-    assert isinstance(response, UnifyMessageSent)
-    assert response.contact == 1
-    assert len(response.content) > 0
-
-    print(f"✅ Got unify message response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing unify message and verify response
+    await capture_outgoing_unify_message(event_capture, 1)
 
 
 @pytest.mark.asyncio
@@ -306,25 +212,13 @@ async def test_email_to_phone_call(test_redis_client, event_capture):
         "test_message_id",
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for phone call response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        PhoneCallSent,
-        timeout=60.0,
-        contact=contact_number,
-    )
-
-    # Verify response
-    assert isinstance(response, PhoneCallSent)
-    assert response.contact == contact_number
+    # Capture outgoing phone call and verify response
+    await capture_outgoing_phone_call(event_capture, contact_number)
 
     # End the phone call
-    end_phone_call = PhoneCallEnded(
-        contact=contact_number,
-    )
     await test_redis_client.publish(
         "app:comms:phone_call_ended",
-        end_phone_call.to_json(),
+        PhoneCallEnded(contact=contact_number).to_json(),
     )
 
 
@@ -342,21 +236,8 @@ async def test_unify_message_to_unify_message(test_redis_client, event_capture):
     contact_id = 1
     await send_incoming_unify_message(test_redis_client, contact_id, "Tell me a joke")
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for unify message response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        UnifyMessageSent,
-        timeout=60.0,
-        contact=contact_id,
-    )
-
-    # Verify response
-    assert isinstance(response, UnifyMessageSent)
-    assert response.contact == contact_id
-    assert len(response.content) > 0
-
-    print(f"✅ Got unify message response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing unify message and verify response
+    await capture_outgoing_unify_message(event_capture, contact_id)
 
 
 @pytest.mark.asyncio
@@ -378,21 +259,8 @@ async def test_unify_message_to_sms(test_redis_client, event_capture):
         "Tell me a joke via SMS",
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for SMS response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        SMSSent,
-        timeout=60.0,
-        contact=contact_number,
-    )
-
-    # Verify response
-    assert isinstance(response, SMSSent)
-    assert response.contact == contact_number
-    assert len(response.content) > 0
-
-    print(f"✅ Got unify call started response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing SMS and verify response
+    await capture_outgoing_sms(event_capture, contact_number)
 
 
 @pytest.mark.asyncio
@@ -414,21 +282,8 @@ async def test_unify_message_to_email(test_redis_client, event_capture):
         "Tell me a joke via email",
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for email response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        EmailSent,
-        timeout=60.0,
-        contact=email_address,
-    )
-
-    # Verify response
-    assert isinstance(response, EmailSent)
-    assert response.contact == email_address
-    assert len(response.body) > 0
-
-    print(f"✅ Got email response: {response.body[:100]}...")
-    print(f"   Full response length: {len(response.body)} characters")
+    # Capture outgoing email and verify response
+    await capture_outgoing_email(event_capture, email_address)
 
 
 @pytest.mark.asyncio
@@ -449,25 +304,13 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
         "Tell me a joke via phone call",
     )
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for phone call response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        PhoneCallSent,
-        timeout=60.0,
-        contact=contact_number,
-    )
-
-    # Verify response
-    assert isinstance(response, PhoneCallSent)
-    assert response.contact == contact_number
+    # Capture outgoing phone call and verify response
+    await capture_outgoing_phone_call(event_capture, contact_number)
 
     # End the phone call
-    end_phone_call = PhoneCallEnded(
-        contact=contact_number,
-    )
     await test_redis_client.publish(
         "app:comms:phone_call_ended",
-        end_phone_call.to_json(),
+        PhoneCallEnded(contact=contact_number).to_json(),
     )
 
 
@@ -504,12 +347,9 @@ async def test_phone_call_flow(test_redis_client, event_capture):
     print(f"   Exchange 2 (Response to user): {len(''.join(chunks2))} characters")
 
     # End the phone call
-    end_phone_call = PhoneCallEnded(
-        contact=contact_number,
-    )
     await test_redis_client.publish(
         "app:comms:phone_call_ended",
-        end_phone_call.to_json(),
+        PhoneCallEnded(contact=contact_number).to_json(),
     )
 
 
@@ -543,30 +383,13 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
     await pubsub.unsubscribe("app:call:response_gen")
     await pubsub.aclose()
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for SMS response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        SMSSent,
-        timeout=60.0,
-        contact=contact_number,
-    )
-
-    # Verify response
-    assert isinstance(response, SMSSent)
-    assert response.contact == contact_number
-    assert len(response.content) > 0
-
-    # Verify exchange completed successfully
-    print(f"✅ Got SMS response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing SMS and verify response
+    await capture_outgoing_sms(event_capture, contact_number)
 
     # End the phone call
-    end_phone_call = PhoneCallEnded(
-        contact=contact_number,
-    )
     await test_redis_client.publish(
         "app:comms:phone_call_ended",
-        end_phone_call.to_json(),
+        PhoneCallEnded(contact=contact_number).to_json(),
     )
 
 
@@ -600,30 +423,13 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
     await pubsub.unsubscribe("app:call:response_gen")
     await pubsub.aclose()
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for email response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        EmailSent,
-        timeout=60.0,
-        contact=email_address,
-    )
-
-    # Verify response
-    assert isinstance(response, EmailSent)
-    assert response.contact == email_address
-    assert len(response.body) > 0
-
-    # Verify exchange completed successfully
-    print(f"✅ Got email response: {response.body[:100]}...")
-    print(f"   Full response length: {len(response.body)} characters")
+    # Capture outgoing email and verify response
+    await capture_outgoing_email(event_capture, email_address)
 
     # End the phone call
-    end_phone_call = PhoneCallEnded(
-        contact=contact_number,
-    )
     await test_redis_client.publish(
         "app:comms:phone_call_ended",
-        end_phone_call.to_json(),
+        PhoneCallEnded(contact=contact_number).to_json(),
     )
 
 
@@ -657,30 +463,13 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
     await pubsub.unsubscribe("app:call:response_gen")
     await pubsub.aclose()
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for unify message response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        UnifyMessageSent,
-        timeout=60.0,
-        contact=contact_id,
-    )
-
-    # Verify response
-    assert isinstance(response, UnifyMessageSent)
-    assert response.contact == contact_id
-    assert len(response.content) > 0
-
-    # Verify exchange completed successfully
-    print(f"✅ Got unify message response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing unify message and verify response
+    await capture_outgoing_unify_message(event_capture, contact_id)
 
     # End the phone call
-    end_phone_call = PhoneCallEnded(
-        contact=contact_number,
-    )
     await test_redis_client.publish(
         "app:comms:phone_call_ended",
-        end_phone_call.to_json(),
+        PhoneCallEnded(contact=contact_number).to_json(),
     )
 
 
@@ -717,10 +506,9 @@ async def test_unify_call_flow(test_redis_client, event_capture):
     print(f"   Exchange 2 (Response to user): {len(''.join(chunks2))} characters")
 
     # End the unify call
-    end_unify_call = UnifyCallEnded(contact=contact_id)
     await test_redis_client.publish(
         "app:comms:unify_call_ended",
-        end_unify_call.to_json(),
+        UnifyCallEnded(contact=contact_id).to_json(),
     )
 
 
@@ -755,28 +543,13 @@ async def test_unify_call_to_sms(test_redis_client, event_capture):
     await pubsub.unsubscribe("app:unify_call:response_gen")
     await pubsub.aclose()
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for SMS response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        SMSSent,
-        timeout=60.0,
-        contact=contact_number,
-    )
-
-    # Verify response
-    assert isinstance(response, SMSSent)
-    assert response.contact == contact_number
-    assert len(response.content) > 0
-
-    # Verify exchange completed successfully
-    print(f"✅ Got SMS response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing SMS and verify response
+    await capture_outgoing_sms(event_capture, contact_number)
 
     # End the unify call
-    end_unify_call = UnifyCallEnded(contact=contact_id)
     await test_redis_client.publish(
         "app:comms:unify_call_ended",
-        end_unify_call.to_json(),
+        UnifyCallEnded(contact=contact_id).to_json(),
     )
 
 
@@ -811,28 +584,13 @@ async def test_unify_call_to_email(test_redis_client, event_capture):
     await pubsub.unsubscribe("app:unify_call:response_gen")
     await pubsub.aclose()
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for email response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        EmailSent,
-        timeout=60.0,
-        contact=email_address,
-    )
-
-    # Verify response
-    assert isinstance(response, EmailSent)
-    assert response.contact == email_address
-    assert len(response.body) > 0
-
-    # Verify exchange completed successfully
-    print(f"✅ Got email response: {response.body[:100]}...")
-    print(f"   Full response length: {len(response.body)} characters")
+    # Capture outgoing email and verify response
+    await capture_outgoing_email(event_capture, email_address)
 
     # End the unify call
-    end_unify_call = UnifyCallEnded(contact=contact_id)
     await test_redis_client.publish(
         "app:comms:unify_call_ended",
-        end_unify_call.to_json(),
+        UnifyCallEnded(contact=contact_id).to_json(),
     )
 
 
@@ -866,26 +624,11 @@ async def test_unify_call_to_unify_message(test_redis_client, event_capture):
     await pubsub.unsubscribe("app:unify_call:response_gen")
     await pubsub.aclose()
 
-    # Wait for the assistant's response
-    print("⏳ Waiting for unify message response (timeout: 60s)...")
-    response = await event_capture.wait_for_event(
-        UnifyMessageSent,
-        timeout=60.0,
-        contact=contact_id,
-    )
-
-    # Verify response
-    assert isinstance(response, UnifyMessageSent)
-    assert response.contact == contact_id
-    assert len(response.content) > 0
-
-    # Verify exchange completed successfully
-    print(f"✅ Got unify message response: {response.content[:100]}...")
-    print(f"   Full response length: {len(response.content)} characters")
+    # Capture outgoing unify message and verify response
+    await capture_outgoing_unify_message(event_capture, contact_id)
 
     # End the unify call
-    end_unify_call = UnifyCallEnded(contact=contact_id)
     await test_redis_client.publish(
         "app:comms:unify_call_ended",
-        end_unify_call.to_json(),
+        UnifyCallEnded(contact=contact_id).to_json(),
     )
