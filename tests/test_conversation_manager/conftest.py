@@ -317,7 +317,7 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
                 "email_address": "test@contact.com",
                 "phone_number": "+15555551111",
             },
-        ]
+        ],
     )
     await temp_client.publish("app:comms:contacts", contacts_event.to_json())
     await asyncio.sleep(4)  # Let contacts be processed

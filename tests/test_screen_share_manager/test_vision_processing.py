@@ -32,7 +32,8 @@ async def test_frame_handling_should_drop_frames_when_queue_is_full(caplog):
     ],
 )
 async def test_vision_should_detect_significant_changes(
-    manager: ScreenShareManager, image_pair
+    manager: ScreenShareManager,
+    image_pair,
 ):
     """Tests that the vision pipeline correctly identifies significant UI changes."""
     before_filename, after_filename = image_pair
@@ -52,7 +53,8 @@ async def test_vision_should_detect_significant_changes(
     ],
 )
 async def test_vision_should_ignore_insignificant_changes(
-    manager: ScreenShareManager, image_pair
+    manager: ScreenShareManager,
+    image_pair,
 ):
     """Tests that the vision pipeline correctly ignores insignificant visual noise."""
     before_filename, after_filename = image_pair

@@ -339,11 +339,21 @@ async def test_real_conductor_manages_actor_lifecycle_jit_and_interjection(monke
     requested_tools_actor = assistant_requested_tool_names(messages, "Actor")
     requested_tools_ts = assistant_requested_tool_names(messages, "TaskScheduler")
 
-    assert "TaskScheduler_execute" not in set(requested_tools_ts), "Conductor should not request TaskScheduler_execute during Actor session."
-    assert requested_tools_actor.count("Actor_act") == 1, "Conductor must not start a second Actor_act after interjection."
+    assert "TaskScheduler_execute" not in set(
+        requested_tools_ts,
+    ), "Conductor should not request TaskScheduler_execute during Actor session."
+    assert (
+        requested_tools_actor.count("Actor_act") == 1
+    ), "Conductor must not start a second Actor_act after interjection."
 
-    interject_helpers = [n for n in requested_tools_all if isinstance(n, str) and n.startswith("interject_")]
-    assert len(interject_helpers) <= 1, f"At most one interject helper expected, saw: {interject_helpers}"
+    interject_helpers = [
+        n
+        for n in requested_tools_all
+        if isinstance(n, str) and n.startswith("interject_")
+    ]
+    assert (
+        len(interject_helpers) <= 1
+    ), f"At most one interject helper expected, saw: {interject_helpers}"
 
     if getattr(plan_handle, "_execution_task", None):
         plan_handle._execution_task.cancel()
@@ -486,7 +496,9 @@ async def test_real_conductor_multiple_interjections_passthrough_reasoning(monke
             if actor._plan_handles:
                 return list(actor._plan_handles)[0]
             await asyncio.sleep(0.05)
-        raise AssertionError("HierarchicalActor did not create a plan handle within timeout.")
+        raise AssertionError(
+            "HierarchicalActor did not create a plan handle within timeout.",
+        )
 
     plan_handle = await _wait_for_plan_handle(real_actor, timeout=120)
 
@@ -554,9 +566,15 @@ async def test_real_conductor_multiple_interjections_passthrough_reasoning(monke
     assert actor_log.count("CACHE HIT: Using cached result") >= 1
 
     assert tool_names_from_messages(messages, "Actor").count("Actor_act") == 1
-    assert "TaskScheduler_execute" not in set(assistant_requested_tool_names(messages, "TaskScheduler"))
+    assert "TaskScheduler_execute" not in set(
+        assistant_requested_tool_names(messages, "TaskScheduler"),
+    )
 
-    interject_helpers = [n for n in assistant_requested_tool_names(messages) if isinstance(n, str) and n.startswith("interject_")]
+    interject_helpers = [
+        n
+        for n in assistant_requested_tool_names(messages)
+        if isinstance(n, str) and n.startswith("interject_")
+    ]
     assert len(interject_helpers) <= 2
     assert "final_answer" not in set(assistant_requested_tool_names(messages))
     assert "final_answer" not in set(tool_names_from_messages(messages))
@@ -679,7 +697,9 @@ async def test_real_conductor_interject_mid_think_no_duplicate_helpers(monkeypat
             if actor._plan_handles:
                 return list(actor._plan_handles)[0]
             await asyncio.sleep(0.05)
-        raise AssertionError("HierarchicalActor did not create a plan handle within timeout.")
+        raise AssertionError(
+            "HierarchicalActor did not create a plan handle within timeout.",
+        )
 
     plan_handle = await _wait_for_plan_handle(real_actor, timeout=120)
 
@@ -731,7 +751,11 @@ async def test_real_conductor_interject_mid_think_no_duplicate_helpers(monkeypat
     assert tool_names_from_messages(messages, "Actor").count("Actor_act") == 1
 
     # Conductor should not duplicate helpers, and no stray final answers
-    interject_helpers = [n for n in assistant_requested_tool_names(messages) if isinstance(n, str) and n.startswith("interject_")]
+    interject_helpers = [
+        n
+        for n in assistant_requested_tool_names(messages)
+        if isinstance(n, str) and n.startswith("interject_")
+    ]
     assert len(interject_helpers) <= 1
     assert "final_answer" not in set(assistant_requested_tool_names(messages))
     assert "final_answer" not in set(tool_names_from_messages(messages))
@@ -742,8 +766,6 @@ async def test_real_conductor_interject_mid_think_no_duplicate_helpers(monkeypat
             await plan_handle._execution_task
         except asyncio.CancelledError:
             pass
-
-
 
 
 @pytest.mark.asyncio
@@ -810,7 +832,9 @@ async def test_real_conductor_actor_clarification_passthrough(monkeypatch):
             if actor._plan_handles:
                 return list(actor._plan_handles)[0]
             await asyncio.sleep(0.05)
-        raise AssertionError("HierarchicalActor did not create a plan handle within timeout.")
+        raise AssertionError(
+            "HierarchicalActor did not create a plan handle within timeout.",
+        )
 
     plan_handle = await _wait_for_plan_handle(real_actor, timeout=120)
 
@@ -836,7 +860,9 @@ async def test_real_conductor_actor_clarification_passthrough(monkeypatch):
 
     # Conductor should have exactly one Actor_act request and no TaskScheduler_execute
     assert assistant_requested_tool_names(messages, "Actor").count("Actor_act") == 1
-    assert "TaskScheduler_execute" not in set(assistant_requested_tool_names(messages, "TaskScheduler"))
+    assert "TaskScheduler_execute" not in set(
+        assistant_requested_tool_names(messages, "TaskScheduler"),
+    )
     # Clarification placeholder should be present in tool messages
     tool_names = tool_names_from_messages(messages)
     assert any(str(n).startswith("clarification_request_") for n in tool_names)
@@ -918,7 +944,9 @@ async def test_real_conductor_actor_handle_ask_passthrough(monkeypatch):
             if actor._plan_handles:
                 return list(actor._plan_handles)[0]
             await asyncio.sleep(0.05)
-        raise AssertionError("HierarchicalActor did not create a plan handle within timeout.")
+        raise AssertionError(
+            "HierarchicalActor did not create a plan handle within timeout.",
+        )
 
     plan_handle = await _wait_for_plan_handle(real_actor, timeout=120)
 
@@ -932,9 +960,13 @@ async def test_real_conductor_actor_handle_ask_passthrough(monkeypatch):
     plan_handle.ask_client.set_system_message = MagicMock()
     plan_handle.ask_client.reset_messages = MagicMock()
     plan_handle.ask_client.reset_system_message = MagicMock()
-    plan_handle.ask_client.generate = AsyncMock(return_value="I navigated to https://example.com.")
+    plan_handle.ask_client.generate = AsyncMock(
+        return_value="I navigated to https://example.com.",
+    )
 
-    nested = await handle.ask("Summarize what just happened.") # Should route to the plan's ask LLM
+    nested = await handle.ask(
+        "Summarize what just happened.",
+    )  # Should route to the plan's ask LLM
     ans = await nested.result()
     assert ans == "I navigated to https://example.com."
 
@@ -942,7 +974,9 @@ async def test_real_conductor_actor_handle_ask_passthrough(monkeypatch):
     final_result, messages = await handle.result()
 
     assert assistant_requested_tool_names(messages, "Actor").count("Actor_act") == 1
-    assert "TaskScheduler_execute" not in set(assistant_requested_tool_names(messages, "TaskScheduler"))
+    assert "TaskScheduler_execute" not in set(
+        assistant_requested_tool_names(messages, "TaskScheduler"),
+    )
 
     if getattr(plan_handle, "_execution_task", None):
         plan_handle._execution_task.cancel()

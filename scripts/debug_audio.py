@@ -130,7 +130,11 @@ class AudioPlayer(App):
     """
 
     def __init__(
-        self, assistant_id: str, assistant_name: str, timestamp_str: str, call_url: str
+        self,
+        assistant_id: str,
+        assistant_name: str,
+        timestamp_str: str,
+        call_url: str,
     ):
         super().__init__()
         self.assistant_id = assistant_id
@@ -469,6 +473,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     app = AudioPlayer(
-        args.assistant_id, args.assistant_name, args.timestamp, args.call_url
+        args.assistant_id,
+        args.assistant_name,
+        args.timestamp,
+        args.call_url,
     )
     app.run()
