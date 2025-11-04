@@ -290,6 +290,7 @@ async def forward_handle_call(
     method_name: str,
     kwargs: dict | None,
     *,
+    call_args: list | tuple | None = None,
     fallback_positional_keys: list[str] | tuple[str, ...] = (),
 ):
     """Invoke a steering method on a handle with robust kwargs handling.
@@ -305,14 +306,37 @@ async def forward_handle_call(
         return None
 
     try:
+        args = list(call_args or [])
         normalised = _normalise_kwargs_for_bound_method(bound, kwargs or {})
-        return await maybe_await(bound(**normalised))
+        return await maybe_await(bound(*args, **normalised))
     except TypeError:
-        # Fallbacks for legacy signatures
+        # Fallbacks: try positional-only, then kwargs-only, then legacy single-key
+        # positional extraction via fallback_positional_keys for maximum tolerance.
+        try:
+            args2 = list(call_args or [])
+            return await maybe_await(bound(*args2))  # type: ignore[misc]
+        except Exception:
+            pass
+        try:
+            return await maybe_await(bound(**(normalised if isinstance(normalised, dict) else {})))  # type: ignore[misc]
+        except Exception:
+            pass
         for k in fallback_positional_keys:
             if kwargs and k in kwargs:
                 try:
-                    return await maybe_await(bound(kwargs.get(k)))  # type: ignore[misc]
+                    # Preserve additional kwargs (e.g., images) alongside the positional message
+                    rest_kwargs = (
+                        dict(normalised) if isinstance(normalised, dict) else {}
+                    )
+                except Exception:
+                    rest_kwargs = {}
+                try:
+                    # Avoid passing the alias key twice if it accidentally matched a parameter
+                    rest_kwargs.pop(k, None)
+                except Exception:
+                    pass
+                try:
+                    return await maybe_await(bound(kwargs.get(k), **rest_kwargs))  # type: ignore[misc]
                 except Exception:
                     pass
         try:

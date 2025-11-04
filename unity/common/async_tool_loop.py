@@ -1676,23 +1676,21 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                     if not isinstance(method, str) or not method:
                         continue
                     call_kwargs = dict(kwargs)
-                    if args is not None and not any(
-                        k in call_kwargs
-                        for k in ("content", "message", "question", "reason")
-                    ):
-                        call_kwargs["content"] = args
+                    # Build positional args (explicit); no aliasing heuristics
+                    call_args: list = []
+                    if args is not None:
+                        if isinstance(args, (list, tuple)):
+                            call_args = list(args)
+                        else:
+                            call_args = [args]
                     attempted_local = True
                     try:
                         await forward_handle_call(
                             h,
                             method,
                             call_kwargs,
-                            fallback_positional_keys=(
-                                "content",
-                                "message",
-                                "question",
-                                "reason",
-                            ),
+                            call_args=call_args,
+                            fallback_positional_keys=(),
                         )
                         try:
                             results["applied"].append(
@@ -1876,22 +1874,19 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                             if not isinstance(method, str) or not method:
                                 continue
                             call_kwargs = dict(kwargs)
-                            if args is not None and not any(
-                                k in call_kwargs
-                                for k in ("content", "message", "question", "reason")
-                            ):
-                                call_kwargs["content"] = args
+                            call_args: list = []
+                            if args is not None:
+                                if isinstance(args, (list, tuple)):
+                                    call_args = list(args)
+                                else:
+                                    call_args = [args]
                             try:
                                 await forward_handle_call(
                                     h,
                                     method,
                                     call_kwargs,
-                                    fallback_positional_keys=(
-                                        "content",
-                                        "message",
-                                        "question",
-                                        "reason",
-                                    ),
+                                    call_args=call_args,
+                                    fallback_positional_keys=(),
                                 )
                                 entry = {"path": list(path), "method": method}
                                 results["applied"].append(entry)
