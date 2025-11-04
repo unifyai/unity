@@ -822,6 +822,146 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_append_to_queue_singleton_adds_follower_and_runs(monkeypatch):
+    """
+    Append a new task to a singleton queue during execution, then complete both
+    tasks and verify the final summary includes the appended follower.
+    """
+
+    # Step-based actor so pause/resume pairs deterministically complete a task
+    class _StepOnly(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _StepOnly, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _StepOnly,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+
+    # Create a singleton queue with one task A
+    (a_id,) = tuple(await _make_ordered_queue(ts, ["App_A"]))  # type: ignore[misc]
+    # Create a standalone task B (not queued)
+    b_id = ts._create_task(name="App_B", description="App_B")["details"]["task_id"]  # type: ignore[index]
+
+    h = await ts.execute(text=str(a_id))
+
+    # Spy activation to detect when B becomes active later
+    b_active_evt: asyncio.Event = asyncio.Event()
+    orig_update_status = ts._update_task_status_instance
+
+    def spy_update_status(*, task_id: int, instance_id: int, new_status: str, activated_by=None):  # type: ignore[override]
+        res = orig_update_status(
+            task_id=task_id,
+            instance_id=instance_id,
+            new_status=new_status,
+            activated_by=activated_by,
+        )
+        try:
+            if task_id == b_id and str(new_status) == "active":
+                b_active_evt.set()
+        except Exception:
+            pass
+        return res
+
+    monkeypatch.setattr(
+        ts,
+        "_update_task_status_instance",
+        spy_update_status,
+        raising=True,
+    )
+
+    # Wait deterministically until a task is active
+    async def _wait_until_active(max_iters: int = 500):
+        for _ in range(max_iters):
+            try:
+                rows = ts._filter_tasks(filter="status == 'active'", limit=1)
+            except Exception:
+                rows = []
+            if rows:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("No active task detected in time")
+
+    await _wait_until_active()
+
+    # Append B to the queue while A is running
+    inner = getattr(h, "_inner", h)
+    msg = inner.append_to_queue(task_id=b_id)
+    assert isinstance(msg, str)
+
+    # Complete A deterministically (two steps)
+    h.pause()
+    h.resume()
+
+    # Wait until B becomes active, then complete B
+    await asyncio.wait_for(b_active_evt.wait(), timeout=20)
+    h.pause()
+    h.resume()
+
+    res = await asyncio.wait_for(h.result(), timeout=30)
+    assert isinstance(res, str)
+    assert "Completed the following tasks:" in res
+    assert f"Task {a_id}: App_A" in res
+    assert f"Task {b_id}: App_B" in res
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_append_to_queue_emits_notification(monkeypatch):
+    """Appending should emit a queue.appended notification event."""
+
+    class _StepOnly(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _StepOnly, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _StepOnly,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    (a_id,) = tuple(await _make_ordered_queue(ts, ["N_app_A"]))  # type: ignore[misc]
+    b_id = ts._create_task(name="N_app_B", description="N_app_B")["details"]["task_id"]  # type: ignore[index]
+
+    h = await ts.execute(text=str(a_id))
+
+    # Wait until active before appending
+    async def _wait_until_active(max_iters: int = 500):
+        for _ in range(max_iters):
+            rows = ts._filter_tasks(filter="status == 'active'", limit=1)
+            if rows:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("No active task detected in time")
+
+    await _wait_until_active()
+
+    inner = getattr(h, "_inner", h)
+    inner.append_to_queue(task_id=b_id)
+
+    # Collect notifications until we observe queue.appended (skip unrelated events)
+    seen_appended = False
+    for _ in range(20):
+        evt = await asyncio.wait_for(h.next_notification(), timeout=30)
+        if isinstance(evt, dict) and evt.get("type") == "queue.appended":
+            assert int(evt.get("task_id")) == int(b_id)
+            seen_appended = True
+            break
+    assert seen_appended, "queue.appended notification not observed"
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_active_task_done_aggregates_all_when_called_late(monkeypatch):
     """
     If called after multiple tasks completed, active_task_done should return
