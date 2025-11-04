@@ -379,44 +379,35 @@ const getLaunchOptions = (headless: boolean, downloadsPath: string | null = null
   }}
 };
 
-const startDesktop = () => {
-  startBrowserAgent({
-    url: `http://localhost:6080/vnc.html?resize=scale&autoreconnect=1&autoconnect=1&password=${process.env.UNIFY_KEY}`,
-    browser: getLaunchOptions(true),
-    prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the browser and apps within the virtual desktop. There may be a terminal (xterm) app launched in the desktop for use.",
-    narrate: true,
-  }).then(agent => {
-    browserAgent = agent;
-    console.log("✅ BrowserAgent started successfully.");
-  }).catch(err => {
-    console.error("❌ Failed to start BrowserAgent:", err);
-    process.exit(1);
-  });
-
-  startBrowserAgent({
-    url: "https://www.duckduckgo.com/",
-    browser: getLaunchOptions(false, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
-  }).then(agent => {
-    desktopBrowserAgent = agent;
+const startDesktop = async (): Promise<BrowserAgent> => {
+  try {
+    const agent = await startBrowserAgent({
+      url: `http://localhost:6080/vnc.html?resize=scale&autoreconnect=1&autoconnect=1&password=${process.env.UNIFY_KEY}`,
+      browser: getLaunchOptions(true),
+      prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the browser and apps within the virtual desktop. There may be a terminal (xterm) app launched in the desktop for use.",
+      narrate: true,
+    });
     console.log("✅ Desktop BrowserAgent started successfully.");
-  }).catch(err => {
+    return agent;
+  } catch (err) {
     console.error("❌ Failed to start Desktop BrowserAgent:", err);
-    process.exit(1);
-  });
+    throw err;
+  }
 }
 
-const startBrowser = (headless: boolean) => {
-  startBrowserAgent({
-    url: "https://www.duckduckgo.com/",
-    browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
-    narrate: true,
-  }).then(agent => {
-    browserAgent = agent;
+const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
+  try {
+    const agent = await startBrowserAgent({
+      url: "https://www.duckduckgo.com/",
+      browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
+      narrate: true,
+    });
     console.log("✅ BrowserAgent started successfully.");
-  }).catch(err => {
+    return agent;
+  } catch (err) {
     console.error("❌ Failed to start BrowserAgent:", err);
-    process.exit(1);
-  });
+    throw err;
+  }
 }
 
 // --- API Endpoints ---
@@ -430,9 +421,9 @@ app.post('/start', async (req: Request, res: Response) => {
   try {
     let agent: BrowserAgent;
     if (mode === "desktop") {
-      agent = await startDesktop(sessionId);
+      agent = await startDesktop();
     } else {
-      agent = await startBrowser(headless ?? false, sessionId);
+      agent = await startBrowser(headless ?? false);
     }
 
     activeSessions.set(sessionId, {
@@ -488,11 +479,11 @@ app.post('/extract', isAgentReady, async (req: Request, res: Response) => {
       // If bypassDomProcessing is true, use screenshot-only extraction
       if (bypassDomProcessing === true) {
         const screenshot = await session.agent.require(BrowserConnector).getHarness().screenshot();
-        const data = await session.agent.models.extract(instructions, zodSchema as ZodTypeAny, screenshot, '');
+        const data = await (session.agent.models as any).extract(instructions, zodSchema as ZodTypeAny, screenshot, '');
         return res.json({ data });
       } else {
         // Use the standard extraction method with DOM processing
-        const data = await session.agent.extract(instructions, zodSchema as ZodTypeAny);
+        const data = await (session.agent as any).extract(instructions, zodSchema as ZodTypeAny);
         return res.json({ data });
       }
     } catch (err: unknown) {
