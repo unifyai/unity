@@ -827,6 +827,20 @@ class ConversationManager:
         elif isinstance(event, Ping):
             print("ping received - keeping conversation manager alive")
 
+        elif isinstance(event, (ConductorPauseActor, ConductorResumeActor)):
+            print("conductor pause/resume event received", event.to_dict())
+            if self.state.conductor_handles:
+                print(
+                    "forwarding pause/resume event to ManagersWorker and Conductor channel",
+                )
+                # Conductor handles available, forward the pause/resume event to the ManagersWorker channel
+                asyncio.create_task(
+                    self.event_broker.publish(
+                        "app:managers:input",
+                        event.to_json(),
+                    ),
+                )
+
         else:
             # otherwise (whatsapp, sms, email) just schedule another llm run after 2 seconds
             # if there is no response at the moment, if there is a response, cancel it, and scheduel

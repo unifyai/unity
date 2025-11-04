@@ -503,3 +503,17 @@ class ConductorNotification(Event):
 
     handle_id: int
     response: str
+
+
+@dataclass
+class ConductorPauseActor(Event):
+    """Signal to pause any in-flight Actor/TaskScheduler execution for the session."""
+
+    reason: str = ""
+
+
+@dataclass
+class ConductorResumeActor(Event):
+    """Signal to resume any previously paused Actor/TaskScheduler execution for the session."""
+
+    reason: str = ""

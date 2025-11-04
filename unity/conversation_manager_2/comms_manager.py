@@ -129,6 +129,35 @@ class CommsManager:
                     ),
                     self.loop,
                 )
+            elif thread == "unity_system_event":
+                system_event_type = event.get("event_type")
+                system_message = event.get("message")
+                if system_event_type in ["pause_actor", "resume_actor"]:
+                    evt = (
+                        ConductorPauseActor(
+                            reason=(
+                                str(system_message)
+                                if system_message is not None
+                                else "The user has just taken control of the desktop, we're pausing our own actions temporarily."
+                            ),
+                        )
+                        if system_event_type == "pause_actor"
+                        else ConductorResumeActor(
+                            reason=(
+                                str(system_message)
+                                if system_message is not None
+                                else "The user has just handed control of the desktop back to us, we're now continuing our control of the desktop."
+                            ),
+                        )
+                    )
+                    asyncio.run_coroutine_threadsafe(
+                        self.message_queue.publish(
+                            f"app:conductor:{system_event_type}",
+                            evt.to_json(),
+                        ),
+                        self.loop,
+                    )
+                message.ack()
             elif thread in events_map:
                 # Publish contacts
                 contacts = event.get("contacts", [])
@@ -287,7 +316,8 @@ class CommsManager:
                     else:
                         event = PhoneCallRecieved(
                             contact=event.get(
-                                "caller_number", event.get("user_number")
+                                "caller_number",
+                                event.get("user_number"),
                             ),
                             conference_name=event.get("conference_name", ""),
                         )
@@ -295,7 +325,8 @@ class CommsManager:
 
                     # Publish the event
                     task = asyncio.run_coroutine_threadsafe(
-                        self.message_queue.publish(topic, event.to_json()), self.loop
+                        self.message_queue.publish(topic, event.to_json()),
+                        self.loop,
                     )
                     message.ack()
                     task.result()
