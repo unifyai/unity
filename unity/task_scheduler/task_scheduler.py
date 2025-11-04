@@ -2109,7 +2109,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         if member_ids:
             fields_needed: List[str] = self._queue_member_fields()
-            rows_by_id: Dict[int, TaskBase] = self._read_rows_by_ids(
+            rows_by_id: Dict[int, Dict[str, Any]] = self._read_rows_by_ids(
                 ids=member_ids,
                 fields=fields_needed,
             )
@@ -2117,14 +2117,11 @@ class TaskScheduler(BaseTaskScheduler):
             ordered: List[Task] = []
             for tid in member_ids:
                 row = rows_by_id.get(int(tid))
-                if not isinstance(row, dict):
+                if row is None:
                     continue
-                try:
-                    st = self._to_status(row.get("status"))  # type: ignore[arg-type]
-                    if st in self._TERMINAL_STATUSES:
-                        continue
-                except Exception:
-                    pass
+                st = self._to_status(row.get("status"))  # type: ignore[arg-type]
+                if st in self._TERMINAL_STATUSES:
+                    continue
                 row = self._sanitize_activation(row)
                 ordered.append(Task(**row))
             return ordered
@@ -2174,9 +2171,9 @@ class TaskScheduler(BaseTaskScheduler):
             head = head_candidates[0]
 
         # Build id -> row map for O(1) next lookups without further backend reads
-        rows_by_id: Dict[int, Task] = {}
+        task_by_id: Dict[int, Task] = {}
         for r in rows_in_queue:
-            rows_by_id[r.task_id] = r
+            task_by_id[r.task_id] = r
 
         # Walk head→tail using next_task pointers in-memory
         ordered: List[Task] = []
@@ -2195,7 +2192,7 @@ class TaskScheduler(BaseTaskScheduler):
             nxt = cur.schedule_next
             if nxt is None:
                 break
-            cur = rows_by_id.get(nxt)
+            cur = task_by_id.get(nxt)
 
         return ordered
 
