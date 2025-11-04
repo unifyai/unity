@@ -43,7 +43,9 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
         message = f"<Actor has been paused due to {reason}>"
         child_message = f"<execution was paused due to {reason}>"
         # When images are supplied, forward them as images for both root and child interjections
-        interject_kwargs = {"kwargs": {"images": images}} if images is not None else {}
+        interject_kwargs = {"args": child_message}
+        if images is not None:
+            interject_kwargs["kwargs"] = {"images": images}
         # Interject only if at least one pause actually applies to a child.
         # For each matched child, pause first, then immediately interject within the child's context.
         spec: Dict[str, Any] = {
@@ -51,21 +53,13 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
                 "TaskScheduler.execute": {
                     "steps": [
                         {"method": "pause"},
-                        {
-                            "method": "interject",
-                            "args": child_message,
-                            **interject_kwargs,
-                        },
+                        {"method": "interject", **interject_kwargs},
                     ],
                 },
                 "Actor.act": {
                     "steps": [
                         {"method": "pause"},
-                        {
-                            "method": "interject",
-                            "args": child_message,
-                            **interject_kwargs,
-                        },
+                        {"method": "interject", **interject_kwargs},
                     ],
                 },
             },
@@ -111,28 +105,22 @@ class ConductorRequestHandle(AsyncToolLoopHandle):
         message = f"<Actor has been resumed due to {reason}>"
         child_message = f"<execution was resumed due to {reason}>"
         # When images are supplied, forward them as images for both root and child interjections
-        interject_kwargs = {"kwargs": {"images": images}} if images is not None else {}
+        interject_kwargs = {"args": child_message}
+        if images is not None:
+            interject_kwargs["kwargs"] = {"images": images}
         # Interject only if at least one resume actually applies to a child.
         # For each matched child, interject first (so the user sees the reason), then resume immediately after.
         spec: Dict[str, Any] = {
             "children": {
                 "TaskScheduler.execute": {
                     "steps": [
-                        {
-                            "method": "interject",
-                            "args": child_message,
-                            **interject_kwargs,
-                        },
+                        {"method": "interject", **interject_kwargs},
                         {"method": "resume"},
                     ],
                 },
                 "Actor.act": {
                     "steps": [
-                        {
-                            "method": "interject",
-                            "args": child_message,
-                            **interject_kwargs,
-                        },
+                        {"method": "interject", **interject_kwargs},
                         {"method": "resume"},
                     ],
                 },
