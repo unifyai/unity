@@ -1566,6 +1566,16 @@ class _ActionProviderProxy:
                     context=context,
                     **kwargs,
                 )
+            except BrowserAgentError as e:
+                if e.error_type == "cancelled":
+                    logger.info(
+                        f"🔴 Action interrupted by immediate pause: {call_repr}",
+                    )
+
+                    raise _ControlledInterruptionException(
+                        f"Action '{call_repr}' interrupted by immediate pause.",
+                    )
+                raise
             finally:
                 if is_magnitude:
                     await asyncio.sleep(0.25)
@@ -3826,9 +3836,12 @@ async def main_plan():
             pass
         return result_str
 
-    async def pause(self) -> str:
+    async def pause(self, immediate: bool = False) -> str:
         """
         Pauses the plan's execution.
+
+        Args:
+            immediate: If True, interrupts any currently executing browser action.
 
         Returns:
             A status message.
@@ -3837,9 +3850,18 @@ async def main_plan():
             _HierarchicalPlanState.RUNNING,
             _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
         ):
+            if immediate:
+                action_provider = self._get_action_provider()
+                if action_provider and hasattr(action_provider.browser, "backend"):
+                    backend = action_provider.browser.backend
+                    if hasattr(backend, "interrupt_current_action"):
+                        logger.info("⚡ Sending interrupt to browser action...")
+                        await backend.interrupt_current_action()
+
             self.runtime.pause()
             self._set_state(_HierarchicalPlanState.PAUSED)
-            self.action_log.append("Plan paused by user.")
+            pause_type = "immediately" if immediate else "by user"
+            self.action_log.append(f"Plan paused {pause_type}.")
             return "Plan paused."
 
         if self._state in (
