@@ -13,6 +13,7 @@ import unify
 
 from .types.reintegration_plan import ReintegrationPlan
 from .types.task import Task
+from datetime import datetime
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -76,14 +77,19 @@ def detach_from_queue_for_activation(
 
     # Compute head_start_at with at most one backend read.
     # Fast path: when current task is the head, reuse its own start_at.
-    head_start_at: Optional[str] = None
+    head_start_at: Optional[datetime] = None
     if prev_tid is None:
-        head_start_at = start_at.isoformat() if start_at is not None else None
+        head_start_at = start_at
     else:
         # Prefer LocalTaskView for a single-step head start_at resolution.
         _qid = task_row.queue_id
         if _qid is not None:
-            head_start_at = scheduler._view.get_head_start_at(_qid)
+            queue_head_start_at = scheduler._view.get_head_start_at(_qid)
+            head_start_at = (
+                datetime.fromisoformat(queue_head_start_at)
+                if queue_head_start_at is not None
+                else None
+            )
         # Fallbacks when queue_id is missing or the local view returned nothing
         if head_start_at is None:
             # Fallback: walk prev pointers (rare case when queue_id is absent)
@@ -91,11 +97,7 @@ def detach_from_queue_for_activation(
             while cur_head is not None and cur_head.schedule_prev is not None:
                 cur_head = _get_row(cur_head.schedule_prev)
             if cur_head is not None:
-                head_start_at = (
-                    cur_head.schedule_start_at.isoformat()
-                    if cur_head.schedule_start_at is not None
-                    else None
-                )
+                head_start_at = cur_head.schedule_start_at
 
     # Batch-fetch log objects for all relevant task_ids in one backend call (reuse scheduler helper)
     needed_ids: list[int] = []
@@ -179,7 +181,7 @@ def detach_from_queue_for_activation(
                     # Preserve existing next linkage; remove any stale start_at first
                     next_sched.pop("start_at", None)
                     if head_start_at is not None:
-                        next_sched["start_at"] = head_start_at
+                        next_sched["start_at"] = head_start_at.isoformat()
                     # Merge status promotion into the same write to avoid an extra backend call
                     _update_schedule(
                         next_log,

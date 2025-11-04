@@ -257,7 +257,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                             try:
                                 plan = None
                                 if self._instance_id is not None:
-                                    plan = (self._scheduler._reintegration_plans or {}).get(  # type: ignore[attr-defined]
+                                    plan = self._scheduler._reintegration_plans.get(  # type: ignore[attr-defined]
                                         (self._task_id, self._instance_id),
                                     )
                                 prior_status = (

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
+from datetime import datetime
 
 
 @dataclass
@@ -17,11 +18,11 @@ class ReintegrationPlan:
     """
 
     task_id: int
-    instance_id: Optional[int]
+    instance_id: int
     prev_task: Optional[int]
     next_task: Optional[int]
-    start_at: Optional[str]
+    start_at: Optional[datetime]
     was_head: bool
     original_status: Optional[str]
-    head_start_at: Optional[str] = None
+    head_start_at: Optional[datetime] = None
     queue_id: Optional[int] = None
