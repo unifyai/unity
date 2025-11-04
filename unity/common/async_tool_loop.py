@@ -807,6 +807,31 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         return await nested_steer_on(self, spec)
 
+    async def nested_structure(self) -> dict:
+        """Return a nested, read-only structure of all inner tool loops.
+
+        This discovers in-flight child handles and their descendants and
+        returns a recursive dictionary describing the current state.
+
+        The structure is implementation-agnostic and includes for each node:
+        - label: best-effort human-readable label (e.g., "Class.method(x123)")
+        - class: the handle's class name
+        - loop_id and log_label when available
+        - state: "in_flight", "done", or "unknown"
+        - children: list of child entries, each with:
+            - origin: "task_info" or "wrapper"
+            - tool_name (for task_info children) or a best-effort name for wrappers
+            - call_id (when known)
+            - is_passthrough (when known)
+            - state and a nested "handle" node when a child handle is present
+
+        Returns
+        -------
+        dict
+            A nested dictionary describing the hierarchy beneath this handle.
+        """
+        return await nested_structure_on(self)
+
     # --- snapshotting v1: read-only capture (flat only) ---------------------
     def serialize(
         self,
@@ -1955,6 +1980,151 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
 
     await _apply(handle, spec, [str(label)])
     return results
+
+
+# --- module-level nested structure introspection (read-only) -------------------
+async def nested_structure_on(
+    handle: Any,
+    *,
+    max_depth: Optional[int] = None,
+) -> dict:
+    """Return a nested, read-only structure for any compatible handle.
+
+    Discovery strategy:
+    - Primary: traverse ``_task.task_info`` entries to find in-flight child
+      tool handles (tool name, call_id, is_passthrough, handle).
+    - Secondary: include common wrapper attributes ("_actor_handle",
+      "_current_handle") when they reference handle-like objects and are not
+      already discovered via ``task_info``.
+
+    Cycle-safe: maintains a visited set to avoid infinite loops in rare cases
+    where wrapper attributes or handles may reference parents.
+
+    Parameters
+    ----------
+    handle : Any
+        A tool-loop handle or handle-like object to introspect.
+    max_depth : int | None, optional
+        Optional max recursion depth; None means unlimited.
+
+    Returns
+    -------
+    dict
+        Nested dictionary describing the hierarchy beneath ``handle``.
+    """
+
+    def _best_label(h) -> str:
+        try:
+            return (
+                getattr(h, "_log_label", None)
+                or getattr(h, "_loop_id", None)
+                or getattr(getattr(h, "__class__", object), "__name__", "handle")
+            )
+        except Exception:
+            return "handle"
+
+    def _state_of(h) -> str:
+        try:
+            d = h.done() if hasattr(h, "done") else None
+            if isinstance(d, bool):
+                return "done" if d else "in_flight"
+            return "unknown"
+        except Exception:
+            return "unknown"
+
+    async def _walk(h, depth: int, visited: set[int]) -> dict:
+        try:
+            hid = id(h)
+        except Exception:
+            hid = None
+        if hid is not None and hid in visited:
+            return {
+                "label": _best_label(h),
+                "class": getattr(h, "__class__", object).__name__,
+                "loop_id": getattr(h, "_loop_id", None),
+                "log_label": getattr(h, "_log_label", None),
+                "state": "cycle",
+                "children": [],
+            }
+        if hid is not None:
+            visited.add(hid)
+
+        node: dict = {
+            "label": _best_label(h),
+            "class": getattr(h, "__class__", object).__name__,
+            "loop_id": getattr(h, "_loop_id", None),
+            "log_label": getattr(h, "_log_label", None),
+            "state": _state_of(h),
+            "children": [],
+        }
+
+        if max_depth is not None and depth >= max_depth:
+            return node
+
+        # Discover children via task_info
+        task_info = {}
+        with suppress(Exception):
+            task_info = getattr(getattr(h, "_task", None), "task_info", {}) or {}
+
+        seen_child_ids: set[int] = set()
+        if isinstance(task_info, dict) and task_info:
+            for meta in list(task_info.values()):
+                try:
+                    name = getattr(meta, "name", None)
+                    call_id = getattr(meta, "call_id", None)
+                    is_passthrough = bool(getattr(meta, "is_passthrough", False))
+                    child = getattr(meta, "handle", None)
+                except Exception:
+                    name, call_id, is_passthrough, child = None, None, False, None
+
+                entry: dict = {
+                    "origin": "task_info",
+                    "tool_name": name,
+                    "call_id": call_id,
+                    "is_passthrough": is_passthrough,
+                }
+                if child is not None:
+                    with suppress(Exception):
+                        seen_child_ids.add(id(child))
+                    nested = await _walk(child, depth + 1, visited)
+                    entry["handle"] = nested
+                    entry["state"] = nested.get("state", "unknown")
+                else:
+                    entry["state"] = "pending"
+                node["children"].append(entry)
+
+        # Wrapper attributes as secondary discovery channels
+        for attr in ("_actor_handle", "_current_handle"):
+            child = None
+            with suppress(Exception):
+                child = getattr(h, attr)
+            if child is None:
+                continue
+            try:
+                if id(child) in seen_child_ids:
+                    continue
+            except Exception:
+                pass
+            # Heuristic: treat as handle-like if it exposes any steering surface
+            is_handle_like = any(
+                hasattr(child, m) for m in ("done", "result", "ask", "interject")
+            )
+            if not is_handle_like:
+                continue
+            nested = await _walk(child, depth + 1, visited)
+            entry = {
+                "origin": "wrapper",
+                "wrapper_attr": attr,
+                "tool_name": nested.get("label")
+                or getattr(child, "__class__", object).__name__,
+                "state": nested.get("state", "unknown"),
+                "handle": nested,
+            }
+            node["children"].append(entry)
+
+        return node
+
+    return await _walk(handle, 0, set())
 
 
 # ─────────────────────────────────────────────────────────────────────────────
