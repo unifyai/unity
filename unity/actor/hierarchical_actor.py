@@ -1775,6 +1775,8 @@ class HierarchicalPlan(BaseActiveTask):
         persist: bool = True,
         images: Optional[dict[str, Any]] = None,
         entrypoint: Optional[int] = None,
+        entrypoint_args: Optional[list[Any]] = None,
+        entrypoint_kwargs: Optional[dict[str, Any]] = None,
         dedicated_action_provider: Optional[ActionProvider] = None,
     ):
         """
@@ -1802,6 +1804,8 @@ class HierarchicalPlan(BaseActiveTask):
         self.execution_namespace: Dict[str, Any] = {}
         self.persist = persist
         self.entrypoint = entrypoint
+        self.entrypoint_args = entrypoint_args or []
+        self.entrypoint_kwargs = entrypoint_kwargs or {}
         self.dedicated_action_provider = dedicated_action_provider
 
         self.idempotency_cache: Dict[tuple, Any] = {}
@@ -1987,10 +1991,19 @@ class HierarchicalPlan(BaseActiveTask):
                             f"Invalid function data for entrypoint {self.entrypoint}.",
                         )
 
+                    # Build argument string for entrypoint call from plan-provided args/kwargs
+                    def _render_value(v: Any) -> str:
+                        return repr(v)
+
+                    args_list = [_render_value(v) for v in (self.entrypoint_args or [])]
+                    for k, v in (self.entrypoint_kwargs or {}).items():
+                        args_list.append(f"{k}={_render_value(v)}")
+                    rendered_args = ", ".join(args_list)
+
                     synthetic_main = f"""
 async def main_plan():
     '''Auto-generated main_plan to run entrypoint function {entrypoint_name}.'''
-    return await {entrypoint_name}()
+    return await {entrypoint_name}({rendered_args})
 """
                     base_code = f"{entrypoint_code}\n\n{synthetic_main}"
 
@@ -4290,6 +4303,8 @@ class HierarchicalActor(BaseActor):
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         entrypoint: Optional[int] = None,
         new_session: bool = False,
+        entrypoint_args: Optional[list[Any]] = None,
+        entrypoint_kwargs: Optional[dict[str, Any]] = None,
         **kwargs,
     ) -> HierarchicalPlan:
         """
@@ -4331,6 +4346,8 @@ class HierarchicalActor(BaseActor):
             persist=persist,
             images=images,
             entrypoint=entrypoint,
+            entrypoint_args=entrypoint_args,
+            entrypoint_kwargs=entrypoint_kwargs,
             dedicated_action_provider=dedicated_action_provider,
         )
         setattr(plan_handle, "__passthrough__", True)
