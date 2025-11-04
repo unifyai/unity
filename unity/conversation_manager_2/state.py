@@ -282,7 +282,7 @@ class ConversationManagerState:
                     self.mode = "unify_call"
                     self.unify_call_start_timestamp = e.timestamp
                     contact = self.get_contact(
-                        contact_id=1
+                        contact_id=1,
                     )  # unify_call always targets boss
                     self.unify_call_contact = contact
                     thread_type = "unify_call"
@@ -632,7 +632,10 @@ class ConversationManagerState:
 
     # conductor handle tracking helpers
     def register_conductor_handle(
-        self, handle_id: str, query: str, response: str
+        self,
+        handle_id: str,
+        query: str,
+        response: str,
     ) -> None:
         self.conductor_handles[handle_id] = {
             "query": query,
@@ -641,7 +644,11 @@ class ConversationManagerState:
         }
 
     def add_conductor_handle_action(
-        self, handle_id: str, action_name: str, query: str, response: str
+        self,
+        handle_id: str,
+        action_name: str,
+        query: str,
+        response: str,
     ) -> None:
         if handle_id in self.conductor_handles:
             self.conductor_handles[handle_id]["handle_actions"].append(
@@ -649,11 +656,15 @@ class ConversationManagerState:
                     "action_name": action_name,
                     "query": query,
                     "response": response,
-                }
+                },
             )
 
     def update_conductor_handle_action(
-        self, handle_id: str, action_name: str, query: str | None, response: str
+        self,
+        handle_id: str,
+        action_name: str,
+        query: str | None,
+        response: str,
     ) -> None:
         if handle_id in self.conductor_handles:
             if query is None:
@@ -663,7 +674,7 @@ class ConversationManagerState:
                     "action_name": action_name,
                     "query": query,
                     "response": response,
-                }
+                },
             )
 
     def get_details(self) -> dict:
@@ -743,6 +754,7 @@ class ConversationManagerState:
         rolling_summary: Optional[str] = None,
         respond_to: bool = False,
         response_policy: Optional[str] = None,
+        utc_offset_hours: Optional[float] = None,
     ):
         contact = Contact(
             contact_id=contact_id,
@@ -756,6 +768,7 @@ class ConversationManagerState:
             respond_to=respond_to,
             response_policy=response_policy,
             is_boss=contact_id == 1,
+            utc_offset_hours=utc_offset_hours,
         )
         self.inverted_contacts_map[contact_id] = contact
         if email_address:
@@ -776,6 +789,7 @@ class ConversationManagerState:
         rolling_summary: Optional[str] = None,
         respond_to: bool = False,
         response_policy: Optional[str] = None,
+        utc_offset_hours: Optional[float] = None,
     ):
         contact = None
         print("current contacts", self.inverted_contacts_map)
@@ -806,6 +820,7 @@ class ConversationManagerState:
                     rolling_summary,
                     respond_to,
                     response_policy,
+                    utc_offset_hours,
                 )
         else:
             new_contact = self.create_new_contact(
@@ -820,6 +835,7 @@ class ConversationManagerState:
                 rolling_summary,
                 respond_to,
                 response_policy,
+                utc_offset_hours,
             )
             self.active_conversations[new_contact.contact_id] = new_contact
             contact = new_contact
