@@ -7,9 +7,6 @@ if TYPE_CHECKING:
     from unity.conversation_manager_2.conversation_manager import ConversationManager
 from unity.conversation_manager_2.domains.call_manager import LivekitCallManager
 
-
-livekit_call_manager = LivekitCallManager()
-
 class EventHandler:
     _registry = {}
 
@@ -35,6 +32,10 @@ class EventHandler:
     
 
 
+@EventHandler.register(StartupEvent)
+async def _(event: StartupEvent):
+    ...
+
 CallEvents = Union[PhoneCallRecieved, PhoneCallSent, PhoneCallEnded, UnifyCallReceived]
 
 @EventHandler.register(
@@ -50,7 +51,7 @@ async def _(event: CallEvents, cm: 'ConversationManager', *args, **kwargs):
         cm.contact_index.push_message(event.contact.id, "phone", event.thread_message())
 
         # start call process
-        livekit_call_manager.start_call()
+        cm.call_manager.start_call()
 
         # make an llm run
         await cm.run_llm()
@@ -84,17 +85,30 @@ async def _(event, cm: 'ConversationManager', *args, **kwargs):
                 ))
 async def _(event, cm: 'ConversationManager', *args, **kwargs):
     # update state
-    match thread:
-        case "sms": thread = "sms"
-        case "email": thread = "email"
-        case "unify": thread = "unify"
+    thread = None
+    message_content = None
+    subject = None
+    body = None
+
+    match event:
+        case SMSSent() | SMSRecieved():
+            thread = "sms"
+            message_content = event.content
+        case EmailSent() | EmailRecieved():
+            thread = "email"
+            subject = event.subject
+            body = event.body
+        case UnifyMessageSent() | UnifyMessageRecieved():
+            thread = "unify"
+            message_content = event.content
     
-    cm.contact_index.push_message(event.contact, thread, message)
-    cm.notifications_bar.push_notif(...)
+    message_content = event.content
+    print("CONTACT ->", event.contact)
+    cm.contact_index.push_message(event.contact, thread, message_content=message_content, subject=subject, body=body, timestamp=event.timestamp)
+    # cm.notifications_bar.push_notif(...)
     
-    # run llm
-    print("got contact", event.contact)
-    await cm.run_llm(delay=1)
+    # run llm (TODO: add cancel running if not on a call)
+    await cm.run_llm(delay=2)
 
 @EventHandler.register(
     (
@@ -116,7 +130,9 @@ async def _(event: StartupEvent, cm: 'ConversationManager', *args, **kwargs):
 
 @EventHandler.register(GetContactsResponse)
 async def _(event: GetContactsResponse, cm: 'ConversationManager', *args, **kwargs):
-    print("got contacts")
+    print("recieved and setting contacts")
+    cm.contact_index.contacts = {c["contact_id"]:c for c in event.contacts}
+    print(cm.contact_index.contacts)
 
 @EventHandler.register(GetBusEventsResponse)
 async def _(event: GetBusEventsResponse, cm: 'ConversationManager', *args, **kwargs):

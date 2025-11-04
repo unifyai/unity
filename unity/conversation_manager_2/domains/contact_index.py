@@ -8,6 +8,7 @@ from unity.contact_manager.types.contact import Contact as ContactType
 
 class Contact(ContactType):
     is_boss: bool = False
+    on_call: bool = False
     threads: dict[str, deque] = Field(
         default_factory=lambda: {
             "sms": deque(maxlen=5),
@@ -45,7 +46,8 @@ class ContactIndex:
     
     @property
     def boss_contact(self):
-        return self.contacts.get(1)
+        # this will have empty threads
+        return Contact(**self.contacts.get(1))
     
     # is this supposed to fail for any reason?
     def push_message(self, contact: Contact, thread_name, message_content=None, subject=None, body=None, timestamp=None):

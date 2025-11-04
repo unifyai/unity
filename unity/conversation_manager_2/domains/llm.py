@@ -19,7 +19,6 @@ class LLM:
         model=self.model,
         instructions=system_prompt,
         input=messages,
-        input=messages,
         text_format=response_model,
     )
         out = out.output[0].content[0].text

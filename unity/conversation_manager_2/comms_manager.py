@@ -197,7 +197,7 @@ class CommsManager:
                             f"app:comms:{thread}_message",
                             events_map[thread](
                                 content=content,
-                                contact=topic,
+                                contact=contact,
                             ).to_json(),
                         ),
                         self.loop,

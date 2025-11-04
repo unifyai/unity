@@ -13,6 +13,7 @@ from unity.conversation_manager_2.debug_logger import log_job_startup, mark_job_
 from unity.conversation_manager_2.domains.call_manager import LivekitCallManager
 from unity.conversation_manager_2.domains.contact_index import ContactIndex
 from unity.conversation_manager_2.domains.event_handlers import EventHandler
+from unity.conversation_manager_2.domains.renderer import Renderer
 from unity.conversation_manager_2.new_events import *
 
 from unity.conversation_manager_2.domains.llm import LLM
@@ -119,6 +120,9 @@ class ConversationManager:
         # call manager
         self.call_manager = LivekitCallManager()
 
+        # renderer
+        self.prompt_renderer = Renderer()
+
         # state - TODO: put the state into a dict or state class
         # access is as a propery with a lock, that is locked when an llm run
         # such that you can never modify state while the LLM is running (so actions do not break)
@@ -127,11 +131,12 @@ class ConversationManager:
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
-        self.last_snapshot = None
+        self.last_snapshot = datetime.now()
         self._current_snapshot = None
     
     def snapshot(self):
         self._current_snapshot = datetime.now()
+        return self._current_snapshot
     
     def commit(self):
         self.last_snapshot = self._current_snapshot
@@ -144,24 +149,28 @@ class ConversationManager:
     async def _run_llm(self):
         self.snapshot()
         # TODO: change to the real state
-        prompt = "REPLY WITH SMS"
+        prompt = self.prompt_renderer.render_state(self.contact_index, None, self.last_snapshot)
         print(prompt)
         input_message = {"role": "user", "content": prompt}
-        # boss_contact = next(
-        #     c for c in self.state.inverted_contacts_map.values() if c.is_boss
-        # )
-        # system_message = Template(SYS).render(
-        #     contact_id=boss_contact.contact_id,
-        #     first_name=boss_contact.first_name,
-        #     surname=boss_contact.surname,
-        #     phone_number=boss_contact.phone_number,
-        #     email_address=boss_contact.email_address,
-        # )
-        # print(system_message)
+        boss_contact = self.contact_index.boss_contact
+        system_prompt = Template(SYS).render(
+            contact_id=boss_contact.contact_id,
+            first_name=boss_contact.first_name,
+            surname=boss_contact.surname,
+            phone_number=boss_contact.phone_number,
+            email_address=boss_contact.email_address,
+        )
 
         # Use dynamic response models (set_details must be called before run_llm)
-        # response_model = self.state.dynamic_response_models[self.state.mode]
-        out = await self.llm.run(system="", messages=self.chat_history, stream_to_call=self.mode in ["call", "unify_call", "gmeet"])
+        dynamic_response_models = build_dynamic_response_models(
+            include_email=self.assistant_email not in [None, ""],
+            include_sms=self.assistant_number not in [None, ""],
+            include_call=self.assistant_number not in [None, ""],
+        )
+        response_model = dynamic_response_models[self.mode]
+        out = await self.llm.run(system_prompt=system_prompt, messages=self.chat_history + [input_message],
+                                stream_to_call=self.mode in ["call", "unify_call", "gmeet"],
+                                response_model=response_model)
         parsed_out = json.loads(out)
         if "call" in self.mode:
             if self.mode == "unify_call":
@@ -177,8 +186,11 @@ class ConversationManager:
         print(f"parsed_out {parsed_out}")
         actions = parsed_out.get("actions", [])
         for action in actions:
-            Action.take_action(action["action_name"], **action)
+            print("taking actions...")
+            Action.take_action(action.pop("action_name"), **action)
+            print("done taking actions...")
         self.commit()
+        print("commiting...")
         self.chat_history.append(input_message)
         self.chat_history.append({"role": "assistant", "content": out})
         # event = LLMInput(chat_history=self.state.chat_history)

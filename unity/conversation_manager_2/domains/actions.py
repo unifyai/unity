@@ -208,6 +208,11 @@ class Action:
 # registered actions, make sure to add *args, **kwargs to make calling these actions easier
 
 @Action.register()
+async def wait():
+    # does nothing
+    ...
+
+@Action.register()
 async def send_sms(*args, **kwargs):
     to_number = kwargs.get("phone_number")
     message = kwargs.get("message")
