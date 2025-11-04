@@ -10,7 +10,6 @@ from unity.screen_share_manager.screen_share_manager import TurnState
 from unity.screen_share_manager.types import DetectedEvent
 from tests.helpers import _handle_project
 from tests.test_screen_share_manager.conftest import PNG_RED_B64
-from unittest.mock import PropertyMock
 
 
 @pytest.mark.unit
@@ -28,7 +27,7 @@ async def test_core_flow_should_detect_and_annotate_events(mocked_manager):
                 timestamp=1.5,
                 detection_reason="visual_change",
                 image_handle=mock_handle,
-            )
+            ),
         ],
     )
 
@@ -42,7 +41,8 @@ async def test_core_flow_should_detect_and_annotate_events(mocked_manager):
 
     mocks["annotate"].generate.return_value = "This is the rich annotation."
     annotated_handles = await manager.annotate_events(
-        detected_events, "User is performing a test."
+        detected_events,
+        "User is performing a test.",
     )
 
     mocks["annotate"].generate.assert_called_once()
@@ -132,10 +132,12 @@ async def test_inactivity_flush_should_trigger_for_silent_visual_events(mocked_m
     manager._inactivity_task.cancel()  # Stop the default loop to control timing
 
     with patch.object(
-        manager, "_detect_key_moments", new_callable=AsyncMock
+        manager,
+        "_detect_key_moments",
+        new_callable=AsyncMock,
     ) as mock_detect:
         manager._pending_vision_events.append(
-            {"timestamp": 1.0, "after_frame_b64": PNG_RED_B64}
+            {"timestamp": 1.0, "after_frame_b64": PNG_RED_B64},
         )
         manager._last_activity_time = asyncio.get_event_loop().time()
 

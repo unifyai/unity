@@ -73,7 +73,9 @@ async def test_sms_to_email(test_redis_client, event_capture):
     contact_number = "+15555551111"
     email_address = "test@contact.com"
     await send_incoming_sms(
-        test_redis_client, contact_number, "Tell me a joke via email"
+        test_redis_client,
+        contact_number,
+        "Tell me a joke via email",
     )
 
     # Wait for the assistant's response
@@ -106,7 +108,9 @@ async def test_sms_to_unify_message(test_redis_client, event_capture):
     contact_number = "+15555551111"
     contact_id = 1
     await send_incoming_sms(
-        test_redis_client, contact_number, "Tell me a joke via unify message"
+        test_redis_client,
+        contact_number,
+        "Tell me a joke via unify message",
     )
 
     # Wait for the assistant's response
@@ -138,7 +142,9 @@ async def test_sms_to_phone_call(test_redis_client, event_capture):
     # Send incoming SMS
     contact_number = "+15555551111"
     await send_incoming_sms(
-        test_redis_client, contact_number, "Tell me a joke via phone call"
+        test_redis_client,
+        contact_number,
+        "Tell me a joke via phone call",
     )
 
     # Wait for the assistant's response
@@ -158,7 +164,8 @@ async def test_sms_to_phone_call(test_redis_client, event_capture):
         contact=contact_number,
     )
     await test_redis_client.publish(
-        "app:comms:phone_call_ended", end_phone_call.to_json()
+        "app:comms:phone_call_ended",
+        end_phone_call.to_json(),
     )
 
 
@@ -316,7 +323,8 @@ async def test_email_to_phone_call(test_redis_client, event_capture):
         contact=contact_number,
     )
     await test_redis_client.publish(
-        "app:comms:phone_call_ended", end_phone_call.to_json()
+        "app:comms:phone_call_ended",
+        end_phone_call.to_json(),
     )
 
 
@@ -365,7 +373,9 @@ async def test_unify_message_to_sms(test_redis_client, event_capture):
     contact_id = 1
     contact_number = "+15555551111"
     await send_incoming_unify_message(
-        test_redis_client, contact_id, "Tell me a joke via SMS"
+        test_redis_client,
+        contact_id,
+        "Tell me a joke via SMS",
     )
 
     # Wait for the assistant's response
@@ -399,7 +409,9 @@ async def test_unify_message_to_email(test_redis_client, event_capture):
     contact_id = 1
     email_address = "test@contact.com"
     await send_incoming_unify_message(
-        test_redis_client, contact_id, "Tell me a joke via email"
+        test_redis_client,
+        contact_id,
+        "Tell me a joke via email",
     )
 
     # Wait for the assistant's response
@@ -432,7 +444,9 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
     contact_id = 1
     contact_number = "+15555551111"
     await send_incoming_unify_message(
-        test_redis_client, contact_id, "Tell me a joke via phone call"
+        test_redis_client,
+        contact_id,
+        "Tell me a joke via phone call",
     )
 
     # Wait for the assistant's response
@@ -452,7 +466,8 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
         contact=contact_number,
     )
     await test_redis_client.publish(
-        "app:comms:phone_call_ended", end_phone_call.to_json()
+        "app:comms:phone_call_ended",
+        end_phone_call.to_json(),
     )
 
 
@@ -466,7 +481,10 @@ async def test_phone_call_flow(test_redis_client, event_capture):
     # Send incoming phone call
     contact_number = "+15555551111"
     pubsub = await send_incoming_call(
-        test_redis_client, contact_number, "test_conference", "Tell me a joke"
+        test_redis_client,
+        contact_number,
+        "test_conference",
+        "Tell me a joke",
     )
 
     # Capture the assistant's response to the user utterance
@@ -490,7 +508,8 @@ async def test_phone_call_flow(test_redis_client, event_capture):
         contact=contact_number,
     )
     await test_redis_client.publish(
-        "app:comms:phone_call_ended", end_phone_call.to_json()
+        "app:comms:phone_call_ended",
+        end_phone_call.to_json(),
     )
 
 
@@ -546,7 +565,8 @@ async def test_phone_call_to_sms(test_redis_client, event_capture):
         contact=contact_number,
     )
     await test_redis_client.publish(
-        "app:comms:phone_call_ended", end_phone_call.to_json()
+        "app:comms:phone_call_ended",
+        end_phone_call.to_json(),
     )
 
 
@@ -602,7 +622,8 @@ async def test_phone_call_to_email(test_redis_client, event_capture):
         contact=contact_number,
     )
     await test_redis_client.publish(
-        "app:comms:phone_call_ended", end_phone_call.to_json()
+        "app:comms:phone_call_ended",
+        end_phone_call.to_json(),
     )
 
 
@@ -658,7 +679,8 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
         contact=contact_number,
     )
     await test_redis_client.publish(
-        "app:comms:phone_call_ended", end_phone_call.to_json()
+        "app:comms:phone_call_ended",
+        end_phone_call.to_json(),
     )
 
 
@@ -697,7 +719,8 @@ async def test_unify_call_flow(test_redis_client, event_capture):
     # End the unify call
     end_unify_call = UnifyCallEnded(contact=contact_id)
     await test_redis_client.publish(
-        "app:comms:unify_call_ended", end_unify_call.to_json()
+        "app:comms:unify_call_ended",
+        end_unify_call.to_json(),
     )
 
 
@@ -752,7 +775,8 @@ async def test_unify_call_to_sms(test_redis_client, event_capture):
     # End the unify call
     end_unify_call = UnifyCallEnded(contact=contact_id)
     await test_redis_client.publish(
-        "app:comms:unify_call_ended", end_unify_call.to_json()
+        "app:comms:unify_call_ended",
+        end_unify_call.to_json(),
     )
 
 
@@ -807,7 +831,8 @@ async def test_unify_call_to_email(test_redis_client, event_capture):
     # End the unify call
     end_unify_call = UnifyCallEnded(contact=contact_id)
     await test_redis_client.publish(
-        "app:comms:unify_call_ended", end_unify_call.to_json()
+        "app:comms:unify_call_ended",
+        end_unify_call.to_json(),
     )
 
 
@@ -861,5 +886,6 @@ async def test_unify_call_to_unify_message(test_redis_client, event_capture):
     # End the unify call
     end_unify_call = UnifyCallEnded(contact=contact_id)
     await test_redis_client.publish(
-        "app:comms:unify_call_ended", end_unify_call.to_json()
+        "app:comms:unify_call_ended",
+        end_unify_call.to_json(),
     )

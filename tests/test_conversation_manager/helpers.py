@@ -38,7 +38,8 @@ async def send_incoming_email(
     )
     print(f"\n📧 Sending email from {email_address}")
     await test_redis_client.publish(
-        "app:comms:email_received", incoming_email.to_json()
+        "app:comms:email_received",
+        incoming_email.to_json(),
     )
 
 
@@ -53,7 +54,8 @@ async def send_incoming_unify_message(
     )
     print(f"\n📧 Sending unify message from {contact}")
     await test_redis_client.publish(
-        "app:comms:unify_message_received", incoming_unify_message.to_json()
+        "app:comms:unify_message_received",
+        incoming_unify_message.to_json(),
     )
 
 
@@ -74,7 +76,8 @@ async def send_incoming_call(
         incoming_call = UnifyCallReceived(contact=contact)
     print(f"\n📞 Sending {incoming_call.to_dict()['event_name']} from {contact}")
     await test_redis_client.publish(
-        f"app:comms:{mode}_recieved", incoming_call.to_json()
+        f"app:comms:{mode}_recieved",
+        incoming_call.to_json(),
     )
     await asyncio.sleep(0.5)
 
@@ -88,11 +91,13 @@ async def send_incoming_call(
     print(f"📞 Sending call started event from {contact}")
     if mode == "call":
         await test_redis_client.publish(
-            "app:comms:phone_call_started", PhoneCallStarted(contact=contact).to_json()
+            "app:comms:phone_call_started",
+            PhoneCallStarted(contact=contact).to_json(),
         )
     else:
         await test_redis_client.publish(
-            "app:comms:unify_call_started", UnifyCallStarted(contact=contact).to_json()
+            "app:comms:unify_call_started",
+            UnifyCallStarted(contact=contact).to_json(),
         )
     await asyncio.sleep(0.5)
 
@@ -149,7 +154,7 @@ async def capture_stream_response(pubsub, label: str, timeout: float = 60.0):
                     got_end = True
                     full_response = "".join(chunks)
                     print(
-                        f"   ✓ {label}: Got {len(chunks)} chunks, {len(full_response)} chars total"
+                        f"   ✓ {label}: Got {len(chunks)} chunks, {len(full_response)} chars total",
                     )
                     print(f"   ✓ {label}: Preview: {full_response[:80]}...")
                     return got_start, chunks, got_end

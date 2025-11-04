@@ -1,14 +1,10 @@
-import asyncio
-import base64
 from unittest.mock import patch, AsyncMock, MagicMock
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
-from unity.image_manager.image_manager import ImageHandle
 from unity.screen_share_manager.screen_share_manager import ScreenShareManager
-from unity.screen_share_manager.types import DetectedEvent
 
 PNG_BLUE_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAADElEQVR4nGNkYPhfz/w3A5EhBgAEAP//AwCAN3964Q2Myb4AAAAASUVORK5CYII="
 PNG_RED_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAADElEQVR4nGP8z8AARIwMrAANAAD//wMAANO3+f4uEvsAAAAASUVORK5CYII="
