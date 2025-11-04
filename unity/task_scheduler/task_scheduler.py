@@ -2342,26 +2342,23 @@ class TaskScheduler(BaseTaskScheduler):
           if you see an assertion error, refresh state and reconstruct `new_order` accordingly.
         """
         # Resolve current membership once (prefer local index; fallback to storage)
+        queue_id_exists = queue_id is not None
         try:
-            member_ids = (
-                list(self._view.get_member_ids(int(queue_id)) or [])
-                if isinstance(queue_id, int)
-                else []
-            )
+            member_ids = self._view.get_member_ids(queue_id) if queue_id_exists else []
         except Exception:
             member_ids = []
 
-        in_queue_rows: list[Task] | None = None
+        in_queue_rows: list[Task] = []
         if not member_ids:
             # Single filtered read of runnable rows in this queue
-            if isinstance(queue_id, int):
+            if queue_id_exists:
                 in_queue_rows = [
                     r
                     for r in self._filter_tasks(
                         filter=(
                             "schedule is not None and "
                             "status not in ('completed','cancelled','failed') and "
-                            f"queue_id == {int(queue_id)}"
+                            f"queue_id == {queue_id}"
                         ),
                     )
                 ]
@@ -2375,10 +2372,10 @@ class TaskScheduler(BaseTaskScheduler):
                     and r.queue_id == queue_id
                     and r.status not in self._TERMINAL_STATUSES
                 ]
-            member_ids = [int(r.task_id) for r in (in_queue_rows or [])]
+            member_ids = [r.task_id for r in in_queue_rows]
 
         # Validate permutation
-        current_set: set[int] = {int(t) for t in member_ids}
+        current_set: set[int] = {t for t in member_ids}
         if current_set != set(new_order):
             raise AssertionError(
                 "new_order must be a permutation of the current queue. "
@@ -2452,15 +2449,12 @@ class TaskScheduler(BaseTaskScheduler):
             head_start = locals().get("head_start", None)  # type: ignore[assignment]
 
         # Best-effort: refresh LocalTaskView
-        try:
-            if isinstance(queue_id, int):
-                self._view.update_after_reorder(
-                    queue_id=int(queue_id),
-                    new_order=list(new_order),
-                    head_start_at=head_start,
-                )
-        except Exception:
-            pass
+        if queue_id_exists:
+            self._view.update_after_reorder(
+                queue_id=int(queue_id),
+                new_order=list(new_order),
+                head_start_at=head_start,
+            )
 
         return {
             "outcome": "queue reordered",
