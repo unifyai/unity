@@ -512,7 +512,42 @@ class SimulatedActorHandle(SteerableToolHandle):
         return {}
 
     async def next_notification(self) -> dict:
-        return {}
+        # Consume a unit of progress and report a concise, simulation‑consistent update
+        try:
+            self.simulate_step()
+        except Exception:
+            pass
+
+        # Compose a small progress message consistent with the configured mode
+        try:
+            desc = str(self._description) if self._description else "activity"
+        except Exception:
+            desc = "activity"
+
+        message = f"Progress update for '{desc}'."
+        try:
+            rem_steps = self.get_remaining_steps()
+            rem_secs = self.get_remaining_duration_seconds()
+            if rem_steps is not None:
+                message = f"Progress update: working on '{desc}'. Steps remaining: {max(0, rem_steps)}"
+            elif rem_secs is not None:
+                # Round to one decimal place for readability
+                try:
+                    rem_str = f"{max(0.0, float(rem_secs)):.1f}s"
+                except Exception:
+                    rem_str = str(rem_secs)
+                message = (
+                    f"Progress update: working on '{desc}'. Time remaining: {rem_str}"
+                )
+        except Exception:
+            # Fall back to the generic message
+            pass
+
+        return {
+            "type": "notification",
+            "tool_name": "simulated_actor",
+            "message": message,
+        }
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
