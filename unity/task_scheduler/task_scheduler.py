@@ -1966,12 +1966,12 @@ class TaskScheduler(BaseTaskScheduler):
             out_fast: list[Dict[str, Any]] = []
             for s in summaries:
                 try:
-                    qid = s.get("queue_id")
-                    order = list(s.get("order") or [])
+                    qid = s.queue_id
+                    order = s.order
                     if not order:
                         continue
                     head_id = order[0]
-                    start_at = s.get("start_at")
+                    start_at = s.start_at
                     out_fast.append(
                         {
                             "queue_id": qid,

@@ -16,6 +16,8 @@ import os
 
 import unify
 
+from unity.task_scheduler.types.queue_summary import QueueSummary
+
 from .types.task import Task
 from .types.status import Status
 
@@ -633,7 +635,7 @@ class LocalTaskView:
         except Exception:
             return None
 
-    def get_all_queue_summaries(self) -> List[Dict[str, Any]]:
+    def get_all_queue_summaries(self) -> List[QueueSummary]:
         """
         Return cached summaries for all runnable queues.
 
@@ -642,16 +644,16 @@ class LocalTaskView:
         try:
             if self._cache_disabled() or self._queue_index_stale:
                 self.rebuild_queue_index()
-            out: List[Dict[str, Any]] = []
+            out: List[QueueSummary] = []
             for qid, order in self._queue_index.items():
                 if not order:
                     continue
                 out.append(
-                    {
-                        "queue_id": int(qid),
-                        "order": list(order),
-                        "start_at": self._queue_head_start_at.get(int(qid)),
-                    },
+                    QueueSummary(
+                        queue_id=int(qid),
+                        order=list(order),
+                        start_at=self._queue_head_start_at.get(int(qid)),
+                    ),
                 )
             return out
         except Exception:
