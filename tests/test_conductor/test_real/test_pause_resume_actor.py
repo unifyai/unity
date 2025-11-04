@@ -9,6 +9,10 @@ from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
 from unity.task_scheduler.task_scheduler import TaskScheduler
 
 from tests.helpers import _handle_project
+from unity.image_manager.image_manager import ImageManager
+from unity.image_manager.types import RawImageRef, AnnotatedImageRef
+from pathlib import Path
+import base64
 
 
 @pytest.mark.asyncio
@@ -437,6 +441,265 @@ async def test_pause_actor_no_interjection_for_read_only_contact_query():
     assert not any(
         rec.get("method") == "interject" for rec in (result.get("applied") or [])
     ), "Interjection should not be emitted for read-only ContactManager.ask flows"
+
+    handle.stop("done")
+    await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_resume_actor_image_guides_simulation_to_spreadsheet_actor_path(
+    monkeypatch,
+):
+    """
+    Actor-first path: resume with an annotated image and then ask the inner
+    SimulatedActor about the file – reply should mention a sheet/spreadsheet.
+    """
+
+    # Prepare image id from the existing rota screenshot
+    img_path = (
+        Path(__file__).parent.parent.parent
+        / "test_task_scheduler"
+        / "organize_weekly_rotar.png"
+    )
+    raw_bytes = img_path.read_bytes()
+    img_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    im = ImageManager()
+    [img_id] = im.add_images(
+        [
+            {"caption": "weekly rota", "data": img_b64},
+        ],
+    )
+
+    scheduled_evt = asyncio.Event()
+    paused_evt = asyncio.Event()
+    interjected_evt = asyncio.Event()
+
+    # Signal when Actor.act is scheduled
+    _orig_act = SimulatedActor.act
+
+    @functools.wraps(_orig_act)
+    async def _wrapped_act(self: SimulatedActor, *a, **kw):
+        handle = await _orig_act(self, *a, **kw)
+        scheduled_evt.set()
+        return handle
+
+    monkeypatch.setattr(SimulatedActor, "act", _wrapped_act, raising=True)
+
+    # Detect pause and interjection on the inner actor handle
+    _orig_pause = SimulatedActorHandle.pause
+    _orig_interject = SimulatedActorHandle.interject
+
+    def _wrapped_pause(self: SimulatedActorHandle, *a, **kw):
+        try:
+            paused_evt.set()
+        finally:
+            return _orig_pause(self, *a, **kw)
+
+    async def _wrapped_interject(
+        self: SimulatedActorHandle,
+        instruction: str,
+        *,
+        images=None,
+    ):
+        try:
+            interjected_evt.set()
+        finally:
+            return await _orig_interject(self, instruction, images=images)
+
+    monkeypatch.setattr(SimulatedActorHandle, "pause", _wrapped_pause, raising=True)
+    monkeypatch.setattr(
+        SimulatedActorHandle,
+        "interject",
+        _wrapped_interject,
+        raising=True,
+    )
+
+    # Long-running simulated actor so the session remains in flight
+    actor = SimulatedActor(steps=None, duration=20)
+    cond = SimulatedConductor(actor=actor)
+
+    handle = await cond.request(
+        "Open a browser window so we can walk through the setup together.",
+    )
+
+    # Wait for actor to start and adopt the nested handle
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
+    await asyncio.sleep(0.2)
+
+    # Explicitly pause the actor via nested steer to match the resume scenario
+    pause_spec = {
+        "children": {
+            "Actor.act": {"steps": [{"method": "pause"}]},
+        },
+    }
+    await handle.nested_steer(pause_spec)  # type: ignore[attr-defined]
+    await asyncio.wait_for(paused_evt.wait(), timeout=5.0)
+
+    # Now resume with an annotated image pointing to the rota spreadsheet
+    await handle.resume_actor(
+        "visual update",
+        images=[
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_id)),
+                annotation="this is the file you need to edit",
+            ),
+        ],
+    )
+
+    # Ensure the child interjection (with image) was delivered
+    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
+
+    # Locate the inner SimulatedActor handle and ask about the file type
+    inner_handle = None
+    try:
+        ti = getattr(handle._task, "task_info", {})  # type: ignore[attr-defined]
+        if isinstance(ti, dict):
+            for _t, meta in ti.items():
+                h = getattr(meta, "handle", None)
+                if isinstance(h, SimulatedActorHandle):
+                    inner_handle = h
+                    break
+    except Exception:
+        inner_handle = None
+
+    assert inner_handle is not None, "Expected inner SimulatedActorHandle to be adopted"
+
+    resp = await inner_handle.ask(
+        "What type of file is shown in the screenshot we just sent during resume? Answer briefly.",
+    )
+    assert isinstance(resp, str) and resp.strip()
+    assert "sheet" in resp.lower(), f"Expected 'sheet' mention in: {resp!r}"
+
+    handle.stop("done")
+    await handle.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_resume_actor_image_guides_simulation_to_spreadsheet_scheduler_path(
+    monkeypatch,
+):
+    """
+    TaskScheduler path: resume with an annotated image and then ask the inner
+    queue/task handle – reply should mention a sheet/spreadsheet.
+    """
+
+    # Prepare image id from the rota screenshot
+    img_path = (
+        Path(__file__).parent.parent.parent
+        / "test_task_scheduler"
+        / "organize_weekly_rotar.png"
+    )
+    raw_bytes = img_path.read_bytes()
+    img_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    im = ImageManager()
+    [img_id] = im.add_images(
+        [
+            {"caption": "weekly rota", "data": img_b64},
+        ],
+    )
+
+    scheduled_evt = asyncio.Event()
+    paused_evt = asyncio.Event()
+    interjected_evt = asyncio.Event()
+
+    _orig_act = SimulatedActor.act
+
+    @functools.wraps(_orig_act)
+    async def _wrapped_act(self: SimulatedActor, *a, **kw):
+        handle = await _orig_act(self, *a, **kw)
+        scheduled_evt.set()
+        return handle
+
+    monkeypatch.setattr(SimulatedActor, "act", _wrapped_act, raising=True)
+
+    _orig_pause = SimulatedActorHandle.pause
+    _orig_interject = SimulatedActorHandle.interject
+
+    def _wrapped_pause(self: SimulatedActorHandle, *a, **kw):
+        try:
+            paused_evt.set()
+        finally:
+            return _orig_pause(self, *a, **kw)
+
+    async def _wrapped_interject(
+        self: SimulatedActorHandle,
+        instruction: str,
+        *,
+        images=None,
+    ):
+        try:
+            interjected_evt.set()
+        finally:
+            return await _orig_interject(self, instruction, images=images)
+
+    monkeypatch.setattr(SimulatedActorHandle, "pause", _wrapped_pause, raising=True)
+    monkeypatch.setattr(
+        SimulatedActorHandle,
+        "interject",
+        _wrapped_interject,
+        raising=True,
+    )
+
+    # Long-running simulated actor and a scheduler with a single task
+    actor = SimulatedActor(steps=None, duration=20)
+    ts = TaskScheduler(actor=actor)
+    name = "Organize the weekly rota"
+    ts._create_task(name=name, description=name)
+
+    cond = SimulatedConductor(task_scheduler=ts, actor=actor)
+    handle = await cond.request(f"Run the task named '{name}' now.")
+
+    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
+    await asyncio.sleep(0.4)
+
+    # Pause via nested steer (applies on either TaskScheduler.execute or Actor.act)
+    pause_spec = {
+        "children": {
+            "TaskScheduler.execute": {"steps": [{"method": "pause"}]},
+            "Actor.act": {"steps": [{"method": "pause"}]},
+        },
+    }
+    await handle.nested_steer(pause_spec)  # type: ignore[attr-defined]
+    await asyncio.wait_for(paused_evt.wait(), timeout=5.0)
+
+    # Resume with image
+    await handle.resume_actor(
+        "visual update",
+        images=[
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_id)),
+                annotation="this is the file you need to edit",
+            ),
+        ],
+    )
+
+    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
+
+    # Find the scheduler child handle (ActiveQueue/ActiveTask) and ask
+    inner = None
+    try:
+        ti = getattr(handle, "_task").task_info  # type: ignore[attr-defined]
+        if isinstance(ti, dict):
+            for _t, meta in ti.items():
+                h = getattr(meta, "handle", None)
+                if h is not None and hasattr(h, "ask"):
+                    inner = h
+                    break
+    except Exception:
+        inner = None
+
+    assert inner is not None, "Expected an inner scheduler handle to be adopted"
+
+    ask_handle = await inner.ask(
+        "What type of file is shown in the screenshot we just sent during resume? Answer briefly.",
+    )
+    reply = await ask_handle.result()
+    assert isinstance(reply, str) and reply.strip()
+    assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
     handle.stop("done")
     await handle.result()
