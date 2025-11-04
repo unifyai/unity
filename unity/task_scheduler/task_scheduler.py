@@ -2077,7 +2077,6 @@ class TaskScheduler(BaseTaskScheduler):
         self,
         *,
         queue_id: Optional[int] = None,
-        strict: bool = True,
     ) -> List[Task]:
         """
         Return the runnable queue for a given ``queue_id`` (head→tail).
