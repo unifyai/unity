@@ -65,7 +65,7 @@ class ReintegrationManager:
             instance_id = sorted(live, key=lambda r: r.instance_id)[0].instance_id
             plan = self._s._reintegration_plans.get((task_id, instance_id))
         else:
-            for (tid, iid), p in getattr(self._s, "_reintegration_plans", {}).items():
+            for (tid, iid), p in self._s._reintegration_plans.items():
                 if tid == task_id:
                     plan = p
                     instance_id = iid
@@ -101,7 +101,7 @@ class ReintegrationManager:
             )
 
         # Use the plan's queue_id when present, otherwise derive from the current task
-        qid = getattr(plan, "queue_id", None)
+        qid = plan.queue_id
         if qid is not None:
             queue_list = self._s._get_queue(queue_id=qid)
         else:
@@ -121,7 +121,7 @@ class ReintegrationManager:
             "prev_task": final_prev,
             "next_task": final_next,
         }
-        plan_head_start = getattr(plan, "head_start_at", None)
+        plan_head_start = plan.head_start_at
         if final_prev is None:
             _head_ts = (
                 plan_head_start if plan_head_start is not None else original_start_at
