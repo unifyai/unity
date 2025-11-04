@@ -18,7 +18,7 @@ def build_detection_prompt(
             [
                 f"- At t={evt['payload']['start_time']:.2f}s: \"{evt['payload']['content']}\""
                 for evt in speech_events
-            ]
+            ],
         )
         speech_text = f"User Speech:\n{speech_details}"
     else:

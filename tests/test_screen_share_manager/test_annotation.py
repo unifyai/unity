@@ -1,13 +1,8 @@
-import base64
-import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from unity.image_manager.image_manager import ImageHandle
 from unity.screen_share_manager.screen_share_manager import (
-    ScreenShareManager,
-    TurnState,
     KeyEvent,
 )
 from unity.screen_share_manager.types import DetectedEvent
@@ -15,7 +10,6 @@ from tests.helpers import _handle_project
 from tests.test_screen_share_manager.conftest import (
     PNG_RED_B64,
     PNG_BLUE_B64,
-    PNG_GREEN_B64,
 )
 
 
@@ -52,12 +46,13 @@ async def test_annotation_prompt_combines_all_contexts(mocked_manager):
             timestamp=0.5,
             image_annotation="A previous key event.",
             representative_timestamp=0.5,
-        )
+        ),
     )
 
     # 2. Prepare the event to be annotated
     handle = manager._image_manager.add_images(
-        [{"data": PNG_RED_B64.split(",", 1)[1]}], return_handles=True
+        [{"data": PNG_RED_B64.split(",", 1)[1]}],
+        return_handles=True,
     )[0]
     detected_event = DetectedEvent(1.0, "test", handle)
 
@@ -84,7 +79,8 @@ async def test_successful_annotation_triggers_summary_update(mocked_manager):
     """
     manager, mocks = mocked_manager
     handle = manager._image_manager.add_images(
-        [{"data": PNG_RED_B64.split(",", 1)[1]}], return_handles=True
+        [{"data": PNG_RED_B64.split(",", 1)[1]}],
+        return_handles=True,
     )[0]
     detected_event = DetectedEvent(1.0, "test", handle)
     mocks["annotate"].generate.return_value = "A new thing happened."

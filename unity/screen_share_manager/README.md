@@ -53,13 +53,13 @@ async def run_consumer_workflow():
     screen_manager.set_session_context("User is attempting to navigate a web portal.")
 
     # In a real system, frame pushing happens in a background loop.
-    
+
     # --- Stage 1: Detection (Driven by Manual Turn Control) ---
-    
+
     # 2. Consumer starts a turn
     screen_manager.start_turn()
     print("Turn started. Manager is now collecting events.")
-    
+
     # 3. User speaks multiple times. The manager collects these events for the turn.
     await screen_manager.push_speech("Okay, I see the login form.", 10.0, 11.5)
     await asyncio.sleep(2) # User performs some actions
