@@ -27,6 +27,7 @@ from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from ..common.embed_utils import ensure_vector_column
 from ..common.filter_utils import normalize_filter_expr
+from ..common.search_utils import table_search_top_k
 from .types.website import Website
 
 
@@ -63,6 +64,9 @@ class WebSearcher(BaseWebSearcher):
             self._extract,
             self._crawl,
             self._map,
+            self._search_gated_website,
+            self._filter_websites,
+            self._search_websites,
             include_class_name=False,
         )
         self.add_tools("ask", ask_tools)
@@ -70,8 +74,6 @@ class WebSearcher(BaseWebSearcher):
             **methods_to_tool_dict(
                 self.ask,
                 self._create_website,
-                self._list_websites,
-                self._find_websites,
                 self._delete_website,
                 include_class_name=False,
             ),
@@ -300,6 +302,7 @@ class WebSearcher(BaseWebSearcher):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -357,6 +360,7 @@ class WebSearcher(BaseWebSearcher):
             loop_id=f"{self.__class__.__name__}.{self.update.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
+            response_format=response_format,
         )
 
         if _return_reasoning_steps:
@@ -406,14 +410,14 @@ class WebSearcher(BaseWebSearcher):
         unify.log(context=self._websites_ctx, **entries, new=True, mutable=True)
         return {"outcome": "website created", "details": {"host": host}}
 
-    def _list_websites(
+    def _filter_websites(
         self,
         *,
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
     ) -> List[Website]:
-        """Return Website rows matching an optional boolean filter."""
+        """Filter Websites using a boolean expression (host, gated, etc.)."""
         normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._websites_ctx,
@@ -441,20 +445,103 @@ class WebSearcher(BaseWebSearcher):
             )
         return result
 
-    def _find_websites(
+    def _search_websites(
         self,
         *,
-        host: Optional[str] = None,
-        website_id: Optional[int] = None,
+        notes: str,
+        k: int = 10,
     ) -> List[Website]:
-        """Find Website rows by `host` or `website_id`. Returns a list (may be empty)."""
-        exprs: List[str] = []
-        if host is not None:
-            exprs.append(f"host == {host!r}")
-        if website_id is not None:
-            exprs.append(f"website_id == {int(website_id)}")
-        filt = " and ".join(exprs) if exprs else None
-        return self._list_websites(filter=filt)
+        """Semantic search over Websites using the `notes` field (top-k)."""
+        if not isinstance(notes, str) or not notes.strip():
+            return []
+        rows = table_search_top_k(
+            context=self._websites_ctx,
+            references={"notes": notes},
+            k=max(1, min(int(k), 1000)),
+            allowed_fields=[
+                "website_id",
+                "host",
+                "gated",
+                "subscribed",
+                "credentials",
+                "actor_entrypoint",
+                "notes",
+            ],
+            row_filter=None,
+            unique_id_field="website_id",
+        )
+        return [
+            Website(
+                website_id=(
+                    int(r.get("website_id")) if r.get("website_id") is not None else -1
+                ),
+                host=r.get("host"),
+                gated=bool(r.get("gated", False)),
+                subscribed=bool(r.get("subscribed", False)),
+                credentials=r.get("credentials"),
+                actor_entrypoint=r.get("actor_entrypoint"),
+                notes=r.get("notes", ""),
+            )
+            for r in rows
+        ]
+
+    async def _search_gated_website(
+        self,
+        *,
+        query: str,
+        website: Dict[str, Any] | Website,
+    ) -> str:
+        """Search a gated website using the Actor entrypoint with Website data.
+
+        Parameters
+        ----------
+        query : str
+            Precise query to find on the target site.
+        website : Website | dict
+            Website record containing host, credentials, actor_entrypoint, notes.
+        """
+        # Normalise website record
+        host: str = (
+            website.get("host")
+            if isinstance(website, dict)
+            else getattr(website, "host", "")
+        )
+        creds_field = (
+            website.get("credentials")
+            if isinstance(website, dict)
+            else getattr(website, "credentials", None)
+        )
+        actor_fn_id = (
+            website.get("actor_entrypoint")
+            if isinstance(website, dict)
+            else getattr(website, "actor_entrypoint", None)
+        )
+
+        creds: List[int] = []
+        if isinstance(creds_field, list):
+            try:
+                creds = [int(x) for x in creds_field]
+            except Exception:
+                creds = []
+
+        # Resolve function id: prefer site-specific entrypoint; else default
+        function_id = (
+            actor_fn_id
+            if isinstance(actor_fn_id, int) and actor_fn_id >= 0
+            else self._default_function_id
+        )
+        if not function_id:
+            return "Failed gated website search: Both actor entrypoint and default function are unavailable. Unable to resolve."
+
+        # Start the actor plan with explicit entrypoint args
+        plan = await self.hierarchical_actor.act(
+            description=f"Search website for information: {query}. Start with {host}",
+            entrypoint=function_id,
+            entrypoint_args=[query, host, creds, None],
+            persist=False,
+        )
+        result = await plan.result()
+        return str(result)
 
     def _delete_website(
         self,
