@@ -56,10 +56,13 @@ async def test_ts_ask_calls_contact_manager_ask(monkeypatch):
 
     cm = ContactManager()
 
-    create_handle = await cm.update(
-        "Add a new contact: Sara Smith, email sara.smith@example.com, bio 'Company accountant'. She prefers an *informal* tone",
+    cm._create_contact(
+        first_name="Sara",
+        surname="Smith",
+        email_address="sara.smith@example.com",
+        bio="Company accountant",
+        response_policy="Use an informal tone in all communications: friendly, concise, and casual. Address her by first name.",
     )
-    await create_handle.result()
 
     # --------------------------------------------------------------------
     # 2. Spy on ContactManager.ask *after* the contact exists
@@ -118,11 +121,13 @@ async def test_ts_update_calls_contact_manager_ask(monkeypatch):
     # --------------------------------------------------------------------
 
     cm = ContactManager()
-
-    create_handle = await cm.update(
-        "Add a new contact: Sara Smith, email sara.smith@example.com, bio 'Company accountant'. She prefers an *informal* tone",
+    cm._create_contact(
+        first_name="Sara",
+        surname="Smith",
+        email_address="sara.smith@example.com",
+        bio="Company accountant",
+        response_policy="Use an informal tone in all communications: friendly, concise, and casual. Address her by first name.",
     )
-    await create_handle.result()
 
     # --------------------------------------------------------------------
     # 2. Spy on ContactManager.ask *after* the contact exists
