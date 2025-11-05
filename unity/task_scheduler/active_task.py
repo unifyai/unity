@@ -247,7 +247,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                 if self._scheduler and self._task_id is not None:
                     if intent == "cancel":
                         # Explicit cancellation: mark cancelled.
-                        self._mirror_status("cancelled")
+                        self._mirror_status(Status.cancelled)
                     else:
                         # Defer: restore prior queue/schedule position via public API when available.
                         try:
@@ -310,7 +310,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
 
         # Cancel → mark cancelled; Defer → try reinstatement
         if cancel:
-            self._mirror_status("cancelled")
+            self._mirror_status(Status.cancelled)
         else:
             try:
                 if self._scheduler and self._task_id is not None:
@@ -328,13 +328,13 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
     @functools.wraps(BaseActiveTask.pause, updated=())
     def pause(self) -> Optional[str]:
         ret = self._actor_handle.pause()
-        self._mirror_status("paused")
+        self._mirror_status(Status.paused)
         return ret
 
     @functools.wraps(BaseActiveTask.resume, updated=())
     def resume(self) -> Optional[str]:
         ret = self._actor_handle.resume()
-        self._mirror_status("active")
+        self._mirror_status(Status.active)
         return ret
 
     @functools.wraps(BaseActiveTask.done, updated=())
@@ -510,7 +510,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
     # Internal helpers                                                   #
     # ------------------------------------------------------------------ #
 
-    def _mirror_status(self, new_status: str) -> None:
+    def _mirror_status(self, new_status: Status) -> None:
         """Update the task-row status if we were instantiated by a scheduler."""
         if (
             self._scheduler
