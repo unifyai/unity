@@ -150,14 +150,14 @@ async def test_gated_site_routes_to_search_gated_website(monkeypatch):
         gated=True,
         subscribed=True,
         notes="Tech writing, tutorials, subscription",
+        credentials=[101, 102],
     )
 
     handle = await ws.ask(
-        "Search medium.com for the latest AI updates and summarize the key point.",
+        "Search medium.com for the latest subscribed AI updates and summarize the key point.",
     )
     _ = await handle.result()
 
-    # Primary check: stubbed tool was invoked at least once
     assert calls["gated_website_count"] >= 1
 
 

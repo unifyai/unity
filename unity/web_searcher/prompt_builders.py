@@ -91,9 +91,10 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "- Keep queries concise; if complex, split into smaller, focused searches.",
         "- Prefer a small, high-quality set of sources; cite them in the answer.",
         "- Only fetch page content when you need details beyond snippets.",
+        "- Do not claim inability to log into personal accounts. When a Website entry exists and credentials are available, the Actor can attempt sign-in securely. If credentials are missing or login fails, proceed with public content and clearly state assumptions.",
         "- If the request mentions a specific website (host like 'medium.com' or a human-friendly name like 'Medium'), first consult the Websites catalog:",
         "  • Use `_filter_websites` for exact host/name filters; use `_search_websites` when only thematic notes are given.",
-        "  • If a matching entry exists and `gated=True`, use `_search_gated_website` to browse via the Actor.",
+        "  • If a row exists and `gated=True`, use `_search_gated_website(query=..., website=...)` to browse with login.",
         "  • Otherwise, use general tools (`search`, `extract`, `crawl`, `map`).",
     ]
 
@@ -106,9 +107,28 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "- Use `_filter_websites` for exact/boolean matches over columns (including host like 'medium.com' or name like 'Medium').",
         "- When answering a question that targets a specific site:",
         "  1) Look up the site using `_filter_websites` or `_search_websites`.",
-        "  2) If the site exists and `gated=True`, use `_search_gated_website(query=..., website=...)` to browse with login if needed.",
+        "  2) If the site exists and `gated=True`, use `_search_gated_website(query=..., website=...)` to login with saved credentials and browse.",
         "  3) If not gated or no matching Website entry exists, use general tools (`search`, then optionally `extract`/`crawl`/`map`).",
         "- Do NOT use `_search_websites` to read web content; it only searches the Websites catalog.",
+    ]
+
+    # Concrete examples for routing
+    lines += [
+        "",
+        "Examples",
+        "--------",
+        "- Login to my GitHub and summarize my profile:",
+        "  1) `_filter_websites(filter=\"host == 'github.com' or name == 'GitHub'\", limit=1)`",
+        "  2) If found and gated=True: `_search_gated_website(query='summarize my GitHub profile', website=<row>)`",
+        "  3) Else: use `crawl`/`extract` as appropriate.",
+        "- Access my Towards Data Science subscription article and summarize:",
+        "  1) `_filter_websites(filter=\"host == 'towardsdatascience.com' or name == 'Towards Data Science'\", limit=1)`",
+        "  2) If found and gated=True: `_search_gated_website(query='summarize the latest paywalled article on my reading list', website=<row>)`",
+        "- Summarize updates on docs.example.com:",
+        "  1) `_filter_websites(filter=\"host == 'docs.example.com'\")`",
+        "  2) If gated=False or absent: `crawl(start_url='https://docs.example.com', instructions='Find recent updates')`",
+        "- General web query (non-site specific):",
+        '  1) `search(query="how is the uk temperature in london tomorrow?", max_results=3)`',
     ]
 
     # Decision policy and when to stop
@@ -145,6 +165,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
 def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
     """Return the system prompt used by WebSearcher.update formatted as sections."""
     have_create = "_create_website" in tools
+    have_update = "_update_website" in tools
     have_delete = "_delete_website" in tools
     have_ask = "ask" in tools
 
@@ -171,6 +192,15 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
             "  • Examples:",
             "    - _create_website(name='Medium', host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')",
             "    - _create_website(name='arXiv', host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')",
+        ]
+    if have_update:
+        lines += [
+            "- _update_website: update fields of an existing Website.",
+            "  • Identify by one of: website_id, match_host, match_name",
+            "  • Updatable fields: name, host, gated, subscribed, credentials, actor_entrypoint, notes",
+            "  • Examples:",
+            "    - _update_website(match_host='medium.com', subscribed=False)",
+            "    - _update_website(website_id=3, name='NYTimes', host='nytimes.com')",
         ]
     if have_delete:
         lines += [

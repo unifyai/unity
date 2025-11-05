@@ -278,6 +278,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,

@@ -74,6 +74,7 @@ class WebSearcher(BaseWebSearcher):
             **methods_to_tool_dict(
                 self.ask,
                 self._create_website,
+                self._update_website,
                 self._delete_website,
                 include_class_name=False,
             ),
@@ -89,7 +90,7 @@ class WebSearcher(BaseWebSearcher):
             from ..actor.hierarchical_actor import HierarchicalActor
 
             self._hierarchical_actor = HierarchicalActor()
-            self._ensure_default_function_exists()
+            # self._ensure_default_function_exists()
         return self._hierarchical_actor
 
     def _ensure_default_function_exists(self) -> None:
@@ -97,6 +98,9 @@ class WebSearcher(BaseWebSearcher):
 
         On any error, sets ``self._default_function_id`` to ``None``.
         """
+        if self._default_function_id is not None:
+            return
+
         try:
             fm = self.hierarchical_actor.function_manager
             results = fm.search_functions(
@@ -190,6 +194,7 @@ class WebSearcher(BaseWebSearcher):
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
+            timeout=500,
         )
 
         # If the caller requests reasoning steps, wrap the handle's result
@@ -516,6 +521,7 @@ class WebSearcher(BaseWebSearcher):
         website : Website | dict
             Website record containing host, credentials, actor_entrypoint, notes.
         """
+        print("Searching gated website:", website)
         # Normalise website record
         host: str = (
             website.get("host")
@@ -541,6 +547,7 @@ class WebSearcher(BaseWebSearcher):
                 creds = []
 
         # Resolve function id: prefer site-specific entrypoint; else default
+        self._ensure_default_function_exists()
         function_id = (
             actor_fn_id
             if isinstance(actor_fn_id, int) and actor_fn_id >= 0
@@ -592,6 +599,117 @@ class WebSearcher(BaseWebSearcher):
             "outcome": "website deleted",
             "details": {"host": host, "website_id": website_id},
         }
+
+    def _update_website(
+        self,
+        *,
+        website_id: Optional[int] = None,
+        match_host: Optional[str] = None,
+        match_name: Optional[str] = None,
+        name: Optional[str] = None,
+        host: Optional[str] = None,
+        gated: Optional[bool] = None,
+        subscribed: Optional[bool] = None,
+        credentials: Optional[List[int]] = None,
+        actor_entrypoint: Optional[int] = None,
+        notes: Optional[str] = None,
+    ) -> ToolOutcome:
+        """Update fields of an existing Website.
+
+        Identify the target by one of: website_id, match_host, or match_name.
+        Only provided fields are updated; others remain unchanged. Uniqueness
+        of updated `host` and `name` is enforced.
+        """
+        # Identify target row
+        filt_exprs: List[str] = []
+        if website_id is not None:
+            filt_exprs.append(f"website_id == {int(website_id)}")
+        if match_host is not None:
+            filt_exprs.append(f"host == {match_host!r}")
+        if match_name is not None:
+            filt_exprs.append(f"name == {match_name!r}")
+        if not filt_exprs:
+            raise ValueError(
+                "Provide one identifier: website_id, match_host, or match_name.",
+            )
+        filt = " and ".join(filt_exprs)
+
+        ids = unify.get_logs(
+            context=self._websites_ctx,
+            filter=filt,
+            limit=2,
+            return_ids_only=True,
+        )
+        if not ids:
+            raise ValueError("No website found matching the provided identifier.")
+        if len(ids) > 1:
+            raise RuntimeError("Multiple websites match the provided identifier.")
+        target_id = ids[0]
+
+        # Build updates from non-None fields
+        updates: Dict[str, Any] = {}
+        if name is not None:
+            updates["name"] = name
+        if host is not None:
+            updates["host"] = host
+        if gated is not None:
+            updates["gated"] = bool(gated)
+        if subscribed is not None:
+            updates["subscribed"] = bool(subscribed)
+        if credentials is not None:
+            updates["credentials"] = credentials
+        if actor_entrypoint is not None:
+            updates["actor_entrypoint"] = actor_entrypoint
+        if notes is not None:
+            updates["notes"] = notes
+
+        if not updates:
+            raise ValueError("No updates provided.")
+
+        # Enforce uniqueness for host/name when changing them (allow same-row)
+        if "host" in updates:
+            dupe = unify.get_logs(
+                context=self._websites_ctx,
+                filter=f"host == {updates['host']!r}",
+                limit=1,
+                return_ids_only=True,
+            )
+            if dupe and dupe[0] != target_id:
+                raise AssertionError(
+                    f"Website with host '{updates['host']}' already exists.",
+                )
+        if "name" in updates:
+            dupe = unify.get_logs(
+                context=self._websites_ctx,
+                filter=f"name == {updates['name']!r}",
+                limit=1,
+                return_ids_only=True,
+            )
+            if dupe and dupe[0] != target_id:
+                raise AssertionError(
+                    f"Website with name '{updates['name']}' already exists.",
+                )
+
+        unify.update_logs(
+            logs=[target_id],
+            context=self._websites_ctx,
+            entries=updates,
+            overwrite=True,
+        )
+
+        details: Dict[str, Any] = {
+            "website_id": website_id,
+            "match_host": match_host,
+            "match_name": match_name,
+        }
+        details.update(
+            {
+                k: updates.get(k)
+                for k in ("name", "host", "gated", "subscribed")
+                if k in updates
+            },
+        )
+        return {"outcome": "website updated", "details": details}
 
     def _search(
         self,
