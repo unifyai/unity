@@ -228,6 +228,23 @@ class TaskScheduler(BaseTaskScheduler):
         }
         self.add_tools("update", update_tools)
 
+        # Execute helpers – read-only inspection + safe execution entrypoints
+        execute_tools = {
+            **methods_to_tool_dict(
+                # Read-only helpers that the execute loop may call
+                self.ask,
+                self._list_queues,
+                self._get_queue,
+                # Start execution (queue semantics vs isolated)
+                self._execute_by_id,
+                self._execute_isolated_by_id,
+                # Minimal creator for missing tasks (name + description only)
+                self.create_task,
+                include_class_name=False,
+            ),
+        }
+        self.add_tools("execute", execute_tools)
+
         # active task
         if actor is None:
             # Allow tests to override default simulated duration via env var
@@ -839,6 +856,83 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
     # ------------------------------------------------------------------ #
+    #  Public execution tools (registered via get_tools("execute"))      #
+    # ------------------------------------------------------------------ #
+
+    async def _execute_by_id(self, *, task_id: int) -> SteerableToolHandle:
+        """
+        Start the task identified by task_id using queue semantics and return a steerable handle.
+
+        Behaviour
+        ---------
+        - Does not mutate scheduling fields (e.g., start_at) purely to run.
+        - Preserves existing queue membership and chaining semantics; followers remain attached.
+        - Returns a live handle that is marked for passthrough so outer loops can adopt it directly.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A live handle for the running task or queue head that supports pause, resume,
+            interject, stop and result().
+        """
+        handle = await self._execute_queue_internal(
+            task_id=task_id,
+            parent_chat_context=None,
+            clarification_up_q=None,
+            clarification_down_q=None,
+            detach=False,
+        )
+        # Signal to the outer loop that this handle should be adopted directly
+        setattr(handle, "__passthrough__", True)
+        return handle
+
+    async def _execute_isolated_by_id(self, *, task_id: int) -> SteerableToolHandle:
+        """
+        Start ONLY the specified task in isolation by detaching it from any queue, and return a handle.
+
+        Behaviour
+        ---------
+        - Detaches the task from its queue for this run so followers do not chain automatically.
+        - Does not rewrite scheduling fields merely to run.
+        - Returns a steerable handle marked for passthrough so the caller can adopt it immediately.
+
+        Returns
+        -------
+        SteerableToolHandle
+            A live handle for the isolated run of the requested task.
+        """
+        handle = await self._execute_queue_internal(
+            task_id=task_id,
+            parent_chat_context=None,
+            clarification_up_q=None,
+            clarification_down_q=None,
+            detach=True,
+        )
+        setattr(handle, "__passthrough__", True)
+        return handle
+
+    def create_task(self, *, name: str, description: str) -> ToolOutcome:
+        """
+        Create a brand‑new task with minimal inputs (name and description only).
+
+        Purpose
+        -------
+        This narrowly scoped creator exists for the execute flow so the LLM can
+        materialize a missing task without manipulating scheduling/status/queue
+        fields during execution planning. The scheduler infers lifecycle values
+        and enforces invariants; callers should not attempt to set schedule or
+        status here. Use update tools for full edits.
+
+        Parameters
+        ----------
+        name : str
+            Human‑readable task name.
+        description : str
+            A short description of the task.
+        """
+        return self._create_task(name=name, description=description)
+
+    # ------------------------------------------------------------------ #
     #  Helper – build and start the execute outer tool-use loop      #
     # ------------------------------------------------------------------ #
     def _start_execute_loop(
@@ -859,87 +953,8 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             pass
 
-        def create_task(*, name: str, description: str) -> ToolOutcome:  # type: ignore[valid-type]
-            """Create a brand-new task with minimal inputs (name, description).
-
-            Notes
-            -----
-            - This scoped creator intentionally exposes only name/description to
-              prevent schedule/status/queue manipulation from the execute loop.
-            - Lifecycle values and invariants are inferred by the scheduler.
-            """
-            return self._create_task(name=name, description=description)
-
-        async def _execute_by_id(
-            *,
-            task_id: int,
-        ) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start the task with *task_id* and adopt the queue handle.
-
-            Behavioural rules
-            -----------------
-            - Never modify scheduling/ordering or `start_at` to begin execution.
-            - If the user wants the whole sequence now, reorder the queue explicitly first
-              (see `_update_task_queue`) so the desired subset is at the head, then call this.
-
-            Post-conditions (for the outer loop / LLM):
-            - Mode: "queue" (followers remain attached; chaining semantics).
-            - The selected task stays a member of its current queue.
-            - You SHOULD refresh queues after this call using `list_queues()` and `get_queue(queue_id=…)`
-              before attempting any further queue edits.
-            """
-
-            handle = await self._execute_queue_internal(
-                task_id=task_id,
-                parent_chat_context=parent_chat_context,
-                clarification_up_q=clarification_up_q,
-                clarification_down_q=clarification_down_q,
-            )
-            # 💡 signal pass-through so the outer loop adopts this handle
-            setattr(handle, "__passthrough__", True)
-            return handle
-
-        async def _execute_isolated_by_id(
-            *,
-            task_id: int,
-        ) -> SteerableToolHandle:  # type: ignore[valid-type]
-            """Start ONLY the specified task by first detaching it from the queue.
-
-            Returns an ActiveQueue handle that wraps the isolated task (singleton passthrough).
-            """
-
-            handle = await self._execute_queue_internal(
-                task_id=task_id,
-                parent_chat_context=parent_chat_context,
-                clarification_up_q=clarification_up_q,
-                clarification_down_q=clarification_down_q,
-                detach=True,
-            )
-            # Signal pass-through so the outer loop adopts this handle
-            setattr(handle, "__passthrough__", True)
-            return handle
-
-        async def request_clarification(question: str) -> str:  # type: ignore[valid-type]
-            """Bubble *question* up to the caller and await the answer."""
-            rc = self._make_request_clarification_tool(
-                clarification_up_q,
-                clarification_down_q,
-            )
-            return await rc(question)
-
-        tools = methods_to_tool_dict(
-            # Read-only helpers
-            self.ask,
-            # Queue inspection only (no mutation in execute)
-            self._list_queues,
-            self._get_queue,
-            # Start execution
-            _execute_by_id,
-            _execute_isolated_by_id,
-            # Creation (name + description only)
-            create_task,
-            include_class_name=False,
-        )
+        # Compose toolset from registered execute tools
+        tools = dict(self.get_tools("execute"))
         # Only expose clarification tool when both queues are available
         self._maybe_add_clarification_tool(
             tools,
