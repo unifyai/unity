@@ -16,6 +16,7 @@ from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.types import RawImageRef, AnnotatedImageRef
 from pathlib import Path
 import base64
+from unity.common.async_tool_loop import nested_structure_on
 
 
 async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
@@ -652,6 +653,69 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     assert "USER QUESTION:" in user_prompt and "How is the queue going?" in user_prompt
 
     # Cleanup: stop the active queue to avoid leaving background tasks running
+    h.stop(cancel=False)
+    await asyncio.wait_for(h.result(), timeout=10)
+
+
+# --------------------------------------------------------------------------- #
+#  9. nested_structure reveals ActiveTask and inner SimulatedActor handle      //
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_queue_nested_structure_reveals_all_layers():
+    """ActiveQueue → ActiveTask → SimulatedActorHandle should be visible via nested_structure."""
+
+    # Use a step-based actor so the inner handle persists during inspection
+    class _StepOnly(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    ts = TaskScheduler(actor=_StepOnly())
+
+    # Create a singleton queue and start execution by numeric id
+    (solo_id,) = tuple(await _make_ordered_queue(ts, ["Layered"]))
+    h = await ts.execute(text=str(solo_id))
+
+    # Inspect nested structure from the ActiveQueue handle
+    s = await nested_structure_on(h)
+    assert isinstance(s, dict)
+    # Outer layer is the queue wrapper; children should include wrapper-origin entry to ActiveTask
+    wrapper_child = None
+    for ch in s.get("children", []):
+        if ch.get("origin") == "wrapper" and str(ch.get("wrapper_attr", "")).startswith(
+            "get_wrapped_handles",
+        ):
+            wrapper_child = ch
+            break
+    assert (
+        wrapper_child is not None
+    ), "Expected wrapper child from ActiveQueue via get_wrapped_handles"
+
+    mid = wrapper_child.get("handle") or {}
+    assert (mid.get("class") == "ActiveTask") or (
+        (mid.get("label") or "").endswith("ActiveTask")
+    )
+
+    # The ActiveTask node should itself disclose the inner SimulatedActorHandle via wrapper discovery
+    inner_wrapper = None
+    for ch in mid.get("children", []):
+        if ch.get("origin") == "wrapper" and str(ch.get("wrapper_attr", "")).startswith(
+            "get_wrapped_handles",
+        ):
+            inner_wrapper = ch
+            break
+    assert inner_wrapper is not None, "Expected inner wrapper child from ActiveTask"
+
+    leaf = inner_wrapper.get("handle") or {}
+    assert (leaf.get("class") == "SimulatedActorHandle") or (
+        (leaf.get("label") or "").endswith("SimulatedActorHandle")
+    )
+
+    # Cleanup
     h.stop(cancel=False)
     await asyncio.wait_for(h.result(), timeout=10)
 
