@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from abc import abstractmethod
 import asyncio
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Type
+from pydantic import BaseModel
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
@@ -25,6 +26,7 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -73,6 +75,10 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         ----------
         text : str
             The user's plain‑English research question.
+        response_format : Type[BaseModel] | None, default None
+            Optional Pydantic model to request a structured answer. When provided,
+            the final result should conform to this schema; otherwise a plain
+            string answer is returned.
         _return_reasoning_steps : bool, default False
             When True, SteerableToolHandle.result returns (answer, messages)
             where messages are the internal tool-loop messages.
@@ -94,6 +100,7 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         self,
         text: str,
         *,
+        response_format: Optional[Type[BaseModel]] = None,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
@@ -107,14 +114,30 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
         -------
         Use this method to create, edit, or delete configuration records owned
         by the WebSearcher (e.g., entries in a `Websites` table capturing
-        websites of interest). This method must not answer web research
-        questions; it manages stored metadata only.
+        websites of interest). This method must not browse or answer web
+        research questions; it manages stored metadata only.
+
+        Guidance
+        --------
+        - Treat `host` as the natural unique key for a website entry.
+        - After any mutation (create/delete), verify results via the read‑only
+          `ask` surface (e.g., using catalog tools like `_filter_websites` or
+          `_search_websites`).
+        - Credentials must be referenced by integer `secret_id`s (foreign keys);
+          never include raw secret values in messages or logs.
 
         Clarifications
         --------------
         Do not ask users questions in the final answer. When a clarification
         channel is provided, route follow‑ups there. If not provided, proceed
         with sensible defaults and state assumptions when relevant.
+
+        Parameters
+        ----------
+        response_format : Type[BaseModel] | None, default None
+            Optional Pydantic model to request a structured outcome. When provided,
+            the final result should conform to this schema; otherwise a plain
+            string summary is returned.
 
         Returns
         -------
