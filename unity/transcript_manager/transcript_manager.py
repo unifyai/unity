@@ -892,7 +892,7 @@ class TranscriptManager(BaseTranscriptManager):
         message: Union[Dict[str, Any], Message],
         *,
         exchange_initial_metadata: Optional[Dict[str, Any]] = None,
-    ) -> Message:
+    ) -> int:
         """Log the first message of a brand‑new exchange and set initial metadata.
 
         Behaviour
@@ -913,8 +913,8 @@ class TranscriptManager(BaseTranscriptManager):
 
         Returns
         -------
-        Message
-            The created :class:`Message` populated with assigned identifiers.
+        int
+            The newly assigned ``exchange_id`` for this exchange.
         """
 
         # 1) Validate no exchange_id is provided by the caller
@@ -1000,37 +1000,36 @@ class TranscriptManager(BaseTranscriptManager):
         if exid < 0:
             raise RuntimeError("Created message has an unassigned exchange_id.")
 
-        # 4) Optionally update the Exchanges row with initial metadata
-        if exchange_initial_metadata is not None:
-            try:
-                row_ids = unify.get_logs(
-                    context=self._exchanges_ctx,
-                    filter=f"exchange_id == {exid}",
-                    return_ids_only=True,
-                )
-                if row_ids:
+        # 4) Ensure the Exchanges row exists and optionally set initial metadata
+        try:
+            row_ids = unify.get_logs(
+                context=self._exchanges_ctx,
+                filter=f"exchange_id == {exid}",
+                return_ids_only=True,
+            )
+            if row_ids:
+                if exchange_initial_metadata is not None:
                     unify.update_logs(
                         logs=row_ids,
                         context=self._exchanges_ctx,
                         entries={"metadata": dict(exchange_initial_metadata)},
                         overwrite=True,
                     )
-                else:
-                    # Extremely unlikely: ensure row exists then set metadata
-                    unify.log(
-                        context=self._exchanges_ctx,
-                        exchange_id=exid,
-                        metadata=dict(exchange_initial_metadata),
-                        medium=str(getattr(created, "medium", "")),
-                        new=True,
-                        mutable=True,
-                        params={},
-                    )
-            except Exception:
-                # Non-fatal: do not fail the message creation due to metadata update
-                pass
+            else:
+                unify.log(
+                    context=self._exchanges_ctx,
+                    exchange_id=exid,
+                    metadata=dict(exchange_initial_metadata or {}),
+                    medium=str(getattr(created, "medium", "")),
+                    new=True,
+                    mutable=True,
+                    params={},
+                )
+        except Exception:
+            # Non-fatal: do not fail the message creation due to metadata upsert
+            pass
 
-        return created
+        return exid
 
     # Formatting helper: single contacts table + messages
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:
