@@ -52,6 +52,7 @@ from .images import (
     attach_image_to_context as _attach_image_to_context_impl,
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
+from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -165,9 +166,7 @@ class TranscriptManager(BaseTranscriptManager):
             None,
         ] = "default",
         _call_id: Optional[str] = None,
-        images: Optional[
-            "ImageRefs" | list["RawImageRef" | "AnnotatedImageRef"]
-        ] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self.get_tools("ask"))
