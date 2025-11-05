@@ -78,3 +78,17 @@ def test_log_messages_async_auto_increment_visible_via_filter_messages():
     assert (message_ids[-1] - message_ids[0]) == 2
     assert (exchange_ids[-1] - exchange_ids[0]) == 2
     assert message_ids == exchange_ids
+
+
+@pytest.mark.unit
+@_handle_project
+def test_log_messages_missing_exchange_id_raises_helpful_error():
+    tm = TranscriptManager()
+
+    # Intentionally omit exchange_id → should raise with guidance to use the new API
+    with pytest.raises(ValueError) as exc:
+        tm.log_messages(_base_message(0), synchronous=True)
+
+    msg = str(exc.value)
+    assert "exchange_id" in msg
+    assert "log_first_message_in_new_exchange" in msg
