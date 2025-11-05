@@ -91,6 +91,10 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "- Keep queries concise; if complex, split into smaller, focused searches.",
         "- Prefer a small, high-quality set of sources; cite them in the answer.",
         "- Only fetch page content when you need details beyond snippets.",
+        "- If the request mentions a specific website (host like 'medium.com' or a human-friendly name like 'Medium'), first consult the Websites catalog:",
+        "  • Use `_filter_websites` for exact host/name filters; use `_search_websites` when only thematic notes are given.",
+        "  • If a matching entry exists and `gated=True`, use `_search_gated_website` to browse via the Actor.",
+        "  • Otherwise, use general tools (`search`, `extract`, `crawl`, `map`).",
     ]
 
     # Website-aware routing guidance
@@ -99,7 +103,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "Website-aware Routing",
         "----------------------",
         "- Use `_search_websites` to find relevant Website entries by notes similarity (catalog lookup only; does not browse).",
-        "- Use `_filter_websites` for exact/boolean matches over columns (e.g., by host or gated flag).",
+        "- Use `_filter_websites` for exact/boolean matches over columns (including host like 'medium.com' or name like 'Medium').",
         "- When answering a question that targets a specific site:",
         "  1) Look up the site using `_filter_websites` or `_search_websites`.",
         "  2) If the site exists and `gated=True`, use `_search_gated_website(query=..., website=...)` to browse with login if needed.",
