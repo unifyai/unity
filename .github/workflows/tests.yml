@@ -175,6 +175,7 @@ jobs:
         UNIFY_TESTS_RAND_PROJ: true
         UNIFY_TESTS_DELETE_PROJ_ON_EXIT: true
         UNITY_SIM_ACTOR_DURATION: 1.0
+        UNITY_TS_LOCAL_VIEW_OFF: true
         UNIFY_KEY: ${{ secrets.USER_API_KEY }}
         UNIFY_BASE_URL: https://api.unify.ai/v0
         UNIFY_CACHE: true
