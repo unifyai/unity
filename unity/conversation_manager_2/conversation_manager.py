@@ -341,7 +341,7 @@ class ConversationManager:
                             contact.email_address,
                             action["subject"],
                             action["body"],
-                            action.get("messge_id"),
+                            action.get("message_id"),
                         )
                     else:
                         res = {"success": True}

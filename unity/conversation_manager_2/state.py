@@ -46,6 +46,7 @@ class EmailMessage:
     name: str
     subject: str
     body: str
+    message_id: str | None
     timestamp: datetime
 
 
@@ -434,7 +435,7 @@ class ConversationManagerState:
                 self.push_message(
                     contact,
                     "email",
-                    EmailMessage(contact.full_name, e.subject, e.body, e.timestamp),
+                    EmailMessage(contact.full_name, e.subject, e.body, e.message_id, e.timestamp),
                 )
                 self.push_notif(
                     Notification(
@@ -449,7 +450,7 @@ class ConversationManagerState:
                 self.push_message(
                     contact,
                     "email",
-                    EmailMessage("You", e.subject, e.body, e.timestamp),
+                    EmailMessage("You", e.subject, e.body, e.message_id, e.timestamp),
                 )
                 self.push_notif(
                     Notification(
@@ -879,6 +880,7 @@ class ConversationManagerState:
         if isinstance(message, EmailMessage):
             return f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]:
 Subject: {message.subject}
+Message ID: {message.message_id}
 Body:
 {message.body}
 """
