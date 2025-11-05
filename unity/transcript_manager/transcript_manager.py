@@ -921,7 +921,7 @@ class TranscriptManager(BaseTranscriptManager):
         if isinstance(message, dict):
             if "exchange_id" in message:
                 raise ValueError(
-                    "log_first_message_in_new_exchange expects no 'exchange_id' in the payload.",
+                    "exchange_id must NOT be provided when starting a new exchange; use TranscriptManager.log_messages(...) if you already have an existing exchange id.",
                 )
         else:  # Message instance
             try:
@@ -930,7 +930,7 @@ class TranscriptManager(BaseTranscriptManager):
                     UNASSIGNED,
                 ):
                     raise ValueError(
-                        "log_first_message_in_new_exchange expects the Message to have no explicit exchange_id (use sentinel).",
+                        "Message.exchange_id must NOT be set when starting a new exchange; use TranscriptManager.log_messages(...) if you already have an existing exchange id.",
                     )
             except Exception:
                 # If attribute missing, treat as acceptable (will be injected downstream)
@@ -968,7 +968,7 @@ class TranscriptManager(BaseTranscriptManager):
         # Ensure no explicit exchange id provided
         if payload.get("exchange_id") is not None:
             raise ValueError(
-                "log_first_message_in_new_exchange expects no 'exchange_id' in the payload.",
+                "exchange_id must NOT be provided when starting a new exchange; use TranscriptManager.log_messages(...) if you already have an existing exchange id.",
             )
 
         created_model = Message(**payload)
