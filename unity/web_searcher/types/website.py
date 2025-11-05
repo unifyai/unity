@@ -20,6 +20,13 @@ class Website(BaseModel):
         description=("Stable integer identifier for the website row (auto-counted)."),
     )
 
+    name: str = Field(
+        description=(
+            "Human-friendly unique name for the website (e.g., 'The New York Times')."
+        ),
+        min_length=1,
+    )
+
     host: str = Field(
         description=(
             "Canonical host or site key (e.g., 'nytimes.com' or canonical root URL)."
