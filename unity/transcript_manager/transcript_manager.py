@@ -314,6 +314,12 @@ class TranscriptManager(BaseTranscriptManager):
             If True, messages will be logged in order synchronously. If False,
             messages may be logged asynchronously in any order.
 
+        Notes
+        -----
+        This method requires an explicit ``exchange_id`` on every message. To create
+        a brand‑new exchange (i.e. when no id exists yet), call
+        :pyfunc:`log_first_message_in_new_exchange` instead.
+
         Returns
         -------
         list[Message]
@@ -406,6 +412,22 @@ class TranscriptManager(BaseTranscriptManager):
             else:  # assume mapping
                 payload = dict(raw)
 
+            # Enforce explicit exchange_id on all messages unless explicitly allowed (internal use only)
+            exid_val = payload.get("exchange_id", None)
+            try:
+                # Treat UNASSIGNED (-1) and None as missing
+                if exid_val is None or int(exid_val) < 0:
+                    raise ValueError(
+                        "exchange_id is required when calling TranscriptManager.log_messages. "
+                        "To start a brand-new exchange, use TranscriptManager.log_first_message_in_new_exchange(message, exchange_initial_metadata=...).",
+                    )
+            except (TypeError, ValueError):
+                # Non-int or unparsable also counts as missing/invalid
+                raise ValueError(
+                    "exchange_id must be an integer when calling TranscriptManager.log_messages. "
+                    "To start a brand-new exchange, use TranscriptManager.log_first_message_in_new_exchange(message, exchange_initial_metadata=...).",
+                )
+
             # Ensure required keys exist
             if "receiver_ids" not in payload:
                 raise ValueError("Each message must include 'receiver_ids'.")
@@ -452,61 +474,18 @@ class TranscriptManager(BaseTranscriptManager):
                 params={},
             )
 
-            # Build a Message from the POST response; if ids look unassigned,
-            # perform a one-off read to retrieve the assigned values.
-            # TODO: Remove this GET fallback once the backend echoes auto-assigned
-            # exchange_id on POST responses consistently. message_id already echoes reliably.
-            try:
-                persisted_payload = {
-                    k: log.entries.get(k) for k in Message.model_fields.keys()
-                }
-                # Only refetch when exchange_id is missing/unassigned, since message_id
-                # is already returned by the POST in current backends.
-                need_refetch = False
-                try:
-                    xid_val = persisted_payload.get("exchange_id")
-                    if xid_val is None or int(xid_val) <= -1:
-                        need_refetch = True
-                except Exception:
-                    need_refetch = True
+            # Build a Message directly from the POST response
+            persisted_payload = {
+                k: log.entries.get(k) for k in Message.model_fields.keys()
+            }
+            # Remove any None values for id fields so the validator can apply sentinel if needed
+            if persisted_payload.get("message_id") is None:
+                persisted_payload.pop("message_id", None)
+            if persisted_payload.get("exchange_id") is None:
+                persisted_payload.pop("exchange_id", None)
 
-                if need_refetch:
-                    try:
-                        ts = entries.get("timestamp")
-                        snd = entries.get("sender_id")
-                        med = entries.get("medium")
-                        flt = f"timestamp == '{ts}' and sender_id == {snd} and medium == '{med}'"
-                        rows = unify.get_logs(
-                            context=self._transcripts_ctx,
-                            filter=flt,
-                            limit=1,
-                            from_fields=list(Message.model_fields.keys()),
-                            sorting={"timestamp": "descending"},
-                        )
-                        if rows:
-                            persisted_payload = dict(rows[0].entries)
-                    except Exception:
-                        pass
-
-                # Remove any None values for id fields so the validator can apply sentinel if needed
-                if persisted_payload.get("message_id") is None:
-                    persisted_payload.pop("message_id", None)
-                if persisted_payload.get("exchange_id") is None:
-                    persisted_payload.pop("exchange_id", None)
-
-                created_msg = Message(**persisted_payload)
-                created_messages.append(created_msg)
-            except Exception:
-                # Fallback to constructing from the original request shape, omitting id keys
-                fallback_payload = {
-                    k: entries.get(k) for k in Message.model_fields.keys()
-                }
-                if fallback_payload.get("message_id") is None:
-                    fallback_payload.pop("message_id", None)
-                if fallback_payload.get("exchange_id") is None:
-                    fallback_payload.pop("exchange_id", None)
-                created_msg = Message(**fallback_payload)
-                created_messages.append(created_msg)
+            created_msg = Message(**persisted_payload)
+            created_messages.append(created_msg)
 
             try:
                 # If we're inside an event-loop schedule the coroutine there …
@@ -957,11 +936,59 @@ class TranscriptManager(BaseTranscriptManager):
                 # If attribute missing, treat as acceptable (will be injected downstream)
                 pass
 
-        # 2) Log synchronously to obtain the assigned exchange_id
-        created_list = self.log_messages(message, synchronous=True)
-        if not created_list:
-            raise RuntimeError("No message was created for the new exchange.")
-        created = created_list[0]
+        # 2) Normalise payload and persist directly to obtain an assigned exchange_id
+        def _ensure_contact_id_local(c: Union[int, Contact]) -> int:
+            if not isinstance(c, Contact):
+                if c is None:
+                    raise ValueError(
+                        "sender_id / receiver_ids cannot be None – either provide an int or a Contact instance.",
+                    )
+                return int(c)
+            if c.contact_id is not None and c.contact_id != -1:
+                return int(c.contact_id)
+            # Create via ContactManager and return id
+            full_data = c.model_dump(exclude_none=True)
+            create_kwargs = {k: v for k, v in full_data.items() if k != "contact_id"}
+            outcome = self._contact_manager._create_contact(**create_kwargs)
+            return int(outcome["details"]["contact_id"])  # type: ignore[index]
+
+        if isinstance(message, Message):
+            payload: Dict[str, Any] = message.model_dump(mode="python")
+        else:
+            payload = dict(message)
+
+        if "receiver_ids" not in payload:
+            raise ValueError("Each message must include 'receiver_ids'.")
+
+        payload["sender_id"] = _ensure_contact_id_local(payload.get("sender_id"))
+        payload["receiver_ids"] = [
+            _ensure_contact_id_local(r) for r in payload.get("receiver_ids", [])
+        ]
+
+        # Ensure no explicit exchange id provided
+        if payload.get("exchange_id") is not None:
+            raise ValueError(
+                "log_first_message_in_new_exchange expects no 'exchange_id' in the payload.",
+            )
+
+        created_model = Message(**payload)
+        entries = created_model.to_post_json()
+
+        log = unify.log(
+            context=self._transcripts_ctx,
+            **entries,
+            new=True,
+            mutable=True,
+            params={},
+        )
+
+        persisted_payload = {k: log.entries.get(k) for k in Message.model_fields.keys()}
+        if persisted_payload.get("message_id") is None:
+            persisted_payload.pop("message_id", None)
+        if persisted_payload.get("exchange_id") is None:
+            persisted_payload.pop("exchange_id", None)
+
+        created = Message(**persisted_payload)
 
         # 3) Ensure the new exchange_id is present
         try:
