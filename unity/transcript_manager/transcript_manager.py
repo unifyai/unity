@@ -399,16 +399,12 @@ class TranscriptManager(BaseTranscriptManager):
 
         # ── 2. Normalise each input payload into Message objects ───────────
         normalised_messages: List[Message] = []
-        per_message_metadata: List[Optional[Dict[str, Any]]] = []
         for raw in messages:
             # Convert to dict early so we can mutate fields easily
             if isinstance(raw, Message):
                 payload: Dict[str, Any] = raw.model_dump(mode="python")
-                meta_val = None
             else:  # assume mapping
                 payload = dict(raw)
-                # Extract optional private metadata without letting it leak into the model
-                meta_val = payload.pop("_metadata", None)
 
             # Ensure required keys exist
             if "receiver_ids" not in payload:
@@ -422,19 +418,9 @@ class TranscriptManager(BaseTranscriptManager):
 
             # Re-instantiate Message model for validation
             normalised_messages.append(Message(**payload))
-            per_message_metadata.append(meta_val)
 
         # ── 3. Dump POST-ready JSON for each message ──────────────────────
         msg_entries = [m.to_post_json() for m in normalised_messages]
-
-        # Attach metadata payloads to corresponding entries (column ensured in __init__)
-        if any(pm is not None for pm in per_message_metadata):
-            for idx, meta_val in enumerate(per_message_metadata):
-                if meta_val is not None:
-                    try:
-                        msg_entries[idx]["_metadata"] = meta_val
-                    except Exception:
-                        pass
 
         # ── 4. Persist messages and publish EventBus notifications ───────
         from ..events.event_bus import EVENT_BUS, Event  # local import to avoid cycles
@@ -921,6 +907,103 @@ class TranscriptManager(BaseTranscriptManager):
         eid_to_medium: Optional[Dict[int, str]] = None,
     ) -> None:
         _storage_ensure_exchanges(self, exchange_ids, eid_to_medium=eid_to_medium)
+
+    def log_first_message_in_new_exchange(
+        self,
+        message: Union[Dict[str, Any], Message],
+        *,
+        exchange_initial_metadata: Optional[Dict[str, Any]] = None,
+    ) -> Message:
+        """Log the first message of a brand‑new exchange and set initial metadata.
+
+        Behaviour
+        ---------
+        - Requires that the provided message does NOT specify ``exchange_id``.
+          This method will auto‑assign a new exchange id by delegating to
+          :pyfunc:`log_messages` in synchronous mode.
+        - After successful creation, the corresponding ``Exchanges`` row is
+          updated with the given ``exchange_initial_metadata`` (if provided).
+
+        Parameters
+        ----------
+        message : dict | Message
+            The first message to log for the new exchange. Must not include
+            ``exchange_id``.
+        exchange_initial_metadata : dict | None
+            Optional initial metadata to persist on the created ``Exchanges`` row.
+
+        Returns
+        -------
+        Message
+            The created :class:`Message` populated with assigned identifiers.
+        """
+
+        # 1) Validate no exchange_id is provided by the caller
+        if isinstance(message, dict):
+            if "exchange_id" in message:
+                raise ValueError(
+                    "log_first_message_in_new_exchange expects no 'exchange_id' in the payload.",
+                )
+        else:  # Message instance
+            try:
+                if getattr(message, "exchange_id", UNASSIGNED) not in (
+                    None,
+                    UNASSIGNED,
+                ):
+                    raise ValueError(
+                        "log_first_message_in_new_exchange expects the Message to have no explicit exchange_id (use sentinel).",
+                    )
+            except Exception:
+                # If attribute missing, treat as acceptable (will be injected downstream)
+                pass
+
+        # 2) Log synchronously to obtain the assigned exchange_id
+        created_list = self.log_messages(message, synchronous=True)
+        if not created_list:
+            raise RuntimeError("No message was created for the new exchange.")
+        created = created_list[0]
+
+        # 3) Ensure the new exchange_id is present
+        try:
+            exid = int(getattr(created, "exchange_id"))
+        except Exception as exc:  # noqa: BLE001 – precise error context
+            raise RuntimeError(
+                "Created message lacks an assigned exchange_id.",
+            ) from exc
+        if exid < 0:
+            raise RuntimeError("Created message has an unassigned exchange_id.")
+
+        # 4) Optionally update the Exchanges row with initial metadata
+        if exchange_initial_metadata is not None:
+            try:
+                row_ids = unify.get_logs(
+                    context=self._exchanges_ctx,
+                    filter=f"exchange_id == {exid}",
+                    return_ids_only=True,
+                )
+                if row_ids:
+                    unify.update_logs(
+                        logs=row_ids,
+                        context=self._exchanges_ctx,
+                        entries={"metadata": dict(exchange_initial_metadata)},
+                        overwrite=True,
+                    )
+                else:
+                    # Extremely unlikely: ensure row exists then set metadata
+                    unify.log(
+                        context=self._exchanges_ctx,
+                        exchange_id=exid,
+                        metadata=dict(exchange_initial_metadata),
+                        medium=str(getattr(created, "medium", "")),
+                        new=True,
+                        mutable=True,
+                        params={},
+                    )
+            except Exception:
+                # Non-fatal: do not fail the message creation due to metadata update
+                pass
+
+        return created
 
     # Formatting helper: single contacts table + messages
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:

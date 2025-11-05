@@ -45,24 +45,6 @@ def provision_storage(self) -> None:
     )
     self._exchanges_store.ensure_context()
 
-    # Ensure a private `_metadata` column exists (dict, mutable)
-    try:
-        existing_fields = unify.get_fields(context=self._transcripts_ctx)
-        if "_metadata" not in existing_fields:
-            unify.create_fields(
-                {
-                    "_metadata": {
-                        "type": "dict",
-                        "mutable": True,
-                        "description": "Internal, non user-facing metadata for infrastructure.",
-                    },
-                },
-                context=self._transcripts_ctx,
-            )
-    except Exception:
-        # Non-fatal; logging will still work without the helper if backend creates implicitly
-        pass
-
     # No local columns cache; always read from TableStore when needed
 
 
