@@ -108,6 +108,7 @@ async def test_search_messages_cross_contact_and_message_disambiguation():
             "content": "let's meet next week",
             "timestamp": "2025-06-01 09:00:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 1001,
         },
         {
             "sender_id": bob,
@@ -115,6 +116,7 @@ async def test_search_messages_cross_contact_and_message_disambiguation():
             "content": "let's meet next week",
             "timestamp": "2025-06-01 09:05:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 1002,
         },
         {
             "sender_id": carol,
@@ -122,6 +124,7 @@ async def test_search_messages_cross_contact_and_message_disambiguation():
             "content": "let's meet next month",
             "timestamp": "2025-06-02 10:00:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 1003,
         },
         {
             "sender_id": carol,
@@ -129,6 +132,7 @@ async def test_search_messages_cross_contact_and_message_disambiguation():
             "content": "availability later this week",
             "timestamp": "2025-06-03 11:00:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 1004,
         },
     ]
 
@@ -178,6 +182,7 @@ async def test_search_messages_sender_bio_only():
             "content": "generic note",
             "timestamp": "2025-06-04 10:00:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 2001,
         },
         {
             "sender_id": bob,
@@ -185,6 +190,7 @@ async def test_search_messages_sender_bio_only():
             "content": "another generic",
             "timestamp": "2025-06-04 10:01:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 2002,
         },
     ]
 
@@ -221,6 +227,7 @@ async def test_search_messages_receiver_bio_only_single():
             "content": "hello there",
             "timestamp": "2025-06-05 09:00:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 3001,
         },
         {
             "sender_id": alice,
@@ -228,6 +235,7 @@ async def test_search_messages_receiver_bio_only_single():
             "content": "hi there",
             "timestamp": "2025-06-05 09:01:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 3002,
         },
     ]
 
@@ -265,6 +273,7 @@ async def test_search_messages_receiver_bio_multi_receiver_min_aggregation():
             "content": "check this out",
             "timestamp": "2025-06-06 08:00:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 4001,
         },
         {
             "sender_id": alice,
@@ -272,6 +281,7 @@ async def test_search_messages_receiver_bio_multi_receiver_min_aggregation():
             "content": "another msg",
             "timestamp": "2025-06-06 08:01:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 4002,
         },
     ]
 
@@ -364,6 +374,7 @@ async def test_search_messages_combined_sender_and_receiver_terms():
             "content": "status update",
             "timestamp": "2025-06-07 12:00:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 5001,
         },
         {
             "sender_id": carol,
@@ -371,6 +382,7 @@ async def test_search_messages_combined_sender_and_receiver_terms():
             "content": "status update",
             "timestamp": "2025-06-07 12:01:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 5002,
         },
         {
             "sender_id": alice,
@@ -378,6 +390,7 @@ async def test_search_messages_combined_sender_and_receiver_terms():
             "content": "status update",
             "timestamp": "2025-06-07 12:02:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 5003,
         },
     ]
 
@@ -418,6 +431,7 @@ async def test_search_messages_receiver_only_returns_expected_messages():
             "content": "msg1",
             "timestamp": "2025-06-08 08:00:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 6001,
         },
         {
             "sender_id": alice,
@@ -425,6 +439,7 @@ async def test_search_messages_receiver_only_returns_expected_messages():
             "content": "msg2",
             "timestamp": "2025-06-08 08:01:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 6002,
         },
         {
             "sender_id": alice,
@@ -432,6 +447,7 @@ async def test_search_messages_receiver_only_returns_expected_messages():
             "content": "msg3",
             "timestamp": "2025-06-08 08:02:00",
             "medium": random.choice(VALID_MEDIA),
+            "exchange_id": 6003,
         },
     ]
 
