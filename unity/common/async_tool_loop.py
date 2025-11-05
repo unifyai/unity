@@ -2093,34 +2093,41 @@ async def nested_structure_on(
                     entry["state"] = "pending"
                 node["children"].append(entry)
 
-        # Wrapper attributes as secondary discovery channels
-        for attr in ("_actor_handle", "_current_handle"):
-            child = None
-            with suppress(Exception):
-                child = getattr(h, attr)
-            if child is None:
-                continue
-            try:
-                if id(child) in seen_child_ids:
-                    continue
-            except Exception:
-                pass
-            # Heuristic: treat as handle-like if it exposes any steering surface
-            is_handle_like = any(
-                hasattr(child, m) for m in ("done", "result", "ask", "interject")
+        # Wrapper discovery via standardized helper
+        try:
+            from .handle_wrappers import (
+                discover_wrapped_handles as _discover_wrapped_handles,
             )
-            if not is_handle_like:
-                continue
-            nested = await _walk(child, depth + 1, visited)
-            entry = {
-                "origin": "wrapper",
-                "wrapper_attr": attr,
-                "tool_name": nested.get("label")
-                or getattr(child, "__class__", object).__name__,
-                "state": nested.get("state", "unknown"),
-                "handle": nested,
-            }
-            node["children"].append(entry)
+        except Exception:
+            _discover_wrapped_handles = None  # type: ignore
+
+        if _discover_wrapped_handles is not None:
+            try:
+                pairs = list(_discover_wrapped_handles(h) or [])
+            except Exception:
+                pairs = []
+
+            for src, child in pairs:
+                if child is None:
+                    continue
+                try:
+                    cid = id(child)
+                    if cid in seen_child_ids:
+                        continue
+                    seen_child_ids.add(cid)
+                except Exception:
+                    pass
+
+                nested = await _walk(child, depth + 1, visited)
+                entry = {
+                    "origin": "wrapper",
+                    "wrapper_attr": str(src),
+                    "tool_name": nested.get("label")
+                    or getattr(child, "__class__", object).__name__,
+                    "state": nested.get("state", "unknown"),
+                    "handle": nested,
+                }
+                node["children"].append(entry)
 
         return node
 
