@@ -8,6 +8,7 @@ import unify
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message, UNASSIGNED
+from .types.exchange import Exchange
 
 # New: allow Contact objects to appear in messages
 from ..contact_manager.types.contact import Contact
@@ -886,6 +887,62 @@ class TranscriptManager(BaseTranscriptManager):
         eid_to_medium: Optional[Dict[int, str]] = None,
     ) -> None:
         _storage_ensure_exchanges(self, exchange_ids, eid_to_medium=eid_to_medium)
+
+    def get_exchange_metadata(self, exchange_id: int) -> Exchange:
+        """Fetch the Exchanges row for ``exchange_id`` as an Exchange model."""
+        rows = unify.get_logs(
+            context=self._exchanges_ctx,
+            filter=f"exchange_id == {int(exchange_id)}",
+            limit=1,
+        )
+        if not rows:
+            raise ValueError(f"No exchange found for exchange_id={exchange_id}.")
+
+        rec = rows[0].entries
+        try:
+            return Exchange(
+                exchange_id=int(rec.get("exchange_id")),
+                metadata=dict(rec.get("metadata") or {}),
+                medium=str(rec.get("medium") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Failed to reconstruct Exchange for exchange_id={exchange_id}.",
+            ) from exc
+
+    def update_exchange_metadata(
+        self,
+        exchange_id: int,
+        metadata: Dict[str, Any],
+    ) -> Exchange:
+        """Update (or create) the Exchanges row's metadata and return the updated Exchange."""
+        # Try update first
+        row_ids = unify.get_logs(
+            context=self._exchanges_ctx,
+            filter=f"exchange_id == {int(exchange_id)}",
+            return_ids_only=True,
+        )
+        if row_ids:
+            unify.update_logs(
+                logs=row_ids,
+                context=self._exchanges_ctx,
+                entries={"metadata": dict(metadata or {})},
+                overwrite=True,
+            )
+        else:
+            # Upsert behaviour – create a new row with empty medium if missing
+            unify.log(
+                context=self._exchanges_ctx,
+                exchange_id=int(exchange_id),
+                metadata=dict(metadata or {}),
+                medium="",
+                new=True,
+                mutable=True,
+                params={},
+            )
+
+        # Read back and return canonical shape
+        return self.get_exchange_metadata(exchange_id)
 
     def log_first_message_in_new_exchange(
         self,
