@@ -452,11 +452,11 @@ app.post('/nav', isAgentReady, async (req: Request, res: Response) => {
 });
 
 app.post('/act', isAgentReady, async (req: Request, res: Response) => {
-  const { task, sessionId } = req.body;
+  const { task, sessionId, override_cache } = req.body;
   if (!task) return res.status(400).json({ error: 'bad_request', message: 'Task description is required.' });
   try {
     const session = activeSessions.get(sessionId)!;
-    await session.agent.act(task);
+    await session.agent.act(task, { override_cache: override_cache === true } as any);
     res.json({ status: 'success', message: `Task "${task}" completed.` });
   } catch (err) {
     handleAgentError(err, res);

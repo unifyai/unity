@@ -764,6 +764,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         instruction: str,
         wait: bool = True,
         context: dict = None,
+        override_cache: bool = False,
     ) -> Any:
         """
         Executes a high-level browser task using the Magnitude BrowserAgent.
@@ -777,6 +778,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         the command is added to a queue for background execution, and
                         the function returns immediately.
             context (dict): Internal metadata for command tracking.
+            override_cache (bool): If True, deletes any matching cache entries before execution,
+                                  allowing the action to populate a fresh cache entry. Useful
+                                  when cache entries are corrupted or inefficient.
 
         ### Non-Blocking Example (`wait=False`)
         This is ideal for sequences of actions where the plan doesn't need immediate feedback.
@@ -823,7 +827,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._request,
             "POST",
             "/act",
-            {"task": instruction},
+            {"task": instruction, "override_cache": override_cache},
         )
 
         future = asyncio.get_event_loop().create_future() if wait else None
