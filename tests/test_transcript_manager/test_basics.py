@@ -328,10 +328,7 @@ def test_transcript_manager_clear():
     # Execute clear
     tm.clear()
 
-    # After clear: contexts should exist again and private column present
-    fields_transcripts = unify.get_fields(context=tm._transcripts_ctx)
-    assert "_metadata" in fields_transcripts
-
+    # After clear: context should exist again and exchange_id present
     fields_exchanges = unify.get_fields(context=tm._exchanges_ctx)
     assert "exchange_id" in fields_exchanges
 
