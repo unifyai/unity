@@ -2258,7 +2258,22 @@ class TaskScheduler(BaseTaskScheduler):
 
     def _get_queue_for_task(self, *, task_id: int) -> List[Task]:
         """
-        Return the runnable queue (head→tail) containing `task_id`.
+        Return the runnable queue (head→tail) that contains ``task_id``.
+
+        Use this read‑only tool to retrieve the live chain of runnable tasks that
+        the given task participates in, preserving the actual execution order.
+        It inspects state only and never creates or mutates rows.
+
+        Parameters
+        ----------
+        task_id : int
+            Identifier of a task whose current runnable chain should be returned.
+
+        Returns
+        -------
+        list[Task]
+            Ordered tasks from head to tail. Returns an empty list when the task
+            has no runnable queue or the chain cannot be reconstructed.
         """
         # Strategy
         # ---------
