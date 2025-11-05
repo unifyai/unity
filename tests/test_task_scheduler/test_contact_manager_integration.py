@@ -1,4 +1,5 @@
 import pytest
+from tests.helpers import _handle_project
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
 
@@ -9,6 +10,7 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 
 
 @pytest.mark.unit
+@_handle_project
 def test_ts_tools_expose_contact_manager_ask():
     """TaskScheduler should surface ContactManager.ask inside its tool dictionaries."""
 
@@ -31,7 +33,6 @@ def test_ts_tools_expose_contact_manager_ask():
 import asyncio
 import functools
 
-from tests.helpers import _handle_project
 from unity.contact_manager.contact_manager import ContactManager
 
 
