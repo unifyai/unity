@@ -2469,9 +2469,7 @@ async def main_plan():
                         await action_provider.browser.backend.barrier(
                             up_to_seq=item.exit_seq,
                         )
-                    post_state_screenshot = (
-                        await action_provider.browser.get_screenshot()
-                    )
+                    post_state_screenshot = item.post_state.get("screenshot")
 
                     assessment = await self.actor._check_state_against_goal(
                         plan=self,
@@ -5024,7 +5022,7 @@ class HierarchicalActor(BaseActor):
 
                         post_state = {
                             "url": await action_provider.browser.get_current_url(),
-                            "screenshot": None,
+                            "screenshot": await action_provider.browser.get_screenshot(),
                         }
 
                         if plan.runtime.cache_miss_counter:
@@ -5228,9 +5226,6 @@ class HierarchicalActor(BaseActor):
                 continue
 
             if not search_results:
-                logger.debug(
-                    f"'{function_name}' not found in FunctionManager, assuming built-in/method.",
-                )
                 continue
 
             library_func_data = search_results[0]
