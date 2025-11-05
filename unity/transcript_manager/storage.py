@@ -7,6 +7,7 @@ import unify
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from .types.message import Message
+from .types.exchange import Exchange
 
 
 def provision_storage(self) -> None:
@@ -28,20 +29,7 @@ def provision_storage(self) -> None:
         self._exchanges_ctx,
         unique_keys={"exchange_id": "int"},
         description="One row per conversation exchange/thread with optional metadata.",
-        fields={
-            "exchange_id": {
-                "type": "int",
-                "description": "Unique identifier for the exchange/thread",
-            },
-            "metadata": {
-                "type": "dict",
-                "description": "Arbitrary exchange-level metadata (e.g., URLs, external refs)",
-            },
-            "medium": {
-                "type": "string",
-                "description": "Communication medium for the exchange (same semantics as Message.medium)",
-            },
-        },
+        fields=model_to_fields(Exchange),
     )
     self._exchanges_store.ensure_context()
 
