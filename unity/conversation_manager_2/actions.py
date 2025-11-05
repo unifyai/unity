@@ -76,8 +76,15 @@ class SendEmail(BaseModel):
     first_name: str
     surname: Optional[str]
     email_address: str
-    subject: str
+    subject: str = Field(
+        ...,
+        description="the subject of the email, should be the same as the subject of the received email without any prefix.",
+    )
     body: str
+    message_id: Optional[str] = Field(
+        ...,
+        description="the message id of the email, should be the same as the message id of the received email.",
+    )
 
 
 class SendSMS(BaseModel):
