@@ -19,6 +19,7 @@ from unity.actor.simulated import SimulatedActorHandle
 from unity.function_manager.function_manager import FunctionManager
 from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.types import RawImageRef, AnnotatedImageRef
+from unity.common.async_tool_loop import nested_structure_on
 from pathlib import Path
 import base64
 
@@ -376,4 +377,45 @@ async def test_active_task_interject_image_guides_simulation_to_spreadsheet(
     assert isinstance(reply, str) and reply.strip()
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
+    await task.result()
+
+
+# --------------------------------------------------------------------------- #
+#  8. nested_structure reveals inner SimulatedActor handle via wrapper        //
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_task_nested_structure_reveals_inner_handle():
+    """ActiveTask should expose its inner SimulatedActor handle via wrapper discovery."""
+    actor = SimulatedActor(steps=1, duration=None)
+    task = await ActiveTask.create(
+        actor,
+        task_description="Test nested structure wrapper traversal",
+    )
+
+    s = await nested_structure_on(task)
+    assert isinstance(s, dict)
+    children = s.get("children", [])
+
+    # Find a wrapper-origin child produced via standardized get_wrapped_handles
+    wrapper_child = None
+    for ch in children:
+        if ch.get("origin") == "wrapper" and str(ch.get("wrapper_attr", "")).startswith(
+            "get_wrapped_handles",
+        ):
+            wrapper_child = ch
+            break
+
+    assert (
+        wrapper_child is not None
+    ), "Expected wrapper-discovered child from ActiveTask"
+    inner = wrapper_child.get("handle") or {}
+    assert (inner.get("class") == "SimulatedActorHandle") or (
+        (inner.get("label") or "").endswith("SimulatedActorHandle")
+    )
+
+    # Cleanup
+    task.stop(cancel=False)
     await task.result()
