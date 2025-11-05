@@ -3514,12 +3514,8 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         allow_active: bool = False,
     ) -> Dict[str, str]:
-        """
-        Public facade to restore a task to its prior queue/schedule position.
-
-        Delegates to the internal `_reinstate_task_to_previous_queue` and maps
-        the `allow_active` flag to the private `_allow_active` parameter.
-        """
+        # Facade retained for internal callers; the update tool exposes
+        # `_reinstate_task_to_previous_queue`, which carries the full docstring.
         return self._reintegration_manager.apply(
             task_id=task_id,
             allow_active=allow_active,
@@ -4232,6 +4228,28 @@ class TaskScheduler(BaseTaskScheduler):
         task_id: int,
         _allow_active: bool = False,
     ) -> ToolOutcome:
+        """
+        Reinstate a previously isolated task to its prior queue position.
+
+        Use this write tool when a task was executed in isolation (detached from
+        its queue) and should be reattached to the original queue at the stored
+        position, preserving neighbour links and queue‑level semantics. This does
+        not alter task content; it only restores membership/order.
+
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the task to reinstate into its previous queue.
+        _allow_active : bool, default ``False``
+            Internal/testing flag that permits reintegration even if the task is
+            currently marked ``active``.
+
+        Returns
+        -------
+        ToolOutcome
+            Structured result with outcome and details (e.g., restored queue_id
+            and position) suitable for logging or follow‑up edits.
+        """
         # Delegate to the reintegration manager; accepts `_allow_active` for tests/callers
         return self._reintegration_manager.apply(
             task_id=task_id,
