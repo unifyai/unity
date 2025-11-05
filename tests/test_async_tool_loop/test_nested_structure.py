@@ -107,6 +107,10 @@ class WrapperHandle(SteerableToolHandle):
     def __init__(self, h: ToyHandle):
         self._current_handle = h
 
+    # Adopt standardized wrapper registration for nested_structure
+    def get_wrapped_handles(self):  # type: ignore[override]
+        return {"current": self._current_handle}
+
     async def ask(self, question: str, *, parent_chat_context_cont=None):  # type: ignore[override]
         return self
 
@@ -334,16 +338,16 @@ async def test_nested_structure_includes_wrapper_attribute_children():
         assert first is not None, "Expected Outer_spawn child"
         inner_node = first.get("handle") or {}
         wrapper_children = inner_node.get("children", [])
-        # Expect an entry sourced from wrapper attribute
+        # Expect an entry discovered via standardized wrapper method
         assert any(
             (c.get("origin") == "wrapper")
-            and (c.get("wrapper_attr") == "_current_handle")
+            and str(c.get("wrapper_attr", "")).startswith("get_wrapped_handles")
             and (
                 (c.get("handle") or {}).get("class") == "ToyHandle"
                 or (c.get("handle") or {}).get("label", "").endswith("ToyHandle")
             )
             for c in wrapper_children
-        ), "Expected wrapper child pointing at ToyHandle via _current_handle"
+        ), "Expected wrapper child pointing at ToyHandle via get_wrapped_handles"
     finally:
         try:
             outer.stop("cleanup")
