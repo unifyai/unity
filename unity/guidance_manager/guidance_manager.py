@@ -380,6 +380,22 @@ class GuidanceManager(BaseGuidanceManager):
         *,
         include_types: bool = True,
     ) -> Dict[str, Any] | List[str]:
+        """List available columns in the Guidance table.
+
+        Parameters
+        ----------
+        include_types : bool, default True
+            When True, return a mapping of column_name → type information as
+            stored in the backing context. When False, return a simple list of
+            column names. This is useful for building prompts or validating
+            filter expressions without exposing the full schema payload.
+
+        Returns
+        -------
+        Dict[str, Any] | List[str]
+            Either a dict of column metadata or a list of column names,
+            depending on ``include_types``.
+        """
         cols = self._get_columns()
         return cols if include_types else list(cols)
 
@@ -390,6 +406,28 @@ class GuidanceManager(BaseGuidanceManager):
         column_type: str,
         column_description: Optional[str] = None,
     ) -> Dict[str, str]:
+        """Create a new mutable custom column on the Guidance table.
+
+        Notes
+        -----
+        - Required/built-in columns cannot be recreated.
+        - ``column_name`` must be snake_case: start with a letter, followed by
+          letters, digits or underscores.
+
+        Parameters
+        ----------
+        column_name : str
+            Name of the column to create (snake_case).
+        column_type : str
+            Logical type label recorded in the context metadata.
+        column_description : str | None, default None
+            Optional human-friendly description to attach to the column.
+
+        Returns
+        -------
+        Dict[str, str]
+            Service response confirming the created field metadata.
+        """
         if column_name in self._REQUIRED_COLUMNS:
             raise ValueError(
                 f"'{column_name}' is a required column and cannot be recreated.",
@@ -414,6 +452,18 @@ class GuidanceManager(BaseGuidanceManager):
         return resp
 
     def _delete_custom_column(self, *, column_name: str) -> Dict[str, str]:
+        """Delete a custom column previously added to the Guidance table.
+
+        Parameters
+        ----------
+        column_name : str
+            Name of the column to remove. Required columns cannot be deleted.
+
+        Returns
+        -------
+        Dict[str, str]
+            Service response confirming deletion.
+        """
         if column_name in self._REQUIRED_COLUMNS:
             raise ValueError(f"Cannot delete required column '{column_name}'.")
         resp = unify.delete_fields(fields=[column_name], context=self._ctx)
@@ -645,6 +695,32 @@ class GuidanceManager(BaseGuidanceManager):
         images: Optional[Any] = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
+        """Create a new guidance entry.
+
+        Purpose
+        -------
+        Use this to persist distilled guidance, optionally linking annotated
+        images and related function ids. At least one of ``title``, ``content``
+        or ``images`` must be provided.
+
+        Parameters
+        ----------
+        title : str | None
+            Short human-readable title for the guidance entry.
+        content : str | None
+            Longer freeform guidance text.
+        images : Any | None
+            AnnotatedImageRefs or a structure compatible with the model; when
+            omitted, an empty set is stored.
+        function_ids : list[int] | None
+            Optional ids of related functions to surface in read flows.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome string and details containing the newly assigned
+            ``guidance_id``.
+        """
         if not title and not content and not images:
             raise ValueError(
                 "At least one field (title/content/images) must be provided.",
@@ -678,6 +754,26 @@ class GuidanceManager(BaseGuidanceManager):
         images: Optional[Any] = None,
         function_ids: Optional[List[int]] = None,
     ) -> ToolOutcome:
+        """Update fields of an existing guidance entry by id.
+
+        Parameters
+        ----------
+        guidance_id : int
+            Identifier of the row to update.
+        title : str | None
+            New title (omit to keep existing value).
+        content : str | None
+            New content (omit to keep existing value).
+        images : Any | None
+            Replacement image references; validated to the model format.
+        function_ids : list[int] | None
+            Replacement list of related function ids.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome string and details with the ``guidance_id``.
+        """
         updates: Dict[str, Any] = {}
         if title is not None:
             updates["title"] = title
@@ -740,6 +836,22 @@ class GuidanceManager(BaseGuidanceManager):
         guidance_id: int,
         include_implementations: bool = False,
     ) -> List[Dict[str, Any]]:
+        """Return metadata for functions linked to a guidance entry.
+
+        Parameters
+        ----------
+        guidance_id : int
+            Identifier of the guidance row whose related functions to fetch.
+        include_implementations : bool, default False
+            When True, include the function implementation source in the
+            payload; otherwise only surface metadata useful for selection.
+
+        Returns
+        -------
+        list[dict]
+            One item per related function, including ``function_id``, ``name``,
+            ``argspec``, ``docstring``, ``calls``, and ``precondition`` fields.
+        """
         rows = self._filter(filter=f"guidance_id == {int(guidance_id)}", limit=1)
         if not rows:
             return []
@@ -798,6 +910,18 @@ class GuidanceManager(BaseGuidanceManager):
         return {"attached_count": len(funcs), "functions": funcs}
 
     def _delete_guidance(self, *, guidance_id: int) -> ToolOutcome:
+        """Delete a guidance entry by id.
+
+        Parameters
+        ----------
+        guidance_id : int
+            Identifier of the row to delete.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome string and details with the removed ``guidance_id``.
+        """
         ids = unify.get_logs(
             context=self._ctx,
             filter=f"guidance_id == {int(guidance_id)}",
