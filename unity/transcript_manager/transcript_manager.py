@@ -82,38 +82,14 @@ class TranscriptManager(BaseTranscriptManager):
         else:
             self._contact_manager = ContactManager()
 
-        # Tools exposed to the LLM. We wrap message-search/filter so that the
-        # tool returns a compact string containing a single JSON table of all
-        # participant contacts followed by the list of messages, avoiding
-        # repeating long bios per message. Direct method calls (e.g., tests)
-        # retain their original return types for backward-compat.
-        @functools.wraps(self._filter_messages, updated=())
-        @read_only
-        def _filter_messages(
-            *,
-            filter: Optional[str] = None,
-            offset: int = 0,
-            limit: int = 100,
-        ) -> Dict[str, Any]:  # type: ignore[override]
-            return self._filter_messages(filter=filter, offset=offset, limit=limit)  # type: ignore[misc]
-
-        @functools.wraps(self._search_messages, updated=())
-        @read_only
-        def _search_messages(
-            *,
-            references: Optional[Dict[str, str]] = None,
-            k: int = 10,
-        ) -> Dict[str, Any]:  # type: ignore[override]
-            return self._search_messages(references=references, k=k)  # type: ignore[misc]
-
         ask_tools = {
             **methods_to_tool_dict(
                 self._contact_manager.ask,
                 include_class_name=True,
             ),
             **methods_to_tool_dict(
-                _filter_messages,
-                _search_messages,
+                self._filter_messages,
+                self._search_messages,
                 include_class_name=False,
             ),
         }
@@ -614,14 +590,31 @@ class TranscriptManager(BaseTranscriptManager):
     #  Private tools (LLM-exposed to tool loops)
     #    – these are the underscore-prefixed methods you pass into add_tools
     # ──────────────────────────────────────────────────────────────────────
+    @read_only
     def _search_messages(
         self,
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> Dict[str, Any]:
+        """
+        Semantic search across transcript messages (two-table aware).
+
+        Parameters
+        ----------
+        references : Dict[str, str] | None, default None
+            Mapping of source expressions to reference text for semantic search.
+        k : int, default 10
+            Maximum number of results to return. Must be <= 1000.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Search results with contact information.
+        """
         return _search_messages_impl(self, references=references, k=k)
 
+    @read_only
     def _filter_messages(
         self,
         *,
@@ -629,6 +622,25 @@ class TranscriptManager(BaseTranscriptManager):
         offset: int = 0,
         limit: int | None = 100,
     ) -> Dict[str, Any]:
+        """
+        Filter transcript messages using an exact column-wise boolean expression.
+        The expression must be expressed in valid python syntax.
+
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python boolean expression evaluated with column names in scope.
+            When None, returns all messages.
+        offset : int, default 0
+            Zero-based index of the first result to include.
+        limit : int | None, default 100
+            Maximum number of records to return. Must be <= 1000.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Filtered messages with contact information.
+        """
         return _filter_messages_impl(self, filter=filter, offset=offset, limit=limit)
 
     def update_contact_id(
