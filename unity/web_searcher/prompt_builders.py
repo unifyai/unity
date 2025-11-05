@@ -163,16 +163,17 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
     if have_create:
         lines += [
             "- _create_website: create a new Website row (unique by host).",
-            "  • Parameters: host, gated, subscribed, credentials, actor_entrypoint, notes",
+            "  • Parameters: name, host, gated, subscribed, credentials, actor_entrypoint, notes",
             "  • Examples:",
-            "    - _create_website(host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')",
-            "    - _create_website(host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')",
+            "    - _create_website(name='Medium', host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')",
+            "    - _create_website(name='arXiv', host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')",
         ]
     if have_delete:
         lines += [
             "- _delete_website: delete a Website row by host or website_id (exact match).",
-            "  • Parameters: host, website_id",
+            "  • Parameters: name, host, website_id",
             "  • Examples:",
+            "    - _delete_website(name='Financial Times')",
             "    - _delete_website(host='example.com')",
             "    - _delete_website(website_id=42)",
         ]

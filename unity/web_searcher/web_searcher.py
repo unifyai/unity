@@ -230,7 +230,7 @@ class WebSearcher(BaseWebSearcher):
             # Provision Websites store
             self._websites_store = TableStore(
                 self._websites_ctx,
-                unique_keys={"website_id": "int", "host": "str"},
+                unique_keys={"website_id": "int", "host": "str", "name": "str"},
                 auto_counting={"website_id": None},
                 description=(
                     "Catalog of websites of interest for WebSearcher routing/policies."
@@ -381,6 +381,7 @@ class WebSearcher(BaseWebSearcher):
     def _create_website(
         self,
         *,
+        name: str,
         host: str,
         gated: bool,
         subscribed: bool,
@@ -390,6 +391,9 @@ class WebSearcher(BaseWebSearcher):
     ) -> ToolOutcome:
         """Create a new Website row (unique by host)."""
         assert host, "host is required"
+        assert (
+            isinstance(name, str) and name.strip()
+        ), "name is required and must be non-empty"
 
         existing = unify.get_logs(
             context=self._websites_ctx,
@@ -399,7 +403,16 @@ class WebSearcher(BaseWebSearcher):
         )
         assert not existing, f"Website with host '{host}' already exists."
 
+        existing_name = unify.get_logs(
+            context=self._websites_ctx,
+            filter=f"name == {name!r}",
+            limit=1,
+            return_ids_only=True,
+        )
+        assert not existing_name, f"Website with name '{name}' already exists."
+
         entries: Dict[str, Any] = {
+            "name": name,
             "host": host,
             "gated": bool(gated),
             "subscribed": bool(subscribed),
@@ -435,6 +448,7 @@ class WebSearcher(BaseWebSearcher):
                         if ent.get("website_id") is not None
                         else -1
                     ),
+                    name=ent.get("name", ""),
                     host=ent.get("host"),
                     gated=bool(ent.get("gated", False)),
                     subscribed=bool(ent.get("subscribed", False)),
@@ -460,6 +474,7 @@ class WebSearcher(BaseWebSearcher):
             k=max(1, min(int(k), 1000)),
             allowed_fields=[
                 "website_id",
+                "name",
                 "host",
                 "gated",
                 "subscribed",
@@ -475,6 +490,7 @@ class WebSearcher(BaseWebSearcher):
                 website_id=(
                     int(r.get("website_id")) if r.get("website_id") is not None else -1
                 ),
+                name=r.get("name", ""),
                 host=r.get("host"),
                 gated=bool(r.get("gated", False)),
                 subscribed=bool(r.get("subscribed", False)),
@@ -546,11 +562,14 @@ class WebSearcher(BaseWebSearcher):
     def _delete_website(
         self,
         *,
+        name: Optional[str] = None,
         host: Optional[str] = None,
         website_id: Optional[int] = None,
     ) -> ToolOutcome:
         """Delete a single Website row identified by host or website_id."""
         exprs: List[str] = []
+        if name is not None:
+            exprs.append(f"name == {name!r}")
         if host is not None:
             exprs.append(f"host == {host!r}")
         if website_id is not None:
