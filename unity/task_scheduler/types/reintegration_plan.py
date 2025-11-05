@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Optional
 from datetime import datetime
 
+from .status import Status
+
 
 @dataclass
 class ReintegrationPlan:
@@ -23,6 +25,6 @@ class ReintegrationPlan:
     next_task: Optional[int]
     start_at: Optional[datetime]
     was_head: bool
-    original_status: Optional[str]
+    original_status: Optional[Status]
     head_start_at: Optional[datetime] = None
     queue_id: Optional[int] = None

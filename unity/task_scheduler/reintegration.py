@@ -127,9 +127,7 @@ class ReintegrationManager:
 
         # Determine the desired lifecycle using the central helper
         existing_status = (
-            self._s._to_status(str(original_status))
-            if original_status is not None
-            else Status.queued
+            original_status if original_status is not None else Status.queued
         )
         desired_status = derive_status_after_queue_edit(
             existing_status=existing_status,
