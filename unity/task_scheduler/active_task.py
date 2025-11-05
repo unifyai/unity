@@ -19,6 +19,7 @@ from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
 from .llm import new_llm_client
 import logging
+from ..common.handle_wrappers import HandleWrapperMixin
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 
 
-class ActiveTask(BaseActiveTask):
+class ActiveTask(BaseActiveTask, HandleWrapperMixin):
     def __init__(
         self,
         actor_handle: SteerableToolHandle,
@@ -120,6 +121,9 @@ class ActiveTask(BaseActiveTask):
         self._was_stopped: bool = False
         self._last_intent: Optional[str] = None
         self._last_intent_reason: Optional[str] = None
+
+        # Register the underlying actor handle for standardized wrapper discovery
+        self.wrap_handle(actor_handle)
 
     @classmethod
     async def create(
