@@ -228,24 +228,6 @@ def filter_messages(
     offset: int = 0,
     limit: int | None = 100,
 ) -> Dict[str, Any]:
-    """
-    Filter transcript messages using an exact column-wise boolean expression.
-
-    Parameters
-    ----------
-    filter : str | None, default None
-        A Python boolean expression evaluated with column names in scope.
-        When None, returns all messages.
-    offset : int, default 0
-        Zero-based index of the first result to include.
-    limit : int | None, default 100
-        Maximum number of records to return. Must be <= 1000.
-
-    Returns
-    -------
-    Dict[str, Any]
-        Filtered messages with contact information.
-    """
     normalized = normalize_filter_expr(filter)
     logs = unify.get_logs(
         context=self._transcripts_ctx,
@@ -265,21 +247,6 @@ def search_messages(
     references: Optional[Dict[str, str]] = None,
     k: int = 10,
 ) -> Dict[str, Any]:
-    """
-    Semantic search across transcript messages (two-table aware).
-
-    Parameters
-    ----------
-    references : Dict[str, str] | None, default None
-        Mapping of source expressions to reference text for semantic search.
-    k : int, default 10
-        Maximum number of results to return. Must be <= 1000.
-
-    Returns
-    -------
-    Dict[str, Any]
-        Search results with contact information.
-    """
     # Default behaviour: when references is None/empty, return most recent
     if not references:
         logs = unify.get_logs(
