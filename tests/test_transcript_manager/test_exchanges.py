@@ -5,6 +5,7 @@ import unify
 import pytest
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.exchange import Exchange
 from unity.transcript_manager.types.message import Message
 from tests.helpers import _handle_project
 
@@ -39,31 +40,71 @@ def test_exchanges_row_created_for_explicit_exchange_id():
 
 @pytest.mark.unit
 @_handle_project
-def test_exchanges_row_created_for_auto_assigned_exchange_id():
+def test_get_exchange_metadata_returns_exchange_model():
     tm = TranscriptManager()
 
-    created = tm.log_messages(
+    ex_id = 555001
+    tm.log_messages(
         Message(
-            medium="sms_message",
-            sender_id=1,
-            receiver_ids=[2],
+            medium="email",
+            sender_id=0,
+            receiver_ids=[1],
             timestamp=datetime.now(UTC),
-            content="auto exchange id",
-            # exchange_id intentionally omitted to use auto-counting
+            content="exchanges metadata fetch",
+            exchange_id=ex_id,
         ),
-        synchronous=True,
     )
     tm.join_published()
 
-    assert created and created[0].exchange_id is not None
-    ex_id = int(created[0].exchange_id)
-    assert ex_id >= 0
+    ex = tm.get_exchange_metadata(ex_id)
+    assert isinstance(ex, Exchange)
+    assert ex.exchange_id == ex_id
+    assert ex.medium == "email"
+    assert isinstance(ex.metadata, dict)
 
-    rows = unify.get_logs(
-        context=tm._exchanges_ctx,
-        filter=f"exchange_id == {ex_id}",
-        limit=1,
+
+@pytest.mark.unit
+@_handle_project
+def test_update_exchange_metadata_updates_existing_row():
+    tm = TranscriptManager()
+
+    # Create a fresh exchange via the new helper
+    exid = tm.log_first_message_in_new_exchange(
+        {
+            "medium": "sms_message",
+            "sender_id": 1,
+            "receiver_ids": [2],
+            "timestamp": datetime.now(UTC),
+            "content": "seed",
+        },
     )
-    assert rows and int(rows[0].entries.get("exchange_id")) == ex_id
-    assert isinstance(rows[0].entries.get("metadata"), dict)
-    assert rows[0].entries.get("medium") == "sms_message"
+    tm.join_published()
+
+    # Update metadata
+    new_meta = {"foo": "bar", "n": 1}
+    updated = tm.update_exchange_metadata(exid, new_meta)
+    assert isinstance(updated, Exchange)
+    assert updated.exchange_id == exid
+    assert updated.metadata == new_meta
+    # Medium should remain as originally set
+    assert updated.medium == "sms_message"
+
+    # Round-trip fetch
+    fetched = tm.get_exchange_metadata(exid)
+    assert fetched.metadata == new_meta
+
+
+@pytest.mark.unit
+@_handle_project
+def test_update_exchange_metadata_upserts_when_missing():
+    tm = TranscriptManager()
+
+    exid = 987654321
+    meta = {"seed": "manual"}
+    upserted = tm.update_exchange_metadata(exid, meta)
+
+    assert isinstance(upserted, Exchange)
+    assert upserted.exchange_id == exid
+    assert upserted.metadata == meta
+    # Upsert path sets blank medium
+    assert upserted.medium == ""
