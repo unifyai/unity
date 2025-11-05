@@ -21,6 +21,7 @@ import os
 import unify
 
 from ..common.async_tool_loop import SteerableToolHandle
+from ..common.handle_wrappers import HandleWrapperMixin
 from .types.activated_by import ActivatedBy
 
 if TYPE_CHECKING:  # avoid import cycles at runtime
@@ -328,7 +329,7 @@ class _QueueSnapshot:
             return None
 
 
-class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
+class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abstract-method]
     def __init__(
         self,
         scheduler: "TaskScheduler",
@@ -367,6 +368,13 @@ class ActiveQueue(SteerableToolHandle):  # type: ignore[abstract-method]
 
         # Background driver
         self._driver = asyncio.create_task(self._drive())
+
+    # Standardized wrapper registration: always expose the current inner handle
+    def get_wrapped_handles(self):  # type: ignore[override]
+        try:
+            return {"current": self._current_handle}
+        except Exception:
+            return []
 
     # ----------------------------
     # Small summary helper
