@@ -1,0 +1,38 @@
+---
+description: Fixing Failing Tests
+globs: ["**/*"]
+alwaysApply: true
+---
+
+This rule standardizes how we add temporary debug logging during failing tests and how we clean it up afterwards. ALWAYS use this process in Cursor chats WHENEVER A TEST FAILS. This is the ONLY permitted way to address failing tests.
+
+1) Always start with hardcoded, unconditional debug logs
+- Add logs immediately, without flags or guards. Do not gate behind environment variables or configuration.
+- Use ONLY the dedicated function: CURSOR_DEBUG_LOG(...)
+- Function location: tests/helpers.py
+- Signature: CURSOR_DEBUG_LOG(*message_parts)
+- Behavior: Prints a one-line entry to stderr with timestamp and caller location, making it easy to correlate with test runs.
+
+2) Investigation workflow
+- Step A: Add targeted CURSOR_DEBUG_LOG calls around suspected code paths.
+- Step B: Re-run the failing test(s) and inspect the new logs.
+- Step C: If you are not 100% certain of the root cause, add more CURSOR_DEBUG_LOG entries and repeat.
+- Step D: Only when you are 100% confident of the cause, implement a direct fix (with or without keeping some logs briefly for confirmation).
+- Step E: The user may repeatedly re-run tests and paste logs; continue iterating until the issue is definitively fixed.
+
+3) Cleanup policy
+- After the fix is confirmed, remove all temporary logging.
+- Grep to find every occurrence:
+  - ripgrep: rg -n "CURSOR_DEBUG_LOG\\(" -S
+  - grep:    grep -Rin "CURSOR_DEBUG_LOG(" .
+- Delete each call site (and any now-unused imports) before finalizing the fix.
+
+4) Alignment with workspace rules
+- No fast paths or heuristics: Logging should not add conditional shortcuts; it merely reports state unconditionally.
+- No try/except shields: Do not add defensive try/except around the logs. Keep failures visible.
+- No test details in production prompts: Temporary logs must not leak test-specific information into production prompts or docstrings.
+- Rapid evolution: This logging is temporary by design; remove it once the issue is resolved—do not preserve backward compatibility.
+
+5) Intent and scope
+- This logging exists solely for interactive debugging in Cursor chats.
+- The unique function name CURSOR_DEBUG_LOG is intentionally grep-friendly to ensure quick cleanup on request.
