@@ -2034,19 +2034,24 @@ async def nested_structure_on(
         except Exception:
             hid = None
         if hid is not None and hid in visited:
-            return {
+            _t = _tool_of(h)
+            node_cycle: dict = {
                 "handle": getattr(h, "__class__", object).__name__,
-                "tool": _tool_of(h),
                 "children": [],
             }
+            if isinstance(_t, str) and "." in _t:
+                node_cycle["tool"] = _t
+            return node_cycle
         if hid is not None:
             visited.add(hid)
 
         node: dict = {
             "handle": getattr(h, "__class__", object).__name__,
-            "tool": _tool_of(h),
             "children": [],
         }
+        _t = _tool_of(h)
+        if isinstance(_t, str) and "." in _t:
+            node["tool"] = _t
 
         if max_depth is not None and depth >= max_depth:
             return node
