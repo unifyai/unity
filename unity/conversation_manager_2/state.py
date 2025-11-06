@@ -435,7 +435,9 @@ class ConversationManagerState:
                 self.push_message(
                     contact,
                     "email",
-                    EmailMessage(contact.full_name, e.subject, e.body, e.message_id, e.timestamp),
+                    EmailMessage(
+                        contact.full_name, e.subject, e.body, e.message_id, e.timestamp
+                    ),
                 )
                 self.push_notif(
                     Notification(

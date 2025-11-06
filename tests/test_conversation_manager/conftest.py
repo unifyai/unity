@@ -264,7 +264,9 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
 
     This fixture is module-scoped and runs automatically (autouse=True) for all
     tests in this module, so tests don't need to explicitly request it.
-    Uses its own temporary Redis client for the one-time setup.
+
+    Waits for the CM to subscribe to Redis channels, then publishes startup
+    and contacts events.
 
     Returns: cm_process
     """
@@ -290,14 +292,34 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
         voice_id="test_voice",
     )
 
-    # Wait for CM to be ready and subscribed to channels
+    # Wait for CM to subscribe to channels by checking for active pattern subscriptions
     print("⏳ Waiting for conversation manager to subscribe to Redis channels...")
-    await asyncio.sleep(5)  # Give CM time to fully initialize and subscribe
+    max_wait = 30
+    wait_interval = 0.5
+    waited = 0
+    num_patterns = 0
+    while waited < max_wait:
+        # Check if there are at least 1 active pattern subscription from CM's wait_for_events()
+        num_patterns = await temp_client.execute_command("PUBSUB", "NUMPAT")
+        if num_patterns >= 1:
+            print(
+                f"✅ Found {num_patterns} active pattern subscription(s) after {waited:.1f}s",
+            )
+            break
+        await asyncio.sleep(wait_interval)
+        waited += wait_interval
+    else:
+        print(
+            f"⚠️  Expected pattern subscriptions after {max_wait}s, found {num_patterns}",
+        )
+        raise RuntimeError("Conversation manager did not subscribe to Redis channels")
 
-    # Now send startup event
+    # Brief additional wait to ensure CM's get_message() loop is actively polling
+    await asyncio.sleep(1)
+
+    # Send startup event
     print("📤 Publishing startup event...")
     await temp_client.publish("app:comms:startup", startup.to_json())
-    await asyncio.sleep(2)
 
     # Send contacts list
     print("📤 Publishing contacts...")
@@ -320,7 +342,6 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
         ],
     )
     await temp_client.publish("app:comms:contacts", contacts_event.to_json())
-    await asyncio.sleep(4)  # Let contacts be processed
 
     print("✅ System initialized and ready")
 
