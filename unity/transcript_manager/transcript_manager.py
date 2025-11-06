@@ -23,6 +23,7 @@ from ..common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
+from ..common.filter_utils import normalize_filter_expr
 from ..events.manager_event_logging import (
     log_manager_call,
 )
@@ -252,12 +253,6 @@ class TranscriptManager(BaseTranscriptManager):
         _storage_clear(self)
 
     # (Optional) Public programmatic helpers (non-LLM)
-    async def summarize(self, *args, **kwargs):
-        """Deprecated: summarize functionality removed."""
-        raise NotImplementedError(
-            "Summarize functionality has been removed from TranscriptManager.",
-        )
-
     def log_messages(
         self,
         messages: Union[
@@ -954,6 +949,30 @@ class TranscriptManager(BaseTranscriptManager):
 
         # Read back and return canonical shape
         return self.get_exchange_metadata(exchange_id)
+
+    @functools.wraps(BaseTranscriptManager.filter_exchanges, updated=())
+    def filter_exchanges(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int | None = 100,
+    ) -> Dict[str, Any]:
+        normalized = normalize_filter_expr(filter)
+        logs = unify.get_logs(
+            context=self._exchanges_ctx,
+            filter=normalized,
+            offset=offset,
+            limit=limit,
+            from_fields=list(Exchange.model_fields.keys()),
+        )
+        exchanges: list[Exchange] = []
+        for lg in logs:
+            try:
+                exchanges.append(Exchange(**lg.entries))
+            except Exception:
+                continue
+        return {"exchanges": exchanges}
 
     def log_first_message_in_new_exchange(
         self,
