@@ -4363,20 +4363,19 @@ class TaskScheduler(BaseTaskScheduler):
         """
         normalized_filter = normalize_filter_expr(filter)
 
-        exclude_fields = [
-            name
-            for name in self._get_columns().keys()
-            if isinstance(name, str) and name.startswith("_")
-        ]
+        include_fields = list(Task.model_fields.keys())
 
-        rows = self._view.get_entries(
-            filter=normalized_filter,
-            offset=offset,
-            limit=limit,
-            # Avoid an extra backend call here by deriving private fields from the
-            # cached schema instead of calling get_fields() again.
-            exclude_fields=exclude_fields,
-        )
+        rows = [
+            lg.entries
+            for lg in self._view.get_rows(
+                filter=normalized_filter,
+                offset=offset,
+                limit=limit,
+                # Avoid an extra backend call here by deriving private fields from the
+                # cached schema instead of calling get_fields() again.
+                include_fields=include_fields,
+            )
+        ]
 
         # Rehydrate Enum values inside repetition patterns so callers see
         # the same structure as produced by `RepeatPattern.model_dump()`.
