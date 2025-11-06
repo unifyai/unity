@@ -135,34 +135,25 @@ async def test_nested_structure_with_get_wrapped_handles_method():
 
     s = await nested_structure_on(wrapped)
 
-    # Expect a wrapper-origin child pointing to SteeringHandle
+    # Minimal structure: child node directly represents SteeringHandle
     wchild = None
     for ch in s.get("children", []):
-        if ch.get("origin") == "wrapper" and (ch.get("wrapper_attr") or "").startswith(
-            "get_wrapped_handles",
+        if (ch.get("handle") == "SteeringHandle") or (
+            ch.get("tool") == "SteeringHandle"
         ):
             wchild = ch
             break
     assert (
         wchild is not None
-    ), "Expected wrapper-discovered child via get_wrapped_handles"
+    ), "Expected wrapped SteeringHandle child via get_wrapped_handles"
 
-    hnode = wchild.get("handle") or {}
-    assert (hnode.get("class") == "SteeringHandle") or (
-        (hnode.get("label") or "").endswith("SteeringHandle")
-    )
-
-    # The wrapped SteeringHandle should itself steer a deeper loop via task_info → Final_loop → ToyHandle
-    deep = _find_child(
-        hnode.get("children", []),
-        origin="task_info",
-        tool_name="Final_loop",
-    )
-    assert deep is not None, "Expected Final_loop task_info child under wrapped handle"
-    deep_h = deep.get("handle") or {}
-    assert (deep_h.get("class") == "ToyHandle") or (
-        (deep_h.get("label") or "").endswith("ToyHandle")
-    )
+    # The wrapped SteeringHandle should itself steer a deeper loop; its child must be ToyHandle
+    deep_child = None
+    for ch in wchild.get("children", []):
+        if (ch.get("handle") == "ToyHandle") or (ch.get("tool") == "ToyHandle"):
+            deep_child = ch
+            break
+    assert deep_child is not None, "Expected ToyHandle nested under SteeringHandle"
 
 
 @pytest.mark.asyncio
@@ -172,24 +163,22 @@ async def test_nested_structure_with_mixin_registration():
 
     s = await nested_structure_on(wrapped)
 
-    # Expect discovery via standard method from mixin
+    # Minimal structure: child node directly represents SteeringHandle
     wchild = None
     for ch in s.get("children", []):
-        if ch.get("origin") == "wrapper" and (ch.get("wrapper_attr") or "").startswith(
-            "get_wrapped_handles",
+        if (ch.get("handle") == "SteeringHandle") or (
+            ch.get("tool") == "SteeringHandle"
         ):
             wchild = ch
             break
-    assert wchild is not None, "Expected child discovered via mixin get_wrapped_handles"
+    assert (
+        wchild is not None
+    ), "Expected SteeringHandle child discovered via mixin get_wrapped_handles"
 
-    hnode = wchild.get("handle") or {}
-    assert (hnode.get("class") == "SteeringHandle") or (
-        (hnode.get("label") or "").endswith("SteeringHandle")
-    )
-
-    deep = _find_child(
-        hnode.get("children", []),
-        origin="task_info",
-        tool_name="Final_loop",
-    )
-    assert deep is not None, "Expected Final_loop child under wrapped handle"
+    # And nested ToyHandle under SteeringHandle
+    deep_child = None
+    for ch in wchild.get("children", []):
+        if (ch.get("handle") == "ToyHandle") or (ch.get("tool") == "ToyHandle"):
+            deep_child = ch
+            break
+    assert deep_child is not None, "Expected ToyHandle nested under SteeringHandle"

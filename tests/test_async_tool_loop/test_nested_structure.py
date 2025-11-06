@@ -142,9 +142,11 @@ class WrapperHandle(SteerableToolHandle):
         return None
 
 
-def _find_child(children: list[dict], tool_name: str) -> dict | None:
+def _find_child_by_handle(children: list[dict], handle_name: str) -> dict | None:
     for ch in children or []:
-        if ch.get("tool_name") == tool_name:
+        h = ch.get("handle")
+        t = ch.get("tool")
+        if h == handle_name or t == handle_name:
             return ch
     return None
 
@@ -195,14 +197,11 @@ async def test_nested_structure_reports_child_tool_and_handle():
 
         s = await outer.nested_structure()  # type: ignore[attr-defined]
         assert isinstance(s, dict)
-        ch = _find_child(s.get("children", []), "Outer_spawn")
-        assert ch is not None, "Expected Outer_spawn child in structure"
-        h = ch.get("handle") or {}
-        assert (h.get("class") == "ToyHandle") or (
-            (h.get("label") or "").endswith("ToyHandle")
-        )
-        assert ch.get("origin") == "task_info"
-        assert ch.get("state") in {"in_flight", "pending", "done"}
+        # Minimal format: direct child node for the returned handle
+        ch = _find_child_by_handle(s.get("children", []), "ToyHandle")
+        assert ch is not None, "Expected ToyHandle child in structure"
+        # Child should itself be a minimal node with no further children in this test
+        assert ch.get("handle") == "ToyHandle" or ch.get("tool") == "ToyHandle"
     finally:
         try:
             outer.stop("cleanup")
@@ -264,15 +263,12 @@ async def test_nested_structure_reports_deep_hierarchy_via_task_info():
         await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
 
         s = await outer.nested_structure()  # type: ignore[attr-defined]
-        first = _find_child(s.get("children", []), "Outer_spawn")
-        assert first is not None, "Expected Outer_spawn child"
-        inner_node = first.get("handle") or {}
-        deep = _find_child(inner_node.get("children", []), "Child_spawn")
-        assert deep is not None, "Expected Child_spawn nested under Outer_spawn handle"
-        deep_handle = deep.get("handle") or {}
-        assert (deep_handle.get("class") == "ToyHandle") or (
-            (deep_handle.get("label") or "").endswith("ToyHandle")
-        )
+        # First layer: NestedHandle
+        first = _find_child_by_handle(s.get("children", []), "NestedHandle")
+        assert first is not None, "Expected NestedHandle child"
+        # Second layer under NestedHandle: ToyHandle
+        deep = _find_child_by_handle(first.get("children", []), "ToyHandle")
+        assert deep is not None, "Expected ToyHandle nested under NestedHandle"
     finally:
         try:
             outer.stop("cleanup")
@@ -334,20 +330,15 @@ async def test_nested_structure_includes_wrapper_attribute_children():
         await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
 
         s = await outer.nested_structure()  # type: ignore[attr-defined]
-        first = _find_child(s.get("children", []), "Outer_spawn")
-        assert first is not None, "Expected Outer_spawn child"
-        inner_node = first.get("handle") or {}
-        wrapper_children = inner_node.get("children", [])
-        # Expect an entry discovered via standardized wrapper method
+        # First layer: WrapperHandle
+        first = _find_child_by_handle(s.get("children", []), "WrapperHandle")
+        assert first is not None, "Expected WrapperHandle child"
+        # The wrapper should expose ToyHandle as a nested live child
+        wrapper_children = first.get("children", [])
         assert any(
-            (c.get("origin") == "wrapper")
-            and str(c.get("wrapper_attr", "")).startswith("get_wrapped_handles")
-            and (
-                (c.get("handle") or {}).get("class") == "ToyHandle"
-                or (c.get("handle") or {}).get("label", "").endswith("ToyHandle")
-            )
+            (c.get("handle") == "ToyHandle") or (c.get("tool") == "ToyHandle")
             for c in wrapper_children
-        ), "Expected wrapper child pointing at ToyHandle via get_wrapped_handles"
+        ), "Expected ToyHandle child discovered via wrapper get_wrapped_handles"
     finally:
         try:
             outer.stop("cleanup")
