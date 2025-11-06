@@ -119,6 +119,11 @@ async def _main_async() -> None:
         "line to dictate via voice when --voice mode is active – type 'r' to record).  'quit' to exit.\n\n"
         "┌────────────────── accepted commands ─────────────────────┐\n"
         "│ r / free text   – freeform ask (web research)            │\n"
+        "│ web:add          – create a Website row                   │\n"
+        "│ web:update       – update an existing Website             │\n"
+        "│ web:delete       – delete a Website by name/host/id       │\n"
+        "│ web:filter       – filter Websites by boolean expression  │\n"
+        "│ web:search       – semantic search over notes             │\n"
         "│ save_project | sp – save project snapshot                │\n"
         "│ help | h         – show this help                        │\n"
         "└──────────────────────────────────────────────────────────┘\n"
@@ -170,6 +175,118 @@ async def _main_async() -> None:
                 print(f"💾 Project saved at commit {commit_hash}")
                 if args.voice:
                     _speak("Project saved")
+                continue
+
+            # ── Website management shortcuts (direct tool calls) ───────────
+            if raw.lower() == "web:add":
+                name = input("name>").strip()
+                host = input("host>").strip()
+                gated = input("gated (true/false)>").strip().lower() in {
+                    "1",
+                    "t",
+                    "true",
+                    "yes",
+                    "y",
+                }
+                subscribed = input("subscribed (true/false)>").strip().lower() in {
+                    "1",
+                    "t",
+                    "true",
+                    "yes",
+                    "y",
+                }
+                creds = input(
+                    "credentials (secret_ids comma-separated, optional)>",
+                ).strip()
+                credentials = (
+                    [int(x) for x in creds.split(",") if x.strip().isdigit()]
+                    if creds
+                    else None
+                )
+                notes = input("notes (optional)>").strip()
+                out = ws._create_website(
+                    name=name,
+                    host=host,
+                    gated=gated,
+                    subscribed=subscribed,
+                    credentials=credentials,
+                    notes=notes,
+                )
+                print(out)
+                continue
+
+            if raw.lower() == "web:update":
+                ident = input("identify by (id/host/name)>").strip().lower()
+                kwargs: Dict[str, object] = {}
+                if ident == "id":
+                    kwargs["website_id"] = int(input("website_id>").strip())
+                elif ident == "host":
+                    kwargs["match_host"] = input("host>").strip()
+                elif ident == "name":
+                    kwargs["match_name"] = input("name>").strip()
+                else:
+                    print("Unknown identifier; use id/host/name")
+                    continue
+                # collect updates (skip empties)
+                new_name = input("new name (optional)>").strip()
+                if new_name:
+                    kwargs["name"] = new_name
+                new_host = input("new host (optional)>").strip()
+                if new_host:
+                    kwargs["host"] = new_host
+                v = input("set gated? (true/false/skip)>").strip().lower()
+                if v in {"1", "t", "true", "yes", "y", "0", "f", "false", "no", "n"}:
+                    kwargs["gated"] = v in {"1", "t", "true", "yes", "y"}
+                v = input("set subscribed? (true/false/skip)>").strip().lower()
+                if v in {"1", "t", "true", "yes", "y", "0", "f", "false", "no", "n"}:
+                    kwargs["subscribed"] = v in {"1", "t", "true", "yes", "y"}
+                creds = input(
+                    "set credentials (comma-separated ids or blank to skip)>",
+                ).strip()
+                if creds:
+                    kwargs["credentials"] = [
+                        int(x) for x in creds.split(",") if x.strip().isdigit()
+                    ]
+                notes = input("new notes (optional)>").strip()
+                if notes:
+                    kwargs["notes"] = notes
+                out = ws._update_website(**kwargs)  # type: ignore[arg-type]
+                print(out)
+                continue
+
+            if raw.lower() == "web:delete":
+                ident = input("delete by (id/host/name)>").strip().lower()
+                kw: Dict[str, object] = {}
+                if ident == "id":
+                    kw["website_id"] = int(input("website_id>").strip())
+                elif ident == "host":
+                    kw["host"] = input("host>").strip()
+                elif ident == "name":
+                    kw["name"] = input("name>").strip()
+                else:
+                    print("Unknown identifier; use id/host/name")
+                    continue
+                print(ws._delete_website(**kw))
+                continue
+
+            if raw.lower() == "web:filter":
+                filt = input("filter expression (e.g., gated == True)").strip() or None
+                rows = ws._filter_websites(filter=filt)
+                for r in rows:
+                    print(
+                        f"- id={r.website_id} name={r.name!r} host={r.host!r} gated={r.gated} subscribed={r.subscribed}",
+                    )
+                continue
+
+            if raw.lower() == "web:search":
+                notes = input("semantic notes query>").strip()
+                k = input("k (default 5)>").strip()
+                kk = int(k) if k.isdigit() else 5
+                rows = ws._search_websites(notes=notes, k=kk)
+                for r in rows:
+                    print(
+                        f"- id={r.website_id} name={r.name!r} host={r.host!r} gated={r.gated} subscribed={r.subscribed}",
+                    )
                 continue
 
             kind, handle, _clar_up, _clar_down = await _dispatch(
