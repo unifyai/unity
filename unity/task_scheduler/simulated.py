@@ -268,11 +268,6 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
     @functools.wraps(BaseTaskScheduler.clear, updated=())
     def clear(self) -> None:
-        try:
-            # Reset the LLM's internal state (best-effort)
-            self._llm.reset_state()
-        except Exception:
-            pass
         # Rebuild and set the system message again to mirror initialisation
         from .types.task import Task as _Task  # local import to avoid cycles
 
