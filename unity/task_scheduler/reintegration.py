@@ -10,13 +10,14 @@ reconciles adjacent task state when the head changes.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Optional, Callable
 
 import unify
 
 from unity.common.tool_outcome import ToolOutcome
 
 from .types.status import Status
+from .types.schedule import Schedule
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -113,17 +114,18 @@ class ReintegrationManager:
             is_viable=self._is_viable,
         )
 
-        cur_sched: Dict[str, Any] = {
-            "prev_task": final_prev,
-            "next_task": final_next,
-        }
+        cur_sched = Schedule(
+            prev_task=final_prev,
+            next_task=final_next,
+        )
+
         plan_head_start = plan.head_start_at
         if final_prev is None:
             _head_ts = (
                 plan_head_start if plan_head_start is not None else original_start_at
             )
             if _head_ts is not None:
-                cur_sched["start_at"] = _head_ts
+                cur_sched.start_at = _head_ts
 
         # Determine the desired lifecycle using the central helper
         existing_status = (
@@ -132,7 +134,7 @@ class ReintegrationManager:
         desired_status = derive_status_after_queue_edit(
             existing_status=existing_status,
             is_head=(final_prev is None),
-            head_has_start_at=(cur_sched.get("start_at") is not None),
+            head_has_start_at=(cur_sched.start_at is not None),
         )
         # Avoid conflicting primed states when another task is already primed
         if (
@@ -156,7 +158,9 @@ class ReintegrationManager:
             task_id=tid,
             prev_task=final_prev,
             next_task=final_next,
-            head_start_at=(cur_sched.get("start_at") if final_prev is None else None),
+            head_start_at=(
+                cur_sched.start_at.isoformat() if final_prev is None else None
+            ),
             err_prefix=f"While reinstating task {tid}:",
         )
 
