@@ -236,13 +236,16 @@ class ManagersWorker:
 
     async def _publish_bus_event(self, event: Event) -> None:
         """Publish an event to the EventBus."""
-        event_dict = event.to_dict()["payload"]["event"]
-        event_name = event_dict["event_name"]
-        bus_event = Event.from_dict(event_dict).to_bus_event()
-        bus_event.payload.pop("api_key", None)
-        bus_event.payload.pop("message_id", None)
-        print("Publishing bus event", event_name)
-        await EVENT_BUS.publish(bus_event)
+        try:
+            event_dict = event.to_dict()["payload"]["event"]
+            event_name = event_dict["event_name"]
+            bus_event = Event.from_dict(event_dict).to_bus_event()
+            bus_event.payload.pop("api_key", None)
+            bus_event.payload.pop("message_id", None)
+            print("Publishing bus event", event_name)
+            await EVENT_BUS.publish(bus_event)
+        except Exception as e:
+            print(f"[ManagersWorker] Error publishing bus event: {e}")
 
     async def _log_message(self, event: LogMessageRequest) -> None:
         """Log a message via TranscriptManager."""
