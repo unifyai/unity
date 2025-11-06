@@ -453,7 +453,7 @@ class LocalTaskView:
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-        return_ids_only: Literal[False],
+        return_ids_only: Literal[False] = False,
         exclude_fields: Optional[List[str]] = None,
         include_fields: Optional[List[str]] = None,
     ) -> List[unify.Log]: ...
