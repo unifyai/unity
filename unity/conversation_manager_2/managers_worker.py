@@ -263,6 +263,8 @@ class ManagersWorker:
                 exchange_id = (
                     self._transcript_manager.log_first_message_in_new_exchange(
                         {
+                            "timestamp": timestamp,
+                            "content": content,
                             "medium": medium,
                             "sender_id": sender_id,
                             "receiver_ids": receiver_ids,
