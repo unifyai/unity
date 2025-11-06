@@ -15,6 +15,7 @@ from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.actions import (
     _send_sms_message_via_number,
     _send_email_via_address,
+    _send_unify_message,
     _start_call,
 )
 from unity.conversation_manager_2.state import ConversationManagerState
@@ -394,6 +395,10 @@ class ConversationManager:
                 elif action["action_name"] == "send_unify_message":
                     # Boss-only chat; contact id is always 1
                     content = action["message"]
+                    if not os.getenv("TEST"):
+                        res = await _send_unify_message(content)
+                    else:
+                        res = {"success": True}
                     event = UnifyMessageSent(contact=1, content=content)
                     await self.event_broker.publish(
                         "app:comms:unify_message_sent",
