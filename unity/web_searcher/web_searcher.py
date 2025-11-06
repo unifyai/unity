@@ -394,7 +394,38 @@ class WebSearcher(BaseWebSearcher):
         actor_entrypoint: Optional[int] = None,
         notes: str = "",
     ) -> ToolOutcome:
-        """Create a new Website row (unique by host)."""
+        """
+        Create a new `Website` row and persist it to the Websites catalog.
+
+        This tool registers a website of interest for the WebSearcher. The row is
+        unique by `host` (and also by `name`), and captures whether the site is
+        gated or subscription‑based, optional credential references, an optional
+        Actor function entrypoint for gated navigation, and free‑form notes that
+        inform routing and semantic search. Use this to onboard new sources that
+        future `ask` or `update` operations may reference via catalog tools.
+
+        Parameters
+        ----------
+        name : str
+            Human‑friendly display name for the website (unique across rows).
+        host : str
+            Canonical host/domain used as the uniqueness key (e.g., "example.com").
+        gated : bool
+            True when the source requires login or access steps beyond public pages.
+        subscribed : bool
+            True when access relies on an active paid subscription/license.
+        credentials : list[int] | None
+            Optional foreign‑key references to secrets storing login materials.
+        actor_entrypoint : int | None
+            Optional function id for an Actor entrypoint used to navigate the site.
+        notes : str
+            Free‑form operational notes; also used for semantic catalog search.
+
+        Returns
+        -------
+        ToolOutcome
+            A short outcome summary including the created host identifier.
+        """
         assert host, "host is required"
         assert (
             isinstance(name, str) and name.strip()
@@ -435,7 +466,31 @@ class WebSearcher(BaseWebSearcher):
         offset: int = 0,
         limit: int = 100,
     ) -> List[Website]:
-        """Filter Websites using a boolean expression (host, gated, etc.)."""
+        """
+        Return Website rows matching a boolean filter expression over columns.
+
+        Use this read‑only catalog tool to retrieve stored website records based
+        on attributes such as `host`, `name`, `gated`, `subscribed`, or
+        `website_id`. The `filter` argument accepts a concise boolean expression
+        with `==`, `!=`, `and`, and `or` over these fields. Results are paginated
+        with `offset` and `limit`. This does not perform web access; it only reads
+        the persisted Websites table to support configuration inspection and
+        validation within the tool loop.
+
+        Parameters
+        ----------
+        filter : str | None
+            Optional expression to constrain rows (e.g., "gated == true and subscribed == false").
+        offset : int
+            Number of rows to skip from the start of the result set.
+        limit : int
+            Maximum number of rows to return (default 100).
+
+        Returns
+        -------
+        list[Website]
+            Materialised Website models for downstream reasoning or display.
+        """
         normalized = normalize_filter_expr(filter)
         logs = unify.get_logs(
             context=self._websites_ctx,
@@ -470,7 +525,28 @@ class WebSearcher(BaseWebSearcher):
         notes: str,
         k: int = 10,
     ) -> List[Website]:
-        """Semantic search over Websites using the `notes` field (top-k)."""
+        """
+        Semantic similarity search over the Websites catalog using `notes` text.
+
+        Provide a short description of the desired source and this tool returns
+        the top‑k catalog rows whose `notes` are most semantically similar. This
+        is useful for routing (e.g., selecting which site to query) and for
+        quickly recalling previously added sources. It operates only on stored
+        metadata; it does not contact external websites. The `k` parameter bounds
+        the number of results returned.
+
+        Parameters
+        ----------
+        notes : str
+            Natural‑language description used as the search query.
+        k : int
+            Maximum number of similar rows to return (1–1000; default 10).
+
+        Returns
+        -------
+        list[Website]
+            Ranked subset of Website rows relevant to the provided description.
+        """
         if not isinstance(notes, str) or not notes.strip():
             return []
         rows = table_search_top_k(
@@ -573,7 +649,29 @@ class WebSearcher(BaseWebSearcher):
         host: Optional[str] = None,
         website_id: Optional[int] = None,
     ) -> ToolOutcome:
-        """Delete a single Website row identified by host or website_id."""
+        """
+        Delete a single `Website` row identified by `website_id`, `host`, or `name`.
+
+        Exactly one row must match the provided identifier(s); if none are found
+        this tool raises an error, and if multiple rows match it fails to avoid
+        accidental mass deletion. Use this to remove stale or incorrect catalog
+        entries from the Websites table. Deletions are permanent and affect only
+        the configuration store; they do not interact with external websites.
+
+        Parameters
+        ----------
+        name : str | None
+            Optional row selector by human‑friendly name (unique when present).
+        host : str | None
+            Optional row selector by canonical host/domain.
+        website_id : int | None
+            Optional selector by internal integer identifier.
+
+        Returns
+        -------
+        ToolOutcome
+            Outcome summary containing the identifier that was used for deletion.
+        """
         exprs: List[str] = []
         if name is not None:
             exprs.append(f"name == {name!r}")
