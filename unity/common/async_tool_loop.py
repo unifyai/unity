@@ -808,27 +808,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         return await nested_steer_on(self, spec)
 
     async def nested_structure(self) -> dict:
-        """Return a nested, read-only structure of all inner tool loops.
+        """Return a minimal nested, read-only structure of live child loops.
 
-        This discovers in-flight child handles and their descendants and
-        returns a recursive dictionary describing the current state.
+        Shape (per node):
+        - handle: class name of the handle (string)
+        - tool: canonical entrypoint label "Class.method" when available, else class name
+        - children: list of the same node shape for live (in-flight) nested handles only
 
-        The structure is implementation-agnostic and includes for each node:
-        - label: best-effort human-readable label (e.g., "Class.method(x123)")
-        - class: the handle's class name
-        - loop_id and log_label when available
-        - state: "in_flight", "done", or "unknown"
-        - children: list of child entries, each with:
-            - origin: "task_info" or "wrapper"
-            - tool_name (for task_info children) or a best-effort name for wrappers
-            - call_id (when known)
-            - is_passthrough (when known)
-            - state and a nested "handle" node when a child handle is present
-
-        Returns
-        -------
-        dict
-            A nested dictionary describing the hierarchy beneath this handle.
+        Notes
+        -----
+        - Non-steerable or pending base tool calls without an adopted handle are omitted.
+        - Completed child handles are omitted.
+        - Canonicalization strips leading "Simulated"/"Base" from class names.
         """
         return await nested_structure_on(self)
 
@@ -1988,49 +1979,54 @@ async def nested_structure_on(
     *,
     max_depth: Optional[int] = None,
 ) -> dict:
-    """Return a nested, read-only structure for any compatible handle.
+    """Return a minimal nested structure for any compatible handle.
 
-    Discovery strategy:
-    - Primary: traverse ``_task.task_info`` entries to find in-flight child
-      tool handles (tool name, call_id, is_passthrough, handle).
-    - Secondary: include common wrapper attributes ("_actor_handle",
-      "_current_handle") when they reference handle-like objects and are not
-      already discovered via ``task_info``.
-
-    Cycle-safe: maintains a visited set to avoid infinite loops in rare cases
-    where wrapper attributes or handles may reference parents.
-
-    Parameters
-    ----------
-    handle : Any
-        A tool-loop handle or handle-like object to introspect.
-    max_depth : int | None, optional
-        Optional max recursion depth; None means unlimited.
-
-    Returns
-    -------
-    dict
-        Nested dictionary describing the hierarchy beneath ``handle``.
+    Each node contains:
+      - handle: class name of the handle
+      - tool: canonical "Class.method" when available, else class name
+      - children: only live, steerable nested handles (pending/done omitted)
     """
 
-    def _best_label(h) -> str:
+    def _canon_cls(name: str) -> str:
         try:
-            return (
-                getattr(h, "_log_label", None)
-                or getattr(h, "_loop_id", None)
-                or getattr(getattr(h, "__class__", object), "__name__", "handle")
-            )
+            s = str(name or "")
         except Exception:
-            return "handle"
+            s = str(name)
+        if s.startswith("Simulated") and len(s) > 9:
+            return s[9:]
+        if s.startswith("Base") and len(s) > 4:
+            return s[4:]
+        return s
 
-    def _state_of(h) -> str:
+    def _tool_of(h) -> str | None:
+        # Prefer stable loop_id set by starters (e.g., "ContactManager.ask")
         try:
-            d = h.done() if hasattr(h, "done") else None
-            if isinstance(d, bool):
-                return "done" if d else "in_flight"
-            return "unknown"
+            raw = getattr(h, "_loop_id", None) or ""
         except Exception:
-            return "unknown"
+            raw = ""
+        base = str(raw).split("(", 1)[0]
+        if "." in base:
+            cls, meth = base.split(".", 1)
+            return f"{_canon_cls(cls)}.{meth}"
+        # Fallback to canonicalized class name
+        try:
+            cls_name = _canon_cls(
+                getattr(getattr(h, "__class__", object), "__name__", ""),
+            )
+            return cls_name or None
+        except Exception:
+            return None
+
+    def _is_live(child) -> bool:
+        try:
+            if hasattr(child, "done"):
+                d = child.done()
+                if isinstance(d, bool):
+                    return not d
+        except Exception:
+            pass
+        # If we cannot determine, treat as live to allow traversal
+        return True
 
     async def _walk(h, depth: int, visited: set[int]) -> dict:
         try:
@@ -2039,22 +2035,16 @@ async def nested_structure_on(
             hid = None
         if hid is not None and hid in visited:
             return {
-                "label": _best_label(h),
-                "class": getattr(h, "__class__", object).__name__,
-                "loop_id": getattr(h, "_loop_id", None),
-                "log_label": getattr(h, "_log_label", None),
-                "state": "cycle",
+                "handle": getattr(h, "__class__", object).__name__,
+                "tool": _tool_of(h),
                 "children": [],
             }
         if hid is not None:
             visited.add(hid)
 
         node: dict = {
-            "label": _best_label(h),
-            "class": getattr(h, "__class__", object).__name__,
-            "loop_id": getattr(h, "_loop_id", None),
-            "log_label": getattr(h, "_log_label", None),
-            "state": _state_of(h),
+            "handle": getattr(h, "__class__", object).__name__,
+            "tool": _tool_of(h),
             "children": [],
         }
 
@@ -2070,28 +2060,15 @@ async def nested_structure_on(
         if isinstance(task_info, dict) and task_info:
             for meta in list(task_info.values()):
                 try:
-                    name = getattr(meta, "name", None)
-                    call_id = getattr(meta, "call_id", None)
-                    is_passthrough = bool(getattr(meta, "is_passthrough", False))
                     child = getattr(meta, "handle", None)
                 except Exception:
-                    name, call_id, is_passthrough, child = None, None, False, None
-
-                entry: dict = {
-                    "origin": "task_info",
-                    "tool_name": name,
-                    "call_id": call_id,
-                    "is_passthrough": is_passthrough,
-                }
-                if child is not None:
-                    with suppress(Exception):
-                        seen_child_ids.add(id(child))
-                    nested = await _walk(child, depth + 1, visited)
-                    entry["handle"] = nested
-                    entry["state"] = nested.get("state", "unknown")
-                else:
-                    entry["state"] = "pending"
-                node["children"].append(entry)
+                    child = None
+                if child is None or not _is_live(child):
+                    continue
+                with suppress(Exception):
+                    seen_child_ids.add(id(child))
+                nested = await _walk(child, depth + 1, visited)
+                node["children"].append(nested)
 
         # Wrapper discovery via standardized helper
         try:
@@ -2107,8 +2084,8 @@ async def nested_structure_on(
             except Exception:
                 pairs = []
 
-            for src, child in pairs:
-                if child is None:
+            for _src, child in pairs:
+                if child is None or not _is_live(child):
                     continue
                 try:
                     cid = id(child)
@@ -2117,17 +2094,8 @@ async def nested_structure_on(
                     seen_child_ids.add(cid)
                 except Exception:
                     pass
-
                 nested = await _walk(child, depth + 1, visited)
-                entry = {
-                    "origin": "wrapper",
-                    "wrapper_attr": str(src),
-                    "tool_name": nested.get("label")
-                    or getattr(child, "__class__", object).__name__,
-                    "state": nested.get("state", "unknown"),
-                    "handle": nested,
-                }
-                node["children"].append(entry)
+                node["children"].append(nested)
 
         return node
 
