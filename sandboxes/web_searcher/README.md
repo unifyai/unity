@@ -50,6 +50,11 @@ Once the sandbox starts you will see a prompt and a small help table. Important 
 
 * `r` (voice mode only) Record a one‑off voice query.
 * free text           Any input is routed to `ask` (web research). If clarification is needed, the sandbox will prompt you and forward your answer back to the running call.
+* `web:add`          Create a Website (prompts for name, host, gated, subscribed, credentials, notes).
+* `web:update`       Update an existing Website (identify by id/host/name; prompts for fields).
+* `web:delete`       Delete a Website by id/host/name.
+* `web:filter`       Boolean filter over Websites (e.g., `gated == True`).
+* `web:search`       Semantic search over Websites by `notes` (top‑k).
 * `save_project` / `sp` Save the current Unify project snapshot so you can roll back later.
 * `help` / `h`        Show the in‑session command reference.
 * `quit`              Exit the sandbox.
@@ -66,6 +71,42 @@ WebSearcher sandbox – type queries below …
 
 What changed in Q1 2025 for vector databases?
 [ask] → (final answer with inline citations)
+
+# Create a Website row
+web:add
+name> Medium
+host> medium.com
+gated (true/false)> true
+subscribed (true/false)> true
+credentials (secret_ids comma-separated, optional)> 101,102
+notes (optional)> Tech journalism; paywalled reading list
+{'outcome': 'website created', 'details': {'host': 'medium.com'}}
+
+# Update an existing row
+web:update
+identify by (id/host/name)> host
+host> medium.com
+new name (optional)> Medium (Personal)
+new host (optional)>
+set gated? (true/false/skip)> true
+set subscribed? (true/false/skip)> true
+set credentials (comma-separated ids or blank to skip)>
+new notes (optional)> Focus on subscriptions and saved lists
+{'outcome': 'website updated', 'details': {...}}
+
+# Filter rows
+web:filter
+filter expression (e.g., gated == True)gated == True
+- id=3 name='Medium (Personal)' host='medium.com' gated=True subscribed=True
+
+# Semantic notes search
+web:search
+semantic notes query> subscription sources for ML news
+k (default 5)> 3
+- id=3 name='Medium (Personal)' host='medium.com' gated=True subscribed=True
+
+Login to my Medium subscription article and summarize
+[ask] → (resolves Website and uses _search_gated_website)
 ```
 
 Logging and debugging
