@@ -126,34 +126,20 @@ class TasksStore:
         limit: int = 100,
         return_ids_only: bool = False,
         exclude_fields: Optional[List[str]] = None,
+        include_fields: Optional[List[str]] = None,
     ) -> Union[List[int], List[unify.Log]]:
+        assert (
+            include_fields or exclude_fields
+        ), "Either include_fields or exclude_fields must be provided"
         return unify.get_logs(
             context=self._ctx,
             filter=filter,
             offset=offset,
             limit=limit,
             return_ids_only=return_ids_only,
-            exclude_fields=exclude_fields or [],
+            exclude_fields=exclude_fields,
+            from_fields=include_fields,
         )
-
-    def get_entries(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-        exclude_fields: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        return [
-            log.entries
-            for log in self.get_rows(
-                filter=filter,
-                offset=offset,
-                limit=limit,
-                return_ids_only=False,
-                exclude_fields=exclude_fields,
-            )
-        ]
 
     def get_logs_by_task_ids(
         self,
@@ -458,6 +444,7 @@ class LocalTaskView:
         limit: int = 100,
         return_ids_only: Literal[True],
         exclude_fields: Optional[List[str]] = None,
+        include_fields: Optional[List[str]] = None,
     ) -> List[int]: ...
 
     @overload
@@ -469,6 +456,7 @@ class LocalTaskView:
         limit: int = 100,
         return_ids_only: Literal[False],
         exclude_fields: Optional[List[str]] = None,
+        include_fields: Optional[List[str]] = None,
     ) -> List[unify.Log]: ...
 
     def get_rows(
@@ -479,6 +467,7 @@ class LocalTaskView:
         limit: int = 100,
         return_ids_only: bool = False,
         exclude_fields: Optional[List[str]] = None,
+        include_fields: Optional[List[str]] = None,
     ) -> Union[List[int], List[unify.Log]]:
         """
         Pass-through to the underlying store for general row retrieval.
@@ -491,27 +480,6 @@ class LocalTaskView:
             offset=offset,
             limit=limit,
             return_ids_only=return_ids_only,
-            exclude_fields=exclude_fields,
-        )
-
-    def get_entries(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-        exclude_fields: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Pass-through to the underlying store for entry dictionaries.
-
-        Exists here so that TaskScheduler and helpers route all generic reads
-        through LocalTaskView for consistency and easier optimisation later.
-        """
-        return self._store.get_entries(
-            filter=filter,
-            offset=offset,
-            limit=limit,
             exclude_fields=exclude_fields,
         )
 
@@ -600,7 +568,7 @@ class LocalTaskView:
     def rebuild_queue_index(self) -> None:
         """Fetch minimal rows from storage and rebuild the queue index."""
         try:
-            rows = self._store.get_entries(
+            rows = self._store.get_rows(
                 filter=(
                     "schedule is not None and "
                     "status not in ('completed','cancelled','failed')"
@@ -608,7 +576,7 @@ class LocalTaskView:
             )
         except Exception:
             rows = []
-        self.refresh_queue_index_from_rows([Task(**r) for r in rows])
+        self.refresh_queue_index_from_rows([Task(**r.entries) for r in rows])
 
     def get_member_ids(self, queue_id: int) -> List[int]:
         try:
