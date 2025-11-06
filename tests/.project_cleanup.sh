@@ -182,20 +182,26 @@ if (( ! ASSUME_YES )); then
   esac
 fi
 
-deleted=0
-failed=0
-for m in "${matches[@]}"; do
-  IFS=$'\t' read -r proj_id proj_name <<<"$m"
+CONCURRENCY="${CONCURRENCY:-8}"
+tmp_results="$(mktemp)"
+# Extend the existing trap to also clean up tmp_results
+trap 'rm -f "$tmp_matches" "$tmp_results"' EXIT
+
+# Fire deletions concurrently; one record per job, capture output for summary
+printf '%s\0' "${matches[@]}" \
+| UNIFY_KEY="$UNIFY_KEY" API_BASE="$API_BASE" xargs -0 -n1 -P "$CONCURRENCY" bash -c '
+  IFS=$'"'\t'"' read -r proj_id proj_name <<<"$1"
   if curl -sS -f -X DELETE \
        -H "Authorization: Bearer $UNIFY_KEY" \
        "$API_BASE/project/$proj_id" >/dev/null; then
-    echo "Deleted: $proj_id ($proj_name)"
-    ((deleted++))
+    printf "Deleted: %s (%s)\n" "$proj_id" "$proj_name"
   else
-    echo "Failed:  $proj_id ($proj_name)" >&2
-    ((failed++))
+    printf "Failed:  %s (%s)\n" "$proj_id" "$proj_name" >&2
+    exit 1
   fi
-  sleep 0.05
-done
+' _ \
+2>&1 | tee -a "$tmp_results"
 
+deleted=$(grep -c '^Deleted:' "$tmp_results" || true)
+failed=$(grep -c '^Failed:' "$tmp_results" || true)
 echo "Done. Deleted=$deleted Failed=$failed"
