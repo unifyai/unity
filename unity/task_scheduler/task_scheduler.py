@@ -785,10 +785,7 @@ class TaskScheduler(BaseTaskScheduler):
         )
 
         # Clone if this is a triggerable or recurring task
-        if (
-            self._to_status(task_row.status) == Status.triggerable
-            or task_row.repeat is not None
-        ):
+        if task_row.status == Status.triggerable or task_row.repeat is not None:
             self._clone_task_instance(task_row)
 
         # Promote status to active (and record the activation reason) and clear the primed pointer if needed
@@ -1387,8 +1384,7 @@ class TaskScheduler(BaseTaskScheduler):
                     try:
                         primed_exists = (
                             self._primed_task is not None
-                            and self._to_status(self._primed_task.status)
-                            == Status.primed
+                            and self._primed_task.status == Status.primed
                         )
                     except Exception:
                         primed_exists = False
@@ -2178,8 +2174,7 @@ class TaskScheduler(BaseTaskScheduler):
             seen.add(cur.task_id)
 
             # Strip stale activation metadata on non-active rows
-            _row = self._sanitize_activation(cur.model_dump())
-            ordered.append(Task(**_row))
+            ordered.append(self._sanitize_activation_task(cur))
 
             nxt = cur.schedule_next
             if nxt is None:
@@ -2198,24 +2193,21 @@ class TaskScheduler(BaseTaskScheduler):
         """
         # Locate the starting row
         try:
-            cur_row = self._get_single_row_or_raise(task_id)
+            current_task = self._get_single_row_or_raise(task_id)
         except Exception:
             return []
 
         # Walk to head using prev_task pointers
-        head = cur_row
-        try:
-            while head is not None:
-                prev_id = head.schedule_prev
-                if prev_id is None:
-                    break
-                prev_rows = self._filter_tasks(
-                    filter=f"task_id == {prev_id}",
-                    limit=1,
-                )
-                head = prev_rows[0] if prev_rows else None
-        except Exception:
-            pass
+        head = current_task
+        while head is not None:
+            prev_id = head.schedule_prev
+            if prev_id is None:
+                break
+            prev_task = self._filter_tasks(
+                filter=f"task_id == {prev_id}",
+                limit=1,
+            )
+            head = prev_task[0] if prev_task else None
 
         if head is None:
             return []
@@ -2225,19 +2217,18 @@ class TaskScheduler(BaseTaskScheduler):
         node: Task | None = head
         seen: set[int] = set()
         while node is not None:
-            tid = node.task_id
-            if tid is not None and tid in seen:
+            task_id = node.task_id
+            if task_id is not None and task_id in seen:
                 break
-            if tid is not None:
-                seen.add(tid)
+            if task_id is not None:
+                seen.add(task_id)
             # Strip stale activation metadata on non-active rows
-            _row = self._sanitize_activation(dict(node))
-            ordered.append(Task(**_row))
-            nxt_id = node.schedule_next
-            if nxt_id is None:
+            ordered.append(self._sanitize_activation_task(node))
+            next_id = node.schedule_next
+            if next_id is None:
                 break
-            nxt_rows = self._filter_tasks(filter=f"task_id == {nxt_id}", limit=1)
-            node = nxt_rows[0] if nxt_rows else None
+            next_task = self._filter_tasks(filter=f"task_id == {next_id}", limit=1)
+            node = next_task[0] if next_task else None
 
         return ordered
 
@@ -2492,8 +2483,9 @@ class TaskScheduler(BaseTaskScheduler):
         missing = [tid for tid in block if tid not in ids_found]
         assert not missing, f"Unknown task ids: {missing}"
         for r in rows:
-            st = self._to_status(r.status)
-            assert st not in self._TERMINAL_STATUSES, f"Task {r.task_id} is terminal"
+            assert (
+                r.status not in self._TERMINAL_STATUSES
+            ), f"Task {r.task_id} is terminal"
             if r.trigger is not None:
                 raise ValueError(
                     f"Task {r.task_id} is trigger-based and cannot be placed in the queue.",
@@ -2525,14 +2517,14 @@ class TaskScheduler(BaseTaskScheduler):
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
         # Keep monotonic allocator in sync when caller specifies a higher id
         try:
-            if isinstance(target_qid, int):
+            if target_qid is not None:
                 self._view.sync_max_queue_id_seen(int(target_qid))
         except Exception:
             pass
 
         # Build target queue's existing order once (prefer local index)
         try:
-            if isinstance(target_qid, int):
+            if target_qid is not None:
                 tgt_existing = list(self._view.get_member_ids(int(target_qid)) or [])
             else:
                 tgt_existing = []
@@ -2559,7 +2551,7 @@ class TaskScheduler(BaseTaskScheduler):
             for q in (source_qid_by_tid.get(int(t)) for t in block)
             if isinstance(q, int)
         }
-        if isinstance(target_qid, int) and target_qid in source_qids:
+        if target_qid is not None and target_qid in source_qids:
             source_qids.discard(int(target_qid))
 
         def _current_order_for(qid: int) -> List[int]:
@@ -2814,10 +2806,7 @@ class TaskScheduler(BaseTaskScheduler):
                 if (not is_head) and derived_status == Status.primed:
                     derived_status = Status.queued
                 # Only include status when it actually changes and is not 'active'
-                try:
-                    if self._to_status(existing_status) != self._to_status(derived_status):  # type: ignore[arg-type]
-                        write_entries["status"] = derived_status
-                except Exception:
+                if existing_status != derived_status:
                     write_entries["status"] = derived_status
 
             # Skip no-op writes when the current row already matches the desired state
@@ -2831,12 +2820,7 @@ class TaskScheduler(BaseTaskScheduler):
                 )
                 same_qid = cur_qid == target_qid
                 if "status" in write_entries:
-                    desired_st = self._to_status(write_entries["status"])  # type: ignore[arg-type]
-                    try:
-                        cur_st = self._to_status(cur_status)  # type: ignore[arg-type]
-                    except Exception:
-                        cur_st = cur_status
-                    same_status = cur_st == desired_st
+                    same_status = cur_status == write_entries["status"]
                 else:
                     # When active, we never change status in this call
                     same_status = True
@@ -2917,7 +2901,7 @@ class TaskScheduler(BaseTaskScheduler):
         Apply multiple schedule edits atomically with graph validation.
 
         Each item: {"task_id": int, "schedule": {"queue_id": int | None,
-        "prev_task": int | None, "next_task": int | None, "start_at"?: str}}
+        "prev_task": int | None, "next_task": int | None, "start_at": str}}
 
         Validation:
         - All referenced tasks must exist and be non-terminal/non-active.
@@ -3062,7 +3046,7 @@ class TaskScheduler(BaseTaskScheduler):
                 **({"queue_id": int(top_qid)} if isinstance(top_qid, int) else {}),
             }
             try:
-                if self._to_status(existing_status) != self._to_status(desired_status):  # type: ignore[arg-type]
+                if existing_status != self._to_status(desired_status):  # type: ignore[arg-type]
                     entries["status"] = desired_status
             except Exception:
                 entries["status"] = desired_status
@@ -4542,5 +4526,14 @@ class TaskScheduler(BaseTaskScheduler):
             if str(row.get("status")) != str(Status.active):
                 row.pop("activated_by", None)
         return row
+
+    def _sanitize_activation_task(self, task: Task) -> Task:
+        """
+        Drop `activated_by` unless the row is currently active to keep
+        payloads clean and Pydantic construction predictable.
+        """
+        if task.status != Status.active:
+            task.activated_by = None
+        return task
 
     # Steering intent classifier moved to ActiveTask.classify_steering_intent

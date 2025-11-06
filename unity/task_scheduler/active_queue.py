@@ -784,19 +784,6 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                     )
         return
 
-    async def _route_interjection_llm(
-        self,
-        *,
-        queue_rows: list[dict],
-        message: str,
-    ) -> tuple[list[dict], bool]:
-        # Backwards-compat wrapper; delegate to helper
-        return await _InterjectionRouter.route(
-            queue_rows=queue_rows,
-            message=message,
-            current_task_id=self._current_task_id,
-        )
-
     def stop(self, *, cancel: bool = False, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
         try:
             return self._current_handle.stop(cancel=cancel, reason=reason)
