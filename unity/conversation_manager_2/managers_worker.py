@@ -18,6 +18,7 @@ from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.events.event_bus import EVENT_BUS
 from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.transcript_manager.types.message import UNASSIGNED
 from unity.conversation_manager_2.new_events import *
 from unity.conductor.conductor import Conductor
 from unity.common.async_tool_loop import SteerableToolHandle
@@ -258,6 +259,16 @@ class ManagersWorker:
             metadata = getattr(event, "metadata", None)
 
             # Log the message
+            if exchange_id == UNASSIGNED:
+                exchange_id = (
+                    self._transcript_manager.log_first_message_in_new_exchange(
+                        {
+                            "medium": medium,
+                            "sender_id": sender_id,
+                            "receiver_ids": receiver_ids,
+                        },
+                    )
+                )
             messages = self._transcript_manager.log_messages(
                 {
                     "medium": medium,
