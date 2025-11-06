@@ -729,36 +729,30 @@ class LocalTaskView:
 
         if not return_ids_only:
             logs = self._store.get_logs_by_task_ids(
-                task_ids=ids_list if not singular else ids_list[0],
+                task_ids=ids_list,
                 return_ids_only=False,
             )
             # Opportunistically memoize task_id -> log_id
-            try:
-                for lg in logs or []:
-                    try:
-                        e = getattr(lg, "entries", {}) or {}
-                        tid = e.get("task_id")
-                        lid = getattr(lg, "id", None)
-                        if isinstance(tid, int) and isinstance(lid, int):
-                            self.cache_log_id(task_id=int(tid), log_id=int(lid))
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+            for lg in logs:
+                try:
+                    e = lg.entries
+                    tid = e.get("task_id")
+                    lid = lg.id
+                    if tid is not None and lid is not None:
+                        self.cache_log_id(task_id=tid, log_id=lid)
+                except Exception:
+                    continue
             return logs
 
         # return_ids_only=True path
         resolved_by_tid: Dict[int, int] = {}
         missing: List[int] = []
         for tid in ids_list:
-            try:
-                lid = self._task_log_id_cache.get(int(tid))
-                if isinstance(lid, int):
-                    resolved_by_tid[int(tid)] = int(lid)
-                else:
-                    missing.append(int(tid))
-            except Exception:
-                continue
+            lid = self._task_log_id_cache.get(int(tid))
+            if lid is not None:
+                resolved_by_tid[int(tid)] = int(lid)
+            else:
+                missing.append(int(tid))
 
         if missing:
             try:
@@ -768,21 +762,21 @@ class LocalTaskView:
                 )
             except Exception:
                 logs = []
-            for lg in logs or []:
+            for lg in logs:
                 try:
-                    e = getattr(lg, "entries", {}) or {}
+                    e = lg.entries
                     tid = e.get("task_id")
-                    lid = getattr(lg, "id", None)
-                    if isinstance(tid, int) and isinstance(lid, int):
-                        resolved_by_tid[int(tid)] = int(lid)
-                        self.cache_log_id(task_id=int(tid), log_id=int(lid))
+                    lid = lg.id
+                    if tid is not None and lid is not None:
+                        resolved_by_tid[tid] = lid
+                        self.cache_log_id(task_id=tid, log_id=lid)
                 except Exception:
                     continue
 
         out: List[int] = []
         for tid in ids_list:
             lid = resolved_by_tid.get(int(tid))
-            if isinstance(lid, int):
+            if lid is not None:
                 out.append(int(lid))
         return out
 
