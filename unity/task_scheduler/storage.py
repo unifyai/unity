@@ -208,7 +208,6 @@ class TasksStore:
         *,
         logs: Union[int, unify.Log, List[Union[int, unify.Log]]],
         entries: Union[Dict[str, Any], List[Dict[str, Any]]],
-        overwrite: bool = True,
     ) -> Dict[str, str]:
         def _norm(v: Any) -> Any:
             # Normalize enums to their underlying values
@@ -481,6 +480,7 @@ class LocalTaskView:
             limit=limit,
             return_ids_only=return_ids_only,
             exclude_fields=exclude_fields,
+            include_fields=include_fields,
         )
 
     # ----------------------------- Queue index -----------------------------
