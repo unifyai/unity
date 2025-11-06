@@ -26,6 +26,8 @@ from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
+from ..blacklist_manager.blacklist_manager import BlackListManager
+from ..transcript_manager.types.message import Medium
 
 # Module delegations (split helpers)
 from .storage import (
@@ -141,6 +143,7 @@ class ContactManager(BaseContactManager):
                 self._create_custom_column,
                 self._delete_custom_column,
                 self._merge_contacts,
+                self._move_to_blacklist,
                 include_class_name=False,
             ),
         }
@@ -867,6 +870,122 @@ class ContactManager(BaseContactManager):
             contact_id_2=contact_id_2,
             overrides=overrides,
         )
+
+    def _move_to_blacklist(
+        self,
+        *,
+        contact_id: int,
+        reason: str,
+    ) -> ToolOutcome:
+        """
+        Add all non-empty contact details for the specified contact to the blacklist.
+
+        For each available detail:
+        - email_address → one blacklist entry with ``medium == email``.
+        - phone_number → two entries with ``medium == sms_message`` and ``phone_call``.
+        - whatsapp_number → two entries with ``medium == whatsapp_message`` and ``whatsapp_call``.
+
+        The blacklist reason is standardised as a concise summary of the contact followed by the cause:
+        - ``"{first_name}, {surname}, {bio}, moved to blacklist due to {reason}"`` with missing parts omitted and no stray commas.
+
+        Additionally, this tool deletes the contact from the Contacts table once the blacklist entries
+        have been created. When no details exist to blacklist, the contact is still deleted as part of
+        the move operation.
+
+        Returns
+        -------
+        ToolOutcome
+            ``{"outcome": "contact details moved to blacklist", "details": {"contact_id": <int>, "blacklist_ids": [<int>, ...]}}``.
+
+        Raises
+        ------
+        ValueError
+            If the contact cannot be found.
+        """
+        # Fetch the contact row (public fields only)
+        rows = unify.get_logs(
+            context=self._ctx,
+            filter=f"contact_id == {int(contact_id)}",
+            limit=1,
+            from_fields=self._allowed_fields(),
+        )
+        if not rows:
+            raise ValueError(
+                f"No contact found with contact_id {contact_id} to move to blacklist.",
+            )
+        ent = rows[0].entries
+
+        first = (ent.get("first_name") or "").strip()
+        last = (ent.get("surname") or "").strip()
+        bio = (ent.get("bio") or "").strip()
+        parts = [p for p in (first, last, bio) if p]
+        head = ", ".join(parts)
+        suffix = f"moved to blacklist due to {reason}"
+        bl_reason = f"{head}, {suffix}" if head else suffix
+
+        # Build detail → media pairs
+        detail_media: list[tuple[str, Medium]] = []
+        email = (ent.get("email_address") or "").strip()
+        if email:
+            detail_media.append((email, Medium.EMAIL))
+        phone = (ent.get("phone_number") or "").strip()
+        if phone:
+            detail_media.append((phone, Medium.SMS_MESSAGE))
+            detail_media.append((phone, Medium.PHONE_CALL))
+        whatsapp = (ent.get("whatsapp_number") or "").strip()
+        if whatsapp:
+            detail_media.append((whatsapp, Medium.WHATSAPP_MSG))
+            detail_media.append((whatsapp, Medium.WHATSAPP_CALL))
+
+        if not detail_media:
+            # Even when no details exist, delete the contact as part of the move
+            try:
+                _op_delete(self, contact_id=contact_id, _log_id=None)
+            except Exception:
+                # Best-effort delete; surface original outcome regardless
+                pass
+            return {
+                "outcome": "no contact details to blacklist",
+                "details": {"contact_id": int(contact_id), "blacklist_ids": []},
+            }
+
+        blm = BlackListManager()
+        created_ids: list[int] = []
+
+        # Best-effort de-duplication per (medium, contact_detail)
+        for detail, med in detail_media:
+            existing = blm.filter_blacklist(
+                filter=f"medium == '{med.value}' and contact_detail == '{detail}'",
+                limit=1,
+            )["entries"]
+            if existing:
+                # Skip creating duplicates
+                try:
+                    created_ids.append(int(existing[0].blacklist_id))
+                except Exception:
+                    pass
+                continue
+
+            res = blm.create_blacklist_entry(
+                medium=med,
+                contact_detail=detail,
+                reason=bl_reason,
+            )
+            try:
+                created_ids.append(int(res["details"]["blacklist_id"]))
+            except Exception:
+                pass
+
+        # Finally, delete the original contact
+        try:
+            _op_delete(self, contact_id=contact_id, _log_id=None)
+        except Exception:
+            pass
+
+        return {
+            "outcome": "contact details moved to blacklist",
+            "details": {"contact_id": int(contact_id), "blacklist_ids": created_ids},
+        }
 
     def _create_custom_column(
         self,
