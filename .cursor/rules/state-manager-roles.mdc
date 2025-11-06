@@ -178,6 +178,13 @@ Use this to decide which manager to call, what each owns, and where its jurisdic
   - **Steered by**: Offline scheduler/controller (outside live chat orchestration).
   - **Steers**: `ContactManager.update`, `KnowledgeManager.update` (to persist distilled facts from transcripts).
 
+### EventBus
+- **Role**: Cross‑cutting, in‑process publish/subscribe backbone and searchable event log used by all managers for telemetry and coordination.
+- **Scope**: Managers publish structured events (notably `ManagerMethod` for incoming/outgoing `ask`/`update`/`execute`) via a thin logging wrapper; the bus supports `publish`, `search` (filterable queries), `join_published`/`join_callbacks` for deterministic flushing, per‑type window sizing, auto‑pinning, and callback registration.
+- **Connections**:
+  - **Steered by**: All public manager methods (through the logging decorator) and other components that emit operational events.
+  - **Steers**: `MemoryManager` (registers callbacks to react to message and `ManagerMethod` events for maintenance workflows); tests and higher‑level orchestrators query the bus to observe recent activity.
+
 ### Precedence and source of truth
 - **Code is canonical**: This guide is descriptive. If the implementation ever contradicts these descriptions or relationships, the current code takes precedence.
 - **Keep in sync**: As managers evolve, update this document alongside changes to cross‑manager wiring, public surfaces, or prompt composition so it remains accurate.
