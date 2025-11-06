@@ -1042,7 +1042,6 @@ class TaskScheduler(BaseTaskScheduler):
         result = self._write_log_entries(
             logs=log_objs[0].id,
             entries=entries,
-            overwrite=True,
         )
         # Auto-clear reintegration plan on completion/failed to avoid stale replay.
         # Intentionally keep the plan on 'cancelled' so callers can reinstate
@@ -3567,7 +3566,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         log_ids = self._get_logs_by_task_ids(task_ids=task_ids)
         entries: Dict[str, Any] = {"status": new_status}
-        return self._write_log_entries(logs=log_ids, entries=entries, overwrite=True)
+        return self._write_log_entries(logs=log_ids, entries=entries)
 
     def _update_task(
         self,
@@ -3788,7 +3787,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
         else:
             log_id = self._get_logs_by_task_ids(task_ids=task_id)
-            return self._write_log_entries(logs=log_id, entries=entries, overwrite=True)
+            return self._write_log_entries(logs=log_id, entries=entries)
 
     def _update_task_instance(
         self,
@@ -3857,7 +3856,6 @@ class TaskScheduler(BaseTaskScheduler):
         result = self._write_log_entries(
             logs=log_to_update.id,
             entries=entries_to_write,
-            overwrite=True,
         )
 
         if "status" in entries_to_write:
@@ -4085,13 +4083,12 @@ class TaskScheduler(BaseTaskScheduler):
         *,
         logs: Union[int, "unify.Log", List[Union[int, "unify.Log"]]],
         entries: Dict[str, Any],
-        overwrite: bool = True,
     ) -> Dict[str, str]:
         """
         Centralised adapter for log writes. Keeps all mutation calls going
         through one place in the scheduler.
         """
-        return self._view.write_entries(logs=logs, entries=entries, overwrite=overwrite)
+        return self._view.write_entries(logs=logs, entries=entries)
 
     # ------------------------------------------------------------------ #
     #  (removed) checkpoint persistence                                   #

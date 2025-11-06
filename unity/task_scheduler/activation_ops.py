@@ -143,7 +143,6 @@ def detach_from_queue_for_activation(
         scheduler._view.write_entries(  # type: ignore[attr-defined]
             logs=_log_id(log_or_id),
             entries=entries,
-            overwrite=True,
         )
 
     # Always record a reintegration plan for precise restore on defer stop,

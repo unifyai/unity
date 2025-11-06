@@ -217,7 +217,6 @@ async def test_summary_on_stop_defer(monkeypatch):
             ts._write_log_entries(
                 logs=log_ids[0],
                 entries={"info": MOCK_SUMMARY},
-                overwrite=True,
             )
 
     # Verify the data in the store

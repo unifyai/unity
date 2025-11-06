@@ -128,9 +128,6 @@ class TasksStore:
         exclude_fields: Optional[List[str]] = None,
         include_fields: Optional[List[str]] = None,
     ) -> Union[List[int], List[unify.Log]]:
-        assert (
-            include_fields or exclude_fields
-        ), "Either include_fields or exclude_fields must be provided"
         return unify.get_logs(
             context=self._ctx,
             filter=filter,
@@ -906,7 +903,6 @@ class LocalTaskView:
         *,
         logs: Union[int, unify.Log, List[Union[int, unify.Log]]],
         entries: Union[Dict[str, Any], List[Dict[str, Any]]],
-        overwrite: bool = True,
     ) -> Dict[str, str]:
         """
         Pass-through write with light cache maintenance.
@@ -929,7 +925,7 @@ class LocalTaskView:
         except Exception:
             touches_lifecycle = True
 
-        result = self._store.update(logs=logs, entries=entries, overwrite=overwrite)
+        result = self._store.update(logs=logs, entries=entries)
 
         if touches_lifecycle:
             # We do not try to micro-update here; the caller can provide

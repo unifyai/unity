@@ -97,7 +97,6 @@ def sync_adjacent_links(
             scheduler._view.write_entries(  # type: ignore[attr-defined]
                 logs=log_id,
                 entries={"schedule": n_sched},
-                overwrite=True,
             )
         else:
             # Handle both unify.Log and plain dict
@@ -114,7 +113,6 @@ def sync_adjacent_links(
                 scheduler._view.write_entries(  # type: ignore[attr-defined]
                     logs=row_obj.id if hasattr(row_obj, "id") else row_obj,
                     entries={"schedule": n_sched},
-                    overwrite=True,
                 )
             else:
                 # dict row fallback
@@ -134,7 +132,6 @@ def sync_adjacent_links(
                 scheduler._view.write_entries(  # type: ignore[attr-defined]
                     logs=log_id,
                     entries={"schedule": n_sched},
-                    overwrite=True,
                 )
 
         # Was the neighbour the *primed* task?  Keep cache in lock-step.
@@ -220,7 +217,6 @@ def attach_with_links(
             scheduler._view.write_entries(  # type: ignore[attr-defined]
                 logs=prev_log.id if hasattr(prev_log, "id") else prev_log,
                 entries={"schedule": prev_sched},
-                overwrite=True,
             )
 
     if next_log is not None:
@@ -233,7 +229,6 @@ def attach_with_links(
             scheduler._view.write_entries(  # type: ignore[attr-defined]
                 logs=next_log.id if hasattr(next_log, "id") else next_log,
                 entries={"schedule": next_sched},
-                overwrite=True,
             )
 
     # Build current task schedule and write via validated funnel.
