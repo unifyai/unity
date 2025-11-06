@@ -318,11 +318,6 @@ def build_simulated_method_prompt(
             "Format as concise bullet points or compact JSON‑like blocks. "
             "Avoid hedging language and avoid meta‑commentary about the process."
         )
-    elif method.lower() == "summarize":
-        behaviour = (
-            "Please always provide an **imaginary summary** that looks realistic. "
-            "Do not answer in future tense and do not describe how you will summarise."
-        )
     else:
         behaviour = (
             "Please act as though the request has been fully satisfied. "
