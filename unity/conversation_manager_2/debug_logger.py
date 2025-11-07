@@ -76,7 +76,6 @@ def log_job_startup(
                 "running": True,
             },
             api_key=api_key,
-            batched=False,
         )
         print("Logged Startup Event", job_name)
     except Exception as e:
