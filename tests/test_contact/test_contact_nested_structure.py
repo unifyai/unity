@@ -22,7 +22,7 @@ async def test_nested_structure_flat_contactmanager_ask():
     try:
         structure = await h.nested_structure()  # type: ignore[attr-defined]
         expected = {
-            "handle": "ReadOnlyAskGuardHandle",
+            "handle": "ReadOnlyAskGuardHandle(AsyncToolLoopHandle)",
             "tool": "ContactManager.ask",
             "children": [],
         }
@@ -132,7 +132,7 @@ async def test_nested_structure_contactmanager_update_then_ask_nested():
             "tool": "ContactManager.update",
             "children": [
                 {
-                    "handle": "ReadOnlyAskGuardHandle",
+                    "handle": "ReadOnlyAskGuardHandle(AsyncToolLoopHandle)",
                     "tool": "ContactManager.ask",
                     "children": [],
                 },
