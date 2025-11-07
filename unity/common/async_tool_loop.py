@@ -2004,11 +2004,13 @@ async def _nested_structure_on(
         return s
 
     def _handle_chain_of(h) -> str:
-        """Return the handle name with parent chain up to AsyncToolLoopHandle.
+        """Return the handle name with parent chain nested like A(B(C)).
 
-        Format: Leaf(Parent(...(AsyncToolLoopHandle))). If AsyncToolLoopHandle is
-        not in the MRO, returns just the concrete class name. Never includes
-        SteerableToolHandle or any ancestors above it.
+        Traverses base classes upward and nests the names until reaching one of
+        the sentinels: AsyncToolLoopHandle, SteerableToolHandle, or
+        SteerableHandle. The sentinel encountered is included once and then
+        traversal stops. If the leaf class itself is a sentinel, the result is
+        just that class name.
         """
         try:
             cls = getattr(h, "__class__", object)
@@ -2018,6 +2020,17 @@ async def _nested_structure_on(
             leaf_name = getattr(cls, "__name__", "") or "handle"
         except Exception:
             leaf_name = "handle"
+
+        # If the leaf itself is a sentinel, return it directly
+        try:
+            if cls is AsyncToolLoopHandle:
+                return "AsyncToolLoopHandle"
+            if cls is SteerableToolHandle:
+                return "SteerableToolHandle"
+            if cls is SteerableHandle:
+                return "SteerableHandle"
+        except Exception:
+            pass
 
         try:
             mro = list(getattr(cls, "__mro__", ()))
@@ -2031,46 +2044,36 @@ async def _nested_structure_on(
                 bname = getattr(base, "__name__", "")
             except Exception:
                 bname = ""
-            # Stop conditions (do not include these)
-            try:
-                if base is SteerableToolHandle or base is SteerableHandle:
-                    break
-            except Exception:
-                # If these symbols are not available for any reason, be conservative
-                pass
-            # Include AsyncToolLoopHandle and then stop
+
+            # Include the first sentinel encountered and then stop
             try:
                 if base is AsyncToolLoopHandle:
-                    parts.append(bname or "AsyncToolLoopHandle")
+                    parts.append("AsyncToolLoopHandle")
+                    break
+                if base is SteerableToolHandle:
+                    parts.append("SteerableToolHandle")
+                    break
+                if base is SteerableHandle:
+                    parts.append("SteerableHandle")
                     break
             except Exception:
-                # If AsyncToolLoopHandle is not resolvable here, just continue normally
                 pass
+
             # Skip Python/ABC/object sentinels
             from abc import ABC as _ABC  # local to avoid top import confusion
 
             if base is object or base is _ABC:
                 break
+
             # Append intermediate custom base classes (if any)
             if bname:
                 parts.append(bname)
 
-        # If AsyncToolLoopHandle was not encountered, avoid exposing framework internals
-        # by collapsing to the leaf-only name when the chain would otherwise include
-        # only non-target bases.
+        # Compose nested parentheses A(B(C)) from the top down
         try:
-            if "AsyncToolLoopHandle" not in parts and any(
-                p in ("SteerableToolHandle", "SteerableHandle") for p in parts
-            ):
-                parts = [leaf_name]
-        except Exception:
-            parts = [leaf_name]
-
-        # Compose nested parentheses: A(B(C))
-        try:
-            s = parts[0]
-            for p in parts[1:]:
-                s = f"{s}({p})"
+            s = parts[-1]
+            for p in reversed(parts[:-1]):
+                s = f"{p}({s})"
             return s
         except Exception:
             return leaf_name

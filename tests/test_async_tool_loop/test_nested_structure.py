@@ -142,11 +142,16 @@ class WrapperHandle(SteerableToolHandle):
         return None
 
 
+def _base_name(val: str | None) -> str:
+    s = str(val) if val is not None else ""
+    return s.split("(", 1)[0]
+
+
 def _find_child_by_handle(children: list[dict], handle_name: str) -> dict | None:
     for ch in children or []:
         h = ch.get("handle")
         t = ch.get("tool")
-        if h == handle_name or t == handle_name:
+        if _base_name(h) == handle_name or _base_name(t) == handle_name:
             return ch
     return None
 
@@ -201,7 +206,10 @@ async def test_nested_structure_reports_child_tool_and_handle():
         ch = _find_child_by_handle(s.get("children", []), "ToyHandle")
         assert ch is not None, "Expected ToyHandle child in structure"
         # Child should itself be a minimal node with no further children in this test
-        assert ch.get("handle") == "ToyHandle" or ch.get("tool") == "ToyHandle"
+        assert (
+            _base_name(ch.get("handle")) == "ToyHandle"
+            or _base_name(ch.get("tool")) == "ToyHandle"
+        )
     finally:
         try:
             outer.stop("cleanup")
@@ -336,7 +344,8 @@ async def test_nested_structure_includes_wrapper_attribute_children():
         # The wrapper should expose ToyHandle as a nested live child
         wrapper_children = first.get("children", [])
         assert any(
-            (c.get("handle") == "ToyHandle") or (c.get("tool") == "ToyHandle")
+            (_base_name(c.get("handle")) == "ToyHandle")
+            or (_base_name(c.get("tool")) == "ToyHandle")
             for c in wrapper_children
         ), "Expected ToyHandle child discovered via wrapper get_wrapped_handles"
     finally:
