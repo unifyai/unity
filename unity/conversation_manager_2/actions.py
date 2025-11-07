@@ -288,24 +288,24 @@ async def _send_unify_message(content: str) -> str:
     print(f"Sending unify message: {content}")
     message_data = {
         "thread": "unify_message_outbound",
-        "event": {
-            "content": content,
-            "role": "assistant",
-        },
+        "event": {"content": content, "role": "assistant"},
     }
-
-    # Publish with attributes
-    future = publisher.publish(
-        topic_path,
-        json.dumps(message_data).encode("utf-8"),
-        thread="unify_message_outbound",
-    )
-    message_id = future.result()
-    print(f"Unify message published with ID: {message_id}")
-    if message_id:
-        return {"success": True}
-    else:
-        return {"success": False}
+    try:
+        # Publish with attributes
+        future = publisher.publish(
+            topic_path,
+            json.dumps(message_data).encode("utf-8"),
+            thread="unify_message_outbound",
+        )
+        message_id = future.result()
+        print(f"Unify message published with ID: {message_id}")
+        if message_id:
+            return {"success": True}
+        else:
+            return {"success": False}
+    except Exception as e:
+        print(f"Error sending unify message: {e}")
+        return {"success": False, "error": str(e)}
 
 
 async def _start_call(
