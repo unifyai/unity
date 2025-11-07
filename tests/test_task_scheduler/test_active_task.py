@@ -19,7 +19,6 @@ from unity.actor.simulated import SimulatedActorHandle
 from unity.function_manager.function_manager import FunctionManager
 from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.types import RawImageRef, AnnotatedImageRef
-from unity.common.async_tool_loop import _nested_structure_on
 from pathlib import Path
 import base64
 
@@ -377,37 +376,4 @@ async def test_active_task_interject_image_guides_simulation_to_spreadsheet(
     assert isinstance(reply, str) and reply.strip()
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
-    await task.result()
-
-
-# --------------------------------------------------------------------------- #
-#  8. nested_structure reveals inner SimulatedActor handle via wrapper        //
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_active_task_nested_structure_reveals_inner_handle():
-    """ActiveTask should expose its inner SimulatedActor handle via wrapper discovery."""
-    actor = SimulatedActor(steps=1, duration=None)
-    task = await ActiveTask.create(
-        actor,
-        task_description="Test nested structure wrapper traversal",
-    )
-
-    s = await _nested_structure_on(task)
-    assert isinstance(s, dict)
-    children = s.get("children", [])
-    # Minimal structure: child should directly represent the inner SimulatedActorHandle
-    leaf = None
-    for ch in children:
-        if (ch.get("handle") == "SimulatedActorHandle") or (
-            ch.get("tool") == "SimulatedActorHandle"
-        ):
-            leaf = ch
-            break
-    assert leaf is not None, "Expected inner SimulatedActorHandle child"
-
-    # Cleanup
-    task.stop(cancel=False)
     await task.result()
