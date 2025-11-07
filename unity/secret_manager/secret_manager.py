@@ -174,7 +174,9 @@ class SecretManager(BaseSecretManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Default update-side tool policy (no-op, retain current tools)."""
+        """Require 'ask' on the first step; auto thereafter (mirrors ContactManager)."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
     # --------------------- Internal helpers (.env sync) --------------------- #
