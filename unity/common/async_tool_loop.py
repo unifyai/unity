@@ -805,13 +805,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         See module‑level ``nested_steer_on`` for full behaviour details.
         """
 
-        return await nested_steer_on(self, spec)
+        return await _nested_steer_on(self, spec)
 
     async def nested_structure(self) -> dict:
         """Return a minimal nested, read-only structure of live child loops.
 
         Shape (per node):
-        - handle: class name of the handle (string)
+        - handle: inheritance chain up to AsyncToolLoopHandle, formatted as
+          "Leaf(Parent(...(AsyncToolLoopHandle)))" when applicable; otherwise
+          the concrete class name.
         - tool: canonical entrypoint label "Class.method" when available, else class name
         - children: list of the same node shape for live (in-flight) nested handles only
 
@@ -819,9 +821,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         -----
         - Non-steerable or pending base tool calls without an adopted handle are omitted.
         - Completed child handles are omitted.
-        - Canonicalization strips leading "Simulated"/"Base" from class names.
+        - Canonicalization strips leading "Simulated"/"Base" from class names for the "tool" field.
+        - The inheritance chain stops at AsyncToolLoopHandle and does not include
+          "SteerableToolHandle" or any ancestors above it.
         """
-        return await nested_structure_on(self)
+        return await _nested_structure_on(self)
 
     # --- snapshotting v1: read-only capture (flat only) ---------------------
     def serialize(
@@ -1491,7 +1495,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
 
 # --- module-level generic helper ----------------------------------------------
-async def nested_steer_on(handle: Any, spec: dict) -> dict:
+async def _nested_steer_on(handle: Any, spec: dict) -> dict:
     """Apply a nested steering spec to any compatible handle without LLM calls.
 
     Node schema (keys optional; omitted treated as None):
@@ -1974,7 +1978,7 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
 
 
 # --- module-level nested structure introspection (read-only) -------------------
-async def nested_structure_on(
+async def _nested_structure_on(
     handle: Any,
     *,
     max_depth: Optional[int] = None,
@@ -1982,7 +1986,8 @@ async def nested_structure_on(
     """Return a minimal nested structure for any compatible handle.
 
     Each node contains:
-      - handle: class name of the handle
+      - handle: inheritance chain up to AsyncToolLoopHandle (e.g., Leaf(Parent(...(AsyncToolLoopHandle)))),
+        or the concrete class name if AsyncToolLoopHandle is not in the MRO.
       - tool: canonical "Class.method" when available, else class name
       - children: only live, steerable nested handles (pending/done omitted)
     """
@@ -1997,6 +2002,78 @@ async def nested_structure_on(
         if s.startswith("Base") and len(s) > 4:
             return s[4:]
         return s
+
+    def _handle_chain_of(h) -> str:
+        """Return the handle name with parent chain up to AsyncToolLoopHandle.
+
+        Format: Leaf(Parent(...(AsyncToolLoopHandle))). If AsyncToolLoopHandle is
+        not in the MRO, returns just the concrete class name. Never includes
+        SteerableToolHandle or any ancestors above it.
+        """
+        try:
+            cls = getattr(h, "__class__", object)
+        except Exception:
+            cls = object
+        try:
+            leaf_name = getattr(cls, "__name__", "") or "handle"
+        except Exception:
+            leaf_name = "handle"
+
+        try:
+            mro = list(getattr(cls, "__mro__", ()))
+        except Exception:
+            mro = []
+
+        parts: list[str] = [leaf_name]
+        # Walk parents (skip the leaf itself)
+        for base in (mro[1:] if len(mro) > 1 else []):
+            try:
+                bname = getattr(base, "__name__", "")
+            except Exception:
+                bname = ""
+            # Stop conditions (do not include these)
+            try:
+                if base is SteerableToolHandle or base is SteerableHandle:
+                    break
+            except Exception:
+                # If these symbols are not available for any reason, be conservative
+                pass
+            # Include AsyncToolLoopHandle and then stop
+            try:
+                if base is AsyncToolLoopHandle:
+                    parts.append(bname or "AsyncToolLoopHandle")
+                    break
+            except Exception:
+                # If AsyncToolLoopHandle is not resolvable here, just continue normally
+                pass
+            # Skip Python/ABC/object sentinels
+            from abc import ABC as _ABC  # local to avoid top import confusion
+
+            if base is object or base is _ABC:
+                break
+            # Append intermediate custom base classes (if any)
+            if bname:
+                parts.append(bname)
+
+        # If AsyncToolLoopHandle was not encountered, avoid exposing framework internals
+        # by collapsing to the leaf-only name when the chain would otherwise include
+        # only non-target bases.
+        try:
+            if "AsyncToolLoopHandle" not in parts and any(
+                p in ("SteerableToolHandle", "SteerableHandle") for p in parts
+            ):
+                parts = [leaf_name]
+        except Exception:
+            parts = [leaf_name]
+
+        # Compose nested parentheses: A(B(C))
+        try:
+            s = parts[0]
+            for p in parts[1:]:
+                s = f"{s}({p})"
+            return s
+        except Exception:
+            return leaf_name
 
     def _tool_of(h) -> str | None:
         # Prefer stable loop_id set by starters (e.g., "ContactManager.ask")
@@ -2046,7 +2123,7 @@ async def nested_structure_on(
             visited.add(hid)
 
         node: dict = {
-            "handle": getattr(h, "__class__", object).__name__,
+            "handle": _handle_chain_of(h),
             "children": [],
         }
         _t = _tool_of(h)
