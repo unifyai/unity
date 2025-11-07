@@ -110,6 +110,40 @@ def _canonical_tool_owner_name(cls: type) -> str:
         return ""
 
 
+def canonicalize_handle_class_name(cls: type) -> str:
+    """Return a canonicalized class name for handle display.
+
+    Rules (prefix stripping applied in this order):
+    - Strip leading "Simulated" → e.g., SimulatedFoo → Foo
+    - Strip leading version prefix "V<digits>" → e.g., V3Foo → Foo
+    - Strip leading "Base" → e.g., BaseFoo → Foo
+    """
+    try:
+        name = getattr(cls, "__name__", "") or ""
+    except Exception:
+        name = ""
+
+    s = str(name)
+    try:
+        if s.startswith("Simulated") and len(s) > 9:
+            s = s[9:]
+    except Exception:
+        pass
+    # Strip version prefix like V3, V12, etc.
+    try:
+        import re as _re  # local import to avoid polluting module scope
+
+        s = _re.sub(r"^V\d+", "", s)
+    except Exception:
+        pass
+    try:
+        if s.startswith("Base") and len(s) > 4:
+            s = s[4:]
+    except Exception:
+        pass
+    return s
+
+
 def methods_to_tool_dict(
     *methods: Tuple[Union[Callable, "ToolSpec"]],
     include_class_name: bool = True,

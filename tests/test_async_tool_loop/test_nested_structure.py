@@ -388,3 +388,93 @@ async def test_handle_chain_includes_steerable_handle_sentinel():
     s = await _nested_structure_on(h)
     # The handle string should include the SteerableHandle sentinel for a direct subclass
     assert s.get("handle") == "DirectSH(SteerableHandle)"
+
+
+@pytest.mark.asyncio
+async def test_handle_chain_canonicalizes_leaf_and_drops_base():
+    class BaseCustomHandle(SteerableHandle):
+        async def ask(  # type: ignore[override]
+            self,
+            question: str,
+            *,
+            parent_chat_context_cont=None,
+            images=None,
+        ):
+            return self
+
+        async def interject(  # type: ignore[override]
+            self,
+            message: str,
+            *,
+            parent_chat_context_cont=None,
+        ):
+            return None
+
+    class V3CustomHandle(BaseCustomHandle):
+        pass
+
+    h = V3CustomHandle()
+    s = await _nested_structure_on(h)
+    # Leaf "V3CustomHandle" → canonicalized to "CustomHandle", "BaseCustomHandle" is dropped, sentinel included
+    assert s.get("handle") == "CustomHandle(SteerableHandle)"
+
+
+@pytest.mark.asyncio
+async def test_handle_chain_canonicalizes_simulated_leaf():
+    class BaseCustomHandle(SteerableHandle):
+        async def ask(  # type: ignore[override]
+            self,
+            question: str,
+            *,
+            parent_chat_context_cont=None,
+            images=None,
+        ):
+            return self
+
+        async def interject(  # type: ignore[override]
+            self,
+            message: str,
+            *,
+            parent_chat_context_cont=None,
+        ):
+            return None
+
+    class SimulatedCustomHandle(BaseCustomHandle):
+        pass
+
+    h = SimulatedCustomHandle()
+    s = await _nested_structure_on(h)
+    # Leaf "SimulatedCustomHandle" → canonicalized to "CustomHandle", base dropped, sentinel included
+    assert s.get("handle") == "CustomHandle(SteerableHandle)"
+
+
+@pytest.mark.asyncio
+async def test_handle_chain_canonicalizes_intermediate_and_drops_base():
+    class BaseBaz(SteerableHandle):
+        async def ask(  # type: ignore[override]
+            self,
+            question: str,
+            *,
+            parent_chat_context_cont=None,
+            images=None,
+        ):
+            return self
+
+        async def interject(  # type: ignore[override]
+            self,
+            message: str,
+            *,
+            parent_chat_context_cont=None,
+        ):
+            return None
+
+    class SimulatedBar(BaseBaz):
+        pass
+
+    class V2Foo(SimulatedBar):
+        pass
+
+    h = V2Foo()
+    s = await _nested_structure_on(h)
+    # Leaf "V2Foo" → "Foo"; intermediate "SimulatedBar" → "Bar"; "BaseBaz" dropped; sentinel included
+    assert s.get("handle") == "Foo(Bar(SteerableHandle))"

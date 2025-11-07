@@ -19,6 +19,7 @@ from typing import (
 )
 from ..constants import LOGGER, SESSION_ID
 from .llm_helpers import short_id
+from .llm_helpers import canonicalize_handle_class_name as _canon_handle_name
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.messages import is_non_final_tool_reply as _is_non_final_tool_reply
@@ -2017,7 +2018,7 @@ async def _nested_structure_on(
         except Exception:
             cls = object
         try:
-            leaf_name = getattr(cls, "__name__", "") or "handle"
+            leaf_name = _canon_handle_name(cls) or "handle"
         except Exception:
             leaf_name = "handle"
 
@@ -2065,9 +2066,18 @@ async def _nested_structure_on(
             if base is object or base is _ABC:
                 break
 
-            # Append intermediate custom base classes (if any)
-            if bname:
-                parts.append(bname)
+            # Skip Base* classes entirely; include other intermediates canonicalized
+            try:
+                if bname.startswith("Base"):
+                    continue
+            except Exception:
+                pass
+            try:
+                canon = _canon_handle_name(base)
+            except Exception:
+                canon = bname
+            if canon:
+                parts.append(canon)
 
         # Compose nested parentheses A(B(C)) from the top down
         try:
