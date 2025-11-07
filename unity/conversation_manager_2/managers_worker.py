@@ -266,45 +266,42 @@ class ManagersWorker:
                 exchange_id = (
                     self._transcript_manager.log_first_message_in_new_exchange(
                         {
-                            "timestamp": timestamp,
-                            "content": content,
                             "medium": medium,
                             "sender_id": sender_id,
                             "receiver_ids": receiver_ids,
+                            "timestamp": timestamp,
+                            "content": content,
                         },
                     )
                 )
-            messages = self._transcript_manager.log_messages(
-                {
-                    "medium": medium,
-                    "sender_id": sender_id,
-                    "receiver_ids": receiver_ids,
-                    "timestamp": timestamp,
-                    "content": content,
-                    "exchange_id": exchange_id,
-                    # "call_utterance_timestamp": call_utterance_timestamp,
-                    # "call_url": call_url,
-                    "_metadata": metadata,
-                },
-                synchronous=True,
-            )
+            else:
+                self._transcript_manager.log_messages(
+                    {
+                        "medium": medium,
+                        "sender_id": sender_id,
+                        "receiver_ids": receiver_ids,
+                        "timestamp": timestamp,
+                        "content": content,
+                        "exchange_id": exchange_id,
+                        "_metadata": metadata,
+                    },
+                    synchronous=True,
+                )
 
-            message = messages[0] if messages else None
             print(
                 f"[ManagersWorker] Logged message: {medium}"
                 f" from {sender_id} to {receiver_ids}",
             )
 
             # Publish reply as Event envelope
-            if message:
-                await self._event_broker.publish(
-                    self._publish_channel,
-                    LogMessageResponse(
-                        medium=medium,
-                        exchange_id=message.exchange_id,
-                    ).to_json(),
-                )
-                print(f"[ManagersWorker] Published exchange_id {message.exchange_id}")
+            await self._event_broker.publish(
+                self._publish_channel,
+                LogMessageResponse(
+                    medium=medium,
+                    exchange_id=exchange_id,
+                ).to_json(),
+            )
+            print(f"[ManagersWorker] Published exchange_id {exchange_id}")
 
         except Exception as e:
             print(f"[ManagersWorker] Error logging message: {e}")
