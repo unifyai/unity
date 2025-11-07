@@ -3,7 +3,12 @@ import asyncio
 import pytest
 import unify
 
-from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
+from unity.common.async_tool_loop import (
+    start_async_tool_loop,
+    SteerableToolHandle,
+    SteerableHandle,
+    _nested_structure_on,
+)
 from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
@@ -201,6 +206,8 @@ async def test_nested_structure_reports_child_tool_and_handle():
         await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
 
         s = await outer.nested_structure()  # type: ignore[attr-defined]
+        # Root should resolve to the async loop handle sentinel
+        assert s.get("handle") == "AsyncToolLoopHandle"
         assert isinstance(s, dict)
         # Minimal format: direct child node for the returned handle
         ch = _find_child_by_handle(s.get("children", []), "ToyHandle")
@@ -210,6 +217,8 @@ async def test_nested_structure_reports_child_tool_and_handle():
             _base_name(ch.get("handle")) == "ToyHandle"
             or _base_name(ch.get("tool")) == "ToyHandle"
         )
+        # And the sentinel encountered for ToyHandle should be SteerableToolHandle
+        assert "SteerableToolHandle" in str(ch.get("handle"))
     finally:
         try:
             outer.stop("cleanup")
@@ -353,12 +362,29 @@ async def test_nested_structure_includes_wrapper_attribute_children():
             outer.stop("cleanup")
         except Exception:
             pass
-        try:
-            await asyncio.wait_for(outer.result(), timeout=30.0)
-        except Exception:
-            pass
-        try:
-            if not inner.done():
-                inner.stop("cleanup")
-        except Exception:
-            pass
+
+
+@pytest.mark.asyncio
+async def test_handle_chain_includes_steerable_handle_sentinel():
+    class DirectSH(SteerableHandle):
+        async def ask(  # type: ignore[override]
+            self,
+            question: str,
+            *,
+            parent_chat_context_cont=None,
+            images=None,
+        ):
+            return self
+
+        async def interject(  # type: ignore[override]
+            self,
+            message: str,
+            *,
+            parent_chat_context_cont=None,
+        ):
+            return None
+
+    h = DirectSH()
+    s = await _nested_structure_on(h)
+    # The handle string should include the SteerableHandle sentinel for a direct subclass
+    assert s.get("handle") == "DirectSH(SteerableHandle)"
