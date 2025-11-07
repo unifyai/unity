@@ -32,8 +32,75 @@ async def test_nested_structure_flat_taskscheduler_ask():
             h.stop("cleanup")  # type: ignore[attr-defined]
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_nested_structure_taskscheduler_execute():
+    """
+    Verify TaskScheduler.execute adopts an ActiveQueue handle that wraps an ActiveTask (via wrapper logic),
+    and assert the full nested structure directly for readability.
+    """
+    ts = TaskScheduler()
+
+    # Create a runnable task and capture its id
+    res = ts.create_task(name="Demo", description="Run a demo task.")
+    tid = int(res["details"]["task_id"])
+
+    # Use natural language so the outer execute loop remains in play (avoids numeric fast-path)
+    h = await ts.execute(f"Please execute task id {tid} now.")
+
+    try:
+        # Wait until the nested execute tool has been adopted with a live handle
+        async def _exec_child_adopted():
+            try:
+                task_info = getattr(getattr(h, "_task", None), "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(task_info, dict):
+                    for meta in task_info.values():
+                        nm = getattr(meta, "name", None)
+                        hd = getattr(meta, "handle", None)
+                        if (
+                            nm in ("execute_by_id", "execute_isolated_by_id")
+                            and hd is not None
+                        ):
+                            return True
+                return False
+            except Exception:
+                return False
+
+        await _wait_for_condition(_exec_child_adopted, poll=0.02, timeout=60.0)
+
+        structure = await h.nested_structure()  # type: ignore[attr-defined]
+
+        expected = {
+            "handle": "ExecuteLoopHandle(AsyncToolLoopHandle)",
+            "tool": "TaskScheduler.execute",
+            "children": [
+                {
+                    "handle": "ActiveQueue(SteerableToolHandle)",
+                    "children": [
+                        {
+                            "handle": "ActiveTask(SteerableToolHandle)",
+                            "children": [
+                                {
+                                    # Simulated actor handle is canonicalized to drop 'Simulated' prefix
+                                    "handle": "ActorHandle(SteerableToolHandle)",
+                                    "children": [],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+        assert structure == expected
+    finally:
         try:
-            await asyncio.wait_for(h.result(), timeout=60)  # type: ignore[attr-defined]
+            h.stop("cleanup")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(h.result(), timeout=180)  # type: ignore[attr-defined]
         except Exception:
             pass
 
