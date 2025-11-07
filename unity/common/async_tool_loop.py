@@ -1987,21 +1987,28 @@ async def _nested_structure_on(
     """Return a minimal nested structure for any compatible handle.
 
     Each node contains:
-      - handle: inheritance chain up to AsyncToolLoopHandle (e.g., Leaf(Parent(...(AsyncToolLoopHandle)))),
-        or the concrete class name if AsyncToolLoopHandle is not in the MRO.
-      - tool: canonical "Class.method" when available, else class name
+      - handle: canonicalized inheritance chain up to the first sentinel
+        (AsyncToolLoopHandle / SteerableToolHandle / SteerableHandle), rendered
+        as A(B(C)). Class segments are canonicalized by stripping Simulated,
+        V<digits>, and Base prefixes; Base* parents are elided entirely.
+      - tool: canonicalized "Class.method" when available (same prefix rules),
+        else the canonicalized class name.
       - children: only live, steerable nested handles (pending/done omitted)
     """
 
-    def _canon_cls(name: str) -> str:
-        try:
-            s = str(name or "")
-        except Exception:
-            s = str(name)
+    def _canon_name(name: str) -> str:
+        s = str(name or "")
         if s.startswith("Simulated") and len(s) > 9:
-            return s[9:]
+            s = s[9:]
+        # Strip leading version prefixes like V3/V12
+        try:
+            import re as _re  # local import
+
+            s = _re.sub(r"^V\\d+", "", s)
+        except Exception:
+            pass
         if s.startswith("Base") and len(s) > 4:
-            return s[4:]
+            s = s[4:]
         return s
 
     def _handle_chain_of(h) -> str:
@@ -2023,15 +2030,14 @@ async def _nested_structure_on(
             leaf_name = "handle"
 
         # If the leaf itself is a sentinel, return it directly
-        try:
-            if cls is AsyncToolLoopHandle:
-                return "AsyncToolLoopHandle"
-            if cls is SteerableToolHandle:
-                return "SteerableToolHandle"
-            if cls is SteerableHandle:
-                return "SteerableHandle"
-        except Exception:
-            pass
+        _SENTINELS = (
+            (AsyncToolLoopHandle, "AsyncToolLoopHandle"),
+            (SteerableToolHandle, "SteerableToolHandle"),
+            (SteerableHandle, "SteerableHandle"),
+        )
+        for typ, label in _SENTINELS:
+            if cls is typ:
+                return label
 
         try:
             mro = list(getattr(cls, "__mro__", ()))
@@ -2047,18 +2053,14 @@ async def _nested_structure_on(
                 bname = ""
 
             # Include the first sentinel encountered and then stop
-            try:
-                if base is AsyncToolLoopHandle:
-                    parts.append("AsyncToolLoopHandle")
+            included_sentinel = False
+            for typ, label in _SENTINELS:
+                if base is typ:
+                    parts.append(label)
+                    included_sentinel = True
                     break
-                if base is SteerableToolHandle:
-                    parts.append("SteerableToolHandle")
-                    break
-                if base is SteerableHandle:
-                    parts.append("SteerableHandle")
-                    break
-            except Exception:
-                pass
+            if included_sentinel:
+                break
 
             # Skip Python/ABC/object sentinels
             from abc import ABC as _ABC  # local to avoid top import confusion
@@ -2067,11 +2069,8 @@ async def _nested_structure_on(
                 break
 
             # Skip Base* classes entirely; include other intermediates canonicalized
-            try:
-                if bname.startswith("Base"):
-                    continue
-            except Exception:
-                pass
+            if bname and bname.startswith("Base"):
+                continue
             try:
                 canon = _canon_handle_name(base)
             except Exception:
@@ -2097,10 +2096,10 @@ async def _nested_structure_on(
         base = str(raw).split("(", 1)[0]
         if "." in base:
             cls, meth = base.split(".", 1)
-            return f"{_canon_cls(cls)}.{meth}"
+            return f"{_canon_name(cls)}.{meth}"
         # Fallback to canonicalized class name
         try:
-            cls_name = _canon_cls(
+            cls_name = _canon_name(
                 getattr(getattr(h, "__class__", object), "__name__", ""),
             )
             return cls_name or None
