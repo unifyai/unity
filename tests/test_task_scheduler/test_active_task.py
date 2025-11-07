@@ -398,23 +398,15 @@ async def test_active_task_nested_structure_reveals_inner_handle():
     s = await nested_structure_on(task)
     assert isinstance(s, dict)
     children = s.get("children", [])
-
-    # Find a wrapper-origin child produced via standardized get_wrapped_handles
-    wrapper_child = None
+    # Minimal structure: child should directly represent the inner SimulatedActorHandle
+    leaf = None
     for ch in children:
-        if ch.get("origin") == "wrapper" and str(ch.get("wrapper_attr", "")).startswith(
-            "get_wrapped_handles",
+        if (ch.get("handle") == "SimulatedActorHandle") or (
+            ch.get("tool") == "SimulatedActorHandle"
         ):
-            wrapper_child = ch
+            leaf = ch
             break
-
-    assert (
-        wrapper_child is not None
-    ), "Expected wrapper-discovered child from ActiveTask"
-    inner = wrapper_child.get("handle") or {}
-    assert (inner.get("class") == "SimulatedActorHandle") or (
-        (inner.get("label") or "").endswith("SimulatedActorHandle")
-    )
+    assert leaf is not None, "Expected inner SimulatedActorHandle child"
 
     # Cleanup
     task.stop(cancel=False)

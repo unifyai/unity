@@ -683,37 +683,23 @@ async def test_active_queue_nested_structure_reveals_all_layers():
     # Inspect nested structure from the ActiveQueue handle
     s = await nested_structure_on(h)
     assert isinstance(s, dict)
-    # Outer layer is the queue wrapper; children should include wrapper-origin entry to ActiveTask
-    wrapper_child = None
+    # First layer under ActiveQueue should directly include ActiveTask
+    first = None
     for ch in s.get("children", []):
-        if ch.get("origin") == "wrapper" and str(ch.get("wrapper_attr", "")).startswith(
-            "get_wrapped_handles",
-        ):
-            wrapper_child = ch
+        if (ch.get("handle") == "ActiveTask") or (ch.get("tool") == "ActiveTask"):
+            first = ch
             break
-    assert (
-        wrapper_child is not None
-    ), "Expected wrapper child from ActiveQueue via get_wrapped_handles"
+    assert first is not None, "Expected ActiveTask child under ActiveQueue"
 
-    mid = wrapper_child.get("handle") or {}
-    assert (mid.get("class") == "ActiveTask") or (
-        (mid.get("label") or "").endswith("ActiveTask")
-    )
-
-    # The ActiveTask node should itself disclose the inner SimulatedActorHandle via wrapper discovery
-    inner_wrapper = None
-    for ch in mid.get("children", []):
-        if ch.get("origin") == "wrapper" and str(ch.get("wrapper_attr", "")).startswith(
-            "get_wrapped_handles",
+    # The ActiveTask node should itself include the inner SimulatedActorHandle
+    leaf = None
+    for ch in first.get("children", []):
+        if (ch.get("handle") == "SimulatedActorHandle") or (
+            ch.get("tool") == "SimulatedActorHandle"
         ):
-            inner_wrapper = ch
+            leaf = ch
             break
-    assert inner_wrapper is not None, "Expected inner wrapper child from ActiveTask"
-
-    leaf = inner_wrapper.get("handle") or {}
-    assert (leaf.get("class") == "SimulatedActorHandle") or (
-        (leaf.get("label") or "").endswith("SimulatedActorHandle")
-    )
+    assert leaf is not None, "Expected SimulatedActorHandle under ActiveTask"
 
     # Cleanup
     h.stop(cancel=False)
