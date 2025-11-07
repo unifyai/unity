@@ -478,3 +478,27 @@ async def test_handle_chain_canonicalizes_intermediate_and_drops_base():
     s = await _nested_structure_on(h)
     # Leaf "V2Foo" → "Foo"; intermediate "SimulatedBar" → "Bar"; "BaseBaz" dropped; sentinel included
     assert s.get("handle") == "Foo(Bar(SteerableHandle))"
+
+
+@pytest.mark.asyncio
+async def test_tool_name_canonicalizes_simulated_prefix():
+    class Dummy:
+        def __init__(self):
+            self._loop_id = "SimulatedSomethingManager.ask"
+
+    d = Dummy()
+    s = await _nested_structure_on(d)
+    # Tool field should canonicalize class segment: SimulatedX → X
+    assert s.get("tool") == "SomethingManager.ask"
+
+
+@pytest.mark.asyncio
+async def test_tool_name_canonicalizes_base_prefix():
+    class Dummy:
+        def __init__(self):
+            self._loop_id = "BaseAnotherManager.ask"
+
+    d = Dummy()
+    s = await _nested_structure_on(d)
+    # Tool field should canonicalize class segment: BaseX → X
+    assert s.get("tool") == "AnotherManager.ask"
