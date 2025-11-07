@@ -16,7 +16,7 @@ from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.types import RawImageRef, AnnotatedImageRef
 from pathlib import Path
 import base64
-from unity.common.async_tool_loop import nested_structure_on
+from unity.common.async_tool_loop import _nested_structure_on
 
 
 async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
@@ -681,7 +681,7 @@ async def test_active_queue_nested_structure_reveals_all_layers():
     h = await ts.execute(text=str(solo_id))
 
     # Inspect nested structure from the ActiveQueue handle
-    s = await nested_structure_on(h)
+    s = await _nested_structure_on(h)
     assert isinstance(s, dict)
     # First layer under ActiveQueue should directly include ActiveTask
     first = None

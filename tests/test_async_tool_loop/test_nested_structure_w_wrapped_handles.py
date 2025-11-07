@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from unity.common.async_tool_loop import nested_structure_on
+from unity.common.async_tool_loop import _nested_structure_on
 
 
 class _TaskInfoMeta:
@@ -133,7 +133,7 @@ async def test_nested_structure_with_get_wrapped_handles_method():
     inner = SteeringHandle()
     wrapped = WrapperWithMethod(inner)
 
-    s = await nested_structure_on(wrapped)
+    s = await _nested_structure_on(wrapped)
 
     # Minimal structure: child node directly represents SteeringHandle
     wchild = None
@@ -161,7 +161,7 @@ async def test_nested_structure_with_mixin_registration():
     inner = SteeringHandle()
     wrapped = WrapperWithMixin(inner)
 
-    s = await nested_structure_on(wrapped)
+    s = await _nested_structure_on(wrapped)
 
     # Minimal structure: child node directly represents SteeringHandle
     wchild = None

@@ -19,7 +19,7 @@ from unity.actor.simulated import SimulatedActorHandle
 from unity.function_manager.function_manager import FunctionManager
 from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.types import RawImageRef, AnnotatedImageRef
-from unity.common.async_tool_loop import nested_structure_on
+from unity.common.async_tool_loop import _nested_structure_on
 from pathlib import Path
 import base64
 
@@ -395,7 +395,7 @@ async def test_active_task_nested_structure_reveals_inner_handle():
         task_description="Test nested structure wrapper traversal",
     )
 
-    s = await nested_structure_on(task)
+    s = await _nested_structure_on(task)
     assert isinstance(s, dict)
     children = s.get("children", [])
     # Minimal structure: child should directly represent the inner SimulatedActorHandle

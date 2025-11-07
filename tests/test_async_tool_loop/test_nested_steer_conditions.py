@@ -1,6 +1,6 @@
 import pytest
 
-from unity.common.async_tool_loop import nested_steer_on
+from unity.common.async_tool_loop import _nested_steer_on
 
 
 class _TaskInfoMeta:
@@ -87,7 +87,7 @@ async def test_conditions_any_full_triggers_parent_then():
         ],
     }
 
-    res = await nested_steer_on(root, spec)
+    res = await _nested_steer_on(root, spec)
 
     # Parent interjection should have been applied
     assert "children ready" in root.interjections
@@ -143,6 +143,6 @@ async def test_conditions_all_partial_triggers_parent_pause():
         ],
     }
 
-    await nested_steer_on(root, spec)
+    await _nested_steer_on(root, spec)
 
     assert root.paused >= 1
