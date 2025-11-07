@@ -56,7 +56,11 @@ def log_job_startup(
             api_key=api_key,
         )
         print("Logged Startup Event", job_name)
+    except Exception as e:
+        print(f"Error logging startup event: {e}")
+        traceback.print_exc()
 
+    try:
         # Resolve liveview URL via comms infra service
         liveview_url = None
         retries = 3
@@ -83,7 +87,7 @@ def log_job_startup(
         log.update_entries(liveview_url=liveview_url)
         print("Updated log with liveview URL:", job_name)
     except Exception as e:
-        print(f"Error creating logs / resolving liveview URL: {e}")
+        print(f"Error resolving liveview URL: {e}")
         traceback.print_exc()
 
 
