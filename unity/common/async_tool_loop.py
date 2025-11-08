@@ -781,29 +781,37 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
     # --- targeted nested steerability (programmatic, no LLM) -----------------
     async def nested_steer(self, spec: dict) -> dict:
-        """Apply a nested steering spec to this loop and any matched child handles.
+        """Apply a nested steering spec using nested_structure’s vocabulary.
 
         Programmatic (no LLM) and best‑effort: unknown or missing children are
-        silently ignored and traversal stops naturally when no child is found.
+        ignored and traversal stops naturally when no child is found.
 
-        Spec schema (keys optional; omitted treated as None):
-        - steps: list[dict] – ordered actions to apply on the current handle.
-          Each step is a dict with keys:
-            - method: str – method name to invoke (e.g., "pause", "resume",
-              "interject", "stop", "ask").
-            - args: any – convenience single argument; mapped to a common
-              content key if not otherwise provided in ``kwargs``.
-            - kwargs: dict – keyword arguments to pass to the method.
-        - children: dict[str, dict] – mapping of selector → node to apply on
-          matched in‑flight child handles.
+        Spec schema (structure‑aligned; keys optional):
+        - steps: list[dict]
+            Each step is a dict with:
+              - method: str  (e.g., "pause", "resume", "interject", "stop", "ask")
+              - args: any    (positional argument or list of args; no aliasing)
+              - kwargs: dict (keyword arguments)
+        - children: list[dict]
+            A list of child node specs mirroring nested_structure nodes:
+              - tool: str     Canonicalized "Class.method" (preferred identifier)
+              - handle: str   Canonicalized handle chain "Leaf(Parent(...))"
+              - steps: list[dict]       Local steps to apply on that child
+              - children: list[dict]    Further descendants with the same shape
 
-        Selector matching (case‑insensitive):
-        - Matches against in‑flight tool names at this level (e.g., "TaskScheduler_execute").
-        - Dotted vs underscore tolerated ("TaskScheduler.execute").
-        - Method‑only suffix accepted ("execute").
+        Matching is done against live children discovered via loop task_info
+        and standardized wrapper discovery, using:
+          1) tool equality; else
+          2) base(handle) equality, where base(x) = x.split("(", 1)[0].
 
-        Returns a summary dict: {"applied": [...], "skipped": [...]}, useful for tests.
-        See module‑level ``nested_steer_on`` for full behaviour details.
+        Returns a summary dict:
+          {
+            "applied": [{"path": [...], "method": "..."}],
+            "skipped": [{"path": [...], "child": {"tool": "...", "handle": "..."}}],
+            "status":  {"<path>": {"self": "none|partial|full", "children": {...}}},
+            "conditions_fired": [...]
+          }
+        See module‑level ``_nested_steer_on`` for full behaviour details.
         """
 
         return await _nested_steer_on(self, spec)
@@ -1497,31 +1505,61 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
 # --- module-level generic helper ----------------------------------------------
 async def _nested_steer_on(handle: Any, spec: dict) -> dict:
-    """Apply a nested steering spec to any compatible handle without LLM calls.
+    """Apply a nested steering spec using the same vocabulary as nested_structure.
 
-    Node schema (keys optional; omitted treated as None):
-      - steps: list[dict] – ordered actions to apply on the current handle. Each
-        step supports:
-          - method: str – method name to invoke (e.g., "pause", "resume",
-            "interject", "stop", "ask").
-          - args: any – convenience single argument; mapped to a common content
-            key if not otherwise provided in kwargs.
-          - kwargs: dict – keyword arguments to pass to the method.
-      - children: dict[str, dict] – mapping of selector → child node, where selector
-        is matched against in-flight tool names at this level (from task_info metadata).
+    Spec schema (structure-aligned; keys optional):
+      - steps: list[dict]
+          Ordered actions to apply on the current handle. Each step supports:
+            - method: str  (e.g., "pause", "resume", "interject", "stop", "ask")
+            - args: any    (positional argument or list of args; no aliasing)
+            - kwargs: dict (keyword arguments)
+      - children: list[dict]
+          A list of child node specs. Each child node mirrors a node returned by
+          nested_structure and may include:
+            - tool: str     Canonicalized "Class.method" (preferred identifier)
+            - handle: str   Canonicalized handle chain "Leaf(Parent(...))"
+            - steps: list[dict]   Local steps to apply on that child
+            - children: list[dict]  Further descendants with the same shape
+          Matching is done against live children discovered at this node using:
+            1) tool equality (preferred), else
+            2) base(handle) equality, where base(x) = x.split(\"(\", 1)[0]
 
     Behaviour:
-      - Apply the local steps in order (when present), using robust forwarding.
-      - Discover loop-children via _task.task_info and recurse into matched child handles.
-      - If no loop-children matched, fall back to common wrapper attributes ("_actor_handle",
-        "_current_handle") when exactly one child node is provided.
-      - Unknown selectors are ignored; traversal stops naturally when no child is found.
+      - Apply local steps first on the current handle.
+      - Discover live children via both loop task_info and standardized wrappers
+        (discover_wrapped_handles), deduplicating by object id and skipping
+        completed handles.
+      - For each spec child, match one or more live children and recurse.
+      - Record a results object with:
+          results = {
+            "applied": [ {"path": [...], "method": "..."} ],
+            "skipped": [ {"path": [...], "child": {"tool": "...", "handle": "..."}} ],
+            "status":  {
+              "<path>": {"self": "none|partial|full", "children": {<child_id>: "..." }}
+            },
+            "conditions_fired": [ ... ]  # when conditions are provided
+          }
 
-    Selector matching rules (case-insensitive):
-      - Accept exact tool name matches (e.g., "TaskScheduler_execute").
-      - Accept dotted form (e.g., "TaskScheduler.execute") matching underscore names.
-      - Accept method-only suffix (e.g., "execute" matches "TaskScheduler_execute").
-    """
+    Conditions (optional, structure-aligned):
+      - Node may include "conditions": list[dict]. Each condition has:
+          {
+            "when": { ... boolean expression ... },
+            "then":  [steps...],
+            "else_then": [steps...]
+          }
+        Boolean expression supports:
+          - {"self": "none|partial|full"}
+          - {"child": {"tool": "..."} , "status": "none|partial|full"}
+          - {"child": {"handle": "..."} , "status": "none|partial|full"}
+          - {"path": "A.B.C", "status": "none|partial|full"}    # dotted tool-ids
+          - {"any": [expr, ...]}  / {"all": [expr, ...]}  / {"not": expr}
+
+    Notes:
+      - This refactor unifies naming and discovery with nested_structure:
+        canonicalized names, wrapper traversal, and identical child vocabulary.
+      - Selector/call_id matching from the previous design is removed in favour
+        of structure-based matching by "tool"/"handle".
+    """  # noqa: E501
 
     # Best-effort label for diagnostics
     try:
@@ -1541,8 +1579,10 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                 steps = spec.get("steps") or []
                 if isinstance(steps, list):
                     steps_count = len(steps)
-                children = spec.get("children") or {}
-                if isinstance(children, dict):
+                children = spec.get("children")
+                if isinstance(children, list):
+                    children_count = len(children)
+                elif isinstance(children, dict):
                     children_count = len(children)
         except Exception:
             steps_count, children_count = 0, 0
@@ -1554,77 +1594,176 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
 
     results: dict = {"applied": [], "skipped": []}
 
-    def _norm(s: str) -> str:
+    # ───── shared canonicalization helpers (mirror nested_structure) ─────────
+    def _canon_name(name: str) -> str:
+        s = str(name or "")
+        if s.startswith("Simulated") and len(s) > 9:
+            s = s[9:]
+        # Strip leading version prefixes like V3/V12
         try:
-            return str(s).replace(".", "_").strip().lower()
-        except Exception:
-            return str(s).lower()
+            import re as _re  # noqa: WPS433
 
-    def _selector_matches_name(selector: str, candidate_name: str) -> bool:
-        """Name-only matching with relaxed rules (case-insensitive, suffix)."""
-        sel = _norm(selector)
-        cand = _norm(candidate_name)
-        if not sel or not cand:
-            return False
-        if sel == cand:
-            return True
-        # Suffix match: allow targeting by bare method name
+            s = _re.sub(r"^V\\d+", "", s)
+        except Exception:
+            pass
+        if s.startswith("Base") and len(s) > 4:
+            s = s[4:]
+        return s
+
+    def _handle_chain_of(h) -> str:
         try:
-            suffix = cand.split("_", 1)[1]
+            cls = getattr(h, "__class__", object)
         except Exception:
-            suffix = cand
-        return sel == suffix
-
-    def _selector_hits(
-        selector: str,
-        candidate_name: str,
-        candidate_call_id: str | None,
-    ) -> bool:
-        """Extended selector matcher supporting wildcard and call_id forms.
-
-        Accepted forms:
-        - "*" → match all children at the current level
-        - exact call_id → matches the tool with that call_id
-        - "#<id_suffix>" → match when call_id endswith(<id_suffix>)
-        - "<name>#<call_id|suffix>" → match by name AND call_id (or its suffix)
-        - name-only → uses relaxed name rules (dotted vs underscore; suffix method)
-        """
+            cls = object
         try:
-            s = str(selector or "").strip()
+            leaf_name = _canon_handle_name(cls) or "handle"
         except Exception:
-            s = str(selector)
+            leaf_name = "handle"
 
-        # Wildcard for broadcast at this level
-        if s == "*":
-            return True
+        _SENTINELS = (
+            (AsyncToolLoopHandle, "AsyncToolLoopHandle"),
+            (SteerableToolHandle, "SteerableToolHandle"),
+            (SteerableHandle, "SteerableHandle"),
+        )
+        for typ, label in _SENTINELS:
+            if cls is typ:
+                return label
 
-        # Direct call_id match
-        if candidate_call_id and s == str(candidate_call_id):
-            return True
+        try:
+            mro = list(getattr(cls, "__mro__", ()))
+        except Exception:
+            mro = []
 
-        # call_id suffix match via leading '#'
-        if s.startswith("#"):
-            suf = s[1:]
-            if candidate_call_id and (
-                candidate_call_id.endswith(suf) or candidate_call_id == suf
-            ):
-                return True
-            return False
-
-        # Combined name#id form
-        if "#" in s:
+        parts: list[str] = [leaf_name]
+        for base in (mro[1:] if len(mro) > 1 else []):
             try:
-                left, right = s.split("#", 1)
+                bname = getattr(base, "__name__", "")
             except Exception:
-                left, right = s, ""
-            if _selector_matches_name(left, candidate_name):
-                if not candidate_call_id:
-                    return False
-                return candidate_call_id == right or candidate_call_id.endswith(right)
-            return False
+                bname = ""
 
-        # Default: name-only
-        return _selector_matches_name(s, candidate_name)
+            included_sentinel = False
+            for typ, label in _SENTINELS:
+                if base is typ:
+                    parts.append(label)
+                    included_sentinel = True
+                    break
+            if included_sentinel:
+                break
+
+            from abc import ABC as _ABC  # noqa: WPS433
+
+            if base is object or base is _ABC:
+                break
+
+            if bname and bname.startswith("Base"):
+                continue
+            try:
+                canon = _canon_handle_name(base)
+            except Exception:
+                canon = bname
+            if canon:
+                parts.append(canon)
+
+        try:
+            s = parts[-1]
+            for p in reversed(parts[:-1]):
+                s = f"{p}({s})"
+            return s
+        except Exception:
+            return leaf_name
+
+    def _tool_of(h) -> str | None:
+        try:
+            raw = getattr(h, "_loop_id", None) or ""
+        except Exception:
+            raw = ""
+        base = str(raw).split("(", 1)[0]
+        if "." in base:
+            cls, meth = base.split(".", 1)
+            return f"{_canon_name(cls)}.{meth}"
+        try:
+            cls_name = _canon_name(
+                getattr(getattr(h, "__class__", object), "__name__", ""),
+            )
+            return cls_name or None
+        except Exception:
+            return None
+
+    def _is_live(child) -> bool:
+        try:
+            if hasattr(child, "done"):
+                d = child.done()
+                if isinstance(d, bool):
+                    return not d
+        except Exception:
+            pass
+        return True
+
+    def _base_handle_name(s: str | None) -> str:
+        try:
+            return str(s or "").split("(", 1)[0]
+        except Exception:
+            return str(s or "")
+
+    def _identity_for_path(h) -> str:
+        t = _tool_of(h)
+        if isinstance(t, str) and t:
+            return t
+        return _base_handle_name(_handle_chain_of(h))
+
+    def _discover_children(h) -> list:
+        # task_info discovery
+        task_info = {}
+        from contextlib import suppress as _s
+
+        with _s(Exception):
+            task_info = getattr(getattr(h, "_task", None), "task_info", {}) or {}
+
+        children: list = []
+        seen: set[int] = set()
+        if isinstance(task_info, dict) and task_info:
+            for meta in list(task_info.values()):
+                try:
+                    child = getattr(meta, "handle", None)
+                except Exception:
+                    child = None
+                if child is None or not _is_live(child):
+                    continue
+                try:
+                    cid = id(child)
+                    if cid in seen:
+                        continue
+                    seen.add(cid)
+                except Exception:
+                    pass
+                children.append(child)
+
+        # wrapper discovery (same helper as nested_structure)
+        try:
+            from .handle_wrappers import (  # noqa: WPS433
+                discover_wrapped_handles as _discover_wrapped_handles,
+            )
+        except Exception:
+            _discover_wrapped_handles = None  # type: ignore
+
+        if _discover_wrapped_handles is not None:
+            try:
+                pairs = list(_discover_wrapped_handles(h) or [])
+            except Exception:
+                pairs = []
+            for _src, child in pairs:
+                if child is None or not _is_live(child):
+                    continue
+                try:
+                    cid = id(child)
+                    if cid in seen:
+                        continue
+                    seen.add(cid)
+                except Exception:
+                    pass
+                children.append(child)
+
+        return children
 
     # ───── status helpers ──────────────────────────────────────────────────
     def _merge_status(a: str, b: str) -> str:
@@ -1673,10 +1812,13 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
 
     def _record_status(flat_key: str, node_status: dict) -> None:
         try:
-            children_view = {
-                k: (v.get("self") if isinstance(v, dict) else "none")
-                for k, v in (node_status.get("children", {}) or {}).items()
-            }
+            children_view = {}
+            try:
+                for k, v in (node_status.get("children", {}) or {}).items():
+                    if isinstance(v, dict):
+                        children_view[k] = v.get("self", "none")
+            except Exception:
+                children_view = {}
             results.setdefault("status", {})[flat_key] = {
                 "self": node_status.get("self", "none"),
                 "children": children_view,
@@ -1690,6 +1832,13 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
         except Exception:
             segs = []
         cur = node_status
+        # Fast path: allow a direct child key match for full literal (handles tool ids like "Class.method")
+        try:
+            direct = cur.get("children", {}).get(dotted)
+            if isinstance(direct, dict):
+                return str(direct.get("self", "none"))
+        except Exception:
+            pass
         for s in segs:
             try:
                 ch = cur.get("children", {}).get(s)
@@ -1707,7 +1856,6 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
         h,
         node: dict | None,
         path: list[str],
-        sel_path: list[str],
     ) -> dict:
         node = node or {}
         steps = node.get("steps") or []
@@ -1770,79 +1918,92 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                     # Continue to next step
                     pass
 
-        # 2) Recurse into matched children
-        children = node.get("children") or {}
+        # 2) Recurse into matched children (structure-based)
+        children_specs = node.get("children") or []
+        if not isinstance(children_specs, list):
+            children_specs = []
 
-        # Discover loop children via task_info when available
-        task_info = {}
-        with suppress(Exception):
-            task_info = getattr(getattr(h, "_task", None), "task_info", {}) or {}
+        live_children = _discover_children(h)
+        per_child_nodes: dict[str, list[dict]] = {}
 
-        matched_any = False
-        matched_selectors: set[str] = set()
-        per_selector_nodes: dict[str, list[dict]] = {}
+        for child_spec in children_specs:
+            if not isinstance(child_spec, dict):
+                continue
+            target_tool = child_spec.get("tool")
+            target_handle = _base_handle_name(child_spec.get("handle"))
 
-        if isinstance(children, dict) and children:
-            if isinstance(task_info, dict) and task_info:
-                for sel, child_node in children.items():
-                    for _t, _inf in list(task_info.items()):
-                        try:
-                            _name = getattr(_inf, "name", None)
-                            _cid = getattr(_inf, "call_id", None)
-                            _child = getattr(_inf, "handle", None)
-                        except Exception:
-                            _name, _cid, _child = None, None, None
-                        if (
-                            _name
-                            and _child is not None
-                            and _selector_hits(sel, _name, _cid)
-                        ):
-                            matched_any = True
-                            try:
-                                matched_selectors.add(str(sel))
-                            except Exception:
-                                pass
-                            try:
-                                _p = "/".join(str(p) for p in path)
-                                LOGGER.debug(
-                                    f"↘️ [{label}] Descend: selector {sel!r} matched child {_name!r} at {_p}",
-                                )
-                            except Exception:
-                                pass
-                            child_status = await _apply(
-                                _child,
-                                child_node,
-                                path + [str(_name)],
-                                sel_path + [str(sel)],
-                            )
-                            per_selector_nodes.setdefault(str(sel), []).append(
-                                child_status,
-                            )
+            matched = False
+            matched_nodes: list[dict] = []
+            for child in live_children:
+                live_tool = _tool_of(child)
+                live_handle = _handle_chain_of(child)
+                live_handle_base = _base_handle_name(live_handle)
 
-            # Record any unmatched selectors at this level as skipped
-            try:
-                for _sel in children.keys():
-                    if str(_sel) not in matched_selectors:
-                        try:
-                            results["skipped"].append(
-                                {"path": list(path), "selector": str(_sel)},
-                            )
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                is_match = False
+                if isinstance(target_tool, str) and target_tool:
+                    is_match = live_tool == target_tool
+                elif isinstance(target_handle, str) and target_handle:
+                    is_match = live_handle_base == target_handle
 
-        # Aggregate child statuses per selector
+                if is_match:
+                    matched = True
+                    child_id = target_tool or target_handle or _identity_for_path(child)
+                    try:
+                        _p = "/".join(str(p) for p in path)
+                        LOGGER.debug(
+                            f"↘️ [{label}] Descend: matched child at {_p} → "
+                            f"{child_id!r}",
+                        )
+                    except Exception:
+                        pass
+                    node_status = await _apply(
+                        child,
+                        child_spec,
+                        path + [child_id],
+                    )
+                    per_child_nodes.setdefault(child_id, []).append(node_status)
+                    matched_nodes.append(node_status)
+
+            if not matched:
+                # No live child matched this spec entry
+                ident = {}
+                if isinstance(target_tool, str) and target_tool:
+                    ident["tool"] = target_tool
+                if isinstance(target_handle, str) and target_handle:
+                    ident["handle"] = target_handle
+                try:
+                    results["skipped"].append(
+                        {"path": list(path), "child": ident or {"unknown": True}},
+                    )
+                except Exception:
+                    pass
+
+        # Aggregate child statuses by identity key
         aggregated_children: dict[str, dict] = {}
-        for sel, lst in per_selector_nodes.items():
-            aggregated_children[sel] = _aggregate_nodes(lst)
-        # Ensure explicit selectors exist (even if no match)
-        for sel in (children.keys() if isinstance(children, dict) else []):
-            aggregated_children.setdefault(str(sel), _empty_status_node())
+        for k, lst in per_child_nodes.items():
+            aggregated_children[k] = _aggregate_nodes(lst)
+        # Ensure explicitly specified children exist (even if no live match)
+        for child_spec in children_specs:
+            try:
+                ident = None
+                if isinstance(child_spec, dict):
+                    t = child_spec.get("tool")
+                    h = child_spec.get("handle")
+                    if isinstance(t, str) and t:
+                        ident = t
+                    elif isinstance(h, str) and h:
+                        ident = _base_handle_name(h)
+                if (
+                    isinstance(ident, str)
+                    and ident
+                    and ident not in aggregated_children
+                ):
+                    aggregated_children[ident] = _empty_status_node()
+            except Exception:
+                continue
 
         # Compute self status
-        if children:
-            # Based on direct child selectors' self statuses
+        if children_specs:
             direct = [
                 aggregated_children[s]["self"] for s in aggregated_children.keys()
             ]
@@ -1853,7 +2014,6 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
             ):
                 self_status = "partial"
             elif direct:
-                # all none
                 self_status = "none"
             else:
                 self_status = "none"
@@ -1887,11 +2047,21 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
             try:
                 if "self" in expr:
                     return str(node_status.get("self", "none")) == str(expr.get("self"))
-                if "selector" in expr:
-                    sel = str(expr.get("selector"))
+                if "child" in expr:
+                    child_expr = expr.get("child") or {}
+                    ident = None
+                    if isinstance(child_expr, dict):
+                        t = child_expr.get("tool")
+                        h = child_expr.get("handle")
+                        if isinstance(t, str) and t:
+                            ident = t
+                        elif isinstance(h, str) and h:
+                            ident = _base_handle_name(h)
+                    if not ident:
+                        return False
                     want = str(expr.get("status", "none"))
                     got = str(
-                        (node_status.get("children", {}).get(sel) or {}).get(
+                        (node_status.get("children", {}).get(ident) or {}).get(
                             "self",
                             "none",
                         ),
@@ -1971,10 +2141,7 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
 
         return node_status
 
-    await _apply(handle, spec or {}, [str(label)], [])
-    return results
-
-    await _apply(handle, spec, [str(label)])
+    await _apply(handle, spec or {}, [str(label)])
     return results
 
 
