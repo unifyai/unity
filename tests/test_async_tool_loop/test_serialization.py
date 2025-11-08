@@ -86,9 +86,9 @@ async def test_handle_serialize_minimal():
     assert snap.get("loop_id", "").startswith("ContactManager.ask")
     assert snap.get("entrypoint", {}).get("class_name") == "ContactManager"
     assert snap.get("entrypoint", {}).get("method_name") == "ask"
-    # assistant_steps may be empty depending on timing, but it must be a list
-    assert isinstance(snap.get("assistant_steps"), list)
-    assert isinstance(snap.get("tool_results"), list)
+    # assistant may be empty depending on timing, but it must be a list
+    assert isinstance(snap.get("assistant"), list)
+    assert isinstance(snap.get("tools"), list)
 
 
 @pytest.mark.asyncio
@@ -148,7 +148,7 @@ def _sample_snapshot_dict():
         loop_id="ContactManager.ask(abcdef)",
         system_message="You are helpful.",
         initial_user_message="Find contact Alice",
-        assistant_steps=[
+        assistant=[
             {
                 "role": "assistant",
                 "tool_calls": [
@@ -163,7 +163,7 @@ def _sample_snapshot_dict():
                 ],
             },
         ],
-        tool_results=[
+        tools=[
             {
                 "id": "call_1",
                 "name": "search_contacts",
@@ -180,8 +180,8 @@ def test_loop_snapshot_roundtrip():
     assert validated.version == 1
     assert validated.entrypoint.class_name == "ContactManager"
     assert validated.entrypoint.method_name == "ask"
-    assert isinstance(validated.assistant_steps, list)
-    assert isinstance(validated.tool_results, list)
+    assert isinstance(validated.assistant, list)
+    assert isinstance(validated.tools, list)
 
 
 def test_loop_snapshot_unsupported_version():
@@ -274,8 +274,8 @@ async def test_deserialize_unknown_manager_class_raises():
         "loop_id": "NoSuchManager.ask(xxx)",
         "system_message": "You are helpful.",
         "initial_user_message": "Hello",
-        "assistant_steps": [],
-        "tool_results": [],
+        "assistant": [],
+        "tools": [],
     }
 
     with pytest.raises(ValueError, match="Manager class not found"):
@@ -295,8 +295,8 @@ async def test_deserialize_unknown_manager_method_raises():
         "loop_id": "ContactManager.nope(xxx)",
         "system_message": "You are helpful.",
         "initial_user_message": "Hello",
-        "assistant_steps": [],
-        "tool_results": [],
+        "assistant": [],
+        "tools": [],
     }
 
     with pytest.raises(ValueError, match="No tools registered for ContactManager.nope"):
@@ -343,13 +343,13 @@ async def test_serialize_cancels_inflight_and_keeps_requests():
             tc.get("function", {}).get("name") == "hold"
             for tc in m.get("tool_calls", [])
         )
-        for m in snap.get("assistant_steps", [])
+        for m in snap.get("assistant", [])
         if m.get("role") == "assistant"
     )
     # No tool result should be present because we never opened the gate
     assert not any(
         m.get("role") == "tool" and m.get("name") == "hold"
-        for m in snap.get("tool_results", [])
+        for m in snap.get("tools", [])
     )
 
 
