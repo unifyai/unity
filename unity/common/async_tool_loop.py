@@ -891,23 +891,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except Exception:
             msgs = []
 
-        # Build pruning context (allowed base tools) in a minimal, implementation-agnostic way.
-        # We no longer instantiate managers here. For manager entrypoints we keep `allowed_tool_names=None`
-        # and rely on structural pruning in transcript_ops. For inline-tools, we can populate the registry.
+        # Minimal pruning policy: do not bind allowed tools by inspecting managers.
         allowed_tool_names: set[str] | None = None
         mgr_cls = None
-        try:
-            from .state_managers import (  # noqa: WPS433
-                discover_manager_modules as _discover_manager_modules,
-                get_manager_registry as _get_manager_registry,
-            )
-
-            # Populate registry generically (pattern-based import of unity/*_manager)
-            _discover_manager_modules()
-            _registry = _get_manager_registry()
-            mgr_cls = _registry.get(cls_name)
-        except Exception:
-            mgr_cls = None
 
         # Determine if this looks like a non-manager loop with inline tools
         inline_registry = []
@@ -1027,21 +1013,34 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     method_name=meth_name,
                 )
 
+        # Human-readable root summary from entrypoint (no label parsing)
+        root_summary = {}
+        try:
+            if isinstance(entry_field, _EntryPointManagerMethod):
+                root_summary["tool"] = (
+                    f"{entry_field.class_name}.{entry_field.method_name}"
+                )
+            else:
+                root_summary["tool"] = "InlineTools"
+            root_summary["handle"] = "AsyncToolLoopHandle"
+        except Exception:
+            root_summary = {}
+
         snap = _LoopSnapshot(
             entrypoint=entry_field,
             loop_id=str(self._loop_id or ""),
             system_message=system_message,
+            root=root_summary or None,
             initial_user_message=initial_user_message,
-            assistant_steps=assistant_steps,
-            tool_results=tool_results,
-            assistant_indices=assistant_indices_raw,
-            tool_results_indices=tool_results_indices,
-            interjections=interjections,
-            interjections_indices=interjections_indices,
+            assistant=assistant_steps,
+            tools=tool_results,
+            assistant_positions=assistant_indices_raw,
+            tool_positions=tool_results_indices,
+            system_interjections=interjections,
+            interjection_positions=interjections_indices,
             clarifications=clarifications,
             notifications=notifications,
             images=images_list,
-            full_messages=msgs,
             meta={
                 "run_id": SESSION_ID,
                 "loop_created_at": str(getattr(self, "_created_at_iso", "") or ""),
@@ -1079,10 +1078,85 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         child_snapshot = child.serialize(recursive=True, store=store)
                     except Exception:
                         child_snapshot = None
+
+                # Identify child tool and handle for readability
+                def _child_tool(h) -> str | None:
+                    try:
+                        raw = getattr(h, "_loop_id", None) or ""
+                    except Exception:
+                        raw = ""
+                    base = str(raw).split("(", 1)[0]
+                    if "." in base:
+                        cls, meth = base.split(".", 1)
+                        return f"{_canon_class(cls)}.{meth}"
+                    try:
+                        cls_name = _canon_class(
+                            getattr(getattr(h, "__class__", object), "__name__", ""),
+                        )
+                        return cls_name or None
+                    except Exception:
+                        return None
+
+                def _child_handle_chain(h) -> str | None:
+                    try:
+                        cls = getattr(h, "__class__", object)
+                    except Exception:
+                        cls = object
+                    try:
+                        leaf = _canon_handle_name(cls) or "handle"
+                    except Exception:
+                        leaf = "handle"
+                    _SENTINELS = (
+                        (AsyncToolLoopHandle, "AsyncToolLoopHandle"),
+                        (SteerableToolHandle, "SteerableToolHandle"),
+                        (SteerableHandle, "SteerableHandle"),
+                    )
+                    for typ, label in _SENTINELS:
+                        if cls is typ:
+                            return label
+                    try:
+                        mro = list(getattr(cls, "__mro__", ()))
+                    except Exception:
+                        mro = []
+                    parts = [leaf]
+                    for base in (mro[1:] if len(mro) > 1 else []):
+                        try:
+                            bname = getattr(base, "__name__", "")
+                        except Exception:
+                            bname = ""
+                        included = False
+                        for typ, label in _SENTINELS:
+                            if base is typ:
+                                parts.append(label)
+                                included = True
+                                break
+                        if included:
+                            break
+                        from abc import ABC as _ABC  # noqa: WPS433
+
+                        if base is object or base is _ABC:
+                            break
+                        if bname and bname.startswith("Base"):
+                            continue
+                        try:
+                            canon = _canon_handle_name(base)
+                        except Exception:
+                            canon = bname
+                        if canon:
+                            parts.append(canon)
+                    try:
+                        s = parts[-1]
+                        for p in reversed(parts[:-1]):
+                            s = f"{p}({s})"
+                        return s
+                    except Exception:
+                        return leaf
+
                 entry = {
                     "call_id": getattr(_inf, "call_id", None),
-                    "tool_name": getattr(_inf, "name", None),
-                    "is_passthrough": bool(getattr(_inf, "is_passthrough", False)),
+                    "tool": _child_tool(child) or getattr(_inf, "name", None),
+                    "handle": _child_handle_chain(child),
+                    "passthrough": bool(getattr(_inf, "is_passthrough", False)),
                     "state": state,
                 }
                 if isinstance(child_snapshot, dict):
@@ -1128,8 +1202,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             child_snapshot = None
                     entry = {
                         "call_id": None,
-                        "tool_name": None,
-                        "is_passthrough": False,
+                        "tool": _child_tool(child),
+                        "handle": _child_handle_chain(child),
+                        "passthrough": False,
                         "state": state,
                     }
                     if isinstance(child_snapshot, dict):
@@ -1255,7 +1330,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         assistant_call_ids: set[str] = set()
         try:
-            for am in snap.assistant_steps or []:
+            for am in snap.assistant or []:
                 for tc in am.get("tool_calls", []) or []:
                     try:
                         _cid = tc.get("id")
@@ -1268,7 +1343,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         final_call_ids: set[str] = set()
         try:
-            for tm in snap.tool_results or []:
+            for tm in snap.tools or []:
                 try:
                     _cid = tm.get("tool_call_id")
                 except Exception:
@@ -1298,16 +1373,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # If indices are present, reconstruct exact ordering across assistants, tools, and interjections.
         if (
-            snap.assistant_indices
-            or snap.tool_results_indices
-            or snap.interjections_indices
+            snap.assistant_positions
+            or snap.tool_positions
+            or snap.interjection_positions
         ):
             combined: list[tuple[int, dict]] = []
             # Assistant messages with indices
             try:
                 for idx_val, amsg in zip(
-                    snap.assistant_indices or [],
-                    snap.assistant_steps or [],
+                    snap.assistant_positions or [],
+                    snap.assistant or [],
                 ):
                     if isinstance(amsg, dict) and amsg.get("role") == "assistant":
                         combined.append((int(idx_val), amsg))
@@ -1316,8 +1391,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             # Tool results with indices (skip clarification wrappers and any pending placeholders)
             try:
                 for idx_val, tmsg in zip(
-                    snap.tool_results_indices or [],
-                    snap.tool_results or [],
+                    snap.tool_positions or [],
+                    snap.tools or [],
                 ):
                     try:
                         nm = tmsg.get("name")
@@ -1335,8 +1410,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             # Interjections with indices
             try:
                 for idx_val, imsg in zip(
-                    snap.interjections_indices or [],
-                    snap.interjections or [],
+                    snap.interjection_positions or [],
+                    snap.system_interjections or [],
                 ):
                     if isinstance(imsg, dict) and imsg.get("role") == "system":
                         combined.append((int(idx_val), imsg))
@@ -1349,7 +1424,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         else:
             # Backward-compat path: pair tool results by call_id after each assistant
             by_call_id: dict[str, dict] = {}
-            for tm in snap.tool_results or []:
+            for tm in snap.tools or []:
                 try:
                     name_val = tm.get("name")
                     tcid = tm.get("tool_call_id")
@@ -1366,7 +1441,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 if isinstance(tcid, str) and tcid:
                     by_call_id[tcid] = tm
 
-            for amsg in snap.assistant_steps or []:
+            for amsg in snap.assistant or []:
                 if not isinstance(amsg, dict) or amsg.get("role") != "assistant":
                     continue
                 msgs.append(amsg)
@@ -1451,9 +1526,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         _resume_children_payload.append(
                             {
                                 "call_id": rec.get("call_id"),
-                                "tool_name": rec.get("tool_name"),
+                                "tool_name": rec.get("tool"),
                                 "is_passthrough": bool(
-                                    rec.get("is_passthrough", False),
+                                    rec.get("passthrough", False),
                                 ),
                                 "handle": child_handle,
                             },

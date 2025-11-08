@@ -229,7 +229,7 @@ def extract_clarifications(
     name.
 
     Invariants:
-    - Each entry contains {call_id, tool_name, question} where `question` is the
+    - Each entry contains {call_id, tool, question} where `question` is the
       tool message content verbatim; no parsing or rewriting is applied.
     """
     callid_to_tool_name = callid_to_tool_name or {}
@@ -245,7 +245,7 @@ def extract_clarifications(
             clarifications.append(
                 {
                     "call_id": cid,
-                    "tool_name": callid_to_tool_name.get(cid, ""),
+                    "tool": callid_to_tool_name.get(cid, ""),
                     "question": content,
                 },
             )
