@@ -117,9 +117,9 @@ async def test_nested_steer_targets_child_and_applies_method():
             "steps": [
                 {"method": "interject", "args": "root-info"},  # informational only
             ],
-            "children": {
-                "Outer_spawn": {"steps": [{"method": "pause"}]},
-            },
+            "children": [
+                {"handle": "ToyHandle", "steps": [{"method": "pause"}]},
+            ],
         }
 
         res = await outer.nested_steer(spec)  # type: ignore[attr-defined]
@@ -135,7 +135,7 @@ async def test_nested_steer_targets_child_and_applies_method():
         assert any(
             (item.get("method") == "pause")
             and any(
-                isinstance(p, str) and ("Outer_spawn" in p)
+                isinstance(p, str) and ("ToyHandle" in p)
                 for p in (item.get("path") or [])
             )
             for item in (res.get("applied") or [])
@@ -244,13 +244,9 @@ async def test_nested_steer_noop_when_child_selector_does_not_match():
         # Intentionally provide a non-matching child-level selector. Without any fallback,
         # no method should be applied.
         spec = {
-            "children": {
-                "Wrapper_run": {
-                    "children": {
-                        "IGNORED": {"steps": [{"method": "pause"}]},
-                    },
-                },
-            },
+            "children": [
+                {"handle": "IGNORED", "steps": [{"method": "pause"}]},
+            ],
         }
 
         res = await outer.nested_steer(spec)  # type: ignore[attr-defined]
@@ -260,11 +256,8 @@ async def test_nested_steer_noop_when_child_selector_does_not_match():
             inner.paused == 0
         ), "No child matched; nested_steer should not apply any method"
         assert any(
-            (item.get("selector") == "IGNORED")
-            and any(
-                isinstance(p, str) and ("Wrapper_run" in p)
-                for p in (item.get("path") or [])
-            )
+            isinstance(item.get("child"), dict)
+            and (item["child"].get("handle") == "IGNORED")
             for item in (res.get("skipped") or [])
         ), "Expected non-matching selector to be recorded as skipped with the correct path"
     finally:
@@ -332,15 +325,16 @@ async def test_nested_steer_applies_serial_steps_on_child():
 
         msg = "serial-steps-info"
         spec = {
-            "children": {
-                "Outer_spawn": {
+            "children": [
+                {
+                    "handle": "ToyHandle",
                     "steps": [
                         {"method": "pause"},
                         {"method": "resume"},
                         {"method": "interject", "args": msg},
                     ],
                 },
-            },
+            ],
         }
 
         await outer.nested_steer(spec)  # type: ignore[attr-defined]
