@@ -42,6 +42,38 @@ from ._async_tool.transcript_ops import (
 if TYPE_CHECKING:
     from ..image_manager.types.image_refs import ImageRefs
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper: derive entrypoint ("Class.method") from loop_id lineage label
+# Accepts labels like:
+#   "ContactManager.ask"
+#   "ContactManager.ask(x2ab)"
+#   "ContactManager.update->ContactManager.ask(x2ab)"
+#   "TaskScheduler.execute->TaskScheduler.ask"
+# Returns (class_name, method_name) or raises ValueError when not parseable.
+# ─────────────────────────────────────────────────────────────────────────────
+def _parse_entrypoint_from_loop_id_label(label: str) -> tuple[str, str]:
+    s = str(label or "")
+    # When lineage is present, keep only the last segment
+    try:
+        if "->" in s:
+            s = s.split("->")[-1]
+    except Exception:
+        pass
+    # Strip any trailing unique-id in parentheses
+    try:
+        s = s.split("(", 1)[0]
+    except Exception:
+        s = s
+    s = s.strip()
+    if "." not in s or not s:
+        raise ValueError("Manager entrypoint required (Class.method) in loop_id label")
+    cls_name, meth_name = s.split(".", 1)
+    if not cls_name or not meth_name:
+        raise ValueError("Manager entrypoint required (Class.method) in loop_id label")
+    return cls_name, meth_name
+
+
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
 from abc import ABC, abstractmethod
@@ -866,14 +898,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Stopping too early can cancel nested handles before they are recorded.
 
         # Resolve entrypoint candidate from loop_id label (e.g., "ContactManager.ask" or
-        # "ContactManager.ask(x2ab)")
+        # "ContactManager.update->ContactManager.ask(x2ab)")
         raw_label = str(getattr(self, "_log_label", None) or self._loop_id or "")
-        base = raw_label.split("(", 1)[0]
-        if "." not in base or not base:
-            raise ValueError(
-                "Manager entrypoint required (Class.method) in loop_id label",
-            )
-        cls_name, meth_name = base.split(".", 1)
+        cls_name, meth_name = _parse_entrypoint_from_loop_id_label(raw_label)
 
         # Gather transcript fragments
         msgs = []
@@ -986,21 +1013,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             except Exception:
                 pass
 
-        # Finalise entrypoint selection, preferring explicit entrypoint metadata when present.
-        try:
-            _explicit = getattr(self, "_entrypoint_info", None)
-        except Exception:
-            _explicit = None
-        if isinstance(_explicit, dict) and _explicit.get("type") == "manager_method":
-            entry_field = _EntryPointManagerMethod(
-                class_name=str(_explicit.get("class_name") or cls_name),
-                method_name=str(_explicit.get("method_name") or meth_name),
-            )
-        else:
-            entry_field = _EntryPointManagerMethod(
-                class_name=cls_name,
-                method_name=meth_name,
-            )
+        # Finalise entrypoint selection exclusively from loop_id label.
+        entry_field = _EntryPointManagerMethod(
+            class_name=cls_name,
+            method_name=meth_name,
+        )
 
         # Human-readable root summary from entrypoint (no label parsing)
         root_summary = {}
@@ -1274,20 +1291,32 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _discover_manager_modules()
         _registry = _get_manager_registry()
 
-        mgr_cls = _registry.get(snap.entrypoint.class_name)
+        # Derive entrypoint exclusively from loop_id label when available
+        ep_class_name = snap.entrypoint.class_name
+        ep_method_name = snap.entrypoint.method_name
+        try:
+            if loop_label:
+                _cls, _meth = _parse_entrypoint_from_loop_id_label(loop_label)
+                ep_class_name, ep_method_name = _cls, _meth
+        except Exception:
+            # Fallback to snapshot entrypoint fields
+            ep_class_name = snap.entrypoint.class_name
+            ep_method_name = snap.entrypoint.method_name
+
+        mgr_cls = _registry.get(ep_class_name)
         if mgr_cls is None:
             raise ValueError(
-                f"Manager class not found: {snap.entrypoint.class_name}",
+                f"Manager class not found: {ep_class_name}",
             )
         manager = mgr_cls()
-        method_name = snap.entrypoint.method_name
+        method_name = ep_method_name
         tools = dict(manager.get_tools(method_name, include_sub_tools=True))
         if not tools:
             raise ValueError(
-                f"No tools registered for {snap.entrypoint.class_name}.{method_name}",
+                f"No tools registered for {ep_class_name}.{method_name}",
             )
         if not loop_label:
-            loop_label = f"{snap.entrypoint.class_name}.{method_name}"
+            loop_label = f"{ep_class_name}.{method_name}"
 
         # Build a fresh LLM client and restore system header.
         client = _new_llm_client()
