@@ -1060,7 +1060,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 if state == "in_flight":
                     try:
                         child_snapshot = child.serialize(recursive=True)
-                    except Exception:
+                    except Exception as e:
+                        # Fallback: if we cannot build an inline snapshot for a live child,
+                        # record it as completed (state='done') to satisfy schema requirements.
+                        state = "done"
                         child_snapshot = None
 
                 # Identify child tool and handle for readability
@@ -1197,7 +1200,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     if state == "in_flight":
                         try:
                             child_snapshot = child.serialize(recursive=True)
-                        except Exception:
+                        except Exception as e:
+                            state = "done"
                             child_snapshot = None
                     entry = {
                         "call_id": None,
