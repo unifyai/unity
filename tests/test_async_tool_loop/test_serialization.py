@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import pytest
 
 from tests.helpers import _handle_project
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_system_interjection_event,
+)
 from unity.common.async_tool_loop import AsyncToolLoopHandle
 from unity.common.loop_snapshot import (
     LoopSnapshot,
@@ -220,3 +224,62 @@ async def test_deserialize_unknown_manager_method_raises():
 # ----------------------------------------------------------------------------
 # Inline and flat-loop tests removed for manager-only snapshot design
 # ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interjection_captured_and_preserved():
+    cm = ContactManager()
+    handle = await cm.ask("Find contact Charlie")
+
+    interjection_text = "Prefer compact layout"
+    await handle.interject(interjection_text)
+    # Wait until the interjection is materialised as a system message in the transcript
+    await _wait_for_system_interjection_event(contains=interjection_text, timeout=120.0)
+
+    snap = handle.serialize()
+
+    # Resume and ensure the resumed loop still completes successfully
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+    out = await asyncio.wait_for(resumed.result(), timeout=180)
+    assert isinstance(out, str) and len(out) > 0
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_resume_survives_serialization():
+    tm = TranscriptManager()
+    handle = await tm.ask("List my transcripts briefly.")
+
+    # Pause before snapshot
+    handle.pause()
+    snap = handle.serialize()
+
+    # Resume after deserialization and complete
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+    resumed.resume()
+    out = await asyncio.wait_for(resumed.result(), timeout=180)
+    assert isinstance(out, str) and len(out) > 0
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_notifications_replayed_after_resume():
+    cm = ContactManager()
+    handle = await cm.ask("Find contact Delta")
+
+    # Inject pending notifications directly onto the handle prior to snapshot
+    # (mirrors behaviour of tools emitting _notification_up_q events)
+    await handle._notification_q.put({"type": "notification", "tool_name": "test", "step": 1})  # type: ignore[attr-defined]
+    await handle._notification_q.put({"type": "notification", "tool_name": "test", "step": 2})  # type: ignore[attr-defined]
+
+    snap = handle.serialize()
+    notifs = snap.get("notifications") or []
+    assert isinstance(notifs, list) and len(notifs) >= 2
+
+    # After resume, notifications are re-injected and immediately consumable
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+    evt1 = await asyncio.wait_for(resumed.next_notification(), timeout=60)
+    evt2 = await asyncio.wait_for(resumed.next_notification(), timeout=60)
+    assert evt1.get("type") == "notification"
+    assert evt2.get("type") == "notification"
