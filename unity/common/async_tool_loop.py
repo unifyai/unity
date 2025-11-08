@@ -1519,8 +1519,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # If the last interjection occurred *after* the last assistant message,
         # request an immediate LLM turn without duplicating the interjection message.
         try:
-            ai = snap.assistant_indices or []
-            ii = snap.interjections_indices or []
+            ai = snap.assistant_positions or []
+            ii = snap.interjection_positions or []
             if ai or ii:
                 last_asst = max(ai) if ai else -1
                 last_intr = max(ii) if ii else -1

@@ -487,11 +487,17 @@ class ToolsData:
                 # If the current tail tool message looks like a progress payload,
                 # do NOT emit another tool reply for the same call_id – instead
                 # create a synthetic assistant→tool pair to carry the final result.
+                is_placeholder = False
                 with suppress(Exception):
                     _content_str = tool_reply_msg.get("content") or ""
-                if "_content_str" not in locals():
-                    _content_str = ""
-                if isinstance(_content_str, str) and '"tool"' in _content_str:
+                    if isinstance(_content_str, str):
+                        try:
+                            parsed = json.loads(_content_str)
+                            if isinstance(parsed, dict) and parsed.get("_placeholder"):
+                                is_placeholder = True
+                        except Exception:
+                            is_placeholder = False
+                if is_placeholder:
                     tool_msg = await self._emit_completion_pair(
                         result,
                         call_id,
@@ -629,7 +635,7 @@ class ToolsData:
             ph = create_tool_call_message(
                 name=info.name,
                 call_id=info.call_id,
-                content="Nested async tool loop started… waiting for result.",
+                content=json.dumps({"_placeholder": "nested_start"}, indent=4),
             )
             await insert_tool_message_after_assistant(
                 assistant_meta,
@@ -640,7 +646,7 @@ class ToolsData:
             )
             info.tool_reply_msg = ph
         else:
-            ph["content"] = "Nested async tool loop started… waiting for result."
+            ph["content"] = json.dumps({"_placeholder": "nested_start"}, indent=4)
 
         # Book-keeping for the new task (inherit, share placeholder)
         metadata = dataclasses.replace(
