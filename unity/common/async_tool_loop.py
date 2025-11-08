@@ -891,57 +891,23 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except Exception:
             msgs = []
 
-        # Build pruning context (allowed base tools for this manager method).
-        # Best-effort: resolve manager class and its tools; if not found, fall back
-        # to simple structural pruning (drop synthetic check_status_* calls).
+        # Build pruning context (allowed base tools) in a minimal, implementation-agnostic way.
+        # We no longer instantiate managers here. For manager entrypoints we keep `allowed_tool_names=None`
+        # and rely on structural pruning in transcript_ops. For inline-tools, we can populate the registry.
         allowed_tool_names: set[str] | None = None
         mgr_cls = None
         try:
-            from .state_managers import (
-                BaseStateManager as _BaseStateManager,
-            )  # noqa: WPS433
-            from importlib import import_module as _import_module  # noqa: WPS433
+            from .state_managers import (  # noqa: WPS433
+                discover_manager_modules as _discover_manager_modules,
+                get_manager_registry as _get_manager_registry,
+            )
 
-            # Ensure common managers are imported so __subclasses__ is populated
-            for _m in (
-                "unity.contact_manager.contact_manager",
-                "unity.transcript_manager.transcript_manager",
-                "unity.knowledge_manager.knowledge_manager",
-                "unity.guidance_manager.guidance_manager",
-                "unity.secret_manager.secret_manager",
-                "unity.skill_manager.skill_manager",
-                "unity.task_scheduler.task_scheduler",
-                "unity.file_manager.file_manager",
-                "unity.image_manager.image_manager",
-                "unity.web_searcher.web_searcher",
-                "unity.conductor.conductor",
-            ):
-                try:
-                    _import_module(_m)
-                except Exception:
-                    pass
-
-            def _all_subclasses(cls_):
-                out = set()
-                for sub in cls_.__subclasses__():
-                    out.add(sub)
-                    out.update(_all_subclasses(sub))
-                return out
-
-            for c in _all_subclasses(_BaseStateManager):
-                if getattr(c, "__name__", "") == cls_name:
-                    mgr_cls = c
-                    break
-            if mgr_cls is not None:
-                try:
-                    manager = mgr_cls()
-                    _tools_dict = manager.get_tools(meth_name, include_sub_tools=True)
-                    if isinstance(_tools_dict, dict) and _tools_dict:
-                        allowed_tool_names = set(_tools_dict.keys())
-                except Exception:
-                    allowed_tool_names = None
+            # Populate registry generically (pattern-based import of unity/*_manager)
+            _discover_manager_modules()
+            _registry = _get_manager_registry()
+            mgr_cls = _registry.get(cls_name)
         except Exception:
-            allowed_tool_names = None
+            mgr_cls = None
 
         # Determine if this looks like a non-manager loop with inline tools
         inline_registry = []
@@ -1030,16 +996,36 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             except Exception:
                 pass
 
-        # Finalise entrypoint selection
-        if use_inline_entrypoint:
+        # Finalise entrypoint selection, preferring explicit entrypoint metadata when present.
+        try:
+            _explicit = getattr(self, "_entrypoint_info", None)
+        except Exception:
+            _explicit = None
+        if isinstance(_explicit, dict) and _explicit.get("type") == "manager_method":
+            entry_field = _EntryPointManagerMethod(
+                class_name=str(_explicit.get("class_name") or cls_name),
+                method_name=str(_explicit.get("method_name") or meth_name),
+            )
+        elif isinstance(_explicit, dict) and _explicit.get("type") == "inline_tools":
+            try:
+                _tools_explicit = list(_explicit.get("tools") or [])
+            except Exception:
+                _tools_explicit = []
             entry_field = _EntryPointInlineTools(
-                tools=[_ToolRef(**t) for t in inline_registry if isinstance(t, dict)],
+                tools=[_ToolRef(**t) for t in _tools_explicit if isinstance(t, dict)],
             )
         else:
-            entry_field = _EntryPointManagerMethod(
-                class_name=cls_name,
-                method_name=meth_name,
-            )
+            if use_inline_entrypoint:
+                entry_field = _EntryPointInlineTools(
+                    tools=[
+                        _ToolRef(**t) for t in inline_registry if isinstance(t, dict)
+                    ],
+                )
+            else:
+                entry_field = _EntryPointManagerMethod(
+                    class_name=cls_name,
+                    method_name=meth_name,
+                )
 
         snap = _LoopSnapshot(
             entrypoint=entry_field,
@@ -1077,6 +1063,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # If recursive capture was requested, attach a children manifest under meta.
         if recursive and isinstance(task_info, dict):
             children: list[dict] = []
+            # Children via task_info (adopted handles)
             for _t, _inf in task_info.items():
                 child = getattr(_inf, "handle", None)
                 if child is None:
@@ -1110,6 +1097,53 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     else:
                         entry["snapshot"] = child_snapshot
                 children.append(entry)
+            # Children via standardized wrapper discovery
+            try:
+                from .handle_wrappers import (  # noqa: WPS433
+                    discover_wrapped_handles as _discover_wrapped_handles,
+                )
+            except Exception:
+                _discover_wrapped_handles = None  # type: ignore
+            if _discover_wrapped_handles is not None:
+                try:
+                    pairs = list(_discover_wrapped_handles(self) or [])
+                except Exception:
+                    pairs = []
+                for _src, child in pairs:
+                    if child is None:
+                        continue
+                    state = "done"
+                    try:
+                        state = "in_flight" if not bool(child.done()) else "done"
+                    except Exception:
+                        pass
+                    child_snapshot = None
+                    if state == "in_flight":
+                        try:
+                            child_snapshot = child.serialize(
+                                recursive=True,
+                                store=store,
+                            )
+                        except Exception:
+                            child_snapshot = None
+                    entry = {
+                        "call_id": None,
+                        "tool_name": None,
+                        "is_passthrough": False,
+                        "state": state,
+                    }
+                    if isinstance(child_snapshot, dict):
+                        ref_path = None
+                        try:
+                            if store is not None:
+                                ref_path = store(child_snapshot)
+                        except Exception:
+                            ref_path = None
+                        if ref_path:
+                            entry["ref"] = {"path": ref_path}
+                        else:
+                            entry["snapshot"] = child_snapshot
+                    children.append(entry)
             try:
                 if children:
                     # Ensure meta exists before augmenting
@@ -1166,42 +1200,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         loop_label: str = snap.loop_id or ""
 
         if snap.entrypoint.type == "manager_method":
-            # Resolve manager class by name and collect tools
-            from .state_managers import (
-                BaseStateManager as _BaseStateManager,
-            )  # noqa: WPS433
-
-            _maybe_modules = (
-                "unity.contact_manager.contact_manager",
-                "unity.transcript_manager.transcript_manager",
-                "unity.knowledge_manager.knowledge_manager",
-                "unity.guidance_manager.guidance_manager",
-                "unity.secret_manager.secret_manager",
-                "unity.skill_manager.skill_manager",
-                "unity.task_scheduler.task_scheduler",
-                "unity.file_manager.file_manager",
-                "unity.image_manager.image_manager",
-                "unity.web_searcher.web_searcher",
-                "unity.conductor.conductor",
+            # Resolve manager class by name from the central registry
+            from .state_managers import (  # noqa: WPS433
+                discover_manager_modules as _discover_manager_modules,
+                get_manager_registry as _get_manager_registry,
             )
-            for _m in _maybe_modules:
-                try:
-                    _import_module(_m)
-                except Exception:
-                    pass
 
-            def _all_subclasses(cls_):
-                out = set()
-                for sub in cls_.__subclasses__():
-                    out.add(sub)
-                    out.update(_all_subclasses(sub))
-                return out
+            _discover_manager_modules()
+            _registry = _get_manager_registry()
 
-            mgr_cls = None
-            for c in _all_subclasses(_BaseStateManager):
-                if getattr(c, "__name__", "") == snap.entrypoint.class_name:
-                    mgr_cls = c
-                    break
+            mgr_cls = _registry.get(snap.entrypoint.class_name)
             if mgr_cls is None:
                 # Fallback: flat non-manager loop created via start_async_tool_loop
                 # with no manager context (our serializer encodes this as
@@ -2505,6 +2513,31 @@ def start_async_tool_loop(
 
     try:
         setattr(handle, "_inline_tools_registry", _capture_inline_tools_registry(tools))
+    except Exception:
+        pass
+
+    # Prefer explicit entrypoint metadata over label parsing during serialize().
+    # If a semantic cache namespace like "Class.method" is provided by callers
+    # (manager methods do this), record a structured manager entrypoint. Otherwise,
+    # when inline tools are present, capture those for an inline entrypoint.
+    try:
+        _ep: dict | None = None
+        if (
+            isinstance(semantic_cache_namespace, str)
+            and "." in semantic_cache_namespace
+        ):
+            cls, meth = semantic_cache_namespace.split(".", 1)
+            if cls and meth:
+                _ep = {"type": "manager_method", "class_name": cls, "method_name": meth}
+        if _ep is None:
+            try:
+                _inline_reg = getattr(handle, "_inline_tools_registry", []) or []
+            except Exception:
+                _inline_reg = []
+            if isinstance(_inline_reg, list) and _inline_reg:
+                _ep = {"type": "inline_tools", "tools": list(_inline_reg)}
+        if _ep is not None:
+            setattr(handle, "_entrypoint_info", _ep)
     except Exception:
         pass
 

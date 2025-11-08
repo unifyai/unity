@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import Dict, Callable, Optional
+from typing import Dict, Callable, Optional, Type, Iterable
+import importlib
+import pkgutil
+import sys
 
 
 class BaseStateManager(ABC):
@@ -22,6 +25,19 @@ class BaseStateManager(ABC):
     The class intentionally defines no abstract methods to avoid constraining
     individual manager contracts.
     """
+
+    # Global registry of discovered manager classes keyed by class name
+    _registry: Dict[str, Type["BaseStateManager"]] = {}
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Register concrete subclasses by their class name for stable lookup
+        # We intentionally key by the bare class name to match snapshot entrypoints.
+        try:
+            BaseStateManager._registry[cls.__name__] = cls
+        except Exception:
+            # Registration is best-effort; avoid raising at import time
+            pass
 
     def __init__(self):
         self._tools = {}
@@ -68,3 +84,70 @@ class BaseStateManager(ABC):
             return ret
 
         return self._tools.get(method, {})
+
+
+def get_manager_registry() -> Dict[str, Type[BaseStateManager]]:
+    """
+    Return a snapshot of the current manager class registry.
+
+    The registry is populated via BaseStateManager.__init_subclass__ and can be
+    extended by calling `discover_manager_modules()` to import manager packages.
+    """
+    return dict(BaseStateManager._registry)
+
+
+def _iter_unity_subpackages() -> Iterable[str]:
+    """
+    Yield qualified module names for all subpackages under `unity`.
+
+    This avoids hard-coding specific manager names. We only import packages that
+    look like manager packages to keep discovery minimal and fast.
+    """
+    try:
+        import unity  # local import to resolve package path dynamically
+    except Exception:
+        return []
+
+    for mod in pkgutil.walk_packages(unity.__path__, unity.__name__ + "."):
+        name = mod.name
+        # We consider any package directly under unity whose name ends with "_manager"
+        # as a candidate (e.g., unity.contact_manager, unity.task_scheduler, ...).
+        try:
+            base = name.rsplit(".", 1)[-1]
+        except Exception:
+            base = name
+        if base.endswith("_manager"):
+            yield name
+
+
+def discover_manager_modules() -> None:
+    """
+    Import manager packages under `unity/*_manager/` to populate the registry.
+
+    This replaces brittle, hard-coded import lists with a pattern-based discovery.
+    Safe to call multiple times; repeated imports are ignored by Python's module cache.
+    """
+    for pkg_name in _iter_unity_subpackages():
+        try:
+            # Import the package itself
+            importlib.import_module(pkg_name)
+            # Prefer importing a module with the same name as the package for
+            # conventional layouts like `unity.contact_manager.contact_manager`.
+            leaf = pkg_name.rsplit(".", 1)[-1]
+            candidate = f"{pkg_name}.{leaf}"
+            if candidate not in sys.modules:
+                try:
+                    importlib.import_module(candidate)
+                except Exception:
+                    # Fall back: import all immediate submodules to trigger subclass registration
+                    for sm in pkgutil.iter_modules(
+                        sys.modules[pkg_name].__path__,
+                        pkg_name + ".",
+                    ):
+                        try:
+                            importlib.import_module(sm.name)
+                        except Exception:
+                            continue
+        except Exception:
+            # Best-effort discovery; individual import failures are ignored
+            continue
