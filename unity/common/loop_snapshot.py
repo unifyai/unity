@@ -47,36 +47,30 @@ class EntryPointInlineTools(BaseModel):
 class ChildSnapshot(BaseModel):
     """Schema for a nested child loop snapshot reference (v1).
 
-    Fields
-    ------
-    call_id : str
-        The assistant tool_call id for the child tool invocation.
-    tool_name : str
-        The base tool name as exposed in the parent loop's tool registry.
-    is_passthrough : bool
-        Whether the child handle should be wired for passthrough steering.
-    state : Literal["in_flight", "done"]
-        Indicates whether the child was still running at snapshot time.
-    snapshot : dict | None
-        Inline child snapshot (required when state=="in_flight" if no ref is provided).
-    ref : {"path": str} | None
-        By-reference child snapshot location (required when state=="in_flight" if no inline snapshot is provided).
+    Minimal, nested_structure-aligned vocabulary:
+    - tool: canonical "Class.method" when available; else canonical class name
+    - handle: canonicalized inheritance chain up to AsyncToolLoopHandle or sentinels
+    - passthrough: whether the child was wired for passthrough steering
+    - state: "in_flight" | "done"
+    - call_id: optional assistant tool_call id that spawned this child
+    - snapshot/ref: one must be set for in_flight children
     """
 
-    call_id: str
-    tool_name: str
-    is_passthrough: bool = False
+    tool: Optional[str] = None
+    handle: Optional[str] = None
+    passthrough: bool = False
     state: Literal["in_flight", "done"]
+    call_id: Optional[str] = None
     snapshot: Optional[Dict[str, Any]] = None
     ref: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="after")
     def _validate_child(self):  # type: ignore[override]
-        # Required identifiers
-        if not isinstance(self.call_id, str) or not self.call_id:
-            raise ValueError("child.call_id must be a non-empty string")
-        if not isinstance(self.tool_name, str) or not self.tool_name:
-            raise ValueError("child.tool_name must be a non-empty string")
+        # Minimal identifiers: at least one of tool or handle should be present for readability
+        if not (isinstance(self.tool, str) and self.tool) and not (
+            isinstance(self.handle, str) and self.handle
+        ):
+            raise ValueError("child must include 'tool' or 'handle'")
 
         # State-dependent payload rules
         if self.state == "in_flight":
@@ -127,27 +121,29 @@ class LoopSnapshot(BaseModel):
     # Optional loop identity and prompt header
     loop_id: Optional[str] = None
     system_message: Optional[str] = None
+    # Human-readable root summary (nested_structure-aligned)
+    root: Optional[Dict[str, str]] = None
 
     # Original user input in any of the accepted forms used by the loop
     initial_user_message: Any = None
 
     # Transcript fragments necessary for preflight backfill to work:
-    # - assistant_steps: assistant messages that contain tool_calls
-    # - tool_results: tool messages already produced (paired by call_id)
-    assistant_steps: List[Dict[str, Any]] = Field(default_factory=list)
-    tool_results: List[Dict[str, Any]] = Field(default_factory=list)
+    # - assistant: assistant messages that contain tool_calls
+    # - tools: tool messages already produced (paired by call_id)
+    assistant: List[Dict[str, Any]] = Field(default_factory=list)
+    tools: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # Optional message-order indices (relative to the original client.messages)
+    # Optional positions (relative to the original client.messages)
     # When present, these allow exact interleaving with other message types.
-    assistant_indices: List[int] = Field(default_factory=list)
-    tool_results_indices: List[int] = Field(default_factory=list)
+    assistant_positions: List[int] = Field(default_factory=list)
+    tool_positions: List[int] = Field(default_factory=list)
 
-    # Interjections (system messages beyond index 0) and their original indices
-    interjections: List[Dict[str, Any]] = Field(default_factory=list)
-    interjections_indices: List[int] = Field(default_factory=list)
+    # System interjections (beyond index 0) and their original positions
+    system_interjections: List[Dict[str, Any]] = Field(default_factory=list)
+    interjection_positions: List[int] = Field(default_factory=list)
 
     # Optional: outstanding clarifications at snapshot time
-    # Each entry captures the call_id, the base tool name and the question text
+    # Each entry captures the call_id, the base tool and the question text
     clarifications: List[Dict[str, Any]] = Field(default_factory=list)
 
     # Optional: pending notifications at snapshot time (flat replay only)
@@ -158,13 +154,6 @@ class LoopSnapshot(BaseModel):
 
     # Snapshot of live images context (list of {image_id, annotation})
     images: List[Dict[str, Any]] = Field(default_factory=list)
-
-    # Optional: full raw client.messages dump at snapshot time for debugging
-    # This is not used by deserialization logic; it is provided to aid
-    # diagnostics and post-mortem analysis when resumes do not behave as
-    # expected. The structure mirrors the LLM client transcript and may
-    # include assistant/tool/system entries exactly as recorded.
-    full_messages: Optional[List[Dict[str, Any]]] = None
 
     # Reserved extension points for future versions
     options: Optional[Dict[str, Any]] = None
