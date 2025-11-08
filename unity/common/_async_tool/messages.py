@@ -18,17 +18,15 @@ from .images import append_images_with_source
 
 # Helper: scan transcript for assistant messages that have tool_calls with
 # missing tool replies (before the next assistant message).
-PENDING_PLACEHOLDER_TEXT = "Pending… tool call accepted. Working on it."
 
 
 def is_non_final_tool_reply(msg: dict) -> bool:
     """Return True when a tool message looks like a placeholder/progress, not a final result.
 
-    Heuristics:
+    Rules:
     - Clarification wrappers (name startswith "clarification_request_") are non-final.
-    - Exact pending placeholder content ("Pending… tool call accepted. Working on it.") is non-final.
-    - Progress/notification placeholders produced via serialize_tool_content(is_final=False)
-      are JSON strings that contain a top-level key named "tool" – treat these as non-final.
+    - Any tool message whose content parses to a dict containing the top-level key
+      "_placeholder" is non-final (used for pending/progress/nested-start placeholders).
     """
     try:
         if msg.get("role") != "tool":
@@ -37,16 +35,12 @@ def is_non_final_tool_reply(msg: dict) -> bool:
         if name.startswith("clarification_request_"):
             return True
         content = msg.get("content")
-        # Pending acknowledgement placeholder inserted on schedule
-        if isinstance(content, str) and content.strip() == PENDING_PLACEHOLDER_TEXT:
-            return True
-        # Progress/notification placeholder: JSON string with a top-level {"tool": ...}
         if isinstance(content, str):
             try:
                 import json as _json
 
                 parsed = _json.loads(content)
-                if isinstance(parsed, dict) and "tool" in parsed:
+                if isinstance(parsed, dict) and "_placeholder" in parsed:
                     return True
             except Exception:
                 pass
@@ -525,14 +519,12 @@ async def acknowledge_helper_call(
 async def ensure_placeholders_for_pending(
     assistant_msg: Optional[dict] = None,
     *,
-    content: Optional[str] = None,
     tools_data,
     assistant_meta,
     client,
     msg_dispatcher,
 ) -> list[str]:
     created: list[str] = []
-    placeholder_content = content if content is not None else PENDING_PLACEHOLDER_TEXT
     for task in list(tools_data.pending):
         _inf = tools_data.info.get(task)
         if not _inf:
@@ -563,7 +555,7 @@ async def ensure_placeholders_for_pending(
         placeholder = create_tool_call_message(
             name=_inf.name,
             call_id=_inf.call_id,
-            content=placeholder_content,
+            content=json.dumps({"_placeholder": "pending"}, indent=4),
         )
         await insert_tool_message_after_assistant(
             assistant_meta,

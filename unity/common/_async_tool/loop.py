@@ -29,7 +29,6 @@ from .messages import (
     find_unreplied_assistant_entries,
     chat_context_repr,
     generate_with_preprocess,
-    PENDING_PLACEHOLDER_TEXT,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -1372,10 +1371,6 @@ async def async_tool_loop_inner(
             if tools_data.pending and not llm_turn_required:
                 # Ensure placeholders exist for any pending calls before the next assistant turn
                 await ensure_placeholders_for_pending(
-                    content=(
-                        "Still running… you can use any of the available helper tools "
-                        "to interact with this tool call while it is in progress."
-                    ),
                     tools_data=tools_data,
                     assistant_meta=assistant_meta,
                     client=client,
@@ -1485,10 +1480,6 @@ async def async_tool_loop_inner(
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
             await ensure_placeholders_for_pending(
-                content=(
-                    "Still running… you can use any of the available helper tools "
-                    "to interact with this tool call while it is in progress."
-                ),
                 tools_data=tools_data,
                 assistant_meta=assistant_meta,
                 client=client,
@@ -2324,7 +2315,6 @@ async def async_tool_loop_inner(
                 try:
                     await ensure_placeholders_for_pending(
                         assistant_msg=msg,
-                        content=PENDING_PLACEHOLDER_TEXT,
                         tools_data=tools_data,
                         assistant_meta=assistant_meta,
                         client=client,
