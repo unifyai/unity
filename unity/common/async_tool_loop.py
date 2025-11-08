@@ -1080,6 +1080,33 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         child_snapshot = None
 
                 # Identify child tool and handle for readability
+                def _canon_class(name: str) -> str:
+                    """Canonicalize a class-name string by stripping known prefixes.
+
+                    Rules (applied in order):
+                    - Strip leading 'Simulated' (e.g., SimulatedFoo → Foo)
+                    - Strip leading version prefix 'V<digits>' (e.g., V3Foo → Foo)
+                    - Strip leading 'Base' (e.g., BaseFoo → Foo)
+                    """
+                    s = str(name or "")
+                    try:
+                        if s.startswith("Simulated") and len(s) > 9:
+                            s = s[9:]
+                    except Exception:
+                        pass
+                    try:
+                        import re as _re  # noqa: WPS433
+
+                        s = _re.sub(r"^V\\d+", "", s)
+                    except Exception:
+                        pass
+                    try:
+                        if s.startswith("Base") and len(s) > 4:
+                            s = s[4:]
+                    except Exception:
+                        pass
+                    return s
+
                 def _child_tool(h) -> str | None:
                     try:
                         raw = getattr(h, "_loop_id", None) or ""
