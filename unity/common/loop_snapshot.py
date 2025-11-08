@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Literal, Union
+from typing import Any, Dict, List, Optional, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 from pydantic import model_validator
@@ -9,39 +9,12 @@ from pydantic import model_validator
 class EntryPointManagerMethod(BaseModel):
     """Entry point describing a manager method to resume.
 
-    This is intentionally minimal in v1. Future versions may introduce
-    additional entrypoint types (e.g., inline tools by import path).
+    This is intentionally minimal in v1.
     """
 
     type: Literal["manager_method"] = "manager_method"
     class_name: str
     method_name: str
-
-
-class ToolRef(BaseModel):
-    """Reference to a tool by import path and flags.
-
-    - module: the Python module path (e.g. "mypkg.module").
-    - qualname: the qualified name within the module (e.g. "func" or "Cls.method").
-    - read_only / manager_tool: optional flags mirroring the decorators used in the
-    tool registry; when provided, they will be re-applied on deserialization.
-    """
-
-    name: str
-    module: str
-    qualname: str
-    read_only: Optional[bool] = None
-    manager_tool: Optional[bool] = None
-
-
-class EntryPointInlineTools(BaseModel):
-    """Entry point describing an inline tools registry to resume.
-
-    This supports non-manager loops by listing tools as importable functions.
-    """
-
-    type: Literal["inline_tools"] = "inline_tools"
-    tools: List[ToolRef]
 
 
 class ChildSnapshot(BaseModel):
@@ -53,7 +26,7 @@ class ChildSnapshot(BaseModel):
     - passthrough: whether the child was wired for passthrough steering
     - state: "in_flight" | "done"
     - call_id: optional assistant tool_call id that spawned this child
-    - snapshot/ref: one must be set for in_flight children
+    - snapshot: required for in_flight children
     """
 
     tool: Optional[str] = None
@@ -62,7 +35,6 @@ class ChildSnapshot(BaseModel):
     state: Literal["in_flight", "done"]
     call_id: Optional[str] = None
     snapshot: Optional[Dict[str, Any]] = None
-    ref: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="after")
     def _validate_child(self):  # type: ignore[override]
@@ -75,26 +47,14 @@ class ChildSnapshot(BaseModel):
         # State-dependent payload rules
         if self.state == "in_flight":
             has_inline = isinstance(self.snapshot, dict) and len(self.snapshot) >= 1
-            has_ref = (
-                isinstance(self.ref, dict)
-                and isinstance(
-                    self.ref.get("path"),
-                    str,
-                )
-                and bool(self.ref.get("path"))
-            )
-            if has_inline and has_ref:
+            if not has_inline:
                 raise ValueError(
-                    "child(in_flight) must provide either inline snapshot or ref.path, not both",
-                )
-            if not (has_inline or has_ref):
-                raise ValueError(
-                    "child(in_flight) requires inline snapshot or ref.path",
+                    "child(in_flight) requires inline snapshot",
                 )
         elif self.state == "done":
-            if self.snapshot is not None or self.ref is not None:
+            if self.snapshot is not None:
                 raise ValueError(
-                    "child(done) must not provide snapshot or ref",
+                    "child(done) must not provide snapshot",
                 )
 
         return self
@@ -113,10 +73,8 @@ class LoopSnapshot(BaseModel):
     """
 
     version: int = Field(default=1, ge=1)
-    # Discriminated union of entrypoint types
-    entrypoint: Union[EntryPointManagerMethod, EntryPointInlineTools] = Field(
-        discriminator="type",
-    )
+    # Manager-only entrypoint in the simplified v1
+    entrypoint: EntryPointManagerMethod
 
     # Optional loop identity and prompt header
     loop_id: Optional[str] = None
@@ -176,15 +134,6 @@ def validate_snapshot(snapshot: Dict[str, Any]) -> LoopSnapshot:
     if snap.version != 1:
         raise ValueError(f"Unsupported snapshot version: {snap.version}")
 
-    # Allow both manager and inline-tools entrypoints in v1.
-    if snap.entrypoint.type == "inline_tools":
-        # Minimal sanity checks for inline tools
-        if not snap.entrypoint.tools:
-            raise ValueError("Inline tools entrypoint must include at least one tool")
-        for t in snap.entrypoint.tools:
-            if not t.name or not t.module or not t.qualname:
-                raise ValueError("Inline tool refs must include name, module, qualname")
-
     # Validate nested children manifest (when provided under meta.children)
     try:
         meta = snap.meta or {}
@@ -211,8 +160,8 @@ def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     Behaviour:
     - If version is missing, assume 1.
-    - If entrypoint lacks a discriminant ``type`` but has ``class_name`` or
-      ``tools``, infer the appropriate type.
+    - If entrypoint lacks a discriminant ``type`` but has ``class_name`` and
+      ``method_name``, infer manager_method.
     - Leave unknown fields untouched for forward-compatibility.
     """
 
@@ -225,15 +174,13 @@ def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     if "version" not in out:
         out["version"] = 1
 
-    # Normalise entrypoint discriminant
+    # Normalise entrypoint discriminant (manager-only)
     try:
         ep = out.get("entrypoint")
         if isinstance(ep, dict) and "type" not in ep:
             if "class_name" in ep and "method_name" in ep:
                 ep = {"type": "manager_method", **ep}
-            elif "tools" in ep:
-                ep = {"type": "inline_tools", **ep}
-            out["entrypoint"] = ep
+                out["entrypoint"] = ep
     except Exception:
         pass
 
@@ -243,8 +190,6 @@ def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 __all__ = (
     "EntryPointManagerMethod",
-    "EntryPointInlineTools",
-    "ToolRef",
     "ChildSnapshot",
     "LoopSnapshot",
     "validate_snapshot",
