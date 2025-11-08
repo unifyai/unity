@@ -901,6 +901,37 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             tool_results,
             callid_to_tool_name=extracted.get("callid_to_tool_name", {}),
         )
+        # Include any pending early interjections that may not have been flushed into msgs yet.
+        # Represent them as system messages appended to the end, with monotonically increasing indices.
+        try:
+            early = list(getattr(self, "_early_interjects", []) or [])
+        except Exception:
+            early = []
+        added = 0
+        # Build a set of existing interjection contents for simple de-duplication
+        existing_contents = set()
+        try:
+            for im in interjections:
+                c = im.get("content")
+                if isinstance(c, str):
+                    existing_contents.add(c)
+        except Exception:
+            existing_contents = set()
+        base_idx = len(msgs)
+        for i, payload in enumerate(early):
+            # Normalise to a plain string; dict payloads store text under "message"
+            if isinstance(payload, dict):
+                content = payload.get("message")
+            else:
+                content = payload
+            if not isinstance(content, str) or not content:
+                continue
+            if content in existing_contents:
+                continue
+            interjections.append({"role": "system", "content": content})
+            interjections_indices.append(base_idx + i)
+            existing_contents.add(content)
+            added += 1
         initial_user_message = _initial_user_from_user_visible_history(
             getattr(self, "_user_visible_history", []) or [],
         )
