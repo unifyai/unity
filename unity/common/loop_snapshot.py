@@ -155,10 +155,6 @@ class LoopSnapshot(BaseModel):
     # Snapshot of live images context (list of {image_id, annotation})
     images: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # Reserved extension points for future versions
-    options: Optional[Dict[str, Any]] = None
-    env: Optional[Dict[str, Any]] = None
-
     # Diagnostics/metadata (v1.1+): run identifiers, timestamps, context
     meta: Optional[Dict[str, Any]] = None
 
@@ -241,7 +237,7 @@ def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Nothing else required for v1 – meta/options/env remain optional.
+    # Nothing else required for v1 – meta remains optional.
     return out
 
 
