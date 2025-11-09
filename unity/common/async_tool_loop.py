@@ -875,7 +875,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         - When ``recursive=False`` (default), nested tool loops are not supported
           and a ``ValueError`` is raised if any are detected.
         - When ``recursive=True``, in‑flight nested child handles are captured into
-          ``meta.children`` with inline ``snapshot`` for each child.
+          top-level ``children`` with inline ``snapshot`` for each child.
         """
         # Guard / discovery for nested tool loops. When recursive=False (default),
         # nested handles are not supported and will raise a ValueError. When
@@ -1052,7 +1052,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         ).model_dump()
 
         # Enforce v1 shape
-        # If recursive capture was requested, attach a children manifest under meta.
+        # If recursive capture was requested, attach a children manifest at the top-level.
         if recursive and isinstance(task_info, dict):
             children: list[dict] = []
             # Children via task_info (adopted handles)
@@ -1224,10 +1224,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     children.append(entry)
             try:
                 if children:
-                    # Ensure meta exists before augmenting
-                    if snap.get("meta") is None:
-                        snap["meta"] = {}
-                    snap["meta"]["children"] = children
+                    snap["children"] = children
                     try:
                         LOGGER.info(
                             f"🧩 Snapshot captured {len(children)} in-flight child loop(s)",
@@ -1498,8 +1495,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Prepare resume_children payloads (if any) to adopt nested handles in-flight.
         _resume_children_payload: list[dict] = []
         try:
-            meta = getattr(snap, "meta", None) or {}
-            ch_list = meta.get("children") if isinstance(meta, dict) else None
+            ch_list = getattr(snap, "children", None)
             if isinstance(ch_list, list):
                 for rec in ch_list:
                     try:
