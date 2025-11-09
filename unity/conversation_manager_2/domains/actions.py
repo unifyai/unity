@@ -1,10 +1,18 @@
 import asyncio
 import inspect
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Union, TYPE_CHECKING
 import asyncio
 from pydantic import BaseModel, Field, create_model
+from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager_2.domains import comms_utils
+from unity.conversation_manager_2.domains import managers_utils
+from unity.conversation_manager_2.event_broker import get_event_broker
+from unity.conversation_manager_2.new_events import *
 
+if TYPE_CHECKING:
+    from unity.conversation_manager_2.conversation_manager import ConversationManager
+
+event_broker = get_event_broker()
 
 # conductor
 class ConductorAction(BaseModel):
@@ -18,6 +26,7 @@ class ConductorAction(BaseModel):
             "'conductor_request': read-write request\n"
         ),
     )
+    query: str = Field(..., )
 
 
 class ConductorHandleAction(BaseModel):
@@ -74,9 +83,9 @@ class SendEmail(BaseModel):
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    first_name: str
-    surname: Optional[str]
-    email_address: str
+    # first_name: str
+    # surname: Optional[str]
+    # email_address: str
     subject: str
     body: str
 
@@ -89,8 +98,8 @@ class SendSMS(BaseModel):
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    first_name: str
-    surname: Optional[str]
+    # first_name: str
+    # surname: Optional[str]
     phone_number: str
     message: str
 
@@ -103,8 +112,8 @@ class MakeCall(BaseModel):
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    first_name: Optional[str]
-    surname: Optional[str]
+    # first_name: Optional[str]
+    # surname: Optional[str]
     phone_number: str
 
 
@@ -113,6 +122,7 @@ class SendUnifyMessage(BaseModel):
 
     action_name: Literal["send_unify_message"]
     message: str
+    # could remove this if the contact_id is always 1
     contact_id: Literal[1] = 1
 
 
@@ -219,25 +229,25 @@ class Action:
 # registered actions, make sure to add *args, **kwargs to make calling these actions easier
 
 @Action.register()
-async def wait():
+async def wait(*args, **kwargs):
     # does nothing
     ...
 
 @Action.register()
-async def send_sms(*args, **kwargs):
+async def send_sms(cm: 'ConversationManager', action_name: str, *args, **kwargs):
     to_number = kwargs.get("phone_number")
     message = kwargs.get("message")
     await comms_utils.send_sms_message_via_number(to_number=to_number, message=message)
 
 @Action.register()
-async def send_email(*args, **kwargs):
+async def send_email(cm: 'ConversationManager', action_name: str, *args, **kwargs):
     to_email = kwargs.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
     await comms_utils.send_email_via_address(to_email=to_email, subject=subject, body=body)
 
 @Action.register()
-async def make_call(*args, **kwargs):
+async def make_call(cm: 'ConversationManager', action_name: str, *args, **kwargs):
     from_number = kwargs.get("assistant_number")
     to_number = kwargs.get("phone_number")
     await comms_utils.start_call(from_number=from_number, to_number=to_number)
@@ -250,3 +260,108 @@ async def make_call(*args, **kwargs):
 )
 async def _(*args, **kwargs):
     ...
+
+_next_handle_id = 0
+@Action.register(["conductor_ask", "conductor_request"])
+async def conductor_ask_request(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+    """Start a Conductor ask/request, store handle, and publish started."""
+    global _next_handle_id
+    query = kwargs["query"]
+    if "ask" in action_name:
+        handle = await cm.conductor.ask(
+            query,
+            _parent_chat_context=cm.chat_history,
+        )
+    else:
+        handle = await cm.conductor.request(
+            query,
+            _parent_chat_context=cm.chat_history,
+        )
+
+    # allocate handle id and register
+    handle_id = _next_handle_id
+    _next_handle_id += 1
+    cm.conductor_handles[handle_id] = {
+        "handle": handle,
+        "query": query,
+        "handle_actions": [],
+    }
+
+    # publish started
+    await event_broker.publish(
+        f"app:conductor:conductor_started_handle_{handle_id}",
+        ConductorResponse(
+            handle_id=handle_id,
+            action_name=action_name,
+            query=query,
+        ).to_json(),
+    )
+
+    # spawn watchers
+    asyncio.create_task(managers_utils.conductor_watch_result(handle_id, handle))
+    asyncio.create_task(managers_utils.conductor_watch_notifications(handle_id, handle))
+    asyncio.create_task(managers_utils.conductor_watch_clarifications(handle_id, handle))
+
+
+@Action.register()
+async def handle_conductor_handle_request(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+    handle_id = kwargs["handle_id"]
+    query = kwargs["query"]
+    handle_data = cm.handle_registry.get(handle_id)
+    if not handle_data:
+        print(f"[ManagersWorker] Unknown handle_id={handle_id} for action")
+        return
+
+    # record intervention
+    handle_data["handle_actions"].append(
+        {"action_name": action_name, "query": query},
+    )
+    handle = handle_data["handle"]
+
+    # perform intervention
+    result = ""
+    try:
+        match action_name:
+            case "ask":
+                ask_handle = await handle.ask(
+                    query,
+                    parent_chat_context_cont=cm.chat_history,
+                )
+                result = await ask_handle.result()
+            case "interject":
+                await handle.interject(
+                    query,
+                    parent_chat_context_cont=cm.chat_history,
+                )
+                result = "Handle Interjected"
+            case "stop":
+                handle.stop(reason=query)
+                result = "Handle Stopped"
+            case "pause":
+                handle.pause()
+                result = "Handle Paused"
+            case "resume":
+                handle.resume()
+                result = "Handle Resumed"
+            case "done":
+                done_result = handle.done()
+                result = "Handle Done" if done_result else "Handle Not Done"
+            case _:
+                print(
+                    f"[ManagersWorker] Unknown action_name={action_name} for intervention",
+                )
+                return
+    except Exception as e:
+        result = f"Error in conductor handle request: {e}"
+        print(f"[ManagersWorker] {result}")
+
+    # publish response
+    await event_broker.publish(
+        f"app:conductor:handle_{handle_id}_{action_name}_issued",
+        ConductorHandleResponse(
+            handle_id=handle_id,
+            action_name=action_name,
+            query=query,
+            response=f"Intervened: {action_name} {result}",
+        ).to_json(),
+    )

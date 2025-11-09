@@ -7,8 +7,9 @@ import logging
 from jinja2 import Template
 import json
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, TypedDict
 
+from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager_2.debug_logger import log_job_startup, mark_job_done
 from unity.conversation_manager_2.domains.call_manager import LivekitCallManager
 from unity.conversation_manager_2.domains.contact_index import ContactIndex
@@ -21,9 +22,13 @@ from unity.conversation_manager_2.domains.actions import Action, build_dynamic_r
 from unity.conversation_manager_2.domains.notifications import NotificationBar
 from unity.conversation_manager_2.domains.utils import Debouncer
 
+from unity.memory_manager.memory_manager import MemoryManager
+from unity.contact_manager.contact_manager import ContactManager
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.conversation_manager_2.domains import managers_utils
+
 
 import redis.asyncio as redis
-from openai import AsyncOpenAI
 
 
 logger = logging.getLogger(__name__)
@@ -43,12 +48,6 @@ if not logger.handlers:
 
 
 MAX_CONV_MANAGER_MSGS = 50
-
-# so basically, whenever the total count of a contact message > 10
-# we are going to ask the contact manager/transcript manager to provide an update rolling summary
-# we will keep the last N messages still
-
-
 class ConversationManager:
     def __init__(
         self,
@@ -109,6 +108,11 @@ class ConversationManager:
         self.stop = stop
 
         self.event_broker = event_broker
+
+        # managers
+        self.transcript_manager: TranscriptManager = None
+        self.contact_manager: ContactManager = None
+        self.memory_manager: MemoryManager = None
         
         # llm
         self.llm = LLM("gpt-4.1", event_broker)
@@ -139,6 +143,8 @@ class ConversationManager:
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
+        # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
+        self.conductor_handles: dict[int, dict] = {}
         self.last_snapshot = datetime.now()
         self._current_snapshot = None
     
@@ -158,8 +164,7 @@ class ConversationManager:
 
     async def _run_llm(self):
         self.snapshot()
-        # TODO: change to the real state
-        prompt = self.prompt_renderer.render_state(self.contact_index, None, self.last_snapshot)
+        prompt = self.prompt_renderer.render_state(self.contact_index, self.notifications_bar, self.last_snapshot)
         print(prompt)
         input_message = {"role": "user", "content": prompt}
         boss_contact = self.contact_index.boss_contact
@@ -225,11 +230,18 @@ class ConversationManager:
             await pubsub.psubscribe(
                 "app:comms:*",
                 "app:conductor:*",
+                "app:logging:message_logged",
                 "app:managers:output",
             )
 
             if self.assistant_id:
-                asyncio.create_task(self.publish_startup())
+                # asyncio.create_task(self.publish_startup())
+
+                # this feels like it should be its own method really buts its really big
+                # so will keep that way for now
+                # also this is now fully blocking, will discuss it again with everyone what is the best
+                # way to deal with this
+                managers_utils.init_conv_manager(self)
                 print("Default startup")
 
             while True:
@@ -244,23 +256,6 @@ class ConversationManager:
                 event = Event.from_json(msg["data"])
                 await EventHandler.handle_event(event, self, realtime=self.realtime)
 
-    async def publish_startup(self):
-        print("publishing startup")
-        await self.event_broker.publish(
-            "app:managers:input",
-            ManagersStartupRequest(
-                agent_id=self.assistant_id,
-                first_name=self.assistant_name,
-                age=self.assistant_age,
-                region=self.assistant_region,
-                about=self.assistant_about,
-                phone=self.assistant_number,
-                email=self.assistant_email,
-                user_phone=self.user_number,
-                user_whatsapp_number=self.user_whatsapp_number,
-                assistant_whatsapp_number=self.assistant_number,
-            ).to_json(),
-        )
 
     async def publish_bus_events(self, event: Event):
         await self.event_broker.publish(
@@ -292,6 +287,8 @@ class ConversationManager:
         """
         self.user_turn_end_callback = callback
 
+    # This can be moved to event handlers actually
+    # and sets the Assistant dataclass instead of calling the conversation manager's
     def set_details(self, payload: dict):
         """Populate assistant/user/voice details and update environment variables."""
         self.user_id = payload["user_id"]

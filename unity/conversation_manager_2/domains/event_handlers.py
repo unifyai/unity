@@ -1,11 +1,12 @@
+import asyncio
+from time import perf_counter
 from typing import TYPE_CHECKING, Union
 
 from unity.conversation_manager_2.new_events import *
+from unity.conversation_manager_2.domains import managers_utils
 
 if TYPE_CHECKING:
     from unity.conversation_manager_2.conversation_manager import ConversationManager
-from unity.conversation_manager_2.domains.call_manager import LivekitCallManager
-
 class EventHandler:
     _registry = {}
 
@@ -22,18 +23,13 @@ class EventHandler:
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
         # maybe add the event bus logging thing here
         if event.__class__.loggable:
-            ...
+            asyncio.create_task(managers_utils.publish_bus_events(event))
         print(event)
         f = cls._registry.get(event.__class__)
         if not f:
-            raise Exception(f"class: {event.__class__} is not registed!")
+            # do nothing basically (?)
+            return asyncio.sleep(0)
         return f(event, cm, *args, **kwargs)
-    
-
-
-@EventHandler.register(StartupEvent)
-async def _(event: StartupEvent):
-    ...
 
 CallEvents = Union[PhoneCallRecieved, PhoneCallSent, UnifyCallReceived]
 
@@ -69,6 +65,8 @@ async def _(event: CallEvents, cm: 'ConversationManager', *args, **kwargs):
 
 @EventHandler.register((PhoneUtterance, UnifyCallUtterance))
 async def _(event: PhoneCallEnded, cm: 'ConversationManager', *args, **kwargs):
+    # publish transcript
+    asyncio.create_task(managers_utils.log_message(cm, event))
     ...
 
 @EventHandler.register((PhoneCallEnded, UnifyCallEnded))
@@ -140,15 +138,6 @@ async def _(event, cm: 'ConversationManager', *args, **kwargs):
     await cm.run_llm(delay=2)
 
 # TODO: put all managers in the cm and move start up logic from managers worker to here
-@EventHandler.register(
-    (
-        ManagersStartupResponse
-    )
-)
-async def _(event: ManagersStartupResponse, cm: 'ConversationManager', *args, **kwargs):
-    if not event.initialized:
-        raise Exception("Managers failed to initialize")
-    cm.initialized = True
 
 @EventHandler.register((
     StartupEvent
@@ -166,4 +155,10 @@ async def _(event: GetContactsResponse, cm: 'ConversationManager', *args, **kwar
 
 @EventHandler.register(GetBusEventsResponse)
 async def _(event: GetBusEventsResponse, cm: 'ConversationManager', *args, **kwargs):
+    ...
+
+
+@EventHandler.register(ConductorResult)
+async def _(event: ConductorResult, cm: 'ConversationManager', *args, **kwargs):
+    # update the conductor handles state
     ...

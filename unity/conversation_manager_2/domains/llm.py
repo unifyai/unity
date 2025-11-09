@@ -1,6 +1,7 @@
 import os
 from openai import AsyncOpenAI
 
+is_reasoning = lambda name: "gpt-5" in name
 class LLM:
     def __init__(self, model: str, event_broker = None):
         self.client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
