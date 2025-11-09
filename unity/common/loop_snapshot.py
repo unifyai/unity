@@ -6,16 +6,6 @@ from pydantic import BaseModel, Field, ValidationError
 from pydantic import model_validator
 
 
-class EntryPointManagerMethod(BaseModel):
-    """Entry point describing a manager method to resume.
-
-    This is intentionally minimal in v1.
-    """
-
-    class_name: str
-    method_name: str
-
-
 class ChildSnapshot(BaseModel):
     """Schema for a nested child loop snapshot reference (v1).
 
@@ -72,8 +62,6 @@ class LoopSnapshot(BaseModel):
     """
 
     version: int = Field(default=1, ge=1)
-    # Manager-only entrypoint in the simplified v1
-    entrypoint: EntryPointManagerMethod
 
     # Optional loop identity and prompt header
     loop_id: Optional[str] = None
@@ -159,7 +147,8 @@ def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     Behaviour:
     - If version is missing, assume 1.
-    - Drop any legacy ``entrypoint.type`` field if present.
+    - If legacy ``entrypoint`` is present with class_name/method_name, map it to
+      ``root.tool`` (\"Class.method\") when missing and drop ``entrypoint``.
     - Leave unknown fields untouched for forward-compatibility.
     """
 
@@ -172,12 +161,23 @@ def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     if "version" not in out:
         out["version"] = 1
 
-    # Drop legacy entrypoint.type if present (no longer used)
+    # Legacy support: map entrypoint → root.tool, then drop entrypoint
     try:
         ep = out.get("entrypoint")
-        if isinstance(ep, dict) and "type" in ep:
-            ep = {k: v for k, v in ep.items() if k != "type"}
-            out["entrypoint"] = ep
+        if isinstance(ep, dict):
+            cls_name = ep.get("class_name")
+            meth_name = ep.get("method_name")
+            if isinstance(cls_name, str) and isinstance(meth_name, str):
+                root = out.get("root")
+                if not isinstance(root, dict):
+                    root = {}
+                if not isinstance(root.get("tool"), str) or not root.get("tool"):
+                    root["tool"] = f"{cls_name}.{meth_name}"
+                if not isinstance(root.get("handle"), str) or not root.get("handle"):
+                    root["handle"] = "AsyncToolLoopHandle"
+                out["root"] = root
+            # Drop legacy entrypoint unconditionally
+            out.pop("entrypoint", None)
     except Exception:
         pass
 
@@ -186,7 +186,6 @@ def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
 
 __all__ = (
-    "EntryPointManagerMethod",
     "ChildSnapshot",
     "LoopSnapshot",
     "validate_snapshot",

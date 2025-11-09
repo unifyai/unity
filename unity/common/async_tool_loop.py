@@ -28,7 +28,6 @@ from ._async_tool.loop import async_tool_loop_inner
 # inline-tools support removed in simplified manager-only snapshots
 from .loop_snapshot import (
     LoopSnapshot as _LoopSnapshot,
-    EntryPointManagerMethod as _EntryPointManagerMethod,
     validate_snapshot as _validate_snapshot,
     migrate_snapshot as _migrate_snapshot,
 )
@@ -1013,22 +1012,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             except Exception:
                 pass
 
-        # Finalise entrypoint selection exclusively from loop_id label.
-        entry_field = _EntryPointManagerMethod(
-            class_name=cls_name,
-            method_name=meth_name,
-        )
-
-        # Human-readable root summary from entrypoint (no label parsing)
+        # Human-readable root summary from entrypoint (no additional parsing)
         root_summary = {}
         try:
-            root_summary["tool"] = f"{entry_field.class_name}.{entry_field.method_name}"
+            root_summary["tool"] = f"{cls_name}.{meth_name}"
             root_summary["handle"] = "AsyncToolLoopHandle"
         except Exception:
             root_summary = {}
 
         snap = _LoopSnapshot(
-            entrypoint=entry_field,
             loop_id=str(self._loop_id or ""),
             system_message=system_message,
             root=root_summary or None,
@@ -1278,7 +1270,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             new_llm_client as _new_llm_client,
         )  # noqa: WPS433
 
-        # Build tools mapping depending on entrypoint type
+        # Build tools mapping depending on resolved entrypoint
         tools: Dict[str, Callable] = {}
         loop_label: str = snap.loop_id or ""
 
@@ -1291,17 +1283,25 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _discover_manager_modules()
         _registry = _get_manager_registry()
 
-        # Derive entrypoint exclusively from loop_id label when available
-        ep_class_name = snap.entrypoint.class_name
-        ep_method_name = snap.entrypoint.method_name
+        # Resolve entrypoint: prefer loop_id lineage label; else fall back to root.tool
         try:
             if loop_label:
-                _cls, _meth = _parse_entrypoint_from_loop_id_label(loop_label)
-                ep_class_name, ep_method_name = _cls, _meth
-        except Exception:
-            # Fallback to snapshot entrypoint fields
-            ep_class_name = snap.entrypoint.class_name
-            ep_method_name = snap.entrypoint.method_name
+                ep_class_name, ep_method_name = _parse_entrypoint_from_loop_id_label(
+                    loop_label,
+                )
+            else:
+                root = snap.root or {}
+                tool_val = root.get("tool") if isinstance(root, dict) else None
+                if not isinstance(tool_val, str) or "." not in tool_val:
+                    raise ValueError(
+                        "Manager class not found: missing loop_id and root.tool",
+                    )
+                ep_class_name, ep_method_name = tool_val.split(".", 1)
+        except Exception as _exc:
+            # Ensure consistent error message for missing manager
+            raise ValueError(
+                "Manager class not found: unable to derive entrypoint",
+            ) from _exc
 
         mgr_cls = _registry.get(ep_class_name)
         if mgr_cls is None:

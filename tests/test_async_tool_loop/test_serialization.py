@@ -13,7 +13,6 @@ from unity.common.async_tool_loop import (
 )
 from unity.common.loop_snapshot import (
     LoopSnapshot,
-    EntryPointManagerMethod,
     validate_snapshot,
 )
 from unity.contact_manager.contact_manager import ContactManager
@@ -39,8 +38,8 @@ async def test_handle_serialize_minimal():
     assert isinstance(snap, dict)
     assert snap.get("version") == 1
     assert snap.get("loop_id", "").startswith("ContactManager.ask")
-    assert snap.get("entrypoint", {}).get("class_name") == "ContactManager"
-    assert snap.get("entrypoint", {}).get("method_name") == "ask"
+    root = snap.get("root") or {}
+    assert root.get("tool") == "ContactManager.ask"
     # assistant may be empty depending on timing, but it must be a list
     assert isinstance(snap.get("assistant"), list)
     assert isinstance(snap.get("tools"), list)
@@ -93,11 +92,8 @@ async def test_deserialize_migrates_missing_version():
 
 def _sample_snapshot_dict():
     snap = LoopSnapshot(
-        entrypoint=EntryPointManagerMethod(
-            class_name="ContactManager",
-            method_name="ask",
-        ),
         loop_id="ContactManager.ask(abcdef)",
+        root={"tool": "ContactManager.ask", "handle": "AsyncToolLoopHandle"},
         system_message="You are helpful.",
         initial_user_message="Find contact Alice",
         assistant=[
@@ -130,8 +126,8 @@ def test_loop_snapshot_roundtrip():
     data = _sample_snapshot_dict()
     validated = validate_snapshot(data)
     assert validated.version == 1
-    assert validated.entrypoint.class_name == "ContactManager"
-    assert validated.entrypoint.method_name == "ask"
+    assert isinstance(validated.root, dict)
+    assert (validated.root or {}).get("tool") == "ContactManager.ask"
     assert isinstance(validated.assistant, list)
     assert isinstance(validated.tools, list)
 
@@ -184,11 +180,8 @@ async def test_deserialize_transcript_manager_resume():
 async def test_deserialize_unknown_manager_class_raises():
     snap = {
         "version": 1,
-        "entrypoint": {
-            "class_name": "NoSuchManager",
-            "method_name": "ask",
-        },
         "loop_id": "NoSuchManager.ask(xxx)",
+        "root": {"tool": "NoSuchManager.ask", "handle": "AsyncToolLoopHandle"},
         "system_message": "You are helpful.",
         "initial_user_message": "Hello",
         "assistant": [],
@@ -204,11 +197,8 @@ async def test_deserialize_unknown_manager_class_raises():
 async def test_deserialize_unknown_manager_method_raises():
     snap = {
         "version": 1,
-        "entrypoint": {
-            "class_name": "ContactManager",
-            "method_name": "nope",
-        },
         "loop_id": "ContactManager.nope(xxx)",
+        "root": {"tool": "ContactManager.nope", "handle": "AsyncToolLoopHandle"},
         "system_message": "You are helpful.",
         "initial_user_message": "Hello",
         "assistant": [],
@@ -318,9 +308,6 @@ async def test_serialize_entrypoint_parsed_from_loop_id_label_nested():
     inner = getattr(handle, "__wrapped__", handle)
     setattr(inner, "_log_label", "ContactManager.update->ContactManager.ask(custom123)")
     snap = handle.serialize()
-    ep = snap.get("entrypoint") or {}
-    assert ep.get("class_name") == "ContactManager"
-    assert ep.get("method_name") == "ask"
     root = snap.get("root") or {}
     assert root.get("tool") == "ContactManager.ask"
 
@@ -331,10 +318,9 @@ async def test_deserialize_prefers_loop_id_over_entrypoint_fields():
     cm = ContactManager()
     handle = await cm.ask("Find contact Lima")
     snap = handle.serialize()
-    # Corrupt entrypoint but set an authoritative loop_id; deserializer must use loop_id.
-    if isinstance(snap.get("entrypoint"), dict):
-        snap["entrypoint"]["class_name"] = "NoSuchManager"
-        snap["entrypoint"]["method_name"] = "nope"
+    # Corrupt root.tool but set an authoritative loop_id; deserializer must use loop_id.
+    if isinstance(snap.get("root"), dict):
+        snap["root"]["tool"] = "NoSuchManager.nope"
     snap["loop_id"] = "ContactManager.update->ContactManager.ask(custom456)"
     resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
     out = await asyncio.wait_for(resumed.result(), timeout=180.0)
