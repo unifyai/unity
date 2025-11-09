@@ -23,7 +23,8 @@ class LoopMessageDispatcher:
     async def append_msgs(
         self,
         msgs: list[dict],
+        origin: str | None = None,
     ) -> None:
         self._client.append_messages(msgs)
-        await to_event_bus(msgs, self._cfg)
+        await to_event_bus(msgs, self._cfg, origin=origin)
         self._timer.reset()
