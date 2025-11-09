@@ -2585,7 +2585,7 @@ def start_async_tool_loop(
         ):
             cls, meth = semantic_cache_namespace.split(".", 1)
             if cls and meth:
-                _ep = {"type": "manager_method", "class_name": cls, "method_name": meth}
+                _ep = {"class_name": cls, "method_name": meth}
         if _ep is not None:
             setattr(handle, "_entrypoint_info", _ep)
     except Exception:
