@@ -4,6 +4,13 @@ import pytest
 from unity.conductor.conductor import Conductor
 from unity.common.async_tool_loop import AsyncToolLoopHandle
 from tests.helpers import _handle_project
+from unity.contact_manager.contact_manager import ContactManager
+from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.guidance_manager.guidance_manager import GuidanceManager
+from unity.secret_manager.secret_manager import SecretManager
+from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.transcript_manager.types.message import Message
+from datetime import datetime, UTC
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
@@ -450,6 +457,15 @@ async def test_conductor_serialize_websearcher_ask():
 @pytest.mark.asyncio
 @_handle_project
 async def test_deserialize_and_continue_conductor_ask_contactmanager():
+    # Seed Contacts with a Berlin-based product designer to make the answer immediate
+    cm = ContactManager()
+    cm._create_contact(  # type: ignore[attr-defined]
+        first_name="Anna",
+        surname="Klein",
+        bio="Berlin-based product designer with 8 years experience",
+        respond_to=True,
+    )
+
     snap = {
         "version": 1,
         "loop_id": "Conductor.ask(static-contact)",
@@ -489,6 +505,19 @@ async def test_deserialize_and_continue_conductor_ask_contactmanager():
 @pytest.mark.asyncio
 @_handle_project
 async def test_deserialize_and_continue_conductor_ask_transcriptmanager():
+    # Seed Transcripts with a recent budgeting/banking message
+    tm = TranscriptManager()
+    tm.log_messages(  # type: ignore[attr-defined]
+        Message(
+            medium="email",
+            sender_id=0,
+            receiver_ids=[1],
+            timestamp=datetime.now(UTC),
+            content="Budgeting update: reviewed banking fees and savings plan.",
+        ),
+    )
+    tm.join_published()  # ensure visibility before the loop queries
+
     snap = {
         "version": 1,
         "loop_id": "Conductor.ask(static-transcript)",
@@ -528,6 +557,13 @@ async def test_deserialize_and_continue_conductor_ask_transcriptmanager():
 @pytest.mark.asyncio
 @_handle_project
 async def test_deserialize_and_continue_conductor_ask_guidancemanager():
+    # Seed Guidance with an onboarding demo entry
+    gm = GuidanceManager()
+    gm._add_guidance(  # type: ignore[attr-defined]
+        title="Onboarding demo",
+        content="Step-by-step guidance for the onboarding demo.",
+    )
+
     snap = {
         "version": 1,
         "loop_id": "Conductor.ask(static-guidance)",
@@ -567,6 +603,18 @@ async def test_deserialize_and_continue_conductor_ask_guidancemanager():
 @pytest.mark.asyncio
 @_handle_project
 async def test_deserialize_and_continue_conductor_ask_secretmanager():
+    # Seed Secrets with a demo key to ensure a quick list/search response
+    sm = SecretManager()
+    try:
+        sm._create_secret(  # type: ignore[attr-defined]
+            name="DEMO_API_KEY",
+            value="xyz123",
+            description="Demo key for tests",
+        )
+    except Exception:
+        # If already exists in this context, continue
+        pass
+
     snap = {
         "version": 1,
         "loop_id": "Conductor.ask(static-secret)",
@@ -645,6 +693,17 @@ async def test_deserialize_and_continue_conductor_ask_skillmanager():
 @pytest.mark.asyncio
 @_handle_project
 async def test_deserialize_and_continue_conductor_ask_taskscheduler():
+    # Seed TaskScheduler with a couple of tasks so ask() has immediate content
+    ts = TaskScheduler()
+    ts.create_task(
+        name="Email Contoso about invoices",
+        description="Follow up on Q3 invoices",
+    )
+    ts.create_task(
+        name="Prepare slides for kickoff",
+        description="Draft outline and slides",
+    )
+
     snap = {
         "version": 1,
         "loop_id": "Conductor.ask(static-task)",
