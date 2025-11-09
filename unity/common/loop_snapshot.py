@@ -12,7 +12,6 @@ class EntryPointManagerMethod(BaseModel):
     This is intentionally minimal in v1.
     """
 
-    type: Literal["manager_method"] = "manager_method"
     class_name: str
     method_name: str
 
@@ -160,8 +159,7 @@ def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
 
     Behaviour:
     - If version is missing, assume 1.
-    - If entrypoint lacks a discriminant ``type`` but has ``class_name`` and
-      ``method_name``, infer manager_method.
+    - Drop any legacy ``entrypoint.type`` field if present.
     - Leave unknown fields untouched for forward-compatibility.
     """
 
@@ -174,13 +172,12 @@ def migrate_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     if "version" not in out:
         out["version"] = 1
 
-    # Normalise entrypoint discriminant (manager-only)
+    # Drop legacy entrypoint.type if present (no longer used)
     try:
         ep = out.get("entrypoint")
-        if isinstance(ep, dict) and "type" not in ep:
-            if "class_name" in ep and "method_name" in ep:
-                ep = {"type": "manager_method", **ep}
-                out["entrypoint"] = ep
+        if isinstance(ep, dict) and "type" in ep:
+            ep = {k: v for k, v in ep.items() if k != "type"}
+            out["entrypoint"] = ep
     except Exception:
         pass
 

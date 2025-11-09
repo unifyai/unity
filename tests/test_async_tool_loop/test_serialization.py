@@ -72,16 +72,13 @@ async def test_snapshot_contains_meta_and_semantic_namespace():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_migrates_missing_version_and_type():
+async def test_deserialize_migrates_missing_version():
     cm = ContactManager()
     handle = await cm.ask("Find contact Bob")
     snap = handle.serialize()
 
-    # Simulate an older snapshot: drop version and entrypoint.type
+    # Simulate an older snapshot: drop version
     snap.pop("version", None)
-    ep = dict(snap.get("entrypoint") or {})
-    ep.pop("type", None)
-    snap["entrypoint"] = ep
 
     # Should migrate and still be able to resume
     resumed = AsyncToolLoopHandle.deserialize(snap)
@@ -188,7 +185,6 @@ async def test_deserialize_unknown_manager_class_raises():
     snap = {
         "version": 1,
         "entrypoint": {
-            "type": "manager_method",
             "class_name": "NoSuchManager",
             "method_name": "ask",
         },
@@ -209,7 +205,6 @@ async def test_deserialize_unknown_manager_method_raises():
     snap = {
         "version": 1,
         "entrypoint": {
-            "type": "manager_method",
             "class_name": "ContactManager",
             "method_name": "nope",
         },
