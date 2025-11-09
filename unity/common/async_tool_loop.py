@@ -1249,6 +1249,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def deserialize(
         cls,
         snapshot: dict,
+        *,
+        parent_lineage: list[str] | None = None,
     ) -> "SteerableToolHandle":  # type: ignore[override]
         """Recreate a running handle from a v1 snapshot (flat only).
 
@@ -1506,7 +1508,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         child_snap = rec.get("snapshot")
                         if not isinstance(child_snap, dict):
                             continue  # by-ref children not supported in simplified v1
-                        child_handle = cls.deserialize(child_snap)
+                        # Start child under the parent's entrypoint lineage so its logs reflect nested replay
+                        parent_entrypoint = f"{ep_class_name}.{ep_method_name}"
+                        child_handle = cls.deserialize(
+                            child_snap,
+                            parent_lineage=[parent_entrypoint],
+                        )
                         _resume_children_payload.append(
                             {
                                 "call_id": rec.get("call_id"),
@@ -1527,9 +1534,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             msgs if msgs else (init or ""),
             tools,
             loop_id=loop_label,
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
+            parent_lineage=(
+                parent_lineage
+                if parent_lineage is not None
+                else TOOL_LOOP_LINEAGE.get([])
+            ),
             images=images_param,
             resume_children=_resume_children_payload or None,
+            replay_origin="deserialize",
         )
 
         # Diagnostics: log adopted children count
@@ -2527,6 +2539,7 @@ def start_async_tool_loop(
     images: Optional["ImageRefs"] = None,
     evented: Optional[bool] = None,
     resume_children: Optional[list[dict]] = None,
+    replay_origin: Optional[str] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2592,6 +2605,7 @@ def start_async_tool_loop(
                 semantic_cache_namespace=semantic_cache_namespace,
                 images=images,
                 resume_children=resume_children,
+                replay_origin=replay_origin,
             )
         except asyncio.CancelledError:
             raise

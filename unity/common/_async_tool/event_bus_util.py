@@ -6,6 +6,7 @@ from .loop_config import LoopConfig
 async def to_event_bus(
     messages: Union[Dict, List[Dict]],
     loop_cfg: LoopConfig,
+    origin: str | None = None,
 ) -> None:
     """
     Emit *messages* to the shared EventBus (if configured).
@@ -33,6 +34,7 @@ async def to_event_bus(
                     "method": loop_cfg.loop_id,
                     "hierarchy": list(loop_cfg.lineage),
                     "hierarchy_label": loop_cfg.label,
+                    "origin": origin,
                 },
             ),
         )
