@@ -23,6 +23,32 @@ def _assert_dict_subset(expected: dict, actual: dict):
                 dict,
             ), f"Expected dict at key {k!r}, got {type(actual[k]).__name__}"
             _assert_dict_subset(v, actual[k])
+        elif isinstance(v, list):
+            assert isinstance(
+                actual[k],
+                list,
+            ), f"Expected list at key {k!r}, got {type(actual[k]).__name__}"
+            # For lists, ensure each expected item is present (subset semantics).
+            # - If dict: require at least one actual item to be a superset of this dict.
+            # - Else: require exact membership.
+            for exp_item in v:
+                if isinstance(exp_item, dict):
+                    found = False
+                    for act_item in actual[k]:
+                        if isinstance(act_item, dict):
+                            try:
+                                _assert_dict_subset(exp_item, act_item)
+                                found = True
+                                break
+                            except AssertionError:
+                                continue
+                    assert (
+                        found
+                    ), f"List at key {k!r} missing an item matching subset {exp_item!r}"
+                else:
+                    assert (
+                        exp_item in actual[k]
+                    ), f"List at key {k!r} missing item {exp_item!r}"
         else:
             assert (
                 actual[k] == v
@@ -151,9 +177,9 @@ async def test_serialize_contactmanager_update_then_ask_nested():
     Verify a recursive snapshot for ContactManager.update → ContactManager.ask
     (policy requires 'ask' on the first turn).
 
-    We assert a human-readable subset:
+    We assert a human-readable subset that presents the nested structure in one dict:
       - root.tool/handle
-      - presence of a child entry for ContactManager.ask
+      - "children" displayed at the base level containing an entry for ContactManager.ask
       - child's handle shape
       - child's state is either 'in_flight' or 'done'
       - if 'in_flight', child includes an inline snapshot
@@ -182,15 +208,21 @@ async def test_serialize_contactmanager_update_then_ask_nested():
 
         snap = h.serialize(recursive=True)  # type: ignore[attr-defined]
 
-        # Root subset
-        expected_root = {
+        # Human-readable overview of expected nested shape (subset semantics).
+        expected_overview = {
             "version": 1,
             "root": {
                 "tool": "ContactManager.update",
                 "handle": "AsyncToolLoopHandle",
             },
+            "children": [
+                {
+                    "tool": "ContactManager.ask",
+                    "handle": "ReadOnlyAskGuardHandle(AsyncToolLoopHandle)",
+                },
+            ],
         }
-        _assert_dict_subset(expected_root, snap)
+        _assert_dict_subset(expected_overview, snap)
         assert snap.get("loop_id", "").startswith("ContactManager.update")
         assert isinstance(snap.get("assistant"), list)
         assert isinstance(snap.get("tools"), list)
