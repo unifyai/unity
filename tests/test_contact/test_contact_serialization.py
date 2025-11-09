@@ -7,6 +7,7 @@ from tests.test_async_tool_loop.async_helpers import (
     _wait_for_condition,
     _wait_for_tool_request,
 )
+from unity.common.async_tool_loop import AsyncToolLoopHandle
 
 
 def _assert_dict_subset(expected: dict, actual: dict):
@@ -262,3 +263,115 @@ async def test_serialize_contactmanager_update_then_ask_nested():
             await asyncio.wait_for(h.result(), timeout=120)  # type: ignore[attr-defined]
         except Exception:
             pass
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_deserialize_and_continue_ask_with_interjection():
+    """
+    Start from a flat ask snapshot, resume, add an interjection, and verify completion and transcript.
+    """
+    snap = {
+        "version": 1,
+        "loop_id": "ContactManager.ask(static)",
+        "root": {"tool": "ContactManager.ask", "handle": "AsyncToolLoopHandle"},
+        "system_message": "You are helpful.",
+        "initial_user_message": "Who is the contact living in Berlin working as a designer?",
+        "assistant": [],
+        "tools": [],
+    }
+
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+    interjection_text = "Prefer concise output"
+    await resumed.interject(interjection_text)  # type: ignore[attr-defined]
+    out = await asyncio.wait_for(resumed.result(), timeout=240)  # type: ignore[attr-defined]
+    assert isinstance(out, str) and len(out) > 0
+    # Verify the interjection appears once in the resumed transcript
+    hist = resumed.get_history()  # type: ignore[attr-defined]
+    assert isinstance(hist, list)
+    seen = [
+        m
+        for m in hist
+        if isinstance(m, dict)
+        and m.get("role") == "system"
+        and interjection_text in str(m.get("content", ""))
+    ]
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_deserialize_and_continue_update_before_nested_with_interjection():
+    """
+    Start from a flat update snapshot taken before nested 'ask' is adopted, resume,
+    add an interjection, and verify completion and transcript.
+    """
+    snap = {
+        "version": 1,
+        "loop_id": "ContactManager.update(static)",
+        "root": {"tool": "ContactManager.update", "handle": "AsyncToolLoopHandle"},
+        "system_message": "You are helpful.",
+        "initial_user_message": "Please update the contact's policy.",
+        "assistant": [],
+        "tools": [],
+    }
+
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+    interjection_text = "Please proceed safely"
+    await resumed.interject(interjection_text)  # type: ignore[attr-defined]
+    out = await asyncio.wait_for(resumed.result(), timeout=240)  # type: ignore[attr-defined]
+    assert isinstance(out, str) and len(out) > 0
+
+    hist = resumed.get_history()  # type: ignore[attr-defined]
+    assert isinstance(hist, list)
+    seen = [
+        m
+        for m in hist
+        if isinstance(m, dict)
+        and m.get("role") == "system"
+        and interjection_text in str(m.get("content", ""))
+    ]
+    assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_deserialize_and_continue_update_then_ask_nested_with_interjection():
+    """
+    Start from a recursive update→ask snapshot, resume, add an interjection, and verify continuation.
+    """
+    snap = {
+        "version": 1,
+        "loop_id": "ContactManager.update(static-nested)",
+        "root": {"tool": "ContactManager.update", "handle": "AsyncToolLoopHandle"},
+        "system_message": "You are helpful.",
+        "initial_user_message": "Mark respond_to=True for the footballer who wrapped up a kickoff call.",
+        "assistant": [],
+        "tools": [],
+        "children": [
+            {
+                "call_id": None,
+                "tool": "ContactManager.ask",
+                "handle": "ReadOnlyAskGuardHandle(AsyncToolLoopHandle)",
+                "passthrough": False,
+                "state": "done",
+            },
+        ],
+    }
+
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+    interjection_text = "Prefer compact layout"
+    await resumed.interject(interjection_text)  # type: ignore[attr-defined]
+    out = await asyncio.wait_for(resumed.result(), timeout=240)  # type: ignore[attr-defined]
+    assert isinstance(out, str) and len(out) > 0
+
+    hist = resumed.get_history()  # type: ignore[attr-defined]
+    assert isinstance(hist, list)
+    seen = [
+        m
+        for m in hist
+        if isinstance(m, dict)
+        and m.get("role") == "system"
+        and interjection_text in str(m.get("content", ""))
+    ]
+    assert len(seen) == 1
