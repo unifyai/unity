@@ -9,7 +9,6 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.guidance_manager.guidance_manager import GuidanceManager
 from unity.secret_manager.secret_manager import SecretManager
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.transcript_manager.types.message import Message
 from datetime import datetime, UTC
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
@@ -507,14 +506,14 @@ async def test_deserialize_and_continue_conductor_ask_contactmanager():
 async def test_deserialize_and_continue_conductor_ask_transcriptmanager():
     # Seed Transcripts with a recent budgeting/banking message
     tm = TranscriptManager()
-    tm.log_messages(  # type: ignore[attr-defined]
-        Message(
-            medium="email",
-            sender_id=0,
-            receiver_ids=[1],
-            timestamp=datetime.now(UTC),
-            content="Budgeting update: reviewed banking fees and savings plan.",
-        ),
+    tm.log_first_message_in_new_exchange(  # type: ignore[attr-defined]
+        {
+            "medium": "email",
+            "sender_id": 0,
+            "receiver_ids": [1],
+            "timestamp": datetime.now(UTC),
+            "content": "Budgeting update: reviewed banking fees and savings plan.",
+        },
     )
     tm.join_published()  # ensure visibility before the loop queries
 
