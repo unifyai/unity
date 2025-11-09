@@ -7,7 +7,10 @@ from tests.helpers import _handle_project
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_system_interjection_event,
 )
-from unity.common.async_tool_loop import AsyncToolLoopHandle
+from unity.common.async_tool_loop import (
+    AsyncToolLoopHandle,
+    _parse_entrypoint_from_loop_id_label,
+)
 from unity.common.loop_snapshot import (
     LoopSnapshot,
     EntryPointManagerMethod,
@@ -283,3 +286,61 @@ async def test_notifications_replayed_after_resume():
     evt2 = await asyncio.wait_for(resumed.next_notification(), timeout=60)
     assert evt1.get("type") == "notification"
     assert evt2.get("type") == "notification"
+
+
+# ----------------------------------------------------------------------------
+# loop_id parsing – derive entrypoint from labels (serialize/deserialize)
+# ----------------------------------------------------------------------------
+
+
+def test_parse_entrypoint_from_loop_id_label_variants():
+    # Simple "Class.method"
+    assert _parse_entrypoint_from_loop_id_label("ContactManager.ask") == (
+        "ContactManager",
+        "ask",
+    )
+    # Trailing unique id in parentheses
+    assert _parse_entrypoint_from_loop_id_label("ContactManager.ask(x2ab)") == (
+        "ContactManager",
+        "ask",
+    )
+    # Nested lineage; keep last segment only
+    assert _parse_entrypoint_from_loop_id_label(
+        "ContactManager.update->ContactManager.ask(x2ab)",
+    ) == ("ContactManager", "ask")
+    # Multiple segments; still last wins
+    assert _parse_entrypoint_from_loop_id_label(
+        "A.update->B.exec->ContactManager.ask(zzz)",
+    ) == ("ContactManager", "ask")
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_serialize_entrypoint_parsed_from_loop_id_label_nested():
+    cm = ContactManager()
+    handle = await cm.ask("Find contact Kilo")
+    # Force a nested lineage style label; serialize should use only the last segment
+    inner = getattr(handle, "__wrapped__", handle)
+    setattr(inner, "_log_label", "ContactManager.update->ContactManager.ask(custom123)")
+    snap = handle.serialize()
+    ep = snap.get("entrypoint") or {}
+    assert ep.get("class_name") == "ContactManager"
+    assert ep.get("method_name") == "ask"
+    root = snap.get("root") or {}
+    assert root.get("tool") == "ContactManager.ask"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_deserialize_prefers_loop_id_over_entrypoint_fields():
+    cm = ContactManager()
+    handle = await cm.ask("Find contact Lima")
+    snap = handle.serialize()
+    # Corrupt entrypoint but set an authoritative loop_id; deserializer must use loop_id.
+    if isinstance(snap.get("entrypoint"), dict):
+        snap["entrypoint"]["class_name"] = "NoSuchManager"
+        snap["entrypoint"]["method_name"] = "nope"
+    snap["loop_id"] = "ContactManager.update->ContactManager.ask(custom456)"
+    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
+    out = await asyncio.wait_for(resumed.result(), timeout=180.0)
+    assert isinstance(out, str) and len(out) > 0
