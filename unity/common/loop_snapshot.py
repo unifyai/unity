@@ -55,10 +55,10 @@ class LoopSnapshot(BaseModel):
     Scope in v1:
     - Captures the minimal information needed to reconstruct the tool registry
       and re-schedule any assistant-declared tool calls that lack results.
-    - Optionally carries a nested children manifest under ``meta.children`` for
-      in‑flight child loops (each child may be embedded inline or referenced by
-      path). Other metadata fields (e.g., images, clarifications, notifications)
-      are supported for convenience but may be ignored by deserializers.
+    - Optionally carries a nested children manifest under top-level ``children`` for
+      in‑flight child loops (each child is embedded inline with a ``snapshot`` when live).
+      Other metadata fields (e.g., images, clarifications, notifications) are supported
+      for convenience but may be ignored by deserializers.
     """
 
     version: int = Field(default=1, ge=1)
@@ -100,6 +100,9 @@ class LoopSnapshot(BaseModel):
     # Snapshot of live images context (list of {image_id, annotation})
     images: List[Dict[str, Any]] = Field(default_factory=list)
 
+    # Preferred location for nested child snapshots (structure-aligned with nested_structure)
+    children: List[Dict[str, Any]] = Field(default_factory=list)
+
     # Diagnostics/metadata (v1.1+): run identifiers, timestamps, context
     meta: Optional[Dict[str, Any]] = None
 
@@ -121,23 +124,12 @@ def validate_snapshot(snapshot: Dict[str, Any]) -> LoopSnapshot:
     if snap.version != 1:
         raise ValueError(f"Unsupported snapshot version: {snap.version}")
 
-    # Validate nested children manifest (when provided under meta.children)
-    try:
-        meta = snap.meta or {}
-        children = meta.get("children") if isinstance(meta, dict) else None
-        if children is not None:
-            if not isinstance(children, list):
-                raise ValueError("meta.children must be a list when provided")
-            for idx, child in enumerate(children):
-                try:
-                    ChildSnapshot.model_validate(child)
-                except ValidationError as exc:
-                    raise ValueError(
-                        f"Invalid child snapshot at index {idx}",
-                    ) from exc
-    except Exception:
-        # Re-raise ValueErrors from our checks; ignore others defensively
-        raise
+    # Validate top-level nested children manifest (preferred)
+    for idx, child in enumerate(snap.children or []):
+        try:
+            ChildSnapshot.model_validate(child)
+        except ValidationError as exc:
+            raise ValueError(f"Invalid child snapshot at index {idx}") from exc
 
     return snap
 

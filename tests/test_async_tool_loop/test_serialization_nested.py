@@ -38,7 +38,7 @@ async def test_nested_serialize_recursive_resume_manager():
     handle = await tm.ask("Do I have any transcripts? Reply briefly.")
     snap = handle.serialize(recursive=True)
     assert isinstance(snap, dict)
-    children = (snap.get("meta", {}) or {}).get("children", [])
+    children = snap.get("children", [])
     assert isinstance(children, list)
     resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
     out = await resumed.result()
@@ -208,8 +208,7 @@ async def test_recursive_snapshot_children_schema_taskscheduler_execute():
     await _wait_for_condition(_exec_child_adopted, poll=0.02, timeout=60.0)
 
     snap = handle.serialize(recursive=True)
-    meta = snap.get("meta") or {}
-    children = meta.get("children") or []
+    children = snap.get("children") or []
     # After adoption, we expect at least one child entry
     assert isinstance(children, list) and len(children) >= 1
     child = children[0]
