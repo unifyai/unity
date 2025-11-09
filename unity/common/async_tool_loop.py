@@ -1638,6 +1638,69 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
     except Exception:
         label = "handle"
 
+    # Helper: derive a loop-style label for any target handle (child or current)
+    def _label_of(h) -> str:
+        try:
+            return (
+                getattr(h, "_log_label", None)
+                or getattr(h, "_loop_id", None)
+                or getattr(getattr(h, "__class__", object), "__name__", "handle")
+            )
+        except Exception:
+            return "handle"
+
+    # Helper: emit a pre-call log that mirrors native handle logs but marks nested_steer origin
+    def _log_pre_steer(h, method: str, args, kwargs: dict) -> None:
+        try:
+            target_label = _label_of(h)
+            m = (method or "").strip().lower()
+            # Extract a short text payload for well-known methods (best-effort)
+            txt = None
+            try:
+                if isinstance(args, (list, tuple)) and args:
+                    txt = args[0]
+            except Exception:
+                txt = None
+            if not isinstance(txt, str) or not txt:
+                # Try common kwargs for message/question/reason/content
+                for k in ("message", "content", "question", "reason", "text"):
+                    try:
+                        v = kwargs.get(k)
+                        if isinstance(v, str) and v:
+                            txt = v
+                            break
+                    except Exception:
+                        continue
+            # Choose icon and level to mirror direct logs
+            if m == "pause":
+                LOGGER.info(f"⏸️ [{target_label}] Pause requested – via nested_steer")
+            elif m == "resume":
+                LOGGER.info(f"▶️ [{target_label}] Resume requested – via nested_steer")
+            elif m == "stop":
+                suffix = f" – reason: {txt}" if isinstance(txt, str) and txt else ""
+                LOGGER.info(
+                    f"🛑 [{target_label}] Stop requested – via nested_steer{suffix}",
+                )
+            elif m == "interject":
+                suffix = f": {txt}" if isinstance(txt, str) and txt else ""
+                LOGGER.debug(
+                    f"💬 [{target_label}] Interject requested{suffix} – via nested_steer",
+                )
+            elif m == "ask":
+                suffix = f": {txt}" if isinstance(txt, str) and txt else ""
+                LOGGER.info(
+                    f"❓ [{target_label}] Ask requested{suffix} – via nested_steer",
+                )
+            else:
+                # Generic steering step
+                suffix = f": {txt}" if isinstance(txt, str) and txt else ""
+                LOGGER.info(
+                    f"🎯 [{target_label}] {method} requested{suffix} – via nested_steer",
+                )
+        except Exception:
+            # Never let logging failures affect control flow
+            pass
+
     try:
         steps_count = 0
         children_count = 0
@@ -1953,6 +2016,8 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                             call_args = [args]
                     attempted_local = True
                     try:
+                        # Emit a pre-call log with the target's own loop label so hierarchy is preserved
+                        _log_pre_steer(h, method, call_args, call_kwargs)
                         await forward_handle_call(
                             h,
                             method,
