@@ -11,6 +11,10 @@ from unity.common.async_tool_loop import (
 )
 from unity.events.event_bus import EVENT_BUS
 from tests.helpers import SETTINGS
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_condition,
+)
 
 
 @pytest.mark.asyncio
@@ -175,3 +179,241 @@ async def test_single_loop_logging_hierarchy_label():
     assert has_solo, "No ToolLoop event recorded with hierarchy ['Solo']"
     assert has_solo_label, "No ToolLoop event recorded with hierarchy_label 'Solo'"
     assert not has_nested_under_solo, "Unexpected nested hierarchy found under 'Solo'"
+
+
+@pytest.mark.asyncio
+async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(caplog):
+    """
+    Verify that nested_steer emits a pre-call interject log using the child's loop label,
+    and marks the entry as coming via nested_steer.
+    """
+
+    # ── inner tool: trivial sync function ──────────────────────────────────
+    def inner_tool() -> str:  # noqa: D401
+        # Keep the child loop alive long enough for adoption + steering
+        time.sleep(0.2)
+        return "inner-ok"
+
+    # ── outer tool: launches a nested loop and returns its handle ──────────
+    async def outer_tool() -> AsyncToolLoopHandle:
+        inner_client = unify.AsyncUnify(
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
+        )
+        inner_client.set_system_message(
+            "You are running inside an automated test.\n"
+            "1️⃣  Call `inner_tool` (no arguments).\n"
+            "2️⃣  Wait for its response.\n"
+            "3️⃣  Reply with exactly 'done'.",
+        )
+
+        return start_async_tool_loop(
+            client=inner_client,
+            message="start",
+            tools={"inner_tool": inner_tool},
+            loop_id="Inner",
+            max_steps=10,
+            timeout=120,
+        )
+
+    outer_tool.__name__ = "outer_tool"
+    outer_tool.__qualname__ = "outer_tool"
+
+    # ── top-level loop: uses the outer tool ────────────────────────────────
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. Perform the steps exactly:\n"
+        "1️⃣  Call `outer_tool` with no arguments.\n"
+        "2️⃣  Continue running this tool call, when given the option.\n"
+        "3️⃣  Once it is completed, respond with exactly 'outer done'.",
+    )
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        loop_id="Outer",
+        max_steps=10,
+        timeout=240,
+    )
+
+    # Capture logs at DEBUG for the unity logger
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="unity")
+
+    try:
+        # Wait until assistant has requested the outer tool
+        await _wait_for_tool_request(client, "outer_tool")
+
+        # Wait until the nested inner handle is adopted and visible
+        async def _child_adopted():
+            try:
+                ti = getattr(handle._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    return any(
+                        getattr(meta, "name", None) == "outer_tool"
+                        and getattr(meta, "handle", None) is not None
+                        for meta in ti.values()
+                    )
+            except Exception:
+                return False
+            return False
+
+        await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
+
+        # Issue nested_steer interject against the child (by handle base name)
+        msg = "hello from nested_steer"
+        spec = {
+            "children": [
+                {
+                    "handle": "AsyncToolLoopHandle",
+                    "steps": [{"method": "interject", "args": msg}],
+                },
+            ],
+        }
+        await handle.nested_steer(spec)  # type: ignore[attr-defined]
+
+        # Assert a nested_steer pre-log was emitted with the child loop label and origin marker
+        text = caplog.text
+        import re
+
+        # Expect a line like: "💬 [Outer->Inner(xxxx)] Interject requested: hello ... – via nested_steer"
+        assert re.search(
+            r"💬 \[Outer->Inner\([0-9a-f]{4}\)\] Interject requested: .*via nested_steer",
+            text,
+        ), "Expected nested_steer interject log with child label and origin marker"
+    finally:
+        # Finish the loop to avoid leaking tasks
+        try:
+            await handle.result()
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_marker(
+    caplog,
+):
+    """
+    Verify that nested_steer emits pre-call pause/resume logs using the child's loop label,
+    and marks entries as coming via nested_steer.
+    """
+
+    # ── inner tool: trivial sync function ──────────────────────────────────
+    def inner_tool() -> str:  # noqa: D401
+        time.sleep(0.2)
+        return "inner-ok"
+
+    # ── outer tool: launches a nested loop and returns its handle ──────────
+    async def outer_tool() -> AsyncToolLoopHandle:
+        inner_client = unify.AsyncUnify(
+            "gpt-5@openai",
+            reasoning_effort="high",
+            service_tier="priority",
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
+        )
+        inner_client.set_system_message(
+            "You are running inside an automated test.\n"
+            "1️⃣  Call `inner_tool` (no arguments).\n"
+            "2️⃣  Wait for its response.\n"
+            "3️⃣  Reply with exactly 'done'.",
+        )
+
+        return start_async_tool_loop(
+            client=inner_client,
+            message="start",
+            tools={"inner_tool": inner_tool},
+            loop_id="Inner",
+            max_steps=10,
+            timeout=120,
+        )
+
+    outer_tool.__name__ = "outer_tool"
+    outer_tool.__qualname__ = "outer_tool"
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. Perform the steps exactly:\n"
+        "1️⃣  Call `outer_tool` with no arguments.\n"
+        "2️⃣  Continue running this tool call, when given the option.\n"
+        "3️⃣  Once it is completed, respond with exactly 'outer done'.",
+    )
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        loop_id="Outer",
+        max_steps=10,
+        timeout=240,
+    )
+
+    import logging
+
+    caplog.set_level(logging.DEBUG, logger="unity")
+
+    try:
+        await _wait_for_tool_request(client, "outer_tool")
+
+        async def _child_adopted():
+            try:
+                ti = getattr(handle._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    return any(
+                        getattr(meta, "name", None) == "outer_tool"
+                        and getattr(meta, "handle", None) is not None
+                        for meta in ti.values()
+                    )
+            except Exception:
+                return False
+            return False
+
+        await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
+
+        # Issue pause then resume via nested_steer
+        spec = {
+            "children": [
+                {
+                    "handle": "AsyncToolLoopHandle",
+                    "steps": [{"method": "pause"}, {"method": "resume"}],
+                },
+            ],
+        }
+        await handle.nested_steer(spec)  # type: ignore[attr-defined]
+
+        text = caplog.text
+        import re
+
+        # Expect lines like:
+        # "⏸️ [Outer->Inner(xxxx)] Pause requested – via nested_steer"
+        # "▶️ [Outer->Inner(xxxx)] Resume requested – via nested_steer"
+        assert re.search(
+            r"⏸️ \[Outer->Inner\([0-9a-f]{4}\)\] Pause requested – via nested_steer",
+            text,
+        ), "Expected nested_steer pause log with child label and origin marker"
+        assert re.search(
+            r"▶️ \[Outer->Inner\([0-9a-f]{4}\)\] Resume requested – via nested_steer",
+            text,
+        ), "Expected nested_steer resume log with child label and origin marker"
+    finally:
+        try:
+            await handle.result()
+        except Exception:
+            pass
