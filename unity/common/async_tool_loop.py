@@ -303,11 +303,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Only the top-level handle should emit the public stop log.
         # Nested/adopted handles will inherit False to avoid duplicate logging.
         self._is_root_handle: bool = False
-
-        # Buffer interjections that may arrive **before** a downstream handle
-        # (e.g. an `ActiveTask`) has been adopted.  Once a delegate is ready we
-        # forward all queued messages so that no early user guidance is lost.
-        self._early_interjects: list[dict | str] = []
+        # Unified steering event log: records all steering calls made on this handle.
+        # Each entry: {"t": perf_counter(), "method": str, "args": tuple, "kwargs": dict, "fallback": tuple}
+        self._steer_log: list[dict] = []
 
         # Maintain a user-visible history (what the end-user would see):
         # Records: original prompt (user), interjections (user), ask Q/A (user/assistant).
@@ -320,9 +318,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Event streams for bottom-up signals
         self._clar_q: asyncio.Queue[dict] = asyncio.Queue()
         self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
-        # Buffer passthrough operations (method_name, kwargs, fallback_keys) while
-        # a passthrough handle is not yet ready but tools are scheduled
-        self._pending_passthrough_ops: list[tuple[str, dict, tuple[str, ...]]] = []
+        # No pending passthrough ops buffer; unified steer_log replaces ad-hoc buffering.
 
     # small local helpers to keep user-visible history consistent
     def _append_user_visible_user(
@@ -390,40 +386,42 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             )
         return None
 
-    async def _replay_pending_passthrough_ops(self) -> None:
-        if not self._pending_passthrough_ops:
-            return
-        handles = self._iter_passthrough_handles()
-        if not handles:
-            return
-        remaining: list[tuple[str, dict, tuple[str, ...]]] = []
-        for name, kw, fb in list(self._pending_passthrough_ops):
-            forwarded = False
-            for h in handles:
-                await self._forward_call_to_handle(h, name, kw, fb)
-                forwarded = True
-            if not forwarded:
-                remaining.append((name, kw, fb))
-        self._pending_passthrough_ops = remaining
-
-    async def _try_forward_or_buffer(
+    async def _record_and_forward(
         self,
         method_name: str,
-        kwargs: dict,
+        *,
+        args: tuple | list | None = None,
+        kwargs: dict | None = None,
         fallback: tuple[str, ...] = (),
     ) -> None:
+        # Check current passthrough handles first so we can record this fact.
         handles = self._iter_passthrough_handles()
+        # Record the steering event with a timestamp for later replay at adoption time.
+        try:
+            from time import perf_counter as _pc  # local import to avoid top pollution
+        except Exception:  # pragma: no cover
+            _pc = lambda: 0.0  # type: ignore
+        rec = {
+            "t": _pc(),
+            "method": str(method_name or ""),
+            "args": tuple(args or ()),
+            "kwargs": dict(kwargs or {}),
+            "fallback": tuple(fallback or ()),
+            "had_passthrough": bool(handles),
+        }
+        try:
+            self._steer_log.append(rec)
+        except Exception:
+            pass
+        # Forward immediately to any active passthrough handles (multicast).
         if handles:
             for h in handles:
-                await self._forward_call_to_handle(h, method_name, kwargs, fallback)
-            return
-        if self._has_scheduled_tools():
-            try:
-                self._pending_passthrough_ops.append(
-                    (method_name, dict(kwargs or {}), tuple(fallback or ())),
+                await self._forward_call_to_handle(
+                    h,
+                    method_name,
+                    rec["kwargs"],
+                    rec["fallback"],
                 )
-            except Exception:
-                pass
 
     async def ask(
         self,
@@ -452,7 +450,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, parent_chat_context_cont)
 
-        # No delegate forwarding – outer loop remains in control.
+        # Unified steering: record and forward ask to any active passthrough handle(s)
+        await self._record_and_forward(
+            "ask",
+            kwargs={
+                "question": question,
+                "parent_chat_context_cont": parent_chat_context_cont,
+                "images": images,
+            },
+        )
 
         # 0.  Defensive guard: if the outer loop has already finished we can
         #     just answer from the final transcript without starting another
@@ -576,17 +582,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             recursive_tools[_proxy.__name__] = _proxy
         # ----------------------------------------------------------------
 
-        # Generalized passthrough forwarding/buffering
-        await self._replay_pending_passthrough_ops()
-        await self._try_forward_or_buffer(
-            "ask",
-            {
-                "question": question,
-                "parent_chat_context_cont": parent_chat_context_cont,
-                "images": images,
-            },
-        )
-
         # 4.  Fire off a *stand-alone* read-only loop.
         # Compose a clear loop identifier so logs show exactly which loop the
         # question refers to, e.g. "Question(TaskScheduler.execute)" or
@@ -664,17 +659,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # No delegate forwarding – outer loop remains in control.
         # Record user-visible immediately
         self._append_user_visible_user(message, parent_chat_context_cont)
-
-        # Generalized passthrough forwarding/buffering
-        await self._replay_pending_passthrough_ops()
-        await self._try_forward_or_buffer(
+        # Unified steering: record and forward to any active passthrough handle(s)
+        await self._record_and_forward(
             "interject",
-            {
+            kwargs={
                 "message": message,
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
             },
-            ("content", "message"),
+            fallback=("content", "message"),
         )
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
@@ -687,7 +680,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             if parent_chat_context_cont is not None or images is not None
             else message
         )
-        self._early_interjects.append(payload)
         await self._queue.put(payload)
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
@@ -697,10 +689,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         *,
         parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
-        # Replay any pending buffered passthrough ops
+        # Unified steering: record and forward stop to any active passthrough handles
         with suppress(Exception):
             asyncio.get_running_loop().create_task(
-                self._replay_pending_passthrough_ops(),
+                self._record_and_forward(
+                    "stop",
+                    kwargs={
+                        "reason": reason,
+                        "parent_chat_context_cont": parent_chat_context_cont,
+                    },
+                ),
             )
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
         if self._cancel_event.is_set():
@@ -732,17 +730,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def pause(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
-        # Propagate pause to any nested handles first (always)
+        # Unified steering: record and forward pause to any active passthrough handle(s)
         with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                h = getattr(_inf, "handle", None)
-                if h is not None and hasattr(h, "pause"):
-                    with suppress(Exception):
-                        maybe = h.pause()  # may be sync or async
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
+            asyncio.get_running_loop().create_task(
+                self._record_and_forward("pause"),
+            )
 
         self._pause_event.clear()
 
@@ -750,17 +742,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def resume(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
-        # Propagate resume to any nested handles first (always)
+        # Unified steering: record and forward resume to any active passthrough handle(s)
         with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                h = getattr(_inf, "handle", None)
-                if h is not None and hasattr(h, "resume"):
-                    with suppress(Exception):
-                        maybe = h.resume()  # may be sync or async
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
+            asyncio.get_running_loop().create_task(
+                self._record_and_forward("resume"),
+            )
 
         self._pause_event.set()
 
@@ -959,13 +945,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             tool_results,
             callid_to_tool_name=extracted.get("callid_to_tool_name", {}),
         )
-        # Include any pending early interjections that may not have been flushed into msgs yet.
-        # Represent them as system messages appended to the end, with monotonically increasing indices.
+        # Mirror pending interjection steering entries from steer_log which may not be in msgs yet.
+        # Represent them as system messages appended to the end with monotonically increasing indices.
         try:
-            early = list(getattr(self, "_early_interjects", []) or [])
+            steer_log = list(getattr(self, "_steer_log", []) or [])
         except Exception:
-            early = []
-        added = 0
+            steer_log = []
         # Build a set of existing interjection contents for simple de-duplication
         existing_contents = set()
         try:
@@ -976,20 +961,28 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except Exception:
             existing_contents = set()
         base_idx = len(msgs)
-        for i, payload in enumerate(early):
-            # Normalise to a plain string; dict payloads store text under "message"
-            if isinstance(payload, dict):
-                content = payload.get("message")
-            else:
-                content = payload
-            if not isinstance(content, str) or not content:
+        appended = 0
+        for rec in steer_log:
+            try:
+                if rec.get("method") != "interject":
+                    continue
+                kw = rec.get("kwargs") or {}
+                content = kw.get("message")
+                if not isinstance(content, str) or not content:
+                    # positional fallback: args[0] when present
+                    args = rec.get("args") or ()
+                    if isinstance(args, (list, tuple)) and args:
+                        content = args[0]
+                if not isinstance(content, str) or not content:
+                    continue
+                if content in existing_contents:
+                    continue
+                interjections.append({"role": "system", "content": content})
+                interjections_indices.append(base_idx + appended)
+                existing_contents.add(content)
+                appended += 1
+            except Exception:
                 continue
-            if content in existing_contents:
-                continue
-            interjections.append({"role": "system", "content": content})
-            interjections_indices.append(base_idx + i)
-            existing_contents.add(content)
-            added += 1
         initial_user_message = _initial_user_from_user_visible_history(
             getattr(self, "_user_visible_history", []) or [],
         )
