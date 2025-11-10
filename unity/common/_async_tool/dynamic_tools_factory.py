@@ -38,6 +38,8 @@ class DynamicToolFactory:
         -----
         - The 'self' parameter (if any) is stripped from annotations/signature.
         - If the source has a docstring, it is copied verbatim (stripped) onto the wrapper.
+        - If the source method has no docstring, attempt to fall back to the first
+          ancestor in the MRO that defines a docstring for a method with the same name.
         """
         try:
             src = getattr(from_callable, "__func__", from_callable)
@@ -52,6 +54,34 @@ class DynamicToolFactory:
                 doc = inspect.getdoc(src)
                 if isinstance(doc, str) and doc.strip():
                     to_wrapper.__doc__ = doc.strip()
+                else:
+                    # Fallback: walk MRO to find a base-class method docstring
+                    try:
+                        name = getattr(src, "__name__", None) or getattr(
+                            from_callable,
+                            "__name__",
+                            "",
+                        )
+                        owner_cls = getattr(
+                            getattr(from_callable, "__self__", None),
+                            "__class__",
+                            None,
+                        )
+                        if isinstance(name, str) and name and owner_cls is not None:
+                            for base in getattr(owner_cls, "__mro__", ())[1:]:
+                                try:
+                                    cand = getattr(base, name, None)
+                                except Exception:
+                                    cand = None
+                                if cand is None:
+                                    continue
+                                fn_obj = getattr(cand, "__func__", cand)
+                                base_doc = inspect.getdoc(fn_obj)
+                                if isinstance(base_doc, str) and base_doc.strip():
+                                    to_wrapper.__doc__ = base_doc.strip()
+                                    break
+                    except Exception:
+                        pass
             except Exception:
                 pass
         except Exception:
