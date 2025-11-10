@@ -346,7 +346,20 @@ async def test_interject_nested_handle(monkeypatch):
     # b) The tool should then return a message indicating the loop started
     assert msgs[3]["role"] == "tool"
     assert msgs[3]["name"] == "outer_tool"
-    assert msgs[3]["content"].startswith("Nested async tool loop started")
+    _content = msgs[3].get("content") or ""
+    _started_ok = False
+    try:
+        _parsed = json.loads(_content)
+        _started_ok = isinstance(_parsed, dict) and _parsed.get("_placeholder") in (
+            "nested_start",
+            "pending",
+        )
+    except Exception:
+        # Legacy acceptance: human-readable string used before placeholder refactor
+        _started_ok = _content.startswith("Nested async tool loop started")
+    assert (
+        _started_ok
+    ), f"Expected nested-start placeholder or legacy string, got: {_content!r}"
 
     # c) Find the user message "switch to dogs"
     interjection_msg = next(
@@ -393,15 +406,34 @@ async def test_interject_nested_handle(monkeypatch):
         (
             m
             for m in msgs
-            if m["role"] == "tool"
-            and m["name"].startswith("interject outer_tool")
-            and 'Guidance "dogs" forwarded to the running tool.' in m["content"]
+            if m.get("role") == "tool"
+            and isinstance(m.get("name"), str)
+            and (
+                m["name"].startswith("interject outer_tool")  # pretty name path
+                or m["name"].startswith("interject_outer_tool_")  # dynamic helper name
+            )
         ),
         None,
     )
     assert (
         interject_response_msg is not None
     ), "Tool response from interject helper not found"
+    _irep_content = interject_response_msg.get("content") or ""
+    _irep_ok = False
+    # Accept structured JSON payload (dynamic path)
+    try:
+        _irep_parsed = json.loads(_irep_content)
+        if isinstance(_irep_parsed, dict):
+            _irep_ok = _irep_parsed.get("status") == "interjected" and (
+                _irep_parsed.get("content") == "dogs"
+                or _irep_parsed.get("message") == "dogs"
+            )
+    except Exception:
+        pass
+    # Accept pretty acknowledgement string (inline helper path)
+    if not _irep_ok:
+        _irep_ok = 'Guidance "dogs" forwarded to the running tool.' in _irep_content
+    assert _irep_ok, f"Unexpected interject helper response content: {_irep_content!r}"
 
     # f) Assistant may either perform a status check, or the loop may update
     #    the existing placeholder tool message directly upon completion. Accept
