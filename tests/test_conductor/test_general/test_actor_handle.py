@@ -51,11 +51,11 @@ async def test_actor_handle_present_for_direct_actor(monkeypatch):
     # Wait deterministically for actor adoption
     await asyncio.wait_for(adopt_evt.wait(), timeout=120)
 
-    # After the child is visible, the property should be non-None
-    assert c.actor_handle is not None
+    # After the child is visible, the handle method should return non-None
+    assert await c.actor_handle() is not None
 
-    # Property should be the same live request handle during execution
-    assert c.actor_handle is h
+    # Method should return the same live request handle during execution
+    assert await c.actor_handle() is h
 
     # Drive two steps to complete deterministically
     h.pause()
@@ -63,7 +63,7 @@ async def test_actor_handle_present_for_direct_actor(monkeypatch):
     await asyncio.wait_for(h.result(), timeout=30)
 
     # After completion, the handle should clear
-    assert c.actor_handle is None
+    assert await c.actor_handle() is None
 
 
 @pytest.mark.asyncio
@@ -103,17 +103,19 @@ async def test_actor_handle_present_with_active_task(monkeypatch):
     await asyncio.wait_for(adopt_evt.wait(), timeout=120)
 
     # Both task_handle and actor_handle should exist and be the same
-    assert c.task_handle is not None
-    assert c.actor_handle is not None
-    assert c.task_handle is c.actor_handle is h
+    th = await c.task_handle()
+    ah = await c.actor_handle()
+    assert th is not None
+    assert ah is not None
+    assert th is ah is h
 
     # Complete deterministically
     h.pause()
     h.resume()
     await asyncio.wait_for(h.result(), timeout=30)
 
-    assert c.actor_handle is None
-    assert c.task_handle is None
+    assert await c.actor_handle() is None
+    assert await c.task_handle() is None
 
 
 @pytest.mark.asyncio
@@ -161,6 +163,6 @@ async def test_actor_handle_absent_for_read_only_request():
     c._live_requests.add(h)  # type: ignore[attr-defined]
 
     # No actor_handle expected for read-only flows
-    assert c.actor_handle is None
+    assert await c.actor_handle() is None
 
     await asyncio.wait_for(h.result(), timeout=30)

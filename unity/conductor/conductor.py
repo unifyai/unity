@@ -657,126 +657,62 @@ class Conductor(BaseConductor):
             pass
 
     # ------------------------------------------------------------------ #
-    #  Read-only properties: actor_handle / task_handle                  #
+    #  Live handle discovery via nested_structure                         #
     # ------------------------------------------------------------------ #
 
-    @property
-    def actor_handle(self) -> Optional[ConductorRequestHandle]:
-        """Return the Conductor.request handle if any in-flight Actor.act exists.
+    def _tree_has_any(self, node: dict, prefixes: tuple[str, ...]) -> bool:
+        """Return True if any node in the nested_structure tree has a handle label starting with any prefix."""
+        try:
+            handle_label = str(node.get("handle", "")).strip()
+        except Exception:
+            handle_label = ""
+        try:
+            if any(handle_label.startswith(p) for p in prefixes):
+                return True
+        except Exception:
+            pass
+        try:
+            for child in node.get("children", []) or []:
+                if self._tree_has_any(child, prefixes):
+                    return True
+        except Exception:
+            pass
+        return False
 
-        - If a TaskScheduler.execute is in-flight, this will also be non-None and
-          will point to the same request handle as task_handle.
-        - Otherwise, returns the request handle containing an Actor.act only.
-        - Returns None when no such in-flight activity exists.
+    async def task_handle(self) -> Optional[ConductorRequestHandle]:
         """
-        # Prefer returning the same handle as task_handle when present
-        th = self.task_handle
+        Return the live Conductor.request handle when a TaskScheduler.execute is active,
+        detected purely via `nested_structure()` (presence of ActiveQueue/ActiveTask).
+        """
+        for h in list(getattr(self, "_live_requests", [])):
+            try:
+                if hasattr(h, "done") and h.done():
+                    continue
+                tree = await h.nested_structure()
+            except Exception:
+                continue
+            if self._tree_has_any(tree, ("ActiveQueue(", "ActiveTask(")):
+                return h  # type: ignore[return-value]
+        return None  # type: ignore[return-value]
+
+    async def actor_handle(self) -> Optional[ConductorRequestHandle]:
+        """
+        Return the live Conductor.request handle when an Actor session is active.
+        If a TaskScheduler.execute session is active, return the same handle.
+        """
+        th = await self.task_handle()
         if th is not None:
             return th
-        # Otherwise scan for actor-only
         for h in list(getattr(self, "_live_requests", [])):
-            if self._is_handle_finished(h):
-                continue
-            found_actor, found_task = self._detect_actor_or_task(h)
-            if found_actor and not found_task:
-                return h  # type: ignore[return-value]
-        return None
-
-    @property
-    def task_handle(self) -> Optional[ConductorRequestHandle]:
-        """Return the Conductor.request handle if any in-flight TaskScheduler.execute exists.
-
-        When non-None, actor_handle is guaranteed to be the same handle per spec.
-        """
-        for h in list(getattr(self, "_live_requests", [])):
-            if self._is_handle_finished(h):
-                continue
-            _actor, found_task = self._detect_actor_or_task(h)
-            if found_task:
-                return h  # type: ignore[return-value]
-        return None
-
-    # ----------------------------
-    #  Internal helpers
-    # ----------------------------
-    def _is_handle_finished(self, h) -> bool:
-        try:
-            return bool(h.done())
-        except Exception:
-            return False
-
-    def _detect_actor_or_task(self, root) -> tuple[bool, bool]:
-        """Fast, synchronous scan for Actor.act and TaskScheduler.execute presence.
-
-        Mirrors nested_structure traversal without awaiting, by walking:
-        - task_info child handles (tool_name and handle)
-        - standardized wrapper discovery via get_wrapped_handles()
-        Returns (found_actor, found_task).
-        """
-        try:
-            from ..common.handle_wrappers import (
-                discover_wrapped_handles,
-            )  # local import
-        except Exception:
-
-            def discover_wrapped_handles(_):  # type: ignore
-                return []
-
-        def _hit(name: Optional[str], needle: str) -> bool:
             try:
-                n = (name or "").replace(".", "_").lower()
-                return needle in n
-            except Exception:
-                return False
-
-        seen: set[int] = set()
-        stack: list[object] = [root]
-        found_actor = False
-        found_task = False
-
-        while stack:
-            cur = stack.pop()
-            try:
-                cid = id(cur)
-                if cid in seen:
+                if hasattr(h, "done") and h.done():
                     continue
-                seen.add(cid)
+                tree = await h.nested_structure()
             except Exception:
-                pass
-
-            # Class-name check for ActiveTask
-            try:
-                if getattr(cur, "__class__", object).__name__ == "ActiveTask":
-                    found_task = True
-            except Exception:
-                pass
-
-            # Walk task_info children if present
-            try:
-                task_obj = getattr(cur, "_task", None)
-                task_info = getattr(task_obj, "task_info", {}) or {}
-                if isinstance(task_info, dict):
-                    for meta in list(task_info.values()):
-                        name = getattr(meta, "name", None)
-                        child = getattr(meta, "handle", None)
-                        if _hit(name, "taskscheduler_execute"):
-                            found_task = True
-                        if _hit(name, "actor_act"):
-                            found_actor = True
-                        if child is not None:
-                            stack.append(child)
-            except Exception:
-                pass
-
-            # Walk wrapper-discovered children
-            try:
-                for _src, child in list(discover_wrapped_handles(cur) or []):
-                    if child is not None:
-                        stack.append(child)
-            except Exception:
-                pass
-
-        return found_actor, found_task
+                continue
+            if self._tree_has_any(tree, ("ActorHandle(",)):
+                return h  # type: ignore[return-value]
+        return None  # type: ignore[return-value]
 
     # ------------------------------------------------------------------ #
     #  Internal policy – mask Actor.act and TaskScheduler.execute while active
