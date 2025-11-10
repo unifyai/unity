@@ -482,14 +482,7 @@ class Conductor(BaseConductor):
                             "type": "function",
                             "function": {
                                 "name": exec_tool_name,
-                                "arguments": json.dumps(
-                                    {
-                                        "text": (
-                                            f"Start the head-of-queue task with task_id {task_id_int} now. "
-                                            f"Run just this task using queued semantics without modifying any scheduling fields."
-                                        ),
-                                    },
-                                ),
+                                "arguments": json.dumps({"text": str(task_id_int)}),
                             },
                         },
                     ],
