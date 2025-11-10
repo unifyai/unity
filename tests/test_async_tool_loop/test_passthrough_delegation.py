@@ -240,30 +240,20 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
         tools={"delegate_one": delegating_one, "delegate_two": delegating_two},
     )
 
-    # Early interjection before inner handles are returned
+    # Ensure both delegates have been SCHEDULED before sending the interjection so it
+    # falls into the scheduling→adoption window (and is eligible for replay/forwarding).
+    from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
+
+    await _wait_for_tool_request(client, "delegate_one")
+    await _wait_for_tool_request(client, "delegate_two")
+
+    # Interject after scheduling (but before adoption) → should multicast to both
     await outer.interject("BROADCAST")
     # Release delegates deterministically now that the interjection is queued
     gate.set()
 
-    # Wait until both passthrough handles are registered in task_info
+    # Import the wait helper for the next condition
     from tests.test_async_tool_loop.async_helpers import _wait_for_condition
-
-    async def _pts_registered():
-        try:
-            ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
-            if isinstance(ti, dict):
-                pts = [
-                    _inf
-                    for _inf in ti.values()
-                    if getattr(_inf, "handle", None) is not None
-                    and getattr(_inf, "is_passthrough", False)
-                ]
-                return len(pts) >= 2
-        except Exception:
-            return False
-        return False
-
-    await _wait_for_condition(_pts_registered, poll=0.01, timeout=60.0)
 
     # Now wait until both patched interjects are observed
     async def _both_received():
