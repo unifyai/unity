@@ -15,7 +15,7 @@ from unity.common.async_tool_loop import AsyncToolLoopHandle
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_task_handle_present_with_deserialized_execute():
+async def test_task_handle_present_with_deserialized_execute(monkeypatch):
     """
     Starting a Conductor.request loop via deserialization that immediately executes
     a task should make Conductor.task_handle return the same live request handle
@@ -34,31 +34,24 @@ async def test_task_handle_present_with_deserialized_execute():
     tid = ts._create_task(name="X", description="X")["details"]["task_id"]  # type: ignore[index]
 
     # Start via deserialization helper – runs TaskScheduler.execute immediately
-    # Spy to emit an event when the target task turns active
-    active_evt: asyncio.Event = asyncio.Event()
-    orig_update = ts._update_task_status_instance
+    # Wait deterministically for Conductor to adopt the execute session
+    adopt_evt: asyncio.Event = asyncio.Event()
+    orig_adopt = c._session_guard.adopt  # type: ignore[attr-defined]
 
-    def _spy_update(*, task_id: int, instance_id: int, new_status: str, activated_by=None):  # type: ignore[override]
-        res = orig_update(
-            task_id=task_id,
-            instance_id=instance_id,
-            new_status=new_status,
-            activated_by=activated_by,
-        )
+    async def _spy_adopt(handle, kind):  # type: ignore[override]
+        await orig_adopt(handle, kind)
         try:
-            if task_id == int(tid) and str(new_status) == "active":
-                active_evt.set()
+            if str(kind) == "execute" and handle is not None:
+                adopt_evt.set()
         except Exception:
             pass
-        return res
 
-    # Install the spy
-    setattr(ts, "_update_task_status_instance", _spy_update)
+    monkeypatch.setattr(c._session_guard, "adopt", _spy_adopt, raising=True)  # type: ignore[attr-defined]
 
     h = await c.start_task(task_id=int(tid), trigger_reason="test")
 
-    # Wait deterministically until the task is active
-    await asyncio.wait_for(active_evt.wait(), timeout=10)
+    # Wait deterministically until the execute session is adopted
+    await asyncio.wait_for(adopt_evt.wait(), timeout=120)
 
     # Property should expose the same live request handle during execution
     assert c.task_handle is not None
