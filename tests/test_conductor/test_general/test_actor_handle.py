@@ -68,7 +68,7 @@ async def test_actor_handle_present_for_direct_actor(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_actor_handle_present_with_active_task():
+async def test_actor_handle_present_with_active_task(monkeypatch):
     """
     When executing a task (ActiveTask), actor_handle should also exist and be the
     same object as task_handle.
@@ -82,31 +82,25 @@ async def test_actor_handle_present_with_active_task():
     ts = c._task_scheduler  # type: ignore[attr-defined]
     tid = ts._create_task(name="Y", description="Y")["details"]["task_id"]  # type: ignore[index]
 
-    # Spy an event when this task becomes active
-    active_evt: asyncio.Event = asyncio.Event()
-    orig_update = ts._update_task_status_instance
+    # Spy a session adoption event for execute to avoid timing races
+    adopt_evt: asyncio.Event = asyncio.Event()
+    orig_adopt = c._session_guard.adopt  # type: ignore[attr-defined]
 
-    def _spy_update(*, task_id: int, instance_id: int, new_status: str, activated_by=None):  # type: ignore[override]
-        res = orig_update(
-            task_id=task_id,
-            instance_id=instance_id,
-            new_status=new_status,
-            activated_by=activated_by,
-        )
+    async def _spy_adopt(handle, kind):  # type: ignore[override]
+        await orig_adopt(handle, kind)
         try:
-            if task_id == int(tid) and str(new_status) == "active":
-                active_evt.set()
+            if str(kind) == "execute" and handle is not None:
+                adopt_evt.set()
         except Exception:
             pass
-        return res
 
-    setattr(ts, "_update_task_status_instance", _spy_update)
+    monkeypatch.setattr(c._session_guard, "adopt", _spy_adopt, raising=True)  # type: ignore[attr-defined]
 
     # Start by snapshot helper – registers automatically inside start_task
     h = await c.start_task(task_id=int(tid), trigger_reason="test-actor-has-task")
 
-    # Wait deterministically until active
-    await asyncio.wait_for(active_evt.wait(), timeout=10)
+    # Wait deterministically until execute session is adopted
+    await asyncio.wait_for(adopt_evt.wait(), timeout=120)
 
     # Both task_handle and actor_handle should exist and be the same
     assert c.task_handle is not None
