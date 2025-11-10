@@ -27,34 +27,35 @@ def log_job_startup(
     assistant_email: str,
 ):
     try:
-        # Create startup event log
-        log_id = unify.create_logs(
+        # Create startup event log and get log instance
+        unify.create_logs(
             project="AssistantJobs",
             context="startup_events",
-            params={},
-            entries={
-                "job_name": job_name,
-                "timestamp": timestamp,
-                "medium": medium,
-                "user_id": user_id,
-                "assistant_id": assistant_id,
-                "user_name": user_name,
-                "assistant_name": assistant_name,
-                "user_number": user_number,
-                "user_whatsapp_number": user_whatsapp_number,
-                "assistant_number": assistant_number,
-                "user_email": user_email,
-                "assistant_email": assistant_email,
-                "running": True,
-            },
+            entries=[
+                {
+                    "job_name": job_name,
+                    "timestamp": timestamp,
+                    "medium": medium,
+                    "user_id": user_id,
+                    "assistant_id": assistant_id,
+                    "user_name": user_name,
+                    "assistant_name": assistant_name,
+                    "user_number": user_number,
+                    "user_whatsapp_number": user_whatsapp_number,
+                    "assistant_number": assistant_number,
+                    "user_email": user_email,
+                    "assistant_email": assistant_email,
+                    "running": True,
+                }
+            ],
             api_key=api_key,
         )
-        log = unify.get_log_by_id(
+        log = unify.get_logs(
             project="AssistantJobs",
             context="startup_events",
-            log_id=log_id,
+            filter=f"job_name == '{job_name}'",
             api_key=api_key,
-        )
+        )[0]
         print("Logged Startup Event", job_name)
     except Exception as e:
         print(f"Error logging startup event: {e}")
