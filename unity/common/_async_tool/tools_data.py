@@ -484,20 +484,21 @@ class ToolsData:
 
         elif tool_reply_msg is not None:
             if _at_tail(tool_reply_msg):
-                # If the current tail tool message looks like a progress payload,
-                # do NOT emit another tool reply for the same call_id – instead
-                # create a synthetic assistant→tool pair to carry the final result.
-                is_placeholder = False
+                # If the current tail tool message is a placeholder, choose the strategy:
+                # - For streaming progress placeholders, append a synthetic assistant→tool pair
+                #   (preserves progress history as append-only).
+                # - For simple 'pending' or 'nested_start' placeholders, update in-place so the
+                #   final result lives under the original tool message (restores pre-change UX).
+                placeholder_kind: Optional[str] = None
                 with suppress(Exception):
                     _content_str = tool_reply_msg.get("content") or ""
                     if isinstance(_content_str, str):
-                        try:
-                            parsed = json.loads(_content_str)
-                            if isinstance(parsed, dict) and parsed.get("_placeholder"):
-                                is_placeholder = True
-                        except Exception:
-                            is_placeholder = False
-                if is_placeholder:
+                        parsed = json.loads(_content_str)
+                        if isinstance(parsed, dict):
+                            pk = parsed.get("_placeholder")
+                            if isinstance(pk, str) and pk:
+                                placeholder_kind = pk
+                if placeholder_kind == "progress":
                     tool_msg = await self._emit_completion_pair(
                         result,
                         call_id,
