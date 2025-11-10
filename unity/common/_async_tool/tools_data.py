@@ -19,6 +19,7 @@ from .messages import (
     insert_tool_message_after_assistant,
     chat_context_repr,
     _normalise_kwargs_for_bound_method,
+    forward_handle_call,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
@@ -566,7 +567,8 @@ class ToolsData:
         channels, and synchronises passthrough interjections/pause/stop with the
         outer handle when applicable.
         """
-        # Passthrough wiring: replay early interjections and sync pause/stop
+        # Passthrough wiring: replay any steering commands issued after scheduling
+        # and before adoption, and sync pause/stop state minimally.
         try:
             if (
                 getattr(child_handle, "__passthrough__", False)
@@ -574,22 +576,37 @@ class ToolsData:
                 and outer_handle_container[0] is not None
             ):
                 _outer = outer_handle_container[0]
-                _early = list(getattr(_outer, "_early_interjects", []))
-                for _msg in _early:
+                # Replay steer events recorded on the outer handle that occurred
+                # after this tool was scheduled. We skip entries that were already
+                # forwarded immediately at record time (had_passthrough=True).
+                try:
+                    _log = list(getattr(_outer, "_steer_log", []) or [])
+                except Exception:
+                    _log = []
+                for rec in _log:
                     try:
-                        if isinstance(_msg, dict):
-                            maybe_coro = child_handle.interject(  # type: ignore[attr-defined]
-                                _msg.get("message", ""),
-                                parent_chat_context_cont=_msg.get(
-                                    "parent_chat_context_continuted",
-                                ),
-                            )
-                        else:
-                            maybe_coro = child_handle.interject(_msg)  # type: ignore[attr-defined]
-                        if asyncio.iscoroutine(maybe_coro):
-                            await maybe_coro
+                        if rec.get("had_passthrough") is True:
+                            continue
+                        t = rec.get("t", 0.0)
+                        if not isinstance(t, (int, float)):
+                            continue
+                        method = rec.get("method") or ""
+                        if not isinstance(method, str) or not method:
+                            continue
+                        args = rec.get("args") or ()
+                        kwargs = rec.get("kwargs") or {}
+                        fb = rec.get("fallback") or ()
+                        await forward_handle_call(  # type: ignore[name-defined]
+                            child_handle,
+                            method,
+                            kwargs,
+                            call_args=args if isinstance(args, (list, tuple)) else (),
+                            fallback_positional_keys=(
+                                fb if isinstance(fb, (list, tuple)) else ()
+                            ),
+                        )
                     except Exception:
-                        pass
+                        continue
                 try:
                     if not getattr(_outer, "_pause_event", None).is_set() and hasattr(
                         child_handle,
