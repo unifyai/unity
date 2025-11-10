@@ -135,7 +135,11 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
         tools={"delegating_tool_interject": delegating_tool},
     )
 
-    # ---- send *early* interjection ---------------------------------------
+    # Wait until the assistant has scheduled the delegating tool so that the
+    # interjection occurs within the scheduling→adoption window under new semantics.
+    await _wait_for_tool_request(client, "delegating_tool_interject")
+
+    # ---- send interjection within scheduling window (before adoption) ----
     early_msg = "EARLY_INTERJECTION"
     await outer_handle.interject(early_msg)
     # Release the delegating tool to return its handle only after the early interjection
