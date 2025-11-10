@@ -431,6 +431,7 @@ class Conductor(BaseConductor):
     #  start_task – auto-start request loop to execute a task       #
     # ------------------------------------------------------------------ #
 
+    @functools.wraps(BaseConductor.start_task, updated=())
     async def start_task(self, task_id: int, trigger_reason: str):
         """
         Return a steerable `Conductor.request` handle that immediately executes

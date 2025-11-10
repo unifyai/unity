@@ -9,6 +9,7 @@ and it exposes exactly **three** conversational entry-points:
 
 1. `ask`        – read-only Q&A across all domains
 2. `request`    – read-write mutations (plus everything in *ask*)
+3. `start_task` – immediately start execution of a queued task (returns a live handle)
 """
 
 from __future__ import annotations
@@ -95,6 +96,40 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
         determine the best method and tools to apply it.
 
         All parameters & return value mirror :py:meth:`ask`.
+        """
+
+    # ------------------------------------------------------------------ #
+    #  start_task – immediately start execution of a queued task         #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    async def start_task(
+        self,
+        task_id: int,
+        trigger_reason: str,
+    ) -> SteerableToolHandle:
+        """
+        Start execution of an existing queued task identified by ``task_id`` and
+        return a live, steerable handle to the running session.
+
+        This method is intended for scheduler- or event-driven starts where a task
+        should begin immediately without an initial conversational turn. The returned
+        handle exposes the standard steering surface:
+        ``pause()``, ``resume()``, ``interject(message)``, ``stop()``, ``done()``,
+        as well as ``result()`` and history accessors.
+
+        Parameters
+        ----------
+        task_id : int
+            Identifier of the existing task to start.
+        trigger_reason : str
+            Short human-readable description of why the task is starting now
+            (e.g., "scheduled time reached", "external trigger").
+
+        Returns
+        -------
+        SteerableToolHandle
+            A live handle representing the running execution, suitable for
+            awaiting completion or steering mid-flight.
         """
 
     # ------------------------------------------------------------------ #
