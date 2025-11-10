@@ -7,18 +7,16 @@ import os
 import asyncio
 
 from unity.conversation_manager_2.comms_manager import CommsManager
-from unity.conversation_manager_2.managers_worker import ManagersWorker
 from unity.conversation_manager_2.event_broker import (
     get_event_broker,
     create_event_broker,
 )
+from unity.conversation_manager_2.domains.utils import log_task_exc
 from unity.conversation_manager_2.conversation_manager import ConversationManager
 
 
 stop = None
 conversation_manager = None
-managers_worker = None
-
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
@@ -34,8 +32,6 @@ def signal_handler(signum, frame):
         print("Cleaning up conversation manager...")
         conversation_manager.cleanup()
         print("Cleanup finished")
-    if managers_worker:
-        managers_worker.stop()
 
 
 async def main(use_realtime=False, project_name: str = "Assistants"):
@@ -53,20 +49,6 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
 
     # passes events around, uses redis
     event_broker = get_event_broker()
-
-    # Initialize ManagersWorker
-    managers_worker = ManagersWorker()
-
-    # Run ManagersWorker on a background thread via asyncio.to_thread
-    def run_managers_worker():
-        # Also enforce UNIFY_TRACED=false in the worker thread
-        os.environ["UNIFY_TRACED"] = "false"
-        # Create a fresh Redis client bound to the thread's event loop
-        managers_worker._event_broker = create_event_broker()
-        asyncio.run(managers_worker.wait_for_events())
-
-    if not os.getenv("TEST"):
-        asyncio.create_task(asyncio.to_thread(run_managers_worker))
 
     # directly talks with the user
     conversation_manager = ConversationManager(
@@ -97,7 +79,7 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
 
-    asyncio.create_task(conversation_manager.wait_for_events())
+    asyncio.create_task(conversation_manager.wait_for_events()).add_done_callback(log_task_exc)
     asyncio.create_task(conversation_manager.check_inactivity())
     if not os.getenv("TEST"):
         asyncio.create_task(comms_manager.start())
@@ -109,8 +91,6 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
     conversation_manager.cleanup()
     print("Cleanup finished")
 
-    print("Shutting down managers worker...")
-    managers_worker.stop()
     print("Shutdown finished")
 
 

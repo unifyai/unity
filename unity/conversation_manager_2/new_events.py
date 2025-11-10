@@ -505,3 +505,9 @@ class ConductorNotification(Event):
 
     handle_id: int
     response: str
+
+@dataclass
+class ConductorHandleStarted(Event):
+    action_name: str
+    handle_id: id
+    query: str

@@ -22,6 +22,7 @@ class EventHandler:
     @classmethod
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
         # maybe add the event bus logging thing here
+        print(f"Recieved EVENT: {event}")
         if event.__class__.loggable:
             asyncio.create_task(managers_utils.publish_bus_events(event))
         print(event)
@@ -105,36 +106,48 @@ async def _(event, cm: 'ConversationManager', *args, **kwargs):
         case SMSSent():
             thread = "sms"
             message_content = event.content
-            notif_content = f"SMS sent to {contact.full_name}"
+            notif_content = f"SMS sent to {contact['first_name']}"
+            role = "assistant"
         case SMSRecieved():
             thread = "sms"
             message_content = event.content
-            notif_content = f"SMS recieved from {contact.full_name}"
+            notif_content = f"SMS recieved from {contact['first_name']}"
+            role="user"
         case EmailSent():
             thread = "email"
             subject = event.subject
             body = event.body
-            notif_content = f"Email sent to {contact.full_name}"
+            notif_content = f"Email sent to {contact['first_name']}"
+            role="assistant"
         case EmailRecieved():
             thread = "email"
             subject = event.subject
             body = event.body
-            notif_content = f"Email recieved from {contact.full_name}"
+            notif_content = f"Email recieved from {contact['first_name']}"
+            role="user"
         case UnifyMessageSent():
             thread = "unify"
             message_content = event.content
-            notif_content = f"Unify message sent to {contact.full_name}"
+            notif_content = f"Unify message sent to {contact['first_name']}"
+            role="assistant"
         case UnifyMessageRecieved():
             thread = "unify"
             message_content = event.content
-            notif_content = f"Unify message from {contact.full_name}"
+            notif_content = f"Unify message from {contact['first_name']}"
+            role="user"
             
     
     message_content = event.content
-    cm.contact_index.push_message(event.contact, thread, message_content=message_content, subject=subject, body=body, timestamp=event.timestamp)
+    cm.contact_index.push_message(event.contact, thread, 
+                                  message_content=message_content, 
+                                  subject=subject, 
+                                  body=body, 
+                                  timestamp=event.timestamp,
+                                  role=role)
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
     
     # run llm (TODO: add cancel running if not on a call)
+    print("Running LLM now...")
     await cm.run_llm(delay=2)
 
 # TODO: put all managers in the cm and move start up logic from managers worker to here
@@ -158,7 +171,22 @@ async def _(event: GetBusEventsResponse, cm: 'ConversationManager', *args, **kwa
     ...
 
 
-@EventHandler.register(ConductorResult)
+@EventHandler.register(ConductorHandleStarted)
 async def _(event: ConductorResult, cm: 'ConversationManager', *args, **kwargs):
     # update the conductor handles state
-    ...
+    cm.notifications_bar.push_notif(
+        "Conductor",
+        f"Conductor handle started with id {event.handle_id}",
+        event.timestamp
+    )
+    await cm.run_llm()
+
+@EventHandler.register(ConductorResult)
+async def _(event: ConductorResult, cm: 'ConversationManager', *args, **kwargs):
+    cm.notifications_bar.push_notif(
+        "Conductor",
+        f"Recieved result for handle_id: {event.handle_id}\nResult: {event.result}",
+        event.timestamp
+        )
+    cm.conductor_handles.pop(event.handle_id)
+    await cm.run_llm()

@@ -1,4 +1,13 @@
 import asyncio
+import traceback
+
+def log_task_exc(task: asyncio.Task) -> None:
+    try:
+        task.result()          # re-raises if failed
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        traceback.print_exc()
 
 class Debouncer:
     def __init__(self):
@@ -23,6 +32,7 @@ class Debouncer:
                 pass
             # create a running task after delay (if it was not cancelled by a new event being emitted)
             self.running_task = asyncio.create_task(async_fn(*args, **kwargs))
+            self.running_task.add_done_callback(log_task_exc)
             self.pending_task = None
         self.pending_task = asyncio.create_task(wait_for_running_task())
 

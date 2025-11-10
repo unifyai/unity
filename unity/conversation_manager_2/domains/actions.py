@@ -8,6 +8,7 @@ from unity.conversation_manager_2.domains import comms_utils
 from unity.conversation_manager_2.domains import managers_utils
 from unity.conversation_manager_2.event_broker import get_event_broker
 from unity.conversation_manager_2.new_events import *
+from unity.conversation_manager_2.domains.utils import log_task_exc
 
 if TYPE_CHECKING:
     from unity.conversation_manager_2.conversation_manager import ConversationManager
@@ -83,9 +84,6 @@ class SendEmail(BaseModel):
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    # first_name: str
-    # surname: Optional[str]
-    # email_address: str
     subject: str
     body: str
 
@@ -98,8 +96,6 @@ class SendSMS(BaseModel):
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    # first_name: str
-    # surname: Optional[str]
     phone_number: str
     message: str
 
@@ -112,8 +108,6 @@ class MakeCall(BaseModel):
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    # first_name: Optional[str]
-    # surname: Optional[str]
     phone_number: str
 
 
@@ -201,13 +195,15 @@ class Action:
     action_handlers = {}
     
     @classmethod
-    def take_action(cls, action_name, _as_task=True, *args, **kwargs):
+    def take_action(cls, cm, action_name, _as_task=True, *args, **kwargs):
         f = cls.action_handlers.get(action_name)
         if not f:
             raise Exception(f"unregisted action: {action_name}, make sure to register action")
         if inspect.iscoroutinefunction(f):
             if _as_task:
-                return asyncio.create_task(f(*args, **kwargs))
+                t = asyncio.create_task(f(cm, action_name, *args, **kwargs))
+                t.add_done_callback(log_task_exc)
+                return t
             else:
                 return f(*args, **kwargs)
         else:
@@ -227,39 +223,53 @@ class Action:
 
 
 # registered actions, make sure to add *args, **kwargs to make calling these actions easier
+# TODO: add sending/performing [action] notification when actions are made
 
 @Action.register()
-async def wait(*args, **kwargs):
+async def wait(cm, action_name, *args, **kwargs):
     # does nothing
-    ...
+    pass
 
 @Action.register()
 async def send_sms(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+    contact_id = kwargs.get("contact_id")
     to_number = kwargs.get("phone_number")
     message = kwargs.get("message")
-    await comms_utils.send_sms_message_via_number(to_number=to_number, message=message)
+    response = await comms_utils.send_sms_message_via_number(to_number=to_number, message=message)
+    if response["success"]:
+        contact = cm.contact_index.get_contact(contact_id=contact_id, phone_number=to_number)
+        event = SMSSent(contact=contact, content=message)
+    else:
+        event = Error(f"Failed to send sms to {to_number}")
+    await event_broker.publish("app:comms:sms_sent", event.to_json())
 
 @Action.register()
 async def send_email(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+    contact_id = kwargs.get("contact_id")
     to_email = kwargs.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
-    await comms_utils.send_email_via_address(to_email=to_email, subject=subject, body=body)
+    response = await comms_utils.send_email_via_address(to_email=to_email, subject=subject, body=body)
+    if response["success"]:
+        contact = cm.contact_index.get_contact(contact_id=contact_id, email=to_email)
+        event = EmailSent(contact=contact, body=body, subject=subject)
+    else:
+        event = Error(f"Failed to send email to {to_email}")
+    await event_broker.publish("app:comms:email_sent", event.to_json())
 
 @Action.register()
 async def make_call(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+    contact_id = kwargs.get("contact_id")
     from_number = kwargs.get("assistant_number")
     to_number = kwargs.get("phone_number")
-    await comms_utils.start_call(from_number=from_number, to_number=to_number)
+    response = await comms_utils.start_call(from_number=from_number, to_number=to_number)
+    if response["successs"]:
+        contact = cm.contact_index.get_contact(contact_id=contact_id, phone_number=to_number)
+        event = PhoneCallSent(contact=contact)
+    else:
+        event = Error(f"Failed to send call to {to_number}")
+    await event_broker.publish("app:comms:make_call", event.to_json())
 
-@Action.register(
-    [
-        "conductor_...",
-        "conductor_..."
-    ]
-)
-async def _(*args, **kwargs):
-    ...
 
 _next_handle_id = 0
 @Action.register(["conductor_ask", "conductor_request"])
@@ -290,7 +300,7 @@ async def conductor_ask_request(cm: 'ConversationManager', action_name: str, *ar
     # publish started
     await event_broker.publish(
         f"app:conductor:conductor_started_handle_{handle_id}",
-        ConductorResponse(
+        ConductorHandleStarted(
             handle_id=handle_id,
             action_name=action_name,
             query=query,

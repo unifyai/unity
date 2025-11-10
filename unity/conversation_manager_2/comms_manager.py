@@ -312,7 +312,7 @@ class CommsManager:
                 print(f"Unknown event type: {thread}")
         except Exception as e:
             print(f"Error processing message: {e}")
-            message.nack()
+            message.ack()
 
     def subscribe_to_topic(self, subscription_id: str):
         # async def subscribe_to_topic(self, subscription_id: str):

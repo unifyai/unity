@@ -5,7 +5,7 @@ from unity.helpers import run_script, terminate_process
 
 
 class LivekitCallManager:
-    def __init__(self, assistant_number, voice_provider, voice_id, realtime: bool = False):
+    def __init__(self, assistant_number=None, voice_provider=None, voice_id=None, realtime: bool = False):
         self.assistant_number = assistant_number
         self.voice_provider = voice_provider
         self.voice_id = voice_id

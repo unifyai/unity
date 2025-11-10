@@ -25,6 +25,7 @@ from unity.conversation_manager_2.domains.utils import Debouncer
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
+from unity.conductor.conductor import Conductor
 from unity.conversation_manager_2.domains import managers_utils
 
 
@@ -113,6 +114,7 @@ class ConversationManager:
         self.transcript_manager: TranscriptManager = None
         self.contact_manager: ContactManager = None
         self.memory_manager: MemoryManager = None
+        self.conductor: Conductor = None
         
         # llm
         self.llm = LLM("gpt-4.1", event_broker)
@@ -164,7 +166,7 @@ class ConversationManager:
 
     async def _run_llm(self):
         self.snapshot()
-        prompt = self.prompt_renderer.render_state(self.contact_index, self.notifications_bar, self.last_snapshot)
+        prompt = self.prompt_renderer.render_state(self.contact_index, self.notifications_bar, self.conductor_handles, self.last_snapshot)
         print(prompt)
         input_message = {"role": "user", "content": prompt}
         boss_contact = self.contact_index.boss_contact
@@ -214,7 +216,7 @@ class ConversationManager:
         actions = parsed_out.get("actions", [])
         for action in actions:
             print("taking actions...")
-            Action.take_action(action.pop("action_name"), **action, realtime=self.realtime)
+            Action.take_action(self, action.pop("action_name"), **action, realtime=self.realtime)
             print("done taking actions...")
         self.commit()
         print("commiting...")
@@ -241,9 +243,9 @@ class ConversationManager:
                 # so will keep that way for now
                 # also this is now fully blocking, will discuss it again with everyone what is the best
                 # way to deal with this
-                managers_utils.init_conv_manager(self)
+                await managers_utils.init_conv_manager(self)
                 print("Default startup")
-
+            
             while True:
                 msg = await pubsub.get_message(
                     timeout=2,
@@ -321,7 +323,7 @@ class ConversationManager:
     
     def cleanup(self):
         """Clean up any running call processes"""
-        print(f"Marking job {self.state.job_name} done")
-        mark_job_done(self.state.job_name)
+        print(f"Marking job {self.job_name} done")
+        mark_job_done(self.job_name)
         self.call_manager.cleanup_call_proc()
         self.stop.set()

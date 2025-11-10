@@ -25,10 +25,18 @@ event_broker = get_event_broker()
 
 # EVENT BUS
 async def get_bus_events():
-    ...
+    bus_events = await EVENT_BUS.search(filter='type == "Comms"', limit=50)
 
 async def publish_bus_events(event):
-    ...
+    try:
+        event_name = event.__class__.__name__
+        bus_event = event.to_bus_event()
+        bus_event.payload.pop("api_key", None)
+        bus_event.payload.pop("message_id", None)
+        print("Publishing bus event", event_name)
+        await EVENT_BUS.publish(bus_event)
+    except Exception as e:
+        print(f"[ManagersWorker] Error publishing bus event: {e}")
 
 # CONTACT MANAGER
 async def get_contacts():
