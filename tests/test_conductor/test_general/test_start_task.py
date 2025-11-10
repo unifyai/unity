@@ -6,6 +6,7 @@ import pytest
 from unity.conductor.simulated import SimulatedConductor
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
+from unity.task_scheduler.types.status import Status
 
 from tests.helpers import _handle_project
 from tests.test_conductor.utils import (
@@ -44,7 +45,7 @@ async def test_start_task_immediate_execute_no_outer_llm_turn():
 
     # Verify the task completed
     rows = ts._filter_tasks(filter=f"task_id == {tid}")
-    assert any(str(r.get("status")) == "completed" for r in rows)
+    assert any(r.status == Status.completed for r in rows)
 
     # Inspect outer loop transcript: seeded assistant tool_call occurred; outer may add a final assistant summary
     messages = handle.get_history()
@@ -99,7 +100,7 @@ async def test_start_task_interject_pause_resume_then_complete():
 
     # Verify completion
     rows = ts._filter_tasks(filter=f"task_id == {tid}")
-    assert any(str(r.get("status")) == "completed" for r in rows)
+    assert any(r.status == Status.completed for r in rows)
 
     # Outer loop should still only have the single seeded assistant tool_call (final assistant summary may be present)
     messages = handle.get_history()
