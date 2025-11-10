@@ -7,7 +7,7 @@ from typing import Dict
 
 import pytest
 
-from tests.helpers import _handle_project, CURSOR_DEBUG_LOG
+from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.task import Task
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
@@ -1509,11 +1509,6 @@ async def test_dynamic_helper_append_to_queue_is_exposed_and_callable():
     result_text = helper(task_id=int(b_id))
     if inspect.isawaitable(result_text):
         result_text = await result_text
-    CURSOR_DEBUG_LOG(
-        "append_to_queue helper result",
-        type(result_text).__name__,
-        result_text,
-    )
     # Helper may return a dict payload with {'call_id': ..., 'result': <str>} or a plain string.
     if isinstance(result_text, dict):
         res_str = str(result_text.get("result", ""))
