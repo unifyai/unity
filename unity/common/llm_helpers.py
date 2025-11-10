@@ -375,6 +375,53 @@ def _strip_hidden_params_from_doc(
     return doc_clean
 
 
+def _resolve_doc_with_mro_fallback(bound_method) -> str:
+    """
+    Return a docstring for `bound_method`, falling back to the first ancestor
+    in the MRO that defines a docstring for a method with the same name.
+    """
+    import inspect as _inspect  # local import to avoid polluting global scope
+
+    # 1) Prefer the method's own docstring (after unwrap)
+    try:
+        unwrapped = _inspect.unwrap(bound_method)
+    except Exception:
+        unwrapped = bound_method
+    try:
+        doc = _inspect.getdoc(unwrapped)
+        if isinstance(doc, str) and doc.strip():
+            return doc.strip()
+    except Exception:
+        pass
+
+    # 2) MRO fallback for bound methods: find an ancestor method with a docstring
+    try:
+        name = getattr(unwrapped, "__name__", None) or getattr(
+            bound_method,
+            "__name__",
+            "",
+        )
+        owner = getattr(getattr(bound_method, "__self__", None), "__class__", None)
+        if not name or owner is None:
+            return ""
+        for base in getattr(owner, "__mro__", ())[1:]:
+            try:
+                cand = getattr(base, name, None)
+            except Exception:
+                cand = None
+            if cand is None:
+                continue
+            fn_obj = getattr(cand, "__func__", cand)
+            base_doc = _inspect.getdoc(fn_obj)
+            if isinstance(base_doc, str) and base_doc.strip():
+                return base_doc.strip()
+    except Exception:
+        pass
+
+    # 3) No doc found
+    return ""
+
+
 def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     """Convert a Python annotation into a JSON Schema fragment (supports Pydantic)."""
 
@@ -503,8 +550,8 @@ def method_to_schema(
         if param.default is inspect._empty:
             required.append(name)
 
-    # ── scrub the docstring so hidden args disappear from "Args:"/"Parameters" ──
-    raw_doc = bound_method.__doc__ or ""
+    # ── resolve docstring with MRO fallback, then scrub hidden args ───────────
+    raw_doc = _resolve_doc_with_mro_fallback(bound_method) or ""
     cleaned_doc = _strip_hidden_params_from_doc(raw_doc, hidden)
 
     if hasattr(bound_method, "__self__") and hasattr(
