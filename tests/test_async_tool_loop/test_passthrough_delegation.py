@@ -835,3 +835,197 @@ async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch
 
     assert len(h1.ask_payloads) == 1 and len(h2.ask_payloads) == 1
     assert h1.ask_payloads[0] is not None and h2.ask_payloads[0] is not None
+
+
+# ---------------------------------------------------------------------------
+#  New tests for early steering replay on adoption (post‑refactor)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_early_ask_forwarded_on_adoption(monkeypatch):
+    """An early outer.ask(...) issued after scheduling but before adoption is replayed to the adopted passthrough handle."""
+
+    from unity.common.async_tool_loop import SteerableToolHandle
+
+    class AskSpy(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+            self.ask_count = 0
+
+        async def ask(self, question: str, **_):
+            self.ask_count += 1
+            return self
+
+        async def interject(self, message: str, **_):
+            return None
+
+        def stop(self, *_, **__):
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *_, **__):
+            return "paused"
+
+        def resume(self, *_, **__):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            # Finish shortly after adoption so the outer loop can proceed
+            await asyncio.sleep(0.01)
+            self._done.set()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    # Gate to delay returning the inner handle until after the early ask
+    gate = asyncio.Event()
+    inner = AskSpy()
+
+    async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
+        await gate.wait()
+        return inner
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
+        "Wait for it to finish before replying.",
+    )
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"spawn": spawn},
+    )
+
+    # Ensure the tool request has been scheduled, but the handle not yet returned.
+    await _wait_for_tool_request(client, "spawn")
+
+    # EARLY steering: programmatic ask before adoption
+    await outer.ask("EARLY_STATUS?")
+
+    # Now allow adoption
+    gate.set()
+
+    # Wait until the ask was replayed to the adopted passthrough handle
+    from tests.test_async_tool_loop.async_helpers import _wait_for_condition
+
+    async def _asked_once():
+        return inner.ask_count >= 1
+
+    await _wait_for_condition(_asked_once, poll=0.01, timeout=60.0)
+    assert inner.ask_count >= 1, "early ask() was not replayed to the adopted handle"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_pause_resume_replayed_on_adoption(monkeypatch):
+    """pause()/resume() issued between scheduling and adoption are both replayed to the adopted passthrough handle."""
+
+    from unity.common.async_tool_loop import SteerableToolHandle
+
+    class PauseResumeSpy(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+            self.paused = 0
+            self.resumed = 0
+
+        async def ask(self, question: str, **_):
+            return self
+
+        async def interject(self, message: str, **_):
+            return None
+
+        def stop(self, *_, **__):
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *_, **__):
+            self.paused += 1
+            return "paused"
+
+        def resume(self, *_, **__):
+            self.resumed += 1
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            # Complete shortly after adoption to let the outer loop complete cleanly
+            await asyncio.sleep(0.01)
+            self._done.set()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    gate = asyncio.Event()
+    inner = PauseResumeSpy()
+
+    async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
+        await gate.wait()
+        return inner
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
+        "Wait for it to finish before replying.",
+    )
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"spawn": spawn},
+    )
+
+    # Ensure the tool is requested first so the steering occurs between scheduling and adoption
+    await _wait_for_tool_request(client, "spawn")
+
+    # EARLY steering: pause then resume BEFORE adoption
+    outer.pause()
+    outer.resume()
+
+    # Now allow adoption
+    gate.set()
+
+    from tests.test_async_tool_loop.async_helpers import _wait_for_condition
+
+    async def _seen_both():
+        return inner.paused >= 1 and inner.resumed >= 1
+
+    await _wait_for_condition(_seen_both, poll=0.01, timeout=60.0)
+
+    assert inner.paused >= 1, "pause() was not replayed to the adopted handle"
+    assert inner.resumed >= 1, "resume() was not replayed to the adopted handle"
