@@ -11,6 +11,10 @@ from unity.conductor.conductor import Conductor
 from unity.conductor.types import StateManager
 from unity.actor.simulated import SimulatedActor
 from unity.common.async_tool_loop import AsyncToolLoopHandle
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_condition,
+)
 
 
 @pytest.mark.asyncio
@@ -22,8 +26,8 @@ async def test_task_handle_present_with_deserialized_execute(monkeypatch):
     while the execution is in-flight, and None after completion.
     """
 
-    # Use step-based actor so the task does not complete before we can assert
-    actor = SimulatedActor(steps=2, duration=None)
+    # Use step-based actor with enough steps so the task does not complete before we can assert
+    actor = SimulatedActor(steps=5, duration=None)
     c = Conductor(actor=actor)
 
     # Ensure a clean task table
@@ -33,25 +37,37 @@ async def test_task_handle_present_with_deserialized_execute(monkeypatch):
     ts = c._task_scheduler  # type: ignore[attr-defined]
     tid = ts._create_task(name="X", description="X")["details"]["task_id"]  # type: ignore[index]
 
-    # Start via deserialization helper – runs TaskScheduler.execute immediately
-    # Wait deterministically for Conductor to adopt the execute session
-    adopt_evt: asyncio.Event = asyncio.Event()
-    orig_adopt = c._session_guard.adopt  # type: ignore[attr-defined]
-
-    async def _spy_adopt(handle, kind):  # type: ignore[override]
-        await orig_adopt(handle, kind)
-        try:
-            if str(kind) == "execute" and handle is not None:
-                adopt_evt.set()
-        except Exception:
-            pass
-
-    monkeypatch.setattr(c._session_guard, "adopt", _spy_adopt, raising=True)  # type: ignore[attr-defined]
-
     h = await c.start_task(task_id=int(tid), trigger_reason="test")
 
-    # Wait deterministically until the execute session is adopted
-    await asyncio.wait_for(adopt_evt.wait(), timeout=120)
+    # Wait deterministically until the assistant has requested TaskScheduler_execute
+    client = getattr(h, "_client", None)  # internal test-only access
+    assert (
+        client is not None
+    ), "Expected AsyncToolLoopHandle to expose its client for tests"
+    await _wait_for_tool_request(client, "TaskScheduler_execute")
+
+    # Ensure the nested structure has adopted the ActiveQueue/ActiveTask child
+    async def _execute_child_adopted():
+        try:
+            tree = await h.nested_structure()
+
+            def _has_exec(node: dict) -> bool:
+                try:
+                    label = str(node.get("handle", "")).strip()
+                except Exception:
+                    label = ""
+                if label.startswith("ActiveQueue(") or label.startswith("ActiveTask("):
+                    return True
+                for ch in node.get("children", []) or []:
+                    if _has_exec(ch):
+                        return True
+                return False
+
+            return _has_exec(tree)
+        except Exception:
+            return False
+
+    await _wait_for_condition(_execute_child_adopted, poll=0.02, timeout=60.0)
 
     # Method should expose the same live request handle during execution
     assert await c.task_handle() is not None
