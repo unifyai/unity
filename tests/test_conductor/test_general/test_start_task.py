@@ -21,7 +21,7 @@ async def _create_task(ts: TaskScheduler, name: str) -> int:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_from_task_immediate_execute_no_outer_llm_turn():
+async def test_start_task_immediate_execute_no_outer_llm_turn():
     # Steps-based actor: single step completes immediately on result()
     actor = SimulatedActor(steps=1)
     ts = TaskScheduler(actor=actor)
@@ -33,7 +33,7 @@ async def test_start_from_task_immediate_execute_no_outer_llm_turn():
     cond = SimulatedConductor(task_scheduler=ts, actor=actor)
 
     # Start execution from task id with no initial LLM turn in Conductor.request
-    handle = await cond.start_from_task(
+    handle = await cond.start_task(
         tid,
         trigger_reason="the scheduled start time has arrived",
     )
@@ -74,7 +74,7 @@ async def test_start_from_task_immediate_execute_no_outer_llm_turn():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_from_task_interject_pause_resume_then_complete():
+async def test_start_task_interject_pause_resume_then_complete():
     # Actor requires two steps; we'll steer with pause/resume and an interjection
     actor = SimulatedActor(steps=2)
     ts = TaskScheduler(actor=actor)
@@ -84,7 +84,7 @@ async def test_start_from_task_interject_pause_resume_then_complete():
 
     cond = SimulatedConductor(task_scheduler=ts, actor=actor)
 
-    handle = await cond.start_from_task(
+    handle = await cond.start_task(
         tid,
         trigger_reason="an incoming phone call matched the trigger criteria",
     )

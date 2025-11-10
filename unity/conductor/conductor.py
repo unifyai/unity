@@ -428,10 +428,10 @@ class Conductor(BaseConductor):
         return handle
 
     # ------------------------------------------------------------------ #
-    #  start_from_task – auto-start request loop to execute a task       #
+    #  start_task – auto-start request loop to execute a task       #
     # ------------------------------------------------------------------ #
 
-    async def start_from_task(self, task_id: int, trigger_reason: str):
+    async def start_task(self, task_id: int, trigger_reason: str):
         """
         Return a steerable `Conductor.request` handle that immediately executes
         `TaskScheduler.execute` for the provided `task_id` without an initial LLM turn.

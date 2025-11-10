@@ -55,7 +55,7 @@ async def test_task_handle_present_with_deserialized_execute():
     # Install the spy
     setattr(ts, "_update_task_status_instance", _spy_update)
 
-    h = await c.start_from_task(task_id=int(tid), trigger_reason="test")
+    h = await c.start_task(task_id=int(tid), trigger_reason="test")
 
     # Wait deterministically until the task is active
     await asyncio.wait_for(active_evt.wait(), timeout=10)

@@ -102,8 +102,8 @@ async def test_actor_handle_present_with_active_task():
 
     setattr(ts, "_update_task_status_instance", _spy_update)
 
-    # Start by snapshot helper – registers automatically inside start_from_task
-    h = await c.start_from_task(task_id=int(tid), trigger_reason="test-actor-has-task")
+    # Start by snapshot helper – registers automatically inside start_task
+    h = await c.start_task(task_id=int(tid), trigger_reason="test-actor-has-task")
 
     # Wait deterministically until active
     await asyncio.wait_for(active_evt.wait(), timeout=10)
