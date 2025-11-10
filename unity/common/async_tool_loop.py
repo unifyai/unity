@@ -689,17 +689,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         *,
         parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
-        # Unified steering: record and forward stop to any active passthrough handles
-        with suppress(Exception):
-            asyncio.get_running_loop().create_task(
-                self._record_and_forward(
-                    "stop",
-                    kwargs={
-                        "reason": reason,
-                        "parent_chat_context_cont": parent_chat_context_cont,
-                    },
-                ),
-            )
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
         if self._cancel_event.is_set():
             return
@@ -730,11 +719,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def pause(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
-        # Unified steering: record and forward pause to any active passthrough handle(s)
+        # Propagate pause to any nested handles first (always)
         with suppress(Exception):
-            asyncio.get_running_loop().create_task(
-                self._record_and_forward("pause"),
-            )
+            task_info = getattr(self._task, "task_info", {})
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                h = getattr(_inf, "handle", None)
+                if h is not None and hasattr(h, "pause"):
+                    with suppress(Exception):
+                        maybe = h.pause()  # may be sync or async
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
 
         self._pause_event.clear()
 
@@ -742,11 +737,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def resume(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
-        # Unified steering: record and forward resume to any active passthrough handle(s)
+        # Propagate resume to any nested handles first (always)
         with suppress(Exception):
-            asyncio.get_running_loop().create_task(
-                self._record_and_forward("resume"),
-            )
+            task_info = getattr(self._task, "task_info", {})
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                h = getattr(_inf, "handle", None)
+                if h is not None and hasattr(h, "resume"):
+                    with suppress(Exception):
+                        maybe = h.resume()  # may be sync or async
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
 
         self._pause_event.set()
 
