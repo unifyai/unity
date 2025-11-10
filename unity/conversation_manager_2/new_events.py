@@ -255,87 +255,18 @@ class Ping(Event):
 class Error(Event):
     message: str
 
-
-# managers worker events
-@dataclass
-class ManagersStartupRequest(Event):
-    agent_id: str
-    first_name: str
-    age: str
-    region: str
-    about: str
-    phone: str
-    email: str
-    user_phone: str
-    user_whatsapp_number: str
-    assistant_whatsapp_number: str
-
-
-@dataclass
-class ManagersStartupResponse(Event):
-    loggable: ClassVar[bool] = False
-    initialized: bool
-
-
-@dataclass
-class LogMessageRequest(Event):
-    medium: str
-    sender_id: int
-    receiver_ids: list[int]
-    content: str
-    exchange_id: int
-    call_utterance_timestamp: str
-    call_url: str
-    metadata: dict[str, Any]
-
-
 @dataclass
 class LogMessageResponse(Event):
     medium: str
     exchange_id: int
 
-
-@dataclass
-class GetContactsRequest(Event):
-    pass
-
-
 @dataclass
 class GetContactsResponse(Event):
     contacts: list[dict[str, Any]]
 
-
-@dataclass
-class ContactInfoRequest(Event):
-    contact_id: int
-
-
 @dataclass
 class ContactInfoResponse(Event):
     contact_details: dict[str, Any]
-
-
-@dataclass
-class CreateContactRequest(Event):
-    first_name: str
-    surname: str
-    email_address: str
-    phone_number: str
-
-
-@dataclass
-class UpdateContactRequest(Event):
-    contact_id: int
-    first_name: str
-    surname: str
-    email_address: str
-    phone_number: str
-
-
-@dataclass
-class GetBusEventsRequest(Event):
-    pass
-
 
 @dataclass
 class GetBusEventsResponse(Event):
@@ -351,25 +282,12 @@ class GetBusEventsResponse(Event):
     def _repr_truncated(self) -> str:
         return f"{self.__class__.__name__}(events_len={len(self.events)})"
 
-
-@dataclass
-class PublishBusEventRequest(Event):
-    event: dict[str, Any]
-
-
 # --------------------------------------------------------------------------- #
 # LLM inference events
 # --------------------------------------------------------------------------- #
 @dataclass
 class LLMInput(Event):
     chat_history: list[dict]
-
-
-@dataclass
-class UpdateContactRollingSummaryRequest(Event):
-    contacts_ids: list[int]
-    transcripts: list[str]
-
 
 @dataclass
 class UpdateContactRollingSummaryResponse(Event):
