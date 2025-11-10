@@ -26,6 +26,14 @@ import random
 import string
 import unify
 
+# --------------------------------------------------------------------------- #
+# Early logging guard: ensure a harmless handler exists before any imports    #
+# that might call logging.basicConfig(), so they skip adding stream handlers. #
+# --------------------------------------------------------------------------- #
+_root_logger_early = logging.getLogger()
+if not _root_logger_early.handlers:
+    _root_logger_early.addHandler(logging.NullHandler())
+
 from tests.helpers import (
     SETTINGS,
     PRECREATED_CONTEXTS,
@@ -326,6 +334,26 @@ def pytest_configure(config):
         config.option.capture = "no"
 
     config.stash[metadata_key]["Settings"] = SETTINGS.model_dump()
+
+    # ------------------------------------------------------------------ #
+    # Prune non-pytest console handlers so only pytest live logs appear. #
+    # Keeps any file handlers (e.g., when --test-log-enable is used).    #
+    # ------------------------------------------------------------------ #
+    try:
+        root = logging.getLogger()
+        kept_handlers: list[logging.Handler] = []
+        for h in list(root.handlers):
+            mod = getattr(h.__class__, "__module__", "")
+            is_stream = isinstance(h, logging.StreamHandler)
+            is_pytest = mod.startswith("_pytest.logging")
+            # Retain pytest's handlers and any non-stream handlers (file, etc.)
+            if is_stream and not is_pytest:
+                continue
+            kept_handlers.append(h)
+        root.handlers = kept_handlers
+    except Exception:
+        # Never fail configuration due to logging hygiene adjustments.
+        pass
 
 
 # Skip tests marked with requires_real_unify when using the unify stub
