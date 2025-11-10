@@ -468,12 +468,11 @@ class Conductor(BaseConductor):
 
         snapshot = {
             "version": 1,
-            "entrypoint": {"class_name": "Conductor", "method_name": "request"},
             "loop_id": f"{self.__class__.__name__}.request",
             "initial_user_message": (
                 f"<This task has been *automatically* triggered due to {str(trigger_reason).strip()}>."
             ),
-            "assistant_steps": [
+            "assistant": [
                 {
                     "role": "assistant",
                     "content": "",
@@ -483,14 +482,20 @@ class Conductor(BaseConductor):
                             "type": "function",
                             "function": {
                                 "name": exec_tool_name,
-                                "arguments": json.dumps({"text": str(task_id_int)}),
+                                "arguments": json.dumps(
+                                    {
+                                        "text": (
+                                            f"Start the head-of-queue task with task_id {task_id_int} now. "
+                                            f"Run just this task using queued semantics without modifying any scheduling fields."
+                                        ),
+                                    },
+                                ),
                             },
                         },
                     ],
                 },
             ],
-            # No tool_results present – preflight backfill will schedule the call
-            "tool_results": [],
+            "tools": [],
         }
 
         # Deserialize into a live handle; preflight backfill will run the execute call immediately
