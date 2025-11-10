@@ -34,9 +34,10 @@ class DynamicToolFactory:
     def _adopt_signature_and_annotations(from_callable, to_wrapper) -> None:
         """Copy signature and annotations (excluding 'self') from from_callable to to_wrapper."""
         try:
-            to_wrapper.__signature__ = inspect.signature(from_callable)
+            src = getattr(from_callable, "__func__", from_callable)
+            to_wrapper.__signature__ = inspect.signature(src)
             try:
-                ann = dict(getattr(from_callable, "__annotations__", {}))
+                ann = dict(getattr(src, "__annotations__", {}) or {})
                 ann.pop("self", None)
                 to_wrapper.__annotations__ = ann
             except Exception:
@@ -547,8 +548,10 @@ class DynamicToolFactory:
                     )
                     return {"call_id": tool_context.call_id, "result": res}
 
-            # override the wrapper's signature to match the real method
+            # Override the wrapper's signature and annotations to match the real method
             _invoke_handle_method.__signature__ = inspect.signature(bound)
+            # Also copy annotations so downstream schema generation preserves types (e.g., int)
+            self._adopt_signature_and_annotations(bound, _invoke_handle_method)
 
             self._register_tool(
                 func_name=func_name,
