@@ -11,6 +11,10 @@ from unity.conductor.conductor import Conductor
 from unity.actor.simulated import SimulatedActor
 from unity.common.async_tool_loop import AsyncToolLoopHandle
 from unity.conductor.types import StateManager
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_condition,
+)
 
 
 @pytest.mark.asyncio
@@ -22,23 +26,9 @@ async def test_actor_handle_present_for_direct_actor(monkeypatch):
     after completion.
     """
 
-    # Step-based actor so it won't auto-complete before assertions
-    actor = SimulatedActor(steps=2, duration=None)
+    # Step-based actor with enough steps so it won't auto-complete before assertions
+    actor = SimulatedActor(steps=5, duration=None)
     c = Conductor(actor=actor)
-
-    # Trigger: spy session adoption to avoid timing races (no sleeps)
-    adopt_evt: asyncio.Event = asyncio.Event()
-    orig_adopt = c._session_guard.adopt  # type: ignore[attr-defined]
-
-    async def _spy_adopt(handle, kind):  # type: ignore[override]
-        await orig_adopt(handle, kind)
-        try:
-            if str(kind) == "actor" and handle is not None:
-                adopt_evt.set()
-        except Exception:
-            pass
-
-    monkeypatch.setattr(c._session_guard, "adopt", _spy_adopt, raising=True)  # type: ignore[attr-defined]
 
     # Start a live request that clearly implies an interactive session (Actor.act)
     h = await c.request(
@@ -48,8 +38,44 @@ async def test_actor_handle_present_for_direct_actor(monkeypatch):
         ),
     )
 
-    # Wait deterministically for actor adoption
-    await asyncio.wait_for(adopt_evt.wait(), timeout=120)
+    # Wait deterministically until the assistant has requested Actor_act
+    client = getattr(h, "_client", None)  # internal test-only access
+    assert (
+        client is not None
+    ), "Expected AsyncToolLoopHandle to expose its client for tests"
+    await _wait_for_tool_request(client, "Actor_act")
+
+    # Wait until the actor handle is actually registered and visible via nested_structure
+    async def _actor_child_adopted():
+        try:
+            tree = await h.nested_structure()
+
+            def _has_actor(node: dict) -> bool:
+                try:
+                    label = str(node.get("handle", "")).strip()
+                except Exception:
+                    label = ""
+                if label.startswith("ActorHandle("):
+                    return True
+                for ch in node.get("children", []) or []:
+                    if _has_actor(ch):
+                        return True
+                return False
+
+            return _has_actor(tree)
+        except Exception:
+            return False
+
+    await _wait_for_condition(_actor_child_adopted, poll=0.02, timeout=60.0)
+
+    # Now also confirm Conductor exposes the handle
+    async def _actor_handle_visible():
+        try:
+            return (await c.actor_handle()) is not None
+        except Exception:
+            return False
+
+    await _wait_for_condition(_actor_handle_visible, poll=0.02, timeout=60.0)
 
     # After the child is visible, the handle method should return non-None
     assert await c.actor_handle() is not None
@@ -74,7 +100,8 @@ async def test_actor_handle_present_with_active_task(monkeypatch):
     same object as task_handle.
     """
 
-    actor = SimulatedActor(steps=2, duration=None)
+    # Keep the execute session alive long enough to assert handle presence
+    actor = SimulatedActor(steps=5, duration=None)
     c = Conductor(actor=actor)
 
     # Clean tasks and create one
@@ -82,25 +109,38 @@ async def test_actor_handle_present_with_active_task(monkeypatch):
     ts = c._task_scheduler  # type: ignore[attr-defined]
     tid = ts._create_task(name="Y", description="Y")["details"]["task_id"]  # type: ignore[index]
 
-    # Spy a session adoption event for execute to avoid timing races
-    adopt_evt: asyncio.Event = asyncio.Event()
-    orig_adopt = c._session_guard.adopt  # type: ignore[attr-defined]
-
-    async def _spy_adopt(handle, kind):  # type: ignore[override]
-        await orig_adopt(handle, kind)
-        try:
-            if str(kind) == "execute" and handle is not None:
-                adopt_evt.set()
-        except Exception:
-            pass
-
-    monkeypatch.setattr(c._session_guard, "adopt", _spy_adopt, raising=True)  # type: ignore[attr-defined]
-
     # Start by snapshot helper – registers automatically inside start_task
     h = await c.start_task(task_id=int(tid), trigger_reason="test-actor-has-task")
 
-    # Wait deterministically until execute session is adopted
-    await asyncio.wait_for(adopt_evt.wait(), timeout=120)
+    # Wait deterministically until the assistant has requested TaskScheduler_execute
+    client = getattr(h, "_client", None)  # internal test-only access
+    assert (
+        client is not None
+    ), "Expected AsyncToolLoopHandle to expose its client for tests"
+    await _wait_for_tool_request(client, "TaskScheduler_execute")
+
+    # Ensure the nested structure has adopted the ActiveQueue/ActiveTask child
+    async def _execute_child_adopted():
+        try:
+            tree = await h.nested_structure()
+
+            def _has_exec(node: dict) -> bool:
+                try:
+                    label = str(node.get("handle", "")).strip()
+                except Exception:
+                    label = ""
+                if label.startswith("ActiveQueue(") or label.startswith("ActiveTask("):
+                    return True
+                for ch in node.get("children", []) or []:
+                    if _has_exec(ch):
+                        return True
+                return False
+
+            return _has_exec(tree)
+        except Exception:
+            return False
+
+    await _wait_for_condition(_execute_child_adopted, poll=0.02, timeout=60.0)
 
     # Both task_handle and actor_handle should exist and be the same
     th = await c.task_handle()
