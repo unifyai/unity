@@ -167,11 +167,29 @@ class SteerableToolHandle(SteerableHandle):
 
     @abstractmethod
     def pause(self) -> Awaitable[Optional[str]] | Optional[str]:
-        """Temporarily freeze the outer loop (tools keep running)."""
+        """Pause the outer conversational loop without stopping running tools.
+
+        Behaviour
+        ---------
+        - Freezes the assistant's next LLM turn until :pyfunc:`resume` is called.
+        - Any in‑flight tool calls continue executing; the pause only affects the
+          assistant's ability to speak/advance turns.
+        - Nested handles (if any) should receive a corresponding pause signal
+          before the outer loop transitions into the paused state.
+        """
 
     @abstractmethod
     def resume(self) -> Awaitable[Optional[str]] | Optional[str]:
-        """Un-freeze a loop that was paused with :pyfunc:`pause`."""
+        """Resume a loop previously paused with :pyfunc:`pause`.
+
+        Behaviour
+        ---------
+        - Allows the assistant to proceed with the next LLM turn.
+        - If tools completed while paused, their results are processed first and
+          then the assistant replies.
+        - Nested handles (if any) should receive a corresponding resume signal
+          before unfreezing the outer loop.
+        """
 
     @abstractmethod
     def done(self) -> Awaitable[bool] | bool:
@@ -194,8 +212,22 @@ class SteerableToolHandle(SteerableHandle):
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         """Programmatically answer a clarification for a pending tool call.
 
-        This looks up the down-queue for the given call and pushes the answer.
-        Falls through silently if the mapping is missing (tool may have finished).
+        Parameters
+        ----------
+        call_id : str
+            Identifier of the original assistant tool call that requested the
+            clarification.
+        answer : str
+            The clarification answer text to provide to the waiting tool.
+
+        Behaviour
+        ---------
+        - Looks up the queued clarification channel for ``call_id`` and delivers
+          the provided ``answer`` to the tool that is currently waiting.
+        - If the mapping is missing (e.g., the tool already finished or the loop
+          resumed on its own), the call is a no‑op.
+        - Implementations should not raise in the absence of a matching channel;
+          best‑effort delivery is sufficient.
         """
 
     # --- snapshotting (skeleton; non-abstract stubs in v1) -----------------

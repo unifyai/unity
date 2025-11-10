@@ -32,7 +32,13 @@ class DynamicToolFactory:
     # Shared steering helpers – reduce duplication across dynamic helper tools
     @staticmethod
     def _adopt_signature_and_annotations(from_callable, to_wrapper) -> None:
-        """Copy signature and annotations (excluding 'self') from from_callable to to_wrapper."""
+        """Copy signature, annotations, and docstring from from_callable to to_wrapper.
+
+        Notes
+        -----
+        - The 'self' parameter (if any) is stripped from annotations/signature.
+        - If the source has a docstring, it is copied verbatim (stripped) onto the wrapper.
+        """
         try:
             src = getattr(from_callable, "__func__", from_callable)
             to_wrapper.__signature__ = inspect.signature(src)
@@ -40,6 +46,12 @@ class DynamicToolFactory:
                 ann = dict(getattr(src, "__annotations__", {}) or {})
                 ann.pop("self", None)
                 to_wrapper.__annotations__ = ann
+            except Exception:
+                pass
+            try:
+                doc = inspect.getdoc(src)
+                if isinstance(doc, str) and doc.strip():
+                    to_wrapper.__doc__ = doc.strip()
             except Exception:
                 pass
         except Exception:
@@ -197,17 +209,18 @@ class DynamicToolFactory:
                 **{k: v for k, v in _kw.items() if k != "images"},
             }
 
-        self._register_tool(
-            func_name=f"stop_{tool_context.fn_name}_{tool_context.safe_call_id}",
-            fallback_doc=doc,
-            fn=_stop,
-        )
-        # Expose full argspec of handle.stop in the helper schema and ensure `images` exists
+        # Expose full argspec and docstring of handle.stop in the helper schema
         with suppress(Exception):
             if handle is not None and hasattr(handle, "stop"):
                 self._adopt_signature_and_annotations(getattr(handle, "stop"), _stop)
         # Ensure images kw-only param
         self._ensure_kwonly_param(_stop, "images", Optional[ImageRefs], default=None)
+        # Register after adopting signature/doc so factory falls back only when needed
+        self._register_tool(
+            func_name=f"stop_{tool_context.fn_name}_{tool_context.safe_call_id}",
+            fallback_doc=doc,
+            fn=_stop,
+        )
 
     def _create_interject_tool(
         self,
@@ -377,6 +390,7 @@ class DynamicToolFactory:
     def _create_clarify_tool(
         self,
         tool_context: _ToolContext,
+        handle: Any,
     ) -> None:
         doc = (
             f"Provide an answer to the clarification which was requested by the (currently pending) tool "
@@ -403,6 +417,14 @@ class DynamicToolFactory:
                 "call_id": tool_context.call_id,
                 "answer": answer,
             }
+
+        # Prefer to propagate a class method docstring when available (e.g., handle.answer_clarification)
+        with suppress(Exception):
+            if handle is not None and hasattr(handle, "answer_clarification"):
+                src = getattr(handle, "answer_clarification")
+                src_doc = inspect.getdoc(getattr(src, "__func__", src))
+                if isinstance(src_doc, str) and src_doc.strip():
+                    _clarify.__doc__ = src_doc.strip()
 
         self._register_tool(
             func_name=f"clarify_{tool_context.fn_name}_{tool_context.safe_call_id}",
@@ -647,7 +669,7 @@ class DynamicToolFactory:
             )
 
         if info.clar_up_queue is not None:
-            self._create_clarify_tool(create_tool_ctx)
+            self._create_clarify_tool(create_tool_ctx, handle)
 
         # Synthetic `ask` helper for LLM-accessible inspection
         if handle_available:
