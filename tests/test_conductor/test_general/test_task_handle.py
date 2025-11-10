@@ -53,10 +53,10 @@ async def test_task_handle_present_with_deserialized_execute(monkeypatch):
     # Wait deterministically until the execute session is adopted
     await asyncio.wait_for(adopt_evt.wait(), timeout=120)
 
-    # Property should expose the same live request handle during execution
-    assert c.task_handle is not None
-    # The property should point to the same object (logging wrappers are not used here)
-    assert c.task_handle is h
+    # Method should expose the same live request handle during execution
+    assert await c.task_handle() is not None
+    # The handle should point to the same object (logging wrappers are not used here)
+    assert await c.task_handle() is h
 
     # Drive two steps (pause/resume) to complete deterministically
     h.pause()
@@ -64,7 +64,7 @@ async def test_task_handle_present_with_deserialized_execute(monkeypatch):
 
     # Completion clears the handle
     await asyncio.wait_for(h.result(), timeout=30)
-    assert c.task_handle is None
+    assert await c.task_handle() is None
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_task_handle_none_with_deserialized_non_execute():
     c._live_requests.add(h)  # type: ignore[attr-defined]
 
     # During this read-only request, there must be no task_handle
-    assert c.task_handle is None
+    assert await c.task_handle() is None
 
     # Finish the loop to avoid background tasks lingering
     await asyncio.wait_for(h.result(), timeout=30)
