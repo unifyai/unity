@@ -577,36 +577,38 @@ class ToolsData:
             ):
                 _outer = outer_handle_container[0]
                 # Replay steer events recorded on the outer handle that occurred
-                # after this tool was scheduled. We skip entries that were already
+                # after this tool was scheduled (with a small safety delta) and
+                # not later than adoption. We skip entries that were already
                 # forwarded immediately at record time (had_passthrough=True).
-                try:
-                    _log = list(getattr(_outer, "_steer_log", []) or [])
-                except Exception:
-                    _log = []
+                adopt_now = time.perf_counter()
+                SAFETY_DELTA = 0.2  # seconds; cushion to cover scheduling vs. interject ordering races
+                _log = list(getattr(_outer, "_steer_log", []) or [])
                 for rec in _log:
-                    try:
-                        if rec.get("had_passthrough") is True:
-                            continue
-                        t = rec.get("t", 0.0)
-                        if not isinstance(t, (int, float)):
-                            continue
-                        method = rec.get("method") or ""
-                        if not isinstance(method, str) or not method:
-                            continue
-                        args = rec.get("args") or ()
-                        kwargs = rec.get("kwargs") or {}
-                        fb = rec.get("fallback") or ()
-                        await forward_handle_call(  # type: ignore[name-defined]
-                            child_handle,
-                            method,
-                            kwargs,
-                            call_args=args if isinstance(args, (list, tuple)) else (),
-                            fallback_positional_keys=(
-                                fb if isinstance(fb, (list, tuple)) else ()
-                            ),
-                        )
-                    except Exception:
+                    if rec.get("had_passthrough") is True:
                         continue
+                    t = rec.get("t", 0.0)
+                    if not isinstance(t, (int, float)):
+                        continue
+                    # Window: [scheduled_time - delta, adopt_now + delta]
+                    if (t + SAFETY_DELTA) < info.scheduled_time or (
+                        t - SAFETY_DELTA
+                    ) > adopt_now:
+                        continue
+                    method = rec.get("method") or ""
+                    if not isinstance(method, str) or not method:
+                        continue
+                    args = rec.get("args") or ()
+                    kwargs = rec.get("kwargs") or {}
+                    fb = rec.get("fallback") or ()
+                    await forward_handle_call(  # type: ignore[name-defined]
+                        child_handle,
+                        method,
+                        kwargs,
+                        call_args=args if isinstance(args, (list, tuple)) else (),
+                        fallback_positional_keys=(
+                            fb if isinstance(fb, (list, tuple)) else ()
+                        ),
+                    )
                 try:
                     if not getattr(_outer, "_pause_event", None).is_set() and hasattr(
                         child_handle,
