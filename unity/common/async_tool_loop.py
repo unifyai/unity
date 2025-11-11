@@ -2729,6 +2729,14 @@ def start_async_tool_loop(
 
     task = asyncio.create_task(_loop_wrapper(), name="ToolUseLoop")
 
+    # Make introspection surfaces available immediately on the wrapper task.
+    # The inner loop rebinding will point these to the live dicts once running.
+    try:  # pragma: no cover
+        setattr(task, "task_info", {})  # asyncio.Task -> ToolCallMetadata
+        setattr(task, "clarification_channels", {})  # call_id -> (up_q, down_q)
+    except Exception:
+        pass
+
     # Determine initial_user_message for the handle from diverse input forms
     init_content = None
     if isinstance(message, dict):
