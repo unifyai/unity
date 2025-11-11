@@ -66,7 +66,7 @@ from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
 from . import semantic_cache as sc
 
-# Single per-run LLM I/O debug file path (set on first use)
+# Single per-run LLM I/O debug directory path (set on first use)
 _LLM_IO_FILE_PATH: str | None = None
 
 if TYPE_CHECKING:
@@ -284,8 +284,8 @@ async def async_tool_loop_inner(
     # Independent, centrally-configured LLM I/O logging flag
     llm_io_debug = bool(LLM_IO_DEBUG)
 
-    # File sink for LLM I/O: single per-run file under hidden folder, named by SESSION_ID
-    _llm_io_file: str | None = None
+    # File sink for LLM I/O: per-run directory under hidden folder, named by SESSION_ID
+    _llm_io_dir: str | None = None
     if llm_io_debug:
         with suppress(Exception):
             global _LLM_IO_FILE_PATH
@@ -300,21 +300,44 @@ async def async_tool_loop_inner(
                     session_safe = (
                         SESSION_ID.replace(":", "-").replace("+", "-").replace("/", "-")
                     )
-                _LLM_IO_FILE_PATH = str(logs_dir / f"{session_safe}.txt")
-            _llm_io_file = _LLM_IO_FILE_PATH
+                # Use the prior "filename" as a directory name for this run
+                session_dir = logs_dir / f"{session_safe}"
+                session_dir.mkdir(parents=True, exist_ok=True)
+                _LLM_IO_FILE_PATH = str(session_dir)
+            _llm_io_dir = _LLM_IO_FILE_PATH
 
     def _llm_io_write(header: str, body: str) -> None:
-        if not llm_io_debug or _llm_io_file is None:
+        if not llm_io_debug or _llm_io_dir is None:
             return
         try:
-            with open(_llm_io_file, "a", encoding="utf-8") as _f:
+            # Resolve a unique filename inside the per-run directory using the current time
+            from datetime import datetime, timezone as _tz
+            import time as _time
+
+            _dir = Path(_llm_io_dir)
+            # Time-of-day without date, with nanosecond precision
+            _now = datetime.now(_tz.utc)
+            _hhmmss = _now.strftime("%H%M%S")
+            _ns = _time.time_ns() % 1_000_000_000
+            _base = f"{_hhmmss}_{_ns:09d}"
+            _path = _dir / f"{_base}.txt"
+            if _path.exists():
+                _i = 1
+                while True:
+                    _candidate = _dir / f"{_base}_{_i}.txt"
+                    if not _candidate.exists():
+                        _path = _candidate
+                        break
+                    _i += 1
+
+            with open(_path, "w", encoding="utf-8") as _f:
                 _f.write(f"🔄 [{logger.log_label}] {header}\n")
                 _f.write(body.rstrip())
-                _f.write("\n\n")
+                _f.write("\n")
             # Emit a concise terminal notice with the destination file
             try:
                 kind = "request" if "request" in header.lower() else "response"
-                logger.info(f"LLM {kind} written to {_llm_io_file}", prefix="📝")
+                logger.info(f"LLM {kind} written to {_path}", prefix="📝")
             except Exception:
                 pass
         except Exception:
