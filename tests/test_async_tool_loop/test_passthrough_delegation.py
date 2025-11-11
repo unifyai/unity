@@ -9,7 +9,13 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
 )
 from tests.helpers import _handle_project, SETTINGS
-from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_condition,
+    _wait_for_tool_scheduled,
+    _wait_for_tool_requested_and_scheduled,
+    _wait_for_tools_requested_and_scheduled,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +141,12 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
         tools={"delegating_tool_interject": delegating_tool},
     )
 
-    # Wait until the assistant has scheduled the delegating tool so that the
-    # interjection occurs within the scheduling→adoption window under new semantics.
-    await _wait_for_tool_request(client, "delegating_tool_interject")
+    # Wait until assistant requested and the loop has scheduled the delegating tool
+    await _wait_for_tool_requested_and_scheduled(
+        client,
+        outer_handle,
+        "delegating_tool_interject",
+    )
 
     # ---- send interjection within scheduling window (before adoption) ----
     early_msg = "EARLY_INTERJECTION"
@@ -240,20 +249,17 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
         tools={"delegate_one": delegating_one, "delegate_two": delegating_two},
     )
 
-    # Ensure both delegates have been SCHEDULED before sending the interjection so it
-    # falls into the scheduling→adoption window (and is eligible for replay/forwarding).
-    from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
-
-    await _wait_for_tool_request(client, "delegate_one")
-    await _wait_for_tool_request(client, "delegate_two")
+    # Ensure both delegates have been requested and scheduled before interjecting
+    await _wait_for_tools_requested_and_scheduled(
+        client,
+        outer,
+        ["delegate_one", "delegate_two"],
+    )
 
     # Interject after scheduling (but before adoption) → should multicast to both
     await outer.interject("BROADCAST")
     # Release delegates deterministically now that the interjection is queued
     gate.set()
-
-    # Import the wait helper for the next condition
-    from tests.test_async_tool_loop.async_helpers import _wait_for_condition
 
     # Now wait until both patched interjects are observed
     async def _both_received():
@@ -781,12 +787,6 @@ async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch
         tools={"d1": d1, "d2": d2},
     )
 
-    # Deterministically wait until both delegates were requested
-    from tests.test_async_tool_loop.async_helpers import (
-        _wait_for_tool_request,
-        _wait_for_condition,
-    )
-
     await _wait_for_tool_request(client, "d1")
     await _wait_for_tool_request(client, "d2")
 
@@ -908,6 +908,9 @@ async def test_early_ask_forwarded_on_adoption(monkeypatch):
 
     # Ensure the tool request has been scheduled, but the handle not yet returned.
     await _wait_for_tool_request(client, "spawn")
+
+    # Ensure the spawn tool-call is scheduled before early ask, so adoption replay applies
+    await _wait_for_tool_scheduled(outer, "spawn", timeout=30.0, poll=0.01)
 
     # EARLY steering: programmatic ask before adoption
     await outer.ask("EARLY_STATUS?")
@@ -1200,11 +1203,6 @@ async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
     )
 
     # Wait until the tool request for spawn is made and the child is adopted
-    from tests.test_async_tool_loop.async_helpers import (
-        _wait_for_tool_request,
-        _wait_for_condition,
-    )
-
     await _wait_for_tool_request(client, "spawn")
 
     # Wait until passthrough handle is registered
@@ -1346,11 +1344,6 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
         tools={"spawn": spawn},
     )
 
-    from tests.test_async_tool_loop.async_helpers import (
-        _wait_for_tool_request,
-        _wait_for_condition,
-    )
-
     await _wait_for_tool_request(client, "spawn")
 
     # Wait until passthrough handle is registered
@@ -1487,12 +1480,10 @@ async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
         tools={"spawn": spawn},
     )
 
-    from tests.test_async_tool_loop.async_helpers import (
-        _wait_for_tool_request,
-        _wait_for_condition,
-    )
-
     await _wait_for_tool_request(client, "spawn")
+
+    # Ensure the spawn tool-call is scheduled before early interject so adoption replay applies
+    await _wait_for_tool_scheduled(outer, "spawn", timeout=30.0, poll=0.01)
 
     # Send interject BEFORE adoption so replay should deliver it once on adoption
     await outer.interject("HELLO_BEFORE_ADOPTION")
@@ -1604,14 +1595,11 @@ async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
         tools={"delegate_early": delegate_early, "delegate_late": delegate_late},
     )
 
-    from tests.test_async_tool_loop.async_helpers import (
-        _wait_for_tool_request,
-        _wait_for_condition,
+    await _wait_for_tools_requested_and_scheduled(
+        client,
+        outer,
+        ["delegate_early", "delegate_late"],
     )
-
-    # Ensure both tools are scheduled
-    await _wait_for_tool_request(client, "delegate_early")
-    await _wait_for_tool_request(client, "delegate_late")
 
     # Wait until exactly one passthrough handle is adopted (the early one)
     async def _one_adopted(timeout: float = 5.0):
