@@ -571,8 +571,9 @@ class ToolsData:
         channels, and synchronises passthrough interjections/pause/stop with the
         outer handle when applicable.
         """
-        # Passthrough wiring: replay any steering commands issued after scheduling
-        # and before adoption, and sync pause/stop state minimally.
+        # Passthrough wiring: replay steering commands that were issued AFTER this
+        # tool was scheduled and BEFORE adoption (per-child, no duplication), then
+        # sync pause/stop state minimally.
         try:
             if (
                 getattr(child_handle, "__passthrough__", False)
@@ -580,12 +581,10 @@ class ToolsData:
                 and outer_handle_container[0] is not None
             ):
                 _outer = outer_handle_container[0]
-                # Replay steer events recorded on the outer handle that occurred
-                # after this tool was scheduled (with a small safety delta) and
-                # not later than adoption. We skip entries that were already
-                # forwarded immediately at record time (had_passthrough=True).
                 adopt_now = time.perf_counter()
-                SAFETY_DELTA = 0.2  # seconds; cushion to cover scheduling vs. interject ordering races
+                POST_ADOPT_EPSILON = (
+                    0.05  # small cushion to exclude post-adoption events
+                )
                 _log = list(getattr(_outer, "_steer_log", []) or [])
                 for rec in _log:
                     # Skip replay for this child if the event was already forwarded to it
@@ -597,14 +596,24 @@ class ToolsData:
                             continue
                     except Exception:
                         pass
-                    t = rec.get("t", 0.0)
-                    if not isinstance(t, (int, float)):
+                    # Lower bound: event must have been recorded when this call_id
+                    # was already scheduled (state-based, robust to timing races).
+                    try:
+                        sched_ids = rec.get("scheduled_call_ids") or []
+                        if str(info.call_id) not in set(str(x) for x in sched_ids):
+                            continue
+                    except Exception:
                         continue
-                    # Window: [scheduled_time - delta, adopt_now + delta]
-                    if (t + SAFETY_DELTA) < info.scheduled_time or (
-                        t - SAFETY_DELTA
-                    ) > adopt_now:
-                        continue
+                    # Upper bound: exclude events that clearly arrived after adoption.
+                    try:
+                        t = rec.get("t", 0.0)
+                        if (
+                            isinstance(t, (int, float))
+                            and (t - POST_ADOPT_EPSILON) > adopt_now
+                        ):
+                            continue
+                    except Exception:
+                        pass
                     method = rec.get("method") or ""
                     if not isinstance(method, str) or not method:
                         continue

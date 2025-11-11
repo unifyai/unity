@@ -387,6 +387,19 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             from time import perf_counter as _pc  # local import to avoid top pollution
         except Exception:  # pragma: no cover
             _pc = lambda: 0.0  # type: ignore
+        # Snapshot which call_ids are already scheduled at the moment of recording.
+        # This provides a robust lower bound for adoption-time replay without relying
+        # on fragile cross-task timing windows.
+        try:
+            _ti = getattr(self._task, "task_info", {}) or {}
+            _scheduled_ids = []
+            for _t, _inf in _ti.items():
+                try:
+                    _scheduled_ids.append(str(getattr(_inf, "call_id", "")))
+                except Exception:
+                    continue
+        except Exception:
+            _scheduled_ids = []
         rec = {
             "t": _pc(),
             "method": str(method_name or ""),
@@ -395,6 +408,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             "fallback": tuple(fallback or ()),
             "had_passthrough": bool(had_passthrough),
             "forwarded_to": list(forwarded_to or []),
+            "scheduled_call_ids": _scheduled_ids,
         }
         try:
             self._steer_log.append(rec)
@@ -428,29 +442,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, parent_chat_context_cont)
 
-        # Immediate functional forward to any active passthrough handle(s)
-        had_pt = False
-        forwarded_ids: list[str] = []
-        try:
-            task_info = getattr(self._task, "task_info", {})
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                h = getattr(_inf, "handle", None)
-                is_pt = getattr(_inf, "is_passthrough", False)
-                if h is not None and is_pt:
-                    had_pt = True
-                    with suppress(Exception):
-                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
-                    await forward_handle_call(
-                        h,
-                        "ask",
-                        {"question": question, "images": images},
-                        fallback_positional_keys=("question", "content"),
-                    )
-        except Exception:
-            pass
-
-        # Record steer event (adoption will replay only when had_passthrough is False)
+        # Centralized steering: record steer event; functional forwarding happens via mirror path
         await self._record_and_forward(
             "ask",
             kwargs={
@@ -458,8 +450,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
             },
-            had_passthrough=had_pt,
-            forwarded_to=forwarded_ids,
+            had_passthrough=False,
+            forwarded_to=[],
         )
 
         # 0.  Defensive guard: if the outer loop has already finished we can
@@ -685,37 +677,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record user-visible immediately
         self._append_user_visible_user(message, parent_chat_context_cont)
 
-        # Immediate functional forward to any active passthrough handle(s)
-        had_pt = False
-        forwarded_ids: list[str] = []
-        try:
-            task_info = getattr(self._task, "task_info", {})
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                is_pt = getattr(_inf, "is_passthrough", False)
-                if not is_pt:
-                    continue
-                iq = getattr(_inf, "interject_queue", None)
-                h = getattr(_inf, "handle", None)
-                if iq is not None:
-                    had_pt = True
-                    with suppress(Exception):
-                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
-                    await iq.put(message)
-                elif h is not None:
-                    had_pt = True
-                    with suppress(Exception):
-                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
-                    await forward_handle_call(
-                        h,
-                        "interject",
-                        {"message": message, "images": images},
-                        fallback_positional_keys=("content", "message"),
-                    )
-        except Exception:
-            pass
-
-        # Record steer event (adoption will replay only when had_passthrough is False)
+        # Centralized steering: record steer event; functional forwarding happens via mirror path
         await self._record_and_forward(
             "interject",
             kwargs={
@@ -724,8 +686,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "images": images,
             },
             fallback=("content", "message"),
-            had_passthrough=had_pt,
-            forwarded_to=forwarded_ids,
+            had_passthrough=False,
+            forwarded_to=[],
         )
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
@@ -776,36 +738,20 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 f"🛑 [{_label}] Stop requested"
                 + (f" – reason: {reason}" if reason else ""),
             )
-        # Immediate functional forward to any active passthrough handle(s)
-        had_pt = False
-        forwarded_ids: list[str] = []
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                h = getattr(_inf, "handle", None)
-                is_pt = getattr(_inf, "is_passthrough", False)
-                if h is not None and is_pt and hasattr(h, "stop"):
-                    had_pt = True
-                    with suppress(Exception):
-                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
-                    maybe = h.stop(reason)
-                    if asyncio.iscoroutine(maybe):
-                        asyncio.create_task(maybe)
 
         # Expedite shutdown of the outer task and signal stop_event for any waiters
         with suppress(Exception):
             self._task.cancel()
         with suppress(Exception):
             self._stop_event.set()
-        # Record steer event (best-effort)
+        # Record steer event (best-effort). Functional forwarding happens via mirror path.
         try:
             asyncio.create_task(
                 self._record_and_forward(
                     "stop",
                     kwargs={"reason": reason},
-                    had_passthrough=had_pt,
-                    forwarded_to=forwarded_ids,
+                    had_passthrough=False,
+                    forwarded_to=[],
                 ),
             )
         except Exception:
@@ -828,32 +774,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
 
-        # Immediate functional forward to any active passthrough handle(s)
-        had_pt = False
-        forwarded_ids: list[str] = []
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                h = getattr(_inf, "handle", None)
-                is_pt = getattr(_inf, "is_passthrough", False)
-                if h is not None and is_pt and hasattr(h, "pause"):
-                    had_pt = True
-                    maybe = h.pause()  # may be sync or async
-                    if asyncio.iscoroutine(maybe):
-                        asyncio.create_task(maybe)
-                    with suppress(Exception):
-                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
-
         self._pause_event.clear()
-        # Record steer event (best-effort, async)
+        # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
         try:
             asyncio.create_task(
                 self._record_and_forward(
                     "pause",
                     kwargs={},
-                    had_passthrough=had_pt,
-                    forwarded_to=forwarded_ids,
+                    had_passthrough=False,
+                    forwarded_to=[],
                 ),
             )
         except Exception:
@@ -875,22 +804,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def resume(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
-        # Immediate functional forward to any active passthrough handle(s)
-        had_pt = False
-        forwarded_ids: list[str] = []
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                h = getattr(_inf, "handle", None)
-                is_pt = getattr(_inf, "is_passthrough", False)
-                if h is not None and is_pt and hasattr(h, "resume"):
-                    had_pt = True
-                    maybe = h.resume()  # may be sync or async
-                    if asyncio.iscoroutine(maybe):
-                        asyncio.create_task(maybe)
-                    with suppress(Exception):
-                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
         # Auto-resume base tools that were started in paused state while the outer loop was paused
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
@@ -904,14 +817,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             ev.set()
 
         self._pause_event.set()
-        # Record steer event (best-effort, async)
+        # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
         try:
             asyncio.create_task(
                 self._record_and_forward(
                     "resume",
                     kwargs={},
-                    had_passthrough=had_pt,
-                    forwarded_to=forwarded_ids,
+                    had_passthrough=False,
+                    forwarded_to=[],
                 ),
             )
         except Exception:
@@ -979,33 +892,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         This looks up the down-queue for the given call and pushes the answer.
         Falls through silently if the mapping is missing (tool may have finished).
         """
-        task_info, clar_map = {}, {}
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-            clar_map = getattr(self._task, "clarification_channels", {})
-
-        # Direct lookup by full ID; if not present, try suffix matching
-        down_q = None
-        try:
-            if call_id in clar_map:
-                down_q = clar_map[call_id][1]
-            else:
-                for k, (_up, _down) in list(clar_map.items()):
-                    if str(k).endswith(str(call_id)):
-                        down_q = _down
-                        break
-        except Exception:
-            down_q = None
-
-        with suppress(Exception):
-            if down_q is not None:
-                await down_q.put(answer)
-        # Record steer event (best-effort)
+        # Centralized steering: record steer event; functional forwarding happens via mirror path.
         try:
             await self._record_and_forward(
                 "clarify",
                 kwargs={"call_id": call_id, "answer": answer},
-                had_passthrough=True,
+                had_passthrough=False,
             )
         except Exception:
             pass
