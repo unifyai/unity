@@ -2379,6 +2379,7 @@ async def async_tool_loop_inner(
                             parent_chat_context=parent_chat_context,
                             propagate_chat_context=propagate_chat_context,
                             assistant_meta=assistant_meta,
+                            initial_paused=not pause_event.is_set(),
                         )
 
                 # metadata for orderly insertion
