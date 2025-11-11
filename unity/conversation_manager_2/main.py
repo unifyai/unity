@@ -12,6 +12,7 @@ from unity.conversation_manager_2.event_broker import (
     get_event_broker,
     create_event_broker,
 )
+from unity.helpers import cleanup_dangling_call_processes
 
 
 stop = None
@@ -53,6 +54,11 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
     # Ensure Unify traced logging is disabled outside the main thread
     # (avoids ValueError: signal only works in main thread)
     os.environ.setdefault("UNIFY_TRACED", "false")
+
+    # Clean up any dangling call processes from previous runs
+    # This prevents conflicts when multiple call processes can't run simultaneously
+    print("Checking for dangling call processes from previous runs...")
+    cleanup_dangling_call_processes()
 
     stop = asyncio.Event()
 
