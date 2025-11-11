@@ -748,6 +748,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         maybe = h.resume()  # may be sync or async
                         if asyncio.iscoroutine(maybe):
                             asyncio.create_task(maybe)
+            # Auto-resume base tools that were started in paused state while the outer loop was paused
+            for _t, _inf in items:
+                h = getattr(_inf, "handle", None)
+                if h is None:
+                    ev = getattr(_inf, "pause_event", None)
+                    if ev is not None and hasattr(ev, "set"):
+                        with suppress(Exception):
+                            ev.set()
 
         self._pause_event.set()
 
