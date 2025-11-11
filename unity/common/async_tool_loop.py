@@ -351,23 +351,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
     # ── internal: passthrough forwarding/buffering helpers ──────────────────
     def _iter_passthrough_handles(self):
-        task_info = {}
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-        if not isinstance(task_info, dict):
-            return []
-        out = []
-        for _t, _inf in task_info.items():
-            h = getattr(_inf, "handle", None)
-            is_pt = getattr(_inf, "is_passthrough", False)
-            if h is not None and is_pt:
-                out.append(h)
-        return out
+        return []
 
     def _has_scheduled_tools(self) -> bool:
-        with suppress(Exception):
-            ti = getattr(self._task, "task_info", {})
-            return isinstance(ti, dict) and len(ti) > 0
         return False
 
     async def _forward_call_to_handle(
@@ -393,9 +379,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         args: tuple | list | None = None,
         kwargs: dict | None = None,
         fallback: tuple[str, ...] = (),
+        had_passthrough: bool | None = None,
     ) -> None:
-        # Check current passthrough handles first so we can record this fact.
-        handles = self._iter_passthrough_handles()
         # Record the steering event with a timestamp for later replay at adoption time.
         try:
             from time import perf_counter as _pc  # local import to avoid top pollution
@@ -407,21 +392,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             "args": tuple(args or ()),
             "kwargs": dict(kwargs or {}),
             "fallback": tuple(fallback or ()),
-            "had_passthrough": bool(handles),
+            "had_passthrough": bool(had_passthrough),
         }
         try:
             self._steer_log.append(rec)
         except Exception:
             pass
-        # Forward immediately to any active passthrough handles (multicast).
-        if handles:
-            for h in handles:
-                await self._forward_call_to_handle(
-                    h,
-                    method_name,
-                    rec["kwargs"],
-                    rec["fallback"],
-                )
 
     async def ask(
         self,
@@ -450,7 +426,26 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, parent_chat_context_cont)
 
-        # Unified steering: record and forward ask to any active passthrough handle(s)
+        # Immediate functional forward to any active passthrough handle(s)
+        had_pt = False
+        try:
+            task_info = getattr(self._task, "task_info", {})
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                h = getattr(_inf, "handle", None)
+                is_pt = getattr(_inf, "is_passthrough", False)
+                if h is not None and is_pt:
+                    had_pt = True
+                    await forward_handle_call(
+                        h,
+                        "ask",
+                        {"question": question, "images": images},
+                        fallback_positional_keys=("question", "content"),
+                    )
+        except Exception:
+            pass
+
+        # Record steer event (adoption will replay only when had_passthrough is False)
         await self._record_and_forward(
             "ask",
             kwargs={
@@ -458,6 +453,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
             },
+            had_passthrough=had_pt,
         )
 
         # 0.  Defensive guard: if the outer loop has already finished we can
@@ -680,10 +676,35 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
-        # No delegate forwarding – outer loop remains in control.
         # Record user-visible immediately
         self._append_user_visible_user(message, parent_chat_context_cont)
-        # Unified steering: record and forward to any active passthrough handle(s)
+
+        # Immediate functional forward to any active passthrough handle(s)
+        had_pt = False
+        try:
+            task_info = getattr(self._task, "task_info", {})
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                is_pt = getattr(_inf, "is_passthrough", False)
+                if not is_pt:
+                    continue
+                iq = getattr(_inf, "interject_queue", None)
+                h = getattr(_inf, "handle", None)
+                if iq is not None:
+                    had_pt = True
+                    await iq.put(message)
+                elif h is not None:
+                    had_pt = True
+                    await forward_handle_call(
+                        h,
+                        "interject",
+                        {"message": message, "images": images},
+                        fallback_positional_keys=("content", "message"),
+                    )
+        except Exception:
+            pass
+
+        # Record steer event (adoption will replay only when had_passthrough is False)
         await self._record_and_forward(
             "interject",
             kwargs={
@@ -692,6 +713,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "images": images,
             },
             fallback=("content", "message"),
+            had_passthrough=had_pt,
         )
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
@@ -742,17 +764,36 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 f"🛑 [{_label}] Stop requested"
                 + (f" – reason: {reason}" if reason else ""),
             )
-        # Do not directly forward stop to nested handles here; the inner loop
-        # will propagate stop exactly once during cancellation to avoid duplicates.
-        # No delegate forwarding – outer loop remains in control.
-
-        # Pre-adoption nested handles are stopped by the inner loop via propagate_stop_once.
+        # Immediate functional forward to any active passthrough handle(s)
+        had_pt = False
+        with suppress(Exception):
+            task_info = getattr(self._task, "task_info", {})
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                h = getattr(_inf, "handle", None)
+                is_pt = getattr(_inf, "is_passthrough", False)
+                if h is not None and is_pt and hasattr(h, "stop"):
+                    had_pt = True
+                    maybe = h.stop(reason)
+                    if asyncio.iscoroutine(maybe):
+                        asyncio.create_task(maybe)
 
         # Expedite shutdown of the outer task and signal stop_event for any waiters
         with suppress(Exception):
             self._task.cancel()
         with suppress(Exception):
             self._stop_event.set()
+        # Record steer event (best-effort)
+        try:
+            asyncio.create_task(
+                self._record_and_forward(
+                    "stop",
+                    kwargs={"reason": reason},
+                    had_passthrough=had_pt,
+                ),
+            )
+        except Exception:
+            pass
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
             self._queue.put_nowait(
@@ -770,19 +811,29 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def pause(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
-        # Propagate pause to any nested handles first (always)
+
+        # Immediate functional forward to any active passthrough handle(s)
+        had_pt = False
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
             for _t, _inf in items:
                 h = getattr(_inf, "handle", None)
-                if h is not None and hasattr(h, "pause"):
-                    with suppress(Exception):
-                        maybe = h.pause()  # may be sync or async
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
+                is_pt = getattr(_inf, "is_passthrough", False)
+                if h is not None and is_pt and hasattr(h, "pause"):
+                    had_pt = True
+                    maybe = h.pause()  # may be sync or async
+                    if asyncio.iscoroutine(maybe):
+                        asyncio.create_task(maybe)
 
         self._pause_event.clear()
+        # Record steer event (best-effort, async)
+        try:
+            asyncio.create_task(
+                self._record_and_forward("pause", kwargs={}, had_passthrough=had_pt),
+            )
+        except Exception:
+            pass
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
             self._queue.put_nowait(
@@ -800,18 +851,23 @@ class AsyncToolLoopHandle(SteerableToolHandle):
     def resume(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
-        # Propagate resume to any nested handles first (always)
+        # Immediate functional forward to any active passthrough handle(s)
+        had_pt = False
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
             for _t, _inf in items:
                 h = getattr(_inf, "handle", None)
-                if h is not None and hasattr(h, "resume"):
-                    with suppress(Exception):
-                        maybe = h.resume()  # may be sync or async
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
-            # Auto-resume base tools that were started in paused state while the outer loop was paused
+                is_pt = getattr(_inf, "is_passthrough", False)
+                if h is not None and is_pt and hasattr(h, "resume"):
+                    had_pt = True
+                    maybe = h.resume()  # may be sync or async
+                    if asyncio.iscoroutine(maybe):
+                        asyncio.create_task(maybe)
+        # Auto-resume base tools that were started in paused state while the outer loop was paused
+        with suppress(Exception):
+            task_info = getattr(self._task, "task_info", {})
+            items = task_info.items() if isinstance(task_info, dict) else []
             for _t, _inf in items:
                 h = getattr(_inf, "handle", None)
                 if h is None:
@@ -821,6 +877,13 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             ev.set()
 
         self._pause_event.set()
+        # Record steer event (best-effort, async)
+        try:
+            asyncio.create_task(
+                self._record_and_forward("resume", kwargs={}, had_passthrough=had_pt),
+            )
+        except Exception:
+            pass
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
             self._queue.put_nowait(
@@ -905,6 +968,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         with suppress(Exception):
             if down_q is not None:
                 await down_q.put(answer)
+        # Record steer event (best-effort)
+        try:
+            await self._record_and_forward(
+                "clarify",
+                kwargs={"call_id": call_id, "answer": answer},
+                had_passthrough=True,
+            )
+        except Exception:
+            pass
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
             await self._queue.put(
