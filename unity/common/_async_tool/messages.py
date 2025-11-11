@@ -351,6 +351,7 @@ def _is_helper_tool(name: str) -> bool:
         or name.startswith("resume_")
         or name.startswith("clarify_")
         or name.startswith("interject_")
+        or name.startswith("ask_")
     )
 
 

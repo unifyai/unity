@@ -29,6 +29,7 @@ from .messages import (
     find_unreplied_assistant_entries,
     chat_context_repr,
     generate_with_preprocess,
+    acknowledge_helper_call,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -47,7 +48,7 @@ from .images import (
     build_live_images_overview_msgs,
 )
 from .formatting import sanitize_tool_msg_for_logging
-from ..llm_helpers import method_to_schema, _dumps
+from ..llm_helpers import method_to_schema, _dumps, short_id
 from .loop_config import (
     LoopConfig,
     TOOL_LOOP_LINEAGE,
@@ -860,6 +861,175 @@ async def async_tool_loop_inner(
             # Never let synthetic injection crash the loop
             pass
 
+    # ── helper: synthesize mirrored helper tool_calls (no LLM step) ───────────
+    async def _synthesize_mirrored_helper_calls(
+        method: str,
+        payload: dict | None = None,
+    ) -> None:
+        """
+        Create an assistant message containing helper tool_calls that mirror a steering
+        command and immediately insert acknowledgement tool messages, then forward the
+        steering to the target child handles. This does NOT call the LLM.
+        """
+        payload = payload or {}
+
+        # Select targets
+        targets: list[Tuple[asyncio.Task, ToolCallMetadata]] = []
+        # Special-case clarify: target by call_id if provided
+        target_call_id = None
+        with suppress(Exception):
+            target_call_id = payload.get("call_id")
+        if isinstance(target_call_id, str) and target_call_id:
+            for t, inf in list(tools_data.info.items()):
+                try:
+                    if str(inf.call_id) == target_call_id or str(inf.call_id).endswith(
+                        target_call_id,
+                    ):
+                        targets.append((t, inf))
+                        break
+                except Exception:
+                    continue
+        else:
+            for t, inf in list(tools_data.info.items()):
+                try:
+                    if getattr(inf, "is_passthrough", False) and inf.handle is not None:
+                        targets.append((t, inf))
+                except Exception:
+                    continue
+        if not targets:
+            return
+
+        # Build one assistant message with multiple tool_calls
+        tool_calls = []
+        args_by_id: dict[str, Any] = {}
+        for _t, inf in targets:
+            try:
+                base = str(method or "").lower().strip()
+                helper_name = f"{base}_{inf.name}_{str(inf.call_id)[-6:]}"
+                # Normalise arguments per helper convention
+                args: dict[str, Any] = {}
+                if base == "interject":
+                    msg = payload.get("message") or payload.get("content")
+                    if msg is not None:
+                        args["content"] = msg
+                    if "images" in payload:
+                        args["images"] = payload.get("images")
+                elif base == "ask":
+                    q = payload.get("question")
+                    if q is not None:
+                        args["question"] = q
+                    if "images" in payload:
+                        args["images"] = payload.get("images")
+                elif base == "stop":
+                    if "reason" in payload:
+                        args["reason"] = payload.get("reason")
+                elif base == "clarify":
+                    if "answer" in payload:
+                        args["answer"] = payload.get("answer")
+                # pause/resume carry no args
+                call_id = f"mirror_{short_id(6)}"
+                tool_calls.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": helper_name,
+                            "arguments": json.dumps(args or {}),
+                        },
+                    },
+                )
+                args_by_id[call_id] = (helper_name, args, inf)
+            except Exception:
+                continue
+
+        if not tool_calls:
+            return
+
+        # Append assistant message with tool_calls
+        assistant_msg = {"role": "assistant", "content": "", "tool_calls": tool_calls}
+        await _msg_dispatcher.append_msgs([assistant_msg])
+        with suppress(Exception):
+            await to_event_bus(assistant_msg, cfg)
+        assistant_meta[id(assistant_msg)] = {"results_count": 0}
+
+        # If images accompany interject/ask, append to live registry and inject overview
+        with suppress(Exception):
+            imgs = payload.get("images")
+            if imgs is not None and append_images_with_source(imgs):
+                await _inject_live_images_overview(f"{method}_helper_images")
+
+        # Insert ack tool messages and forward steering immediately
+        for call in tool_calls:
+            try:
+                cid = call.get("id")
+                if not isinstance(cid, str):
+                    continue
+                name, args, inf = args_by_id.get(cid, (None, None, None))
+                if not isinstance(name, str) or inf is None:
+                    continue
+                # Ack message
+                with suppress(Exception):
+                    await acknowledge_helper_call(  # type: ignore[name-defined]
+                        assistant_msg,
+                        cid,
+                        name,
+                        call["function"].get("arguments", "{}"),
+                        assistant_meta=assistant_meta,
+                        client=client,
+                        msg_dispatcher=_msg_dispatcher,
+                    )
+
+                # Forward steering to child handle or channels
+                base = str(method or "").lower().strip()
+                h = inf.handle
+                if base == "interject":
+                    iq = inf.interject_queue
+                    new_text = args.get("content")
+                    if iq is not None:
+                        await iq.put(new_text)
+                    elif h is not None:
+                        await forward_handle_call(
+                            h,
+                            "interject",
+                            {"message": new_text, "images": args.get("images")},
+                            fallback_positional_keys=["content", "message"],
+                        )
+                elif base == "ask":
+                    if h is not None:
+                        await forward_handle_call(
+                            h,
+                            "ask",
+                            {
+                                "question": args.get("question"),
+                                "images": args.get("images"),
+                            },
+                            fallback_positional_keys=["question", "content"],
+                        )
+                elif base == "pause":
+                    if h is not None and hasattr(h, "pause"):
+                        maybe = h.pause()
+                        if asyncio.iscoroutine(maybe):
+                            await maybe
+                elif base == "resume":
+                    if h is not None and hasattr(h, "resume"):
+                        maybe = h.resume()
+                        if asyncio.iscoroutine(maybe):
+                            await maybe
+                elif base == "stop":
+                    if h is not None and hasattr(h, "stop"):
+                        maybe = h.stop(args.get("reason"))
+                        if asyncio.iscoroutine(maybe):
+                            await maybe
+                elif base == "clarify":
+                    # deliver to the clarification down queue if available
+                    with suppress(Exception):
+                        if inf.call_id in tools_data.clarification_channels:
+                            _up, _down = tools_data.clarification_channels[inf.call_id]
+                            if _down is not None:
+                                await _down.put(args.get("answer"))
+            except Exception:
+                continue
+
     # ── initial **user** message (single-message path)
     if seeded_batch is None:
         if isinstance(message, dict):
@@ -1178,6 +1348,20 @@ async def async_tool_loop_inner(
                     break
 
                 llm_turn_required = True
+                # Mirrored steering sentinel: synthesize helper tool_calls immediately
+                try:
+                    if isinstance(extra, dict) and "_mirror" in extra:
+                        _ms = extra.get("_mirror") or {}
+                        _m = _ms.get("method")
+                        _kw = _ms.get("kwargs") or {}
+                        if isinstance(_m, str) and _m:
+                            await _synthesize_mirrored_helper_calls(
+                                _m,
+                                _kw if isinstance(_kw, dict) else {},
+                            )
+                            continue
+                except Exception:
+                    pass
                 # Special sentinel: request immediate LLM turn without creating a new system message
                 try:
                     if isinstance(extra, dict) and extra.get("_replay"):

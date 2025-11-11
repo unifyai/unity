@@ -613,6 +613,59 @@ class ToolsData:
                             fb if isinstance(fb, (list, tuple)) else ()
                         ),
                     )
+                    # Also mirror as a synthetic helper tool_call and acknowledgement (no LLM step)
+                    try:
+                        base = method.lower().strip()
+                        helper_name = f"{base}_{info.name}_{str(info.call_id)[-6:]}"
+                        # Build assistant message with a single tool_call
+                        call_id = f"mirror_{int(time.perf_counter()*1000)}"
+                        args_json = {}
+                        if base == "interject":
+                            msg = (kwargs or {}).get("message") or (kwargs or {}).get(
+                                "content",
+                            )
+                            if msg is not None:
+                                args_json["content"] = msg
+                        elif base == "ask":
+                            q = (kwargs or {}).get("question")
+                            if q is not None:
+                                args_json["question"] = q
+                        elif base == "stop":
+                            if "reason" in (kwargs or {}):
+                                args_json["reason"] = kwargs.get("reason")
+                        elif base == "clarify":
+                            if "answer" in (kwargs or {}):
+                                args_json["answer"] = kwargs.get("answer")
+                        asst_msg = {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": helper_name,
+                                        "arguments": json.dumps(args_json or {}),
+                                    },
+                                },
+                            ],
+                        }
+                        await msg_dispatcher.append_msgs([asst_msg])
+                        # Ensure assistant_meta bookkeeping before inserting ack
+                        assistant_meta[id(asst_msg)] = {"results_count": 0}
+                        from .messages import acknowledge_helper_call  # local import
+
+                        await acknowledge_helper_call(
+                            asst_msg,
+                            call_id,
+                            helper_name,
+                            json.dumps(args_json or {}),
+                            assistant_meta=assistant_meta,
+                            client=self._client,
+                            msg_dispatcher=msg_dispatcher,
+                        )
+                    except Exception:
+                        pass
                 try:
                     if not getattr(_outer, "_pause_event", None).is_set() and hasattr(
                         child_handle,
