@@ -2617,19 +2617,20 @@ async def async_tool_loop_inner(
                                     payload,
                                     tools_data.info[tgt_task],
                                 )
-                        tool_msg = create_tool_call_message(
-                            name=pretty_name,
-                            call_id=call["id"],
-                            content=f'Question "{question}" forwarded to the running tool.',
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            msg,
-                            tool_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
-                        continue
+                            tool_msg = create_tool_call_message(
+                                name=pretty_name,
+                                call_id=call["id"],
+                                content=f'Question "{question}" forwarded to the running tool.',
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue
+                        # No matching target child – treat as a BASE tool call (do not continue)
 
                     # Respect hidden per-tool total-call quotas (pre-pruned); guard
                     if tools_data.has_exceeded_quota_for_tool(name):
