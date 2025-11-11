@@ -933,3 +933,86 @@ async def test_dynamic_helpers_hide_get_history_for_async_handle(client):
     # Let the nested loop finish so the test can complete cleanly
     final = await outer.result()
     assert final.strip().lower() in {"ok"}
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_new_tool_scheduled_while_paused_starts_paused(client, monkeypatch):
+    """
+    A base tool scheduled AFTER the outer handle is paused must start paused
+    (its `_pause_event` is cleared). Before the change, the event started set.
+    """
+    # Patch the loop's LLM call to emit a tool-call only AFTER we pause
+    from unity.common._async_tool import loop as _loop
+
+    llm_started = asyncio.Event()
+    release_llm = asyncio.Event()
+    orig_gwp = _loop.generate_with_preprocess
+
+    async def _fake_gwp(_client, preprocess_msgs, **gen_kwargs):
+        # Signal that LLM thinking has started
+        llm_started.set()
+        # Wait until the test allows the LLM to finish (after outer pause)
+        await release_llm.wait()
+        # Emit a single assistant turn that calls `pausable_fn` with no args
+        _client.messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_fake_1",
+                        "type": "function",
+                        "function": {"name": "pausable_fn", "arguments": "{}"},
+                    },
+                ],
+            },
+        )
+        return {"ok": True}
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
+
+    # Base tool that records the initial pause state immediately on start
+    initial_pause_state = {"value": None}
+
+    async def pausable_fn(*, _pause_event: asyncio.Event) -> str:
+        try:
+            initial_pause_state["value"] = _pause_event.is_set()
+        except Exception:
+            initial_pause_state["value"] = None
+        return "ok"
+
+    pausable_fn.__name__ = "pausable_fn"
+    pausable_fn.__qualname__ = "pausable_fn"
+
+    client.set_system_message(
+        "When you respond, call `pausable_fn` exactly once and then finish.",
+    )
+
+    # Start loop, immediately pause, then release the LLM patch to schedule tool
+    h = start_async_tool_loop(
+        client=client,
+        message="start",
+        tools={"pausable_fn": pausable_fn},
+        timeout=120,
+        max_steps=20,
+    )
+
+    # Ensure the LLM step actually started, then pause the outer handle
+    await asyncio.wait_for(llm_started.wait(), timeout=30)
+    h.pause()
+    # Allow the patched LLM to proceed and return the tool-call while paused
+    release_llm.set()
+
+    # Wait until the tool result for `pausable_fn` appears
+    await _wait_for_tool_message_prefix(client, "pausable_fn")
+
+    # The tool must have observed an initial paused state (event cleared)
+    assert (
+        initial_pause_state["value"] is False
+    ), "newly scheduled tool did not start paused"
+
+    # Cleanup: stop the loop and restore original LLM generator
+    h.stop("test cleanup")
+    await h.result()
+    monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)
