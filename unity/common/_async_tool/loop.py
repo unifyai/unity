@@ -958,8 +958,8 @@ async def async_tool_loop_inner(
             if imgs is not None and append_images_with_source(imgs):
                 await _inject_live_images_overview(f"{method}_helper_images")
 
-        # Insert ack tool messages (no additional forwarding here; forwarding is handled
-        # immediately by handle methods or by adoption-time replay for not-yet-adopted children)
+        # Insert ack tool messages (forwarding already occurred via mirror synthesis
+        # or via adoption-time replay for not-yet-adopted children)
         for call in tool_calls:
             try:
                 cid = call.get("id")
@@ -1169,7 +1169,7 @@ async def async_tool_loop_inner(
 
     try:
         while True:
-            # ── 0-Ø. Immediate handover for passthrough delegates ─────────────
+            # ── 0-Ø. Main loop tick start ─────────────────────────────────────
 
             # ── 0-α-P. Global *pause* gate  ────────────────────────────
             # Keep handling tool completions & cancellation, but *never*
@@ -1590,7 +1590,7 @@ async def async_tool_loop_inner(
                 )
                 continue  # still waiting for other tool tasks
 
-            # ── No passthrough delegate; outer loop continues scheduling ──────
+            # ── Continue scheduling / planning ────────────────────────────────
 
             # ── C.  Add temporary tools so the LLM can **continue** or **cancel**
             #       any still‑running tool calls ────────────────────────────────
