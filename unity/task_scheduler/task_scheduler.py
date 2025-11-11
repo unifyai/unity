@@ -13,15 +13,16 @@ import os
 import unify
 import asyncio
 import functools
+import json
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable, Tuple
 from typing import Literal, overload
 from dataclasses import dataclass
-from pydantic import BaseModel, Field
 
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
+    short_id,
 )
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -36,6 +37,7 @@ from .types.trigger import Trigger
 from .types.repetition import RepeatPattern, Frequency, Weekday
 from .types.task import TaskBase, Task
 from .types.activated_by import ActivatedBy
+from .types.queue_plan import QueuePlan
 
 # ------------------------------------------------------------------ #
 #  Local type aliases                                                 #
@@ -397,9 +399,9 @@ class TaskScheduler(BaseTaskScheduler):
             pass
         # Fallback: per-task validated writes
         for tid, write_entries in entries_by_tid.items():
-            row = self._get_single_row_or_raise(int(tid))
+            row = self._get_single_row_or_raise(tid)
             self._validated_write(
-                task_id=int(tid),
+                task_id=tid,
                 entries=write_entries,
                 err_prefix=f"While batched-writing entries (task {tid}):",
                 current_row=row,
@@ -412,12 +414,10 @@ class TaskScheduler(BaseTaskScheduler):
 
         Expects rows as simple dicts with a 'schedule' key; ignores non-dict entries.
         """
-        for r in rows or []:
-            if not isinstance(r, dict):
-                continue
-            sched = r.get("schedule") or {}
-            if (sched or {}).get("prev_task") is None:
-                return (sched or {}).get("start_at")
+        for r in rows:
+            sched = r.get("schedule", {})
+            if sched.get("prev_task") is None:
+                return sched.get("start_at")
         return None
 
     # Public #
@@ -529,21 +529,14 @@ class TaskScheduler(BaseTaskScheduler):
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self.get_tools("update"))
 
-        # Bind to shared scheduler helpers to avoid duplication
-        validate_queue_plan = self.validate_queue_plan
-        apply_queue_plan = self.apply_queue_plan
-        checkpoint_queue_state = self.checkpoint_queue_state
-        revert_to_checkpoint = self.revert_to_checkpoint
-        get_latest_checkpoint = self.get_latest_checkpoint
-
         # Merge these helpers into the update toolset
         tools.update(
             methods_to_tool_dict(
-                validate_queue_plan,
-                apply_queue_plan,
-                checkpoint_queue_state,
-                revert_to_checkpoint,
-                get_latest_checkpoint,
+                self.validate_queue_plan,
+                self.apply_queue_plan,
+                self.checkpoint_queue_state,
+                self.revert_to_checkpoint,
+                self.get_latest_checkpoint,
                 self._set_queue,
                 self._set_schedules_atomic,
                 include_class_name=False,
@@ -1987,9 +1980,7 @@ class TaskScheduler(BaseTaskScheduler):
         ]
 
         # Single-pass index for constant-time next lookups within this tool call
-        rows_by_id: Dict[int, Task] = {}
-        for r in rows:
-            rows_by_id[r.task_id] = r
+        rows_by_id: Dict[int, Task] = {r.task_id: r for r in rows}
 
         # Heads are rows with prev_task == None
         heads: list[Task] = [
@@ -2017,32 +2008,24 @@ class TaskScheduler(BaseTaskScheduler):
             cur = h
             order_for_q: list[int] = []
             while cur is not None:
-                try:
-                    tid_val = cur.task_id
-                    tid_int = int(tid_val) if tid_val is not None else None
-                except Exception:
-                    tid_int = None
-                if isinstance(tid_int, int):
-                    if tid_int in seen:
+                task_id = cur.task_id
+                if task_id is not None:
+                    if task_id in seen:
                         break
-                    seen.add(tid_int)
+                    seen.add(task_id)
                     size += 1
-                    order_for_q.append(tid_int)
+                    order_for_q.append(task_id)
                 nxt = cur.schedule_next
                 if nxt is None:
                     break
-                try:
-                    nxt_int = int(nxt)
-                except Exception:
-                    break
-                cur = rows_by_id.get(nxt_int)
+                cur = rows_by_id.get(nxt)
 
             # Update reconstructed caches
             if order_for_q:
-                new_queue_index[int(qid)] = list(order_for_q)
+                new_queue_index[qid] = list(order_for_q)
                 for _tid in order_for_q:
-                    new_task_to_queue[int(_tid)] = int(qid)
-                new_head_start_at[int(qid)] = start_at
+                    new_task_to_queue[_tid] = qid
+                new_head_start_at[qid] = start_at
 
             out.append(
                 {
@@ -2090,10 +2073,7 @@ class TaskScheduler(BaseTaskScheduler):
             return []
 
         # Fast-path via LocalTaskView with a single minimal read.
-        if queue_id is not None:
-            member_ids = list(self._view.get_member_ids(queue_id) or [])
-        else:
-            member_ids = []
+        member_ids = list(self._view.get_member_ids(queue_id) or [])
 
         if member_ids:
             fields_needed: List[str] = self._queue_member_fields()
@@ -2159,9 +2139,7 @@ class TaskScheduler(BaseTaskScheduler):
             head = head_candidates[0]
 
         # Build id -> row map for O(1) next lookups without further backend reads
-        task_by_id: Dict[int, Task] = {}
-        for r in rows_in_queue:
-            task_by_id[r.task_id] = r
+        task_by_id: Dict[int, Task] = {r.task_id: r for r in rows_in_queue}
 
         # Walk head→tail using next_task pointers in-memory
         ordered: List[Task] = []
@@ -2372,7 +2350,7 @@ class TaskScheduler(BaseTaskScheduler):
             fields=minimal_fields,
         )
         # Trim to ids we actually care about (defensive and deterministic order)
-        rows_by_id = {int(tid): rows_by_id.get(int(tid), {}) for tid in new_order}
+        rows_by_id = {tid: rows_by_id.get(tid, {}) for tid in new_order}
 
         # Compute invariant-preserving plan
         updates_per_log: Dict[int, Dict[str, Any]] = plan_reorder_queue(
@@ -2387,8 +2365,8 @@ class TaskScheduler(BaseTaskScheduler):
         to_write_ids: list[int] = []
         to_write_entries: list[Dict[str, Any]] = []
         for tid in new_order:
-            payload = updates_per_log.get(int(tid)) or {}
-            cur_row = rows_by_id.get(int(tid)) or {}
+            payload = updates_per_log.get(tid) or {}
+            cur_row = rows_by_id.get(tid) or {}
             cur_sched = {**(cur_row.get("schedule") or {})}
             desired_sched = {**(payload.get("schedule") or {})}
             need_status = False
@@ -2409,10 +2387,10 @@ class TaskScheduler(BaseTaskScheduler):
             self._write_log_entries(logs=to_write_ids, entries=to_write_entries)
 
         # Auto-checkpoint after successful edit (best-effort)
+        head_start = None
+        last_checkpoint_id = None
         try:
-            from ..common.llm_helpers import short_id as _short_id  # local import
-
-            cid = _short_id(8)
+            cid = short_id(8)
             snap = {"label": "auto:_reorder_queue", "queues": []}
             head_start = self._head_start_at_from_rows(list(rows_by_id.values()))
             snap["queues"].append(
@@ -2424,14 +2402,14 @@ class TaskScheduler(BaseTaskScheduler):
                 },
             )
             self._queue_checkpoints[cid] = snap
-            _last_checkpoint_id = cid  # noqa: F841
+            last_checkpoint_id = cid  # noqa: F841
         except Exception:
-            head_start = locals().get("head_start", None)  # type: ignore[assignment]
+            pass
 
         # Best-effort: refresh LocalTaskView
         if queue_id_exists:
             self._view.update_after_reorder(
-                queue_id=int(queue_id),
+                queue_id=queue_id,
                 new_order=list(new_order),
                 head_start_at=head_start,
             )
@@ -2441,7 +2419,7 @@ class TaskScheduler(BaseTaskScheduler):
             "details": {
                 "queue_id": queue_id,
                 "new_order": new_order,
-                "checkpoint_id": locals().get("_last_checkpoint_id"),
+                "checkpoint_id": last_checkpoint_id,
             },
         }
 
@@ -2493,25 +2471,18 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Determine each task's current queue (prefer local index; reuse prefetched rows)
         source_qid_by_tid: Dict[int, Optional[int]] = {}
-        try:
-            for tid in block:
-                qid = self._view.get_queue_id_for_task(int(tid))
-                if isinstance(qid, int):
-                    source_qid_by_tid[int(tid)] = int(qid)
-        except Exception:
-            pass
+        for tid in block:
+            qid = self._view.get_queue_id_for_task(tid)
+            if qid is not None:
+                source_qid_by_tid[tid] = qid
         # For any remaining ids, reuse the single consolidated read done above
-        missing = [t for t in block if int(t) not in source_qid_by_tid]
+        missing = [t for t in block if t not in source_qid_by_tid]
         if missing:
-            by_id = {int(r.task_id): r for r in (rows or [])}
+            by_id = {r.task_id: r for r in rows}
             for t in missing:
-                row = by_id.get(int(t))
-                try:
-                    source_qid_by_tid[int(t)] = (
-                        row.queue_id if isinstance(row, dict) else None
-                    )
-                except Exception:
-                    source_qid_by_tid[int(t)] = None
+                row = by_id.get(t)
+                if row is not None:
+                    source_qid_by_tid[t] = row.queue_id
 
         # Allocate target queue id when requested (new queue)
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
@@ -2525,7 +2496,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Build target queue's existing order once (prefer local index)
         try:
             if target_qid is not None:
-                tgt_existing = list(self._view.get_member_ids(int(target_qid)) or [])
+                tgt_existing = list(self._view.get_member_ids(target_qid) or [])
             else:
                 tgt_existing = []
             if not tgt_existing:
@@ -2547,12 +2518,12 @@ class TaskScheduler(BaseTaskScheduler):
 
         # For each source queue (excluding target), compute reduced order
         source_qids: set[int] = {
-            int(q)
-            for q in (source_qid_by_tid.get(int(t)) for t in block)
-            if isinstance(q, int)
+            q_id
+            for q_id in (source_qid_by_tid.get(t) for t in block)
+            if q_id is not None
         }
         if target_qid is not None and target_qid in source_qids:
-            source_qids.discard(int(target_qid))
+            source_qids.discard(target_qid)
 
         def _current_order_for(qid: int) -> List[int]:
             try:
@@ -2589,10 +2560,7 @@ class TaskScheduler(BaseTaskScheduler):
         if tgt_new_order:
             # Apply target queue materialization in one batch using the core primitive
             set_res = self._set_queue(queue_id=target_qid, order=tgt_new_order)
-            try:
-                target_qid = set_res.get("details", {}).get("queue_id", target_qid)
-            except Exception:
-                pass
+            target_qid = set_res.get("details", {}).get("queue_id", target_qid)
             checkpoint_id = set_res.get("details", {}).get("checkpoint_id")
 
         return {
@@ -2662,7 +2630,7 @@ class TaskScheduler(BaseTaskScheduler):
         active_tid: Optional[int] = None
         try:
             if self._active_task is not None:
-                active_tid = int(self._active_task.task_id)
+                active_tid = self._active_task.task_id
         except Exception:
             active_tid = None
 
@@ -2670,8 +2638,8 @@ class TaskScheduler(BaseTaskScheduler):
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
         # Keep the allocator in sync when a new queue becomes materialized here
         try:
-            if isinstance(target_qid, int):
-                self._view.sync_max_queue_id_seen(int(target_qid))
+            if target_qid is not None:
+                self._view.sync_max_queue_id_seen(target_qid)
         except Exception:
             pass
 
@@ -2703,7 +2671,7 @@ class TaskScheduler(BaseTaskScheduler):
                     filter=(
                         "schedule is not None and "
                         "status not in ('completed','cancelled','failed') and "
-                        f"queue_id == {int(target_qid)}"
+                        f"queue_id == {target_qid}"
                     ),
                 )
             except Exception:
@@ -2715,29 +2683,20 @@ class TaskScheduler(BaseTaskScheduler):
 
             # Compute existing head start_at locally to avoid an unfiltered scan
             if queue_start_at is None and existing_head_start is None:
-                try:
-                    for r in rows_in_queue:
-                        if r.schedule_prev is None:
-                            existing_head_start = r.schedule_start_at
-                            break
-                except Exception:
-                    pass
+                for r in rows_in_queue:
+                    if r.schedule_prev is None:
+                        existing_head_start = r.schedule_start_at
+                        break
 
         # Fallback using already-fetched rows when available (only scans 'order')
         if queue_start_at is None and existing_head_start is None:
-            try:
-                for _tid in order:
-                    _row = rows_by_id.get(int(_tid))
-                    if not _row:
-                        continue
-                    if (
-                        _row.schedule_start_at is not None
-                        and _row.schedule_prev is None
-                    ):
-                        existing_head_start = _row.schedule_start_at
-                        break
-            except Exception:
-                pass
+            for _tid in order:
+                _row = rows_by_id.get(_tid)
+                if not _row:
+                    continue
+                if _row.schedule_start_at is not None and _row.schedule_prev is None:
+                    existing_head_start = _row.schedule_start_at
+                    break
 
         to_remove: List[int] = [tid for tid in current_members if tid not in order]
 
@@ -2791,12 +2750,12 @@ class TaskScheduler(BaseTaskScheduler):
             write_entries: Dict[str, Any] = {"schedule": sched, "queue_id": target_qid}
 
             # Fetch current row once for status derivation and no-op detection
-            row = rows_by_id.get(int(tid)) or self._get_single_row_or_raise(int(tid))
+            row = rows_by_id.get(tid) or self._get_single_row_or_raise(tid)
             existing_status = row.status
             is_head = idx == 0
             head_has_start_at = "start_at" in sched
 
-            if not (active_tid is not None and int(tid) == int(active_tid)):
+            if not (active_tid is not None and tid == active_tid):
                 # Centralized derivation; non-head cannot remain primed
                 derived_status = derive_status_after_queue_edit(
                     existing_status=existing_status,
@@ -2837,12 +2796,11 @@ class TaskScheduler(BaseTaskScheduler):
         # No additional start_at write needed – applied on head above
 
         # Auto-checkpoint (avoid extra reads by using local state)
+        last_checkpoint_id = None
         try:
-            from ..common.llm_helpers import short_id as _short_id  # local import
-
-            cid = _short_id(8)
+            cid = short_id(8)
             snap = {"label": "auto:_set_queue", "queues": []}
-            order_now = list(int(x) for x in order)
+            order_now = list(order)
             # Prefer explicit queue_start_at; else preserve the captured head start
             head_start = (
                 queue_start_at if queue_start_at is not None else existing_head_start
@@ -2856,21 +2814,21 @@ class TaskScheduler(BaseTaskScheduler):
                 },
             )
             self._queue_checkpoints[cid] = snap
-            _last_checkpoint_id = cid  # noqa: F841
+            last_checkpoint_id = cid  # noqa: F841
         except Exception:
             pass
 
         # Best-effort: refresh LocalTaskView membership mapping
         try:
-            if isinstance(target_qid, int):
+            if target_qid is not None:
                 _head_start_local = (
                     queue_start_at
                     if queue_start_at is not None
                     else existing_head_start
                 )
                 self._view.update_after_queue_materialized(
-                    queue_id=int(target_qid),
-                    order=[int(x) for x in order],
+                    queue_id=target_qid,
+                    order=order,
                     head_start_at=_head_start_local,
                 )
         except Exception:
@@ -2881,7 +2839,7 @@ class TaskScheduler(BaseTaskScheduler):
             "details": {
                 "queue_id": target_qid,
                 "order": list(order),
-                "checkpoint_id": locals().get("_last_checkpoint_id"),
+                "checkpoint_id": last_checkpoint_id,
             },
         }
 
@@ -3217,9 +3175,9 @@ class TaskScheduler(BaseTaskScheduler):
             )
             # Update LocalTaskView for the reduced source queue
             try:
-                if isinstance(source_qid, int):
+                if source_qid is not None:
                     self._view.update_after_queue_materialized(
-                        queue_id=int(source_qid),
+                        queue_id=source_qid,
                         order=list(first_list),
                         head_start_at=fstart,
                     )
@@ -3230,10 +3188,9 @@ class TaskScheduler(BaseTaskScheduler):
 
         details = {"default_queue": first_list, "new_queues": created}
         # Auto-checkpoint after successful edit (best-effort): capture only touched queues to avoid extra reads
+        last_checkpoint_id = None
         try:
-            from ..common.llm_helpers import short_id as _short_id  # local import
-
-            cid = _short_id(8)
+            cid = short_id(8)
             snap = {"label": "auto:_partition_queue", "queues": []}
             # Source queue snapshot (if any)
             if first_list:
@@ -3259,7 +3216,7 @@ class TaskScheduler(BaseTaskScheduler):
                     },
                 )
             self._queue_checkpoints[cid] = snap
-            _last_checkpoint_id = cid  # noqa: F841
+            last_checkpoint_id = cid  # noqa: F841
         except Exception:
             pass
 
@@ -3267,7 +3224,7 @@ class TaskScheduler(BaseTaskScheduler):
             "outcome": "queue partitioned",
             "details": {
                 **details,
-                "checkpoint_id": locals().get("_last_checkpoint_id"),
+                "checkpoint_id": last_checkpoint_id,
             },
         }
 
@@ -3872,22 +3829,12 @@ class TaskScheduler(BaseTaskScheduler):
 
     def validate_queue_plan(self, *, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
         """Validate a proposed queue plan (dict or JSON string) and return the normalised structure."""
-        import json as _json
-
-        class _LaterGroup(BaseModel):
-            task_ids: List[int] = Field(min_length=1)
-            queue_start_at: Optional[str] = None
-
-        class _QueuePlan(BaseModel):
-            now: List[int] = Field(min_length=1)
-            later_groups: List[_LaterGroup] = Field(default_factory=list)
-            notes: Optional[str] = None
 
         try:
-            parsed = _json.loads(plan) if isinstance(plan, str) else plan
+            parsed = json.loads(plan) if isinstance(plan, str) else plan
         except Exception as _e:  # noqa: N806
             raise ValueError(f"Invalid plan: {_e}")
-        model = _QueuePlan.model_validate(parsed)
+        model = QueuePlan.model_validate(parsed)
         preview: Dict[str, Any] = {"now": model.now, "later": []}
         for g in model.later_groups:
             preview["later"].append(
@@ -3900,22 +3847,12 @@ class TaskScheduler(BaseTaskScheduler):
 
     def apply_queue_plan(self, *, plan: Dict[str, Any] | str) -> Dict[str, Any]:  # type: ignore[valid-type]
         """Apply a validated queue plan atomically using invariant-preserving tools and checkpoint."""
-        import json as _json
-
-        class _LaterGroup(BaseModel):
-            task_ids: List[int] = Field(min_length=1)
-            queue_start_at: Optional[str] = None
-
-        class _QueuePlan(BaseModel):
-            now: List[int] = Field(min_length=1)
-            later_groups: List[_LaterGroup] = Field(default_factory=list)
-            notes: Optional[str] = None
 
         try:
-            parsed = _json.loads(plan) if isinstance(plan, str) else plan
+            parsed = json.loads(plan) if isinstance(plan, str) else plan
         except Exception as _e:
             raise ValueError(f"Invalid plan: {_e}")
-        model = _QueuePlan.model_validate(parsed)
+        model = QueuePlan.model_validate(parsed)
         if model.later_groups:
             parts = [{"task_ids": list(model.now)}] + [
                 {"task_ids": list(g.task_ids), "queue_start_at": g.queue_start_at}
@@ -3954,9 +3891,7 @@ class TaskScheduler(BaseTaskScheduler):
                 },
             )
 
-        from ..common.llm_helpers import short_id as _short_id  # local import
-
-        cid = _short_id(8)
+        cid = short_id(8)
         self._queue_checkpoints[cid] = snapshot
         return {"outcome": "checkpointed", "details": {"checkpoint_id": cid}}
 
