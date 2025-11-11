@@ -51,9 +51,7 @@ class _InterjectionRouter:
 
             def _safe_dump(value):
                 try:
-                    import json as _json  # local import
-
-                    return _json.dumps(value, default=str)
+                    return json.dumps(value, default=str)
                 except Exception:
                     return str(value)
 
@@ -126,9 +124,7 @@ class _InterjectionRouter:
                 raw = ""
 
             try:
-                import json as _json
-
-                data = _json.loads(raw)
+                data = json.loads(raw)
             except Exception:
                 return [], True
 
@@ -172,23 +168,20 @@ class _QueueSnapshot:
     def build_rows(scheduler: "TaskScheduler", current_task_id: int) -> list[dict]:
         """Build a compact queue snapshot (head→tail) using the scheduler's live view."""
         try:
-            queue = scheduler._get_queue_for_task(task_id=current_task_id) or []
+            queue = scheduler._get_queue_for_task(task_id=current_task_id)
         except Exception:
             queue = []
         out: list[dict] = []
         for t in queue:
-            try:
-                out.append(
-                    {
-                        "task_id": getattr(t, "task_id", None),
-                        "name": getattr(t, "name", None),
-                        "description": getattr(t, "description", None),
-                        "status": getattr(t, "status", None),
-                        "schedule": getattr(t, "schedule", None),
-                    },
-                )
-            except Exception:
-                continue
+            out.append(
+                {
+                    "task_id": t.task_id,
+                    "name": t.name,
+                    "description": t.description,
+                    "status": t.status,
+                    "schedule": t.schedule,
+                },
+            )
         return out
 
     @staticmethod
@@ -210,25 +203,21 @@ class _QueueSnapshot:
                     scheduler._walk_queue_from_task(  # type: ignore[attr-defined]
                         task_id=int(current_task_id),
                     )
-                    or []
                 )
             except Exception:
                 _full_chain = []
 
             full_rows: list[dict] = []
             for t in _full_chain:
-                try:
-                    full_rows.append(
-                        {
-                            "task_id": getattr(t, "task_id", None),
-                            "name": getattr(t, "name", None),
-                            "description": getattr(t, "description", None),
-                            "status": getattr(t, "status", None),
-                            "schedule": getattr(t, "schedule", None),
-                        },
-                    )
-                except Exception:
-                    continue
+                full_rows.append(
+                    {
+                        "task_id": t.task_id,
+                        "name": t.name,
+                        "description": t.description,
+                        "status": t.status,
+                        "schedule": t.schedule,
+                    },
+                )
 
             # Compute indices against both views
             total_count_runnable = len(queue_rows)
