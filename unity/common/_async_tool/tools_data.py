@@ -624,9 +624,34 @@ class ToolsData:
                     args = rec.get("args") or ()
                     kwargs = rec.get("kwargs") or {}
                     fb = rec.get("fallback") or ()
+                    # For custom methods (non built-ins), only replay when the child supports it
+                    is_builtin = _m_base in (
+                        "interject",
+                        "ask",
+                        "pause",
+                        "resume",
+                        "stop",
+                        "clarify",
+                    )
+                    if not is_builtin:
+                        try:
+                            has_exact = callable(getattr(child_handle, method, None))
+                        except Exception:
+                            has_exact = False
+                        try:
+                            has_base = callable(getattr(child_handle, _m_base, None))
+                        except Exception:
+                            has_base = False
+                        if not (has_exact or has_base):
+                            # Skip replay and do not synthesize mirrors when unsupported
+                            continue
+                        # Prefer exact name if present
+                        method_to_call = method if has_exact else _m_base
+                    else:
+                        method_to_call = method
                     await forward_handle_call(  # type: ignore[name-defined]
                         child_handle,
-                        method,
+                        method_to_call,
                         kwargs,
                         call_args=args if isinstance(args, (list, tuple)) else (),
                         fallback_positional_keys=(
