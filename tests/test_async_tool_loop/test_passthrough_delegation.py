@@ -927,8 +927,8 @@ async def test_early_ask_forwarded_on_adoption(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_resume_replayed_on_adoption(monkeypatch):
-    """pause()/resume() issued between scheduling and adoption are both replayed to the adopted passthrough handle."""
+async def test_adoption_syncs_pause_state_when_paused(monkeypatch):
+    """If the outer loop is paused at adoption time, the adopted passthrough handle receives pause() once."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
 
@@ -1000,22 +1000,124 @@ async def test_pause_resume_replayed_on_adoption(monkeypatch):
         tools={"spawn": spawn},
     )
 
-    # Ensure the tool is requested first so the steering occurs between scheduling and adoption
+    # Ensure the tool is requested first so the pause occurs between scheduling and adoption
     await _wait_for_tool_request(client, "spawn")
 
-    # EARLY steering: pause then resume BEFORE adoption
+    # Pause BEFORE adoption so adoption-time state sync applies pause() to the child
     outer.pause()
-    outer.resume()
 
     # Now allow adoption
     gate.set()
 
     from tests.test_async_tool_loop.async_helpers import _wait_for_condition
 
-    async def _seen_both():
-        return inner.paused >= 1 and inner.resumed >= 1
+    async def _paused_synced():
+        return inner.paused >= 1 and inner.resumed == 0
 
-    await _wait_for_condition(_seen_both, poll=0.01, timeout=60.0)
+    await _wait_for_condition(_paused_synced, poll=0.01, timeout=60.0)
 
-    assert inner.paused >= 1, "pause() was not replayed to the adopted handle"
-    assert inner.resumed >= 1, "resume() was not replayed to the adopted handle"
+    assert (
+        inner.paused >= 1
+    ), "pause() was not applied to the adopted handle when paused at adoption"
+    assert (
+        inner.resumed == 0
+    ), "resume() should not be applied at adoption when outer remains paused"
+
+    # Let the outer loop finish cleanly – paused outer cannot complete without resume
+    outer.resume()
+    await outer.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
+    """If the outer loop is resumed by adoption time, the adopted passthrough handle receives no pause/resume replay."""
+
+    from unity.common.async_tool_loop import SteerableToolHandle
+
+    class PauseResumeSpy(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+            self.paused = 0
+            self.resumed = 0
+
+        async def ask(self, question: str, **_):
+            return self
+
+        async def interject(self, message: str, **_):
+            return None
+
+        def stop(self, *_, **__):
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *_, **__):
+            self.paused += 1
+            return "paused"
+
+        def resume(self, *_, **__):
+            self.resumed += 1
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await asyncio.sleep(0.01)
+            self._done.set()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    gate = asyncio.Event()
+    inner = PauseResumeSpy()
+
+    async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
+        await gate.wait()
+        return inner
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
+        "Wait for it to finish before replying.",
+    )
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"spawn": spawn},
+    )
+
+    # Ensure the tool is requested first so the steering occurs between scheduling and adoption
+    await _wait_for_tool_request(client, "spawn")
+
+    # EARLY steering: pause then resume BEFORE adoption (outer is resumed at adoption)
+    outer.pause()
+    outer.resume()
+
+    # Now allow adoption
+    gate.set()
+
+    # Wait for outer loop to complete to ensure adoption occurred
+    await outer.result()
+
+    # Under new semantics, pause/resume are NOT replayed; since outer was resumed by adoption,
+    # no pause/resume should be applied to the child at adoption time.
+    assert (
+        inner.paused == 0
+    ), "pause() should not be replayed when outer is resumed by adoption"
+    assert inner.resumed == 0, "resume() should not be replayed at adoption"
