@@ -1498,3 +1498,169 @@ async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
     assert (
         helper_seen
     ), "expected assistant helper tool_call interject_* mirrored on adoption"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
+    """
+    Multi-child adoption: send interject after both delegates are scheduled but before
+    the second delegate returns its handle. Expect:
+      - immediate forward to the already-adopted child,
+      - replay to the newly adopted child on adoption,
+      - no duplication.
+    This would fail prior to per-child forwarded tracking (global had_passthrough)."""
+
+    from unity.common.async_tool_loop import SteerableToolHandle
+
+    early_msgs: list[str] = []
+    late_msgs: list[str] = []
+
+    class SpyHandle(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self, bucket: list[str]):
+            self._done = asyncio.Event()
+            self._bucket = bucket
+
+        async def ask(self, question: str, **_):
+            return self
+
+        async def interject(self, message: str, **_):
+            self._bucket.append(message)
+            return None
+
+        def stop(self, *_, **__):
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *_, **__):
+            return "paused"
+
+        def resume(self, *_, **__):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await asyncio.sleep(0.01)
+            self._done.set()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    early = SpyHandle(early_msgs)
+    late = SpyHandle(late_msgs)
+    gate = asyncio.Event()
+
+    async def delegate_early() -> SteerableToolHandle:  # type: ignore[name-defined]
+        return early
+
+    async def delegate_late() -> SteerableToolHandle:  # type: ignore[name-defined]
+        await gate.wait()
+        return late
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call both tools "
+        "`delegate_early` and `delegate_late` with no arguments, then wait for completion before replying.",
+    )
+
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"delegate_early": delegate_early, "delegate_late": delegate_late},
+    )
+
+    from tests.test_async_tool_loop.async_helpers import (
+        _wait_for_tool_request,
+        _wait_for_condition,
+    )
+
+    # Ensure both tools are scheduled
+    await _wait_for_tool_request(client, "delegate_early")
+    await _wait_for_tool_request(client, "delegate_late")
+
+    # Wait until exactly one passthrough handle is adopted (the early one)
+    async def _one_adopted(timeout: float = 5.0):
+        import time as _time
+
+        start = _time.perf_counter()
+        while _time.perf_counter() - start < timeout:
+            try:
+                ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    pts = [
+                        _inf
+                        for _inf in ti.values()
+                        if getattr(_inf, "handle", None) is not None
+                        and getattr(_inf, "is_passthrough", False)
+                    ]
+                    if len(pts) == 1:
+                        return True
+            except Exception:
+                pass
+            await asyncio.sleep(0)
+        return False
+
+    assert await _one_adopted(), "expected early delegate to be adopted first"
+
+    # Interject before late adoption
+    msg = "GUIDE_ONCE"
+    await outer.interject(msg)
+
+    # Allow late delegate to return its handle
+    gate.set()
+
+    # Wait for both handles to be adopted
+    async def _two_adopted(timeout: float = 5.0):
+        import time as _time
+
+        start = _time.perf_counter()
+        while _time.perf_counter() - start < timeout:
+            try:
+                ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    pts = [
+                        _inf
+                        for _inf in ti.values()
+                        if getattr(_inf, "handle", None) is not None
+                        and getattr(_inf, "is_passthrough", False)
+                    ]
+                    if len(pts) >= 2:
+                        return True
+            except Exception:
+                pass
+            await asyncio.sleep(0)
+        return False
+
+    assert await _two_adopted(), "expected both delegates to be adopted"
+
+    async def _both_once():
+        return early_msgs.count(msg) == 1 and late_msgs.count(msg) == 1
+
+    await _wait_for_condition(_both_once, poll=0.01, timeout=60.0)
+
+    assert (
+        early_msgs.count(msg) == 1
+    ), "early child should receive interject once (immediate)"
+    assert (
+        late_msgs.count(msg) == 1
+    ), "late child should receive interject once (replay)"
+
+    outer.stop("done")
+    await outer.result()
