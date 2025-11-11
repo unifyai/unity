@@ -892,8 +892,16 @@ async def async_tool_loop_inner(
         else:
             for t, inf in list(tools_data.info.items()):
                 try:
-                    if getattr(inf, "is_passthrough", False) and inf.handle is not None:
+                    if inf.handle is None:
+                        continue
+                    base_sel = str(method or "").lower().strip()
+                    # Control signals should propagate to ALL child handles (passthrough or not)
+                    if base_sel in ("pause", "resume", "stop"):
                         targets.append((t, inf))
+                    else:
+                        # Interject/ask remain restricted to passthrough children
+                        if getattr(inf, "is_passthrough", False):
+                            targets.append((t, inf))
                 except Exception:
                     continue
         if not targets:
@@ -958,8 +966,7 @@ async def async_tool_loop_inner(
             if imgs is not None and append_images_with_source(imgs):
                 await _inject_live_images_overview(f"{method}_helper_images")
 
-        # Insert ack tool messages (forwarding already occurred via mirror synthesis
-        # or via adoption-time replay for not-yet-adopted children)
+        # Insert ack tool messages and forward steering immediately to target handles
         for call in tool_calls:
             try:
                 cid = call.get("id")
@@ -979,6 +986,80 @@ async def async_tool_loop_inner(
                         client=client,
                         msg_dispatcher=_msg_dispatcher,
                     )
+                # Forward steering to child handle or channels
+                base = str(method or "").lower().strip()
+                h = inf.handle
+                if base == "interject":
+                    iq = inf.interject_queue
+                    new_text = args.get("content") if isinstance(args, dict) else None
+                    if iq is not None:
+                        await iq.put(new_text)
+                    elif h is not None:
+                        await forward_handle_call(
+                            h,
+                            "interject",
+                            {
+                                "message": new_text,
+                                "images": (
+                                    (args or {}).get("images")
+                                    if isinstance(args, dict)
+                                    else None
+                                ),
+                            },
+                            fallback_positional_keys=["content", "message"],
+                        )
+                elif base == "ask":
+                    if h is not None:
+                        await forward_handle_call(
+                            h,
+                            "ask",
+                            {
+                                "question": (
+                                    (args or {}).get("question")
+                                    if isinstance(args, dict)
+                                    else None
+                                ),
+                                "images": (
+                                    (args or {}).get("images")
+                                    if isinstance(args, dict)
+                                    else None
+                                ),
+                            },
+                            fallback_positional_keys=["question", "content"],
+                        )
+                elif base == "pause":
+                    if h is not None and hasattr(h, "pause"):
+                        maybe = h.pause()
+                        if asyncio.iscoroutine(maybe):
+                            await maybe
+                elif base == "resume":
+                    if h is not None and hasattr(h, "resume"):
+                        maybe = h.resume()
+                        if asyncio.iscoroutine(maybe):
+                            await maybe
+                elif base == "stop":
+                    if h is not None and hasattr(h, "stop"):
+                        reason = (
+                            (args or {}).get("reason")
+                            if isinstance(args, dict)
+                            else None
+                        )
+                        maybe = h.stop(reason)
+                        if asyncio.iscoroutine(maybe):
+                            await maybe
+                elif base == "clarify":
+                    # deliver to the clarification down queue if available
+                    with suppress(Exception):
+                        if inf.call_id in tools_data.clarification_channels:
+                            _up, _down = tools_data.clarification_channels[inf.call_id]
+                            if _down is not None:
+                                await _down.put(
+                                    (
+                                        (args or {}).get("answer")
+                                        if isinstance(args, dict)
+                                        else None
+                                    ),
+                                )
             except Exception:
                 continue
 
@@ -1175,6 +1256,30 @@ async def async_tool_loop_inner(
             # Keep handling tool completions & cancellation, but *never*
             # let the LLM speak while we're paused.
             if not pause_event.is_set():
+                # While paused, process any MIRROR steering sentinels immediately so control
+                # signals (pause/resume/stop/etc.) still reach child handles without waiting.
+                try:
+                    while True:
+                        try:
+                            _extra = interject_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        if isinstance(_extra, dict) and "_mirror" in _extra:
+                            _ms = _extra.get("_mirror") or {}
+                            _m = _ms.get("method")
+                            _kw = _ms.get("kwargs") or {}
+                            if isinstance(_m, str) and _m:
+                                await _synthesize_mirrored_helper_calls(
+                                    _m,
+                                    _kw if isinstance(_kw, dict) else {},
+                                )
+                            continue
+                        else:
+                            # Re-queue non-mirror entries for later processing once resumed
+                            await interject_queue.put(_extra)
+                            break
+                except Exception:
+                    pass
                 # Give any pending tool tasks a chance to finish OR wait until the
                 # loop is resumed / cancelled.  Every coroutine is wrapped in an
                 # asyncio.Task so `asyncio.wait()` is happy.
