@@ -1425,6 +1425,213 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_custom_method_only_propagates_to_matching_passthrough_handles(
+    monkeypatch,
+):
+    """
+    Outer has a custom steering method. Two passthrough children are in-flight:
+      - one child that implements the same custom method,
+      - one child using a standard outer handle (no custom method).
+    Assert: calling the outer custom steering method is delivered ONLY to the implementing child.
+    """
+    from unity.common.async_tool_loop import custom_steering_method
+
+    # Custom outer handle exposing a custom steering method
+    class CustomOuterHandle(AsyncToolLoopHandle):  # type: ignore[misc]
+        @custom_steering_method()
+        def append_to_queue(self, payload: str) -> None:
+            # No local effect; decorator handles record + mirror
+            return None
+
+    # Passthrough child that implements the custom method
+    class ChildCustomHandle(AsyncToolLoopHandle):  # type: ignore[misc]
+        __passthrough__ = True
+
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.received: list[str] = []
+            # Gate to keep the child "in flight" while the test asserts propagation
+            self._done_gate: asyncio.Event = asyncio.Event()
+
+        def append_to_queue(self, payload: str) -> str:
+            self.received.append(payload)
+            return "ok"
+
+        async def result(self) -> str:  # type: ignore[override]
+            await self._done_gate.wait()
+            return "ok"
+
+    # Passthrough child with NO custom method
+    class BasePassthroughHandle(AsyncToolLoopHandle):  # type: ignore[misc]
+        __passthrough__ = True
+
+        # No append_to_queue method on purpose
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self._done_gate: asyncio.Event = asyncio.Event()
+
+        async def result(self) -> str:  # type: ignore[override]
+            await self._done_gate.wait()
+            return "ok"
+
+    # Two inner clients
+    client_one = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client_two = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+
+    @unify.traced
+    async def noop():
+        return "ok"
+
+    # Build two delegates: one returns ChildCustomHandle; the other BasePassthroughHandle
+    async def delegate_custom() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
+        h = start_async_tool_loop(
+            client_one,
+            message="noop",
+            tools={"noop": noop},
+            handle_cls=ChildCustomHandle,
+        )
+        return h
+
+    async def delegate_base() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
+        h = start_async_tool_loop(
+            client_two,
+            message="noop",
+            tools={"noop": noop},
+            handle_cls=BasePassthroughHandle,
+        )
+        return h
+
+    # Outer client instructs model to call both delegates in the first turn
+    outer_client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    outer_client.set_system_message(
+        "In your FIRST assistant turn, call both tools `delegate_custom` and `delegate_base` "
+        "with no arguments, then wait for completion before replying.",
+    )
+
+    outer = start_async_tool_loop(
+        client=outer_client,  # type: ignore[arg-type]
+        message="start",
+        tools={"delegate_custom": delegate_custom, "delegate_base": delegate_base},
+        handle_cls=CustomOuterHandle,
+    )
+
+    # Ensure both tool requests and scheduling happened
+    await _wait_for_tools_requested_and_scheduled(
+        outer_client,
+        outer,
+        ["delegate_custom", "delegate_base"],
+    )
+
+    # Wait until both passthrough handles are adopted
+    async def _two_adopted(timeout: float = 5.0):
+        import time as _time
+
+        start = _time.perf_counter()
+        while _time.perf_counter() - start < timeout:
+            try:
+                ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    pts = [
+                        _inf
+                        for _inf in ti.values()
+                        if getattr(_inf, "handle", None) is not None
+                        and getattr(_inf, "is_passthrough", False)
+                    ]
+                    if len(pts) >= 2:
+                        return True
+            except Exception:
+                pass
+            await asyncio.sleep(0)
+        return False
+
+    assert await _two_adopted(), "expected both delegates to be adopted as passthrough"
+
+    # Locate the custom child handle instance to assert its state later
+    def _find_child_custom_handle():
+        try:
+            ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+            if isinstance(ti, dict):
+                for _inf in ti.values():
+                    h = getattr(_inf, "handle", None)
+                    if isinstance(h, ChildCustomHandle):
+                        return h
+        except Exception:
+            return None
+        return None
+
+    def _find_base_passthrough_handle():
+        try:
+            ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+            if isinstance(ti, dict):
+                for _inf in ti.values():
+                    h = getattr(_inf, "handle", None)
+                    if isinstance(h, BasePassthroughHandle):
+                        return h
+        except Exception:
+            return None
+        return None
+
+    custom_child = _find_child_custom_handle()
+    base_child = _find_base_passthrough_handle()
+    assert custom_child is not None, "could not locate custom child handle"
+    assert base_child is not None, "could not locate base passthrough child handle"
+
+    # Issue outer custom steering method
+    outer.append_to_queue(payload="ADDME")  # type: ignore[attr-defined]
+
+    # Wait until the custom child received the call
+    async def _custom_received():
+        ch = _find_child_custom_handle()
+        return bool(ch and getattr(ch, "received", []) and "ADDME" in ch.received)
+
+    await _wait_for_condition(_custom_received, poll=0.01, timeout=60.0)
+
+    # Assert delivery reached ONLY the matching child
+    assert "ADDME" in custom_child.received
+    # The base child has no method and therefore no state to check; simply ensure no exception was raised
+    # Optionally ensure no unintended attribute appeared
+    assert not hasattr(base_child, "received")
+
+    # Cleanup: release child gates to avoid lingering tasks
+    try:
+        custom_child._done_gate.set()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    try:
+        base_child._done_gate.set()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    # Ensure the outer loop stops and cleans up (prevents stray task hangs)
+    try:
+        outer.stop("done")
+    except Exception:
+        pass
+    try:
+        await outer.result()
+    except Exception:
+        pass
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
     """An interject sent before adoption should be mirrored on adoption and functionally forwarded once."""
 
