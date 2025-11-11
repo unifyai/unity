@@ -251,6 +251,125 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_interjection_patient_does_not_cancel_inflight_llm(monkeypatch) -> None:
+    """
+    When the LLM is currently thinking, a patient interjection
+    (trigger_immediate_llm_turn=False) must NOT cancel the in-flight LLM call.
+    """
+    client = new_client()
+
+    # Spy/patch the inner generation wrapper to gate completion and record cancellation
+    from unity.common._async_tool import loop as _loop
+
+    llm_started = asyncio.Event()
+    release_llm = asyncio.Event()
+    was_cancelled = {"value": False}
+    orig_gwp = _loop.generate_with_preprocess
+
+    async def _fake_gwp(_client, preprocess_msgs, **gen_kwargs):
+        try:
+            llm_started.set()
+            await release_llm.wait()
+            # Append a minimal assistant message the loop expects to see
+            _client.messages.append(
+                {
+                    "role": "assistant",
+                    "content": "ok",
+                    "tool_calls": None,
+                },
+            )
+            # Minimal result payload (shape not asserted by loop beyond success path)
+            return {"ok": True}
+        except asyncio.CancelledError:
+            was_cancelled["value"] = True
+            raise
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
+
+    h = start_async_tool_loop(
+        client=client,
+        message="Say hello (no tools).",
+        tools={},
+        interrupt_llm_with_interjections=True,
+        timeout=120,
+        max_steps=10,
+    )
+
+    # Ensure LLM thinking has begun, then interject in patient mode
+    await asyncio.wait_for(llm_started.wait(), timeout=30.0)
+    await h.interject("please consider this later", trigger_immediate_llm_turn=False)  # type: ignore[arg-type]
+    # Allow the in-flight LLM to complete
+    release_llm.set()
+
+    final = await h.result()
+    assert isinstance(final, str) and final, "loop should complete with a final answer"
+    assert was_cancelled["value"] is False, "patient interjection should not cancel LLM"
+
+    # Cleanup: restore original generator
+    monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_interjection_immediate_cancels_inflight_llm(monkeypatch) -> None:
+    """
+    When the LLM is currently thinking, an immediate interjection
+    (default behaviour) MUST cancel the in-flight LLM call.
+    """
+    client = new_client()
+
+    from unity.common._async_tool import loop as _loop
+
+    llm_started = asyncio.Event()
+    was_cancelled = {"value": False}
+    call_count = {"n": 0}
+    orig_gwp = _loop.generate_with_preprocess
+
+    async def _fake_gwp(_client, preprocess_msgs, **gen_kwargs):
+        call_count["n"] += 1
+        # First call: simulate a long-running generation that must be cancelled
+        if call_count["n"] == 1:
+            llm_started.set()
+            try:
+                # Never completes unless cancelled
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                was_cancelled["value"] = True
+                raise
+        # Second call: complete immediately with a minimal assistant message
+        _client.messages.append(
+            {
+                "role": "assistant",
+                "content": "ok",
+                "tool_calls": None,
+            },
+        )
+        return {"ok": True}
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
+
+    h = start_async_tool_loop(
+        client=client,
+        message="Say hello (no tools).",
+        tools={},
+        interrupt_llm_with_interjections=True,
+        timeout=120,
+        max_steps=10,
+    )
+
+    # Ensure LLM thinking has begun, then interject in immediate mode (default)
+    await asyncio.wait_for(llm_started.wait(), timeout=30.0)
+    await h.interject("urgent change!")  # default: trigger_immediate_llm_turn=True
+
+    final = await h.result()
+    assert isinstance(final, str) and final, "loop should complete with a final answer"
+    assert was_cancelled["value"] is True, "immediate interjection should cancel LLM"
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_interjections_are_processed_and_loop_completes():
     """
     Fire two interjections (B, then C) and validate FIFO order and sufficient tool work.

@@ -1658,7 +1658,17 @@ async def async_tool_loop_inner(
                 except asyncio.QueueEmpty:
                     break
 
-                llm_turn_required = True
+                # Respect per-interjection scheduling preference (default immediate)
+                _is_immediate = True
+                try:
+                    if isinstance(extra, dict):
+                        _is_immediate = bool(
+                            extra.get("trigger_immediate_llm_turn", True),
+                        )
+                except Exception:
+                    _is_immediate = True
+                if _is_immediate:
+                    llm_turn_required = True
                 # Mirrored steering sentinel: synthesize helper tool_calls immediately
                 try:
                     if isinstance(extra, dict) and "_mirror" in extra:
@@ -2203,11 +2213,28 @@ async def async_tool_loop_inner(
 
                 # 1️⃣ user interjected → restart immediately
                 if interject_w in done:
-                    if not llm_task.done():
-                        llm_task.cancel()
-                        await asyncio.gather(llm_task, return_exceptions=True)
-                    await interject_queue.put(interject_w.result())
-                    continue  # top of loop
+                    _payload = None
+                    try:
+                        _payload = interject_w.result()
+                    except Exception:
+                        _payload = None
+                    # Default to immediate behaviour unless explicitly disabled per interjection
+                    _immediate = True
+                    try:
+                        if isinstance(_payload, dict):
+                            _immediate = bool(
+                                _payload.get("trigger_immediate_llm_turn", True),
+                            )
+                    except Exception:
+                        _immediate = True
+                    # Re-queue the payload so it is processed by the main drain path
+                    await interject_queue.put(_payload)
+                    if _immediate:
+                        if not llm_task.done():
+                            llm_task.cancel()
+                            await asyncio.gather(llm_task, return_exceptions=True)
+                        continue  # top of loop
+                    # Patient mode: allow the in-flight LLM call to finish organically
 
                 # 2️⃣ clarification bubbled up while the LLM was thinking →
                 #    cancel current LLM step, surface the clarification request,
