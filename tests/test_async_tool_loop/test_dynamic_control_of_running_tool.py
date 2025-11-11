@@ -1016,3 +1016,109 @@ async def test_new_tool_scheduled_while_paused_starts_paused(client, monkeypatch
     h.stop("test cleanup")
     await h.result()
     monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_resume_unblocks_paused_base_tool_without_helper(client, monkeypatch):
+    """
+    A base tool scheduled while the outer loop is paused should resume
+    running immediately when `handle.resume()` is called, even if the LLM
+    never calls a `resume_…` helper. This would have failed before the
+    auto-resume improvement.
+    """
+    from unity.common._async_tool import loop as _loop
+
+    llm_started = asyncio.Event()
+    release_llm = asyncio.Event()
+    orig_gwp = _loop.generate_with_preprocess
+
+    async def _fake_gwp(_client, preprocess_msgs, **gen_kwargs):
+        # Signal that LLM thinking has started
+        llm_started.set()
+        # Wait until the test allows the LLM to finish (after outer pause)
+        await release_llm.wait()
+        # Emit a single assistant turn that calls `pausable_fn`
+        _client.messages.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_fake_2",
+                        "type": "function",
+                        "function": {"name": "pausable_fn", "arguments": "{}"},
+                    },
+                ],
+            },
+        )
+        return {"ok": True}
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
+
+    # Base tool: starts paused; only completes after _pause_event is set (resume)
+    initial_pause_state = {"value": None}
+
+    async def pausable_fn(*, _pause_event: asyncio.Event) -> str:
+        try:
+            initial_pause_state["value"] = _pause_event.is_set()
+        except Exception:
+            initial_pause_state["value"] = None
+        # Wait until resumed, then finish quickly
+        await _pause_event.wait()
+        return "ok"
+
+    pausable_fn.__name__ = "pausable_fn"
+    pausable_fn.__qualname__ = "pausable_fn"
+
+    client.set_system_message(
+        "When you respond, call `pausable_fn` exactly once and then finish.",
+    )
+
+    h = start_async_tool_loop(
+        client=client,
+        message="start",
+        tools={"pausable_fn": pausable_fn},
+        timeout=180,
+        max_steps=20,
+    )
+
+    # Ensure LLM step started, then pause the outer handle
+    await asyncio.wait_for(llm_started.wait(), timeout=30)
+    h.pause()
+    release_llm.set()
+
+    # Wait until the tool placeholder appears (scheduled while paused)
+    await _wait_for_tool_message_prefix(client, "pausable_fn")
+
+    # Confirm the tool started in a paused state
+    assert (
+        initial_pause_state["value"] is False
+    ), "tool did not start paused while outer loop was paused"
+
+    # Resume the outer handle – should auto-set the per-call pause_event for base tools
+    h.resume()
+
+    # Wait until final tool result "ok" is observed without relying on a resume helper
+    async def _has_final_ok() -> bool:
+        msgs = client.messages or []
+        return any(
+            (m.get("role") == "tool")
+            and (m.get("name") == "pausable_fn")
+            and (m.get("content") == "ok")
+            for m in msgs
+        )
+
+    await _wait_for_condition(_has_final_ok, poll=0.05, timeout=60.0)
+
+    # Ensure no resume helper call was made by the assistant (programmatic resume path)
+    msgs = client.messages or []
+    assert (
+        _assistant_calls_prefix(msgs, "resume") == 0
+    ), "LLM should not need to call resume_… helper for base tools"
+
+    # Cleanup – stop the loop and restore generator
+    h.stop("cleanup")
+    # Await result; outer handle returns a standardized notice on stop
+    await asyncio.wait_for(asyncio.shield(h.result()), timeout=60)
+    monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)
