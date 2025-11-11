@@ -672,6 +672,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         *,
         parent_chat_context_cont: list[dict] | None = None,
         images: list | None = None,
+        trigger_immediate_llm_turn: bool = True,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
@@ -685,6 +686,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "message": message,
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
+                "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
             },
             fallback=("content", "message"),
             had_passthrough=False,
@@ -692,15 +694,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         )
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
-        payload = (
-            {
-                "message": message,
-                "parent_chat_context_continuted": parent_chat_context_cont,
-                "images": images,
-            }
-            if parent_chat_context_cont is not None or images is not None
-            else message
-        )
+        payload = {
+            "message": message,
+            "parent_chat_context_continuted": parent_chat_context_cont,
+            "images": images,
+            "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
+        }
         await self._queue.put(payload)
         # Also mirror as synthetic helper tool_calls immediately (no LLM step)
         try:
