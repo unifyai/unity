@@ -635,6 +635,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 return ans
 
             helper_handle.result = _rec_result  # type: ignore[attr-defined]
+            # Mirror as synthetic helper tool_call (no LLM step)
+            try:
+                await self._queue.put(
+                    {
+                        "_mirror": {
+                            "method": "ask",
+                            "kwargs": {"question": question, "images": images},
+                        },
+                    },
+                )
+            except Exception:
+                pass
             return helper_handle
 
         async def _wrap():
@@ -643,6 +655,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             return answer, inspection_client.messages
 
         helper_handle.result = _wrap  # type: ignore[attr-defined]
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            await self._queue.put(
+                {
+                    "_mirror": {
+                        "method": "ask",
+                        "kwargs": {"question": question, "images": images},
+                    },
+                },
+            )
+        except Exception:
+            pass
         return helper_handle
 
     # -- public API -----------------------------------------------------------
@@ -681,6 +705,21 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             else message
         )
         await self._queue.put(payload)
+        # Also mirror as synthetic helper tool_calls immediately (no LLM step)
+        try:
+            await self._queue.put(
+                {
+                    "_mirror": {
+                        "method": "interject",
+                        "kwargs": {
+                            "message": message,
+                            "images": images,
+                        },
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
     def stop(
@@ -714,6 +753,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             self._task.cancel()
         with suppress(Exception):
             self._stop_event.set()
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            self._queue.put_nowait(
+                {
+                    "_mirror": {
+                        "method": "stop",
+                        "kwargs": {"reason": reason},
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
@@ -732,6 +783,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             asyncio.create_task(maybe)
 
         self._pause_event.clear()
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            self._queue.put_nowait(
+                {
+                    "_mirror": {
+                        "method": "pause",
+                        "kwargs": {},
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
     def resume(self) -> None:
@@ -758,6 +821,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             ev.set()
 
         self._pause_event.set()
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            self._queue.put_nowait(
+                {
+                    "_mirror": {
+                        "method": "resume",
+                        "kwargs": {},
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     @functools.wraps(SteerableToolHandle.done, updated=())
     def done(self) -> bool:
@@ -830,6 +905,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         with suppress(Exception):
             if down_q is not None:
                 await down_q.put(answer)
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            await self._queue.put(
+                {
+                    "_mirror": {
+                        "method": "clarify",
+                        "kwargs": {"call_id": call_id, "answer": answer},
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     # --- targeted nested steerability (programmatic, no LLM) -----------------
     async def nested_steer(self, spec: dict) -> dict:
