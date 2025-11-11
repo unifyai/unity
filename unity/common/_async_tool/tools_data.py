@@ -588,8 +588,15 @@ class ToolsData:
                 SAFETY_DELTA = 0.2  # seconds; cushion to cover scheduling vs. interject ordering races
                 _log = list(getattr(_outer, "_steer_log", []) or [])
                 for rec in _log:
-                    if rec.get("had_passthrough") is True:
-                        continue
+                    # Skip replay for this child if the event was already forwarded to it
+                    try:
+                        fwd_list = rec.get("forwarded_to", [])
+                        if isinstance(fwd_list, (list, tuple)) and str(
+                            info.call_id,
+                        ) in set(str(x) for x in fwd_list):
+                            continue
+                    except Exception:
+                        pass
                     t = rec.get("t", 0.0)
                     if not isinstance(t, (int, float)):
                         continue
