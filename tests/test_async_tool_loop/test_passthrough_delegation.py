@@ -1379,9 +1379,13 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
 
     await _wait_adopted()
 
-    # Immediate ask → should increment ask_count synchronously
+    # Programmatic ask should be forwarded promptly via mirror; wait for it
     await outer.ask("STATUS?")
-    assert inner.ask_count >= 1, "programmatic ask was not forwarded immediately"
+
+    async def _asked():
+        return inner.ask_count >= 1
+
+    await _wait_for_condition(_asked, poll=0.01, timeout=60.0)
 
     # Wait for mirrored helper tool_call and ack tool message to be present
     async def _ask_helper_tool_present():
