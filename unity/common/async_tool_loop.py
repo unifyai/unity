@@ -380,6 +380,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         kwargs: dict | None = None,
         fallback: tuple[str, ...] = (),
         had_passthrough: bool | None = None,
+        forwarded_to: list[str] | tuple[str, ...] | None = None,
     ) -> None:
         # Record the steering event with a timestamp for later replay at adoption time.
         try:
@@ -393,6 +394,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             "kwargs": dict(kwargs or {}),
             "fallback": tuple(fallback or ()),
             "had_passthrough": bool(had_passthrough),
+            "forwarded_to": list(forwarded_to or []),
         }
         try:
             self._steer_log.append(rec)
@@ -428,6 +430,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # Immediate functional forward to any active passthrough handle(s)
         had_pt = False
+        forwarded_ids: list[str] = []
         try:
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
@@ -436,6 +439,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 is_pt = getattr(_inf, "is_passthrough", False)
                 if h is not None and is_pt:
                     had_pt = True
+                    with suppress(Exception):
+                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
                     await forward_handle_call(
                         h,
                         "ask",
@@ -454,6 +459,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "images": images,
             },
             had_passthrough=had_pt,
+            forwarded_to=forwarded_ids,
         )
 
         # 0.  Defensive guard: if the outer loop has already finished we can
@@ -681,6 +687,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # Immediate functional forward to any active passthrough handle(s)
         had_pt = False
+        forwarded_ids: list[str] = []
         try:
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
@@ -692,9 +699,13 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 h = getattr(_inf, "handle", None)
                 if iq is not None:
                     had_pt = True
+                    with suppress(Exception):
+                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
                     await iq.put(message)
                 elif h is not None:
                     had_pt = True
+                    with suppress(Exception):
+                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
                     await forward_handle_call(
                         h,
                         "interject",
@@ -714,6 +725,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             },
             fallback=("content", "message"),
             had_passthrough=had_pt,
+            forwarded_to=forwarded_ids,
         )
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
@@ -766,6 +778,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             )
         # Immediate functional forward to any active passthrough handle(s)
         had_pt = False
+        forwarded_ids: list[str] = []
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
@@ -774,6 +787,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 is_pt = getattr(_inf, "is_passthrough", False)
                 if h is not None and is_pt and hasattr(h, "stop"):
                     had_pt = True
+                    with suppress(Exception):
+                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
                     maybe = h.stop(reason)
                     if asyncio.iscoroutine(maybe):
                         asyncio.create_task(maybe)
@@ -790,6 +805,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     "stop",
                     kwargs={"reason": reason},
                     had_passthrough=had_pt,
+                    forwarded_to=forwarded_ids,
                 ),
             )
         except Exception:
@@ -814,6 +830,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # Immediate functional forward to any active passthrough handle(s)
         had_pt = False
+        forwarded_ids: list[str] = []
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
@@ -825,12 +842,19 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     maybe = h.pause()  # may be sync or async
                     if asyncio.iscoroutine(maybe):
                         asyncio.create_task(maybe)
+                    with suppress(Exception):
+                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
 
         self._pause_event.clear()
         # Record steer event (best-effort, async)
         try:
             asyncio.create_task(
-                self._record_and_forward("pause", kwargs={}, had_passthrough=had_pt),
+                self._record_and_forward(
+                    "pause",
+                    kwargs={},
+                    had_passthrough=had_pt,
+                    forwarded_to=forwarded_ids,
+                ),
             )
         except Exception:
             pass
@@ -853,6 +877,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         LOGGER.info(f"▶️ [{_label}] Resume requested")
         # Immediate functional forward to any active passthrough handle(s)
         had_pt = False
+        forwarded_ids: list[str] = []
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
@@ -864,6 +889,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     maybe = h.resume()  # may be sync or async
                     if asyncio.iscoroutine(maybe):
                         asyncio.create_task(maybe)
+                    with suppress(Exception):
+                        forwarded_ids.append(str(getattr(_inf, "call_id", "")))
         # Auto-resume base tools that were started in paused state while the outer loop was paused
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
@@ -880,7 +907,12 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record steer event (best-effort, async)
         try:
             asyncio.create_task(
-                self._record_and_forward("resume", kwargs={}, had_passthrough=had_pt),
+                self._record_and_forward(
+                    "resume",
+                    kwargs={},
+                    had_passthrough=had_pt,
+                    forwarded_to=forwarded_ids,
+                ),
             )
         except Exception:
             pass
