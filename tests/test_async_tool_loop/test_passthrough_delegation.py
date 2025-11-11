@@ -379,8 +379,17 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
 
     await _wait_for_passthrough_handles()
 
-    # Ask the outer handle; forwarding to both passthrough handles happens synchronously within ask()
+    # Ask the outer handle; forwarding to both passthrough handles is now performed
+    # asynchronously via the mirrored steering path inside the inner loop.
     await outer.ask("STATUS?")
+
+    # Wait until both inner passthrough handles observed ask()
+    from tests.test_async_tool_loop.async_helpers import _wait_for_condition
+
+    async def _both_asked():
+        return (h1.ask_count >= 1) and (h2.ask_count >= 1)
+
+    await _wait_for_condition(_both_asked, poll=0.01, timeout=60.0)
 
     assert h1.ask_count == 1 and h2.ask_count == 1, "ask() was not multicasted"
 
