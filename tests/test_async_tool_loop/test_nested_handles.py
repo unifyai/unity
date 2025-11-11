@@ -401,39 +401,18 @@ async def test_interject_nested_handle(monkeypatch):
     interj_args = json.loads(interj_call["function"]["arguments"]) or {}
     assert interj_args.get("message") == "dogs" or interj_args.get("content") == "dogs"
 
-    # e) Find the tool response from the interject helper
-    interject_response_msg = next(
+    # e) Find the acknowledgement tool message linked to that helper call via tool_call_id
+    interject_ack = next(
         (
             m
             for m in msgs
-            if m.get("role") == "tool"
-            and isinstance(m.get("name"), str)
-            and (
-                m["name"].startswith("interject outer_tool")  # pretty name path
-                or m["name"].startswith("interject_outer_tool_")  # dynamic helper name
-            )
+            if m.get("role") == "tool" and m.get("tool_call_id") == interj_call["id"]
         ),
         None,
     )
     assert (
-        interject_response_msg is not None
-    ), "Tool response from interject helper not found"
-    _irep_content = interject_response_msg.get("content") or ""
-    _irep_ok = False
-    # Accept structured JSON payload (dynamic path)
-    try:
-        _irep_parsed = json.loads(_irep_content)
-        if isinstance(_irep_parsed, dict):
-            _irep_ok = _irep_parsed.get("status") == "interjected" and (
-                _irep_parsed.get("content") == "dogs"
-                or _irep_parsed.get("message") == "dogs"
-            )
-    except Exception:
-        pass
-    # Accept pretty acknowledgement string (inline helper path)
-    if not _irep_ok:
-        _irep_ok = 'Guidance "dogs" forwarded to the running tool.' in _irep_content
-    assert _irep_ok, f"Unexpected interject helper response content: {_irep_content!r}"
+        interject_ack is not None
+    ), "Acknowledgement tool message for interject_* helper not found"
 
     # f) Assistant may either perform a status check, or the loop may update
     #    the existing placeholder tool message directly upon completion. Accept
@@ -1070,11 +1049,29 @@ async def test_dynamic_handle_public_method():
     assert "all done" in final_reply.strip().lower()
     assert progress_calls["count"] == 1, ".ask should be invoked exactly once"
 
-    # Optional: sanity-check that a tool-message from `_ask_…` is present
-    assert any(
-        m.get("role") == "tool" and "ask_" in (m.get("name") or "")
-        for m in client.messages
-    ), "No tool-message from the `ask_…` helper found"
+    # Structural: find the ask_* helper tool_call id and its acknowledgement tool message
+    ask_call_id = next(
+        (
+            tc["id"]
+            for m in client.messages
+            if m.get("role") == "assistant"
+            for tc in (m.get("tool_calls") or [])
+            if isinstance(tc, dict)
+            and isinstance(tc.get("function"), dict)
+            and str(tc["function"].get("name", "")).startswith("ask_")
+        ),
+        None,
+    )
+    assert ask_call_id is not None, "Assistant did not call an ask_* helper"
+    ask_ack = next(
+        (
+            m
+            for m in client.messages
+            if m.get("role") == "tool" and m.get("tool_call_id") == ask_call_id
+        ),
+        None,
+    )
+    assert ask_ack is not None, "No acknowledgement found for ask_* helper call"
 
 
 @pytest.mark.asyncio
