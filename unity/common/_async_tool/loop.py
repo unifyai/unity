@@ -1280,6 +1280,33 @@ async def async_tool_loop_inner(
                             break
                 except Exception:
                     pass
+                # While paused, proactively schedule any unreplied assistant tool_calls
+                # so base tools start in paused state and placeholders appear.
+                with suppress(Exception):
+                    if True:
+                        if unreplied := find_unreplied_assistant_entries(client):
+                            last_problem = unreplied[-1]
+                            amsg = last_problem["assistant_msg"]
+                            missing_ids = set(last_problem["missing"])
+                            if id(amsg) not in assistant_meta:
+                                await schedule_missing_for_message(
+                                    amsg,
+                                    missing_ids,
+                                    tools_data=tools_data,
+                                    parent_chat_context=parent_chat_context,
+                                    propagate_chat_context=propagate_chat_context,
+                                    assistant_meta=assistant_meta,
+                                    client=client,
+                                    msg_dispatcher=_msg_dispatcher,
+                                    initial_paused=True,
+                                )
+                                # Ensure placeholders exist immediately
+                                await ensure_placeholders_for_pending(
+                                    tools_data=tools_data,
+                                    assistant_meta=assistant_meta,
+                                    client=client,
+                                    msg_dispatcher=_msg_dispatcher,
+                                )
                 # Give any pending tool tasks a chance to finish OR wait until the
                 # loop is resumed / cancelled.  Every coroutine is wrapped in an
                 # asyncio.Task so `asyncio.wait()` is happy.
@@ -1331,6 +1358,30 @@ async def async_tool_loop_inner(
                     continue  # remain paused: do not allow the LLM to speak while paused
                 else:
                     # nothing running – just idle until resumed or cancelled
+                    # Before idling, schedule any missing tool replies from last assistant turn
+                    with suppress(Exception):
+                        if unreplied := find_unreplied_assistant_entries(client):
+                            last_problem = unreplied[-1]
+                            amsg = last_problem["assistant_msg"]
+                            missing_ids = set(last_problem["missing"])
+                            if id(amsg) not in assistant_meta:
+                                await schedule_missing_for_message(
+                                    amsg,
+                                    missing_ids,
+                                    tools_data=tools_data,
+                                    parent_chat_context=parent_chat_context,
+                                    propagate_chat_context=propagate_chat_context,
+                                    assistant_meta=assistant_meta,
+                                    client=client,
+                                    msg_dispatcher=_msg_dispatcher,
+                                    initial_paused=True,
+                                )
+                                await ensure_placeholders_for_pending(
+                                    tools_data=tools_data,
+                                    assistant_meta=assistant_meta,
+                                    client=client,
+                                    msg_dispatcher=_msg_dispatcher,
+                                )
                     done, _ = await asyncio.wait(
                         {
                             asyncio.create_task(
