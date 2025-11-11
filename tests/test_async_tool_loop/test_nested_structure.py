@@ -3,7 +3,12 @@ import asyncio
 import pytest
 import unify
 
-from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
+from unity.common.async_tool_loop import (
+    start_async_tool_loop,
+    SteerableToolHandle,
+    SteerableHandle,
+    _nested_structure_on,
+)
 from tests.helpers import _handle_project, SETTINGS
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
@@ -142,11 +147,16 @@ class WrapperHandle(SteerableToolHandle):
         return None
 
 
+def _base_name(val: str | None) -> str:
+    s = str(val) if val is not None else ""
+    return s.split("(", 1)[0]
+
+
 def _find_child_by_handle(children: list[dict], handle_name: str) -> dict | None:
     for ch in children or []:
         h = ch.get("handle")
         t = ch.get("tool")
-        if h == handle_name or t == handle_name:
+        if _base_name(h) == handle_name or _base_name(t) == handle_name:
             return ch
     return None
 
@@ -196,12 +206,19 @@ async def test_nested_structure_reports_child_tool_and_handle():
         await _wait_for_condition(_child_adopted, poll=0.01, timeout=60.0)
 
         s = await outer.nested_structure()  # type: ignore[attr-defined]
+        # Root should resolve to the async loop handle sentinel
+        assert s.get("handle") == "AsyncToolLoopHandle"
         assert isinstance(s, dict)
         # Minimal format: direct child node for the returned handle
         ch = _find_child_by_handle(s.get("children", []), "ToyHandle")
         assert ch is not None, "Expected ToyHandle child in structure"
         # Child should itself be a minimal node with no further children in this test
-        assert ch.get("handle") == "ToyHandle" or ch.get("tool") == "ToyHandle"
+        assert (
+            _base_name(ch.get("handle")) == "ToyHandle"
+            or _base_name(ch.get("tool")) == "ToyHandle"
+        )
+        # And the sentinel encountered for ToyHandle should be SteerableToolHandle
+        assert "SteerableToolHandle" in str(ch.get("handle"))
     finally:
         try:
             outer.stop("cleanup")
@@ -336,7 +353,8 @@ async def test_nested_structure_includes_wrapper_attribute_children():
         # The wrapper should expose ToyHandle as a nested live child
         wrapper_children = first.get("children", [])
         assert any(
-            (c.get("handle") == "ToyHandle") or (c.get("tool") == "ToyHandle")
+            (_base_name(c.get("handle")) == "ToyHandle")
+            or (_base_name(c.get("tool")) == "ToyHandle")
             for c in wrapper_children
         ), "Expected ToyHandle child discovered via wrapper get_wrapped_handles"
     finally:
@@ -344,12 +362,143 @@ async def test_nested_structure_includes_wrapper_attribute_children():
             outer.stop("cleanup")
         except Exception:
             pass
-        try:
-            await asyncio.wait_for(outer.result(), timeout=30.0)
-        except Exception:
-            pass
-        try:
-            if not inner.done():
-                inner.stop("cleanup")
-        except Exception:
-            pass
+
+
+@pytest.mark.asyncio
+async def test_handle_chain_includes_steerable_handle_sentinel():
+    class DirectSH(SteerableHandle):
+        async def ask(  # type: ignore[override]
+            self,
+            question: str,
+            *,
+            parent_chat_context_cont=None,
+            images=None,
+        ):
+            return self
+
+        async def interject(  # type: ignore[override]
+            self,
+            message: str,
+            *,
+            parent_chat_context_cont=None,
+        ):
+            return None
+
+    h = DirectSH()
+    s = await _nested_structure_on(h)
+    # The handle string should include the SteerableHandle sentinel for a direct subclass
+    assert s.get("handle") == "DirectSH(SteerableHandle)"
+
+
+@pytest.mark.asyncio
+async def test_handle_chain_canonicalizes_leaf_and_drops_base():
+    class BaseCustomHandle(SteerableHandle):
+        async def ask(  # type: ignore[override]
+            self,
+            question: str,
+            *,
+            parent_chat_context_cont=None,
+            images=None,
+        ):
+            return self
+
+        async def interject(  # type: ignore[override]
+            self,
+            message: str,
+            *,
+            parent_chat_context_cont=None,
+        ):
+            return None
+
+    class V3CustomHandle(BaseCustomHandle):
+        pass
+
+    h = V3CustomHandle()
+    s = await _nested_structure_on(h)
+    # Leaf "V3CustomHandle" → canonicalized to "CustomHandle", "BaseCustomHandle" is dropped, sentinel included
+    assert s.get("handle") == "CustomHandle(SteerableHandle)"
+
+
+@pytest.mark.asyncio
+async def test_handle_chain_canonicalizes_simulated_leaf():
+    class BaseCustomHandle(SteerableHandle):
+        async def ask(  # type: ignore[override]
+            self,
+            question: str,
+            *,
+            parent_chat_context_cont=None,
+            images=None,
+        ):
+            return self
+
+        async def interject(  # type: ignore[override]
+            self,
+            message: str,
+            *,
+            parent_chat_context_cont=None,
+        ):
+            return None
+
+    class SimulatedCustomHandle(BaseCustomHandle):
+        pass
+
+    h = SimulatedCustomHandle()
+    s = await _nested_structure_on(h)
+    # Leaf "SimulatedCustomHandle" → canonicalized to "CustomHandle", base dropped, sentinel included
+    assert s.get("handle") == "CustomHandle(SteerableHandle)"
+
+
+@pytest.mark.asyncio
+async def test_handle_chain_canonicalizes_intermediate_and_drops_base():
+    class BaseBaz(SteerableHandle):
+        async def ask(  # type: ignore[override]
+            self,
+            question: str,
+            *,
+            parent_chat_context_cont=None,
+            images=None,
+        ):
+            return self
+
+        async def interject(  # type: ignore[override]
+            self,
+            message: str,
+            *,
+            parent_chat_context_cont=None,
+        ):
+            return None
+
+    class SimulatedBar(BaseBaz):
+        pass
+
+    class V2Foo(SimulatedBar):
+        pass
+
+    h = V2Foo()
+    s = await _nested_structure_on(h)
+    # Leaf "V2Foo" → "Foo"; intermediate "SimulatedBar" → "Bar"; "BaseBaz" dropped; sentinel included
+    assert s.get("handle") == "Foo(Bar(SteerableHandle))"
+
+
+@pytest.mark.asyncio
+async def test_tool_name_canonicalizes_simulated_prefix():
+    class Dummy:
+        def __init__(self):
+            self._loop_id = "SimulatedSomethingManager.ask"
+
+    d = Dummy()
+    s = await _nested_structure_on(d)
+    # Tool field should canonicalize class segment: SimulatedX → X
+    assert s.get("tool") == "SomethingManager.ask"
+
+
+@pytest.mark.asyncio
+async def test_tool_name_canonicalizes_base_prefix():
+    class Dummy:
+        def __init__(self):
+            self._loop_id = "BaseAnotherManager.ask"
+
+    d = Dummy()
+    s = await _nested_structure_on(d)
+    # Tool field should canonicalize class segment: BaseX → X
+    assert s.get("tool") == "AnotherManager.ask"

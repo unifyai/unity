@@ -19,19 +19,15 @@ from typing import (
 )
 from ..constants import LOGGER, SESSION_ID
 from .llm_helpers import short_id
+from .llm_helpers import canonicalize_handle_class_name as _canon_handle_name
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.messages import is_non_final_tool_reply as _is_non_final_tool_reply
 from ._async_tool.loop import async_tool_loop_inner
-from ._async_tool.inline_tools import (
-    capture_inline_tools_registry as _capture_inline_tools_registry,
-    resolve_inline_tools as _resolve_inline_tools,
-)
+
+# inline-tools support removed in simplified manager-only snapshots
 from .loop_snapshot import (
     LoopSnapshot as _LoopSnapshot,
-    EntryPointManagerMethod as _EntryPointManagerMethod,
-    EntryPointInlineTools as _EntryPointInlineTools,
-    ToolRef as _ToolRef,
     validate_snapshot as _validate_snapshot,
     migrate_snapshot as _migrate_snapshot,
 )
@@ -44,6 +40,38 @@ from ._async_tool.transcript_ops import (
 
 if TYPE_CHECKING:
     from ..image_manager.types.image_refs import ImageRefs
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper: derive entrypoint ("Class.method") from loop_id lineage label
+# Accepts labels like:
+#   "ContactManager.ask"
+#   "ContactManager.ask(x2ab)"
+#   "ContactManager.update->ContactManager.ask(x2ab)"
+#   "TaskScheduler.execute->TaskScheduler.ask"
+# Returns (class_name, method_name) or raises ValueError when not parseable.
+# ─────────────────────────────────────────────────────────────────────────────
+def _parse_entrypoint_from_loop_id_label(label: str) -> tuple[str, str]:
+    s = str(label or "")
+    # When lineage is present, keep only the last segment
+    try:
+        if "->" in s:
+            s = s.split("->")[-1]
+    except Exception:
+        pass
+    # Strip any trailing unique-id in parentheses
+    try:
+        s = s.split("(", 1)[0]
+    except Exception:
+        s = s
+    s = s.strip()
+    if "." not in s or not s:
+        raise ValueError("Manager entrypoint required (Class.method) in loop_id label")
+    cls_name, meth_name = s.split(".", 1)
+    if not cls_name or not meth_name:
+        raise ValueError("Manager entrypoint required (Class.method) in loop_id label")
+    return cls_name, meth_name
+
 
 # Tiny handle objects exposed to callers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -139,11 +167,29 @@ class SteerableToolHandle(SteerableHandle):
 
     @abstractmethod
     def pause(self) -> Awaitable[Optional[str]] | Optional[str]:
-        """Temporarily freeze the outer loop (tools keep running)."""
+        """Pause the outer conversational loop without stopping running tools.
+
+        Behaviour
+        ---------
+        - Freezes the assistant's next LLM turn until :pyfunc:`resume` is called.
+        - Any in‑flight tool calls continue executing; the pause only affects the
+          assistant's ability to speak/advance turns.
+        - Nested handles (if any) should receive a corresponding pause signal
+          before the outer loop transitions into the paused state.
+        """
 
     @abstractmethod
     def resume(self) -> Awaitable[Optional[str]] | Optional[str]:
-        """Un-freeze a loop that was paused with :pyfunc:`pause`."""
+        """Resume a loop previously paused with :pyfunc:`pause`.
+
+        Behaviour
+        ---------
+        - Allows the assistant to proceed with the next LLM turn.
+        - If tools completed while paused, their results are processed first and
+          then the assistant replies.
+        - Nested handles (if any) should receive a corresponding resume signal
+          before unfreezing the outer loop.
+        """
 
     @abstractmethod
     def done(self) -> Awaitable[bool] | bool:
@@ -166,8 +212,22 @@ class SteerableToolHandle(SteerableHandle):
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         """Programmatically answer a clarification for a pending tool call.
 
-        This looks up the down-queue for the given call and pushes the answer.
-        Falls through silently if the mapping is missing (tool may have finished).
+        Parameters
+        ----------
+        call_id : str
+            Identifier of the original assistant tool call that requested the
+            clarification.
+        answer : str
+            The clarification answer text to provide to the waiting tool.
+
+        Behaviour
+        ---------
+        - Looks up the queued clarification channel for ``call_id`` and delivers
+          the provided ``answer`` to the tool that is currently waiting.
+        - If the mapping is missing (e.g., the tool already finished or the loop
+          resumed on its own), the call is a no‑op.
+        - Implementations should not raise in the absence of a matching channel;
+          best‑effort delivery is sufficient.
         """
 
     # --- snapshotting (skeleton; non-abstract stubs in v1) -----------------
@@ -184,8 +244,6 @@ class SteerableToolHandle(SteerableHandle):
     def deserialize(
         cls,
         snapshot: dict,
-        *,
-        loader: Optional[Callable[[str], dict]] = None,
     ) -> "SteerableToolHandle":
         """Recreate a handle from a serialized snapshot (stub).
 
@@ -245,11 +303,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Only the top-level handle should emit the public stop log.
         # Nested/adopted handles will inherit False to avoid duplicate logging.
         self._is_root_handle: bool = False
-
-        # Buffer interjections that may arrive **before** a downstream handle
-        # (e.g. an `ActiveTask`) has been adopted.  Once a delegate is ready we
-        # forward all queued messages so that no early user guidance is lost.
-        self._early_interjects: list[dict | str] = []
+        # Unified steering event log: records all steering calls made on this handle.
+        # Each entry: {"t": perf_counter(), "method": str, "args": tuple, "kwargs": dict, "fallback": tuple}
+        self._steer_log: list[dict] = []
 
         # Maintain a user-visible history (what the end-user would see):
         # Records: original prompt (user), interjections (user), ask Q/A (user/assistant).
@@ -262,9 +318,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Event streams for bottom-up signals
         self._clar_q: asyncio.Queue[dict] = asyncio.Queue()
         self._notification_q: asyncio.Queue[dict] = asyncio.Queue()
-        # Buffer passthrough operations (method_name, kwargs, fallback_keys) while
-        # a passthrough handle is not yet ready but tools are scheduled
-        self._pending_passthrough_ops: list[tuple[str, dict, tuple[str, ...]]] = []
+        # No pending passthrough ops buffer; unified steer_log replaces ad-hoc buffering.
 
     # small local helpers to keep user-visible history consistent
     def _append_user_visible_user(
@@ -332,40 +386,42 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             )
         return None
 
-    async def _replay_pending_passthrough_ops(self) -> None:
-        if not self._pending_passthrough_ops:
-            return
-        handles = self._iter_passthrough_handles()
-        if not handles:
-            return
-        remaining: list[tuple[str, dict, tuple[str, ...]]] = []
-        for name, kw, fb in list(self._pending_passthrough_ops):
-            forwarded = False
-            for h in handles:
-                await self._forward_call_to_handle(h, name, kw, fb)
-                forwarded = True
-            if not forwarded:
-                remaining.append((name, kw, fb))
-        self._pending_passthrough_ops = remaining
-
-    async def _try_forward_or_buffer(
+    async def _record_and_forward(
         self,
         method_name: str,
-        kwargs: dict,
+        *,
+        args: tuple | list | None = None,
+        kwargs: dict | None = None,
         fallback: tuple[str, ...] = (),
     ) -> None:
+        # Check current passthrough handles first so we can record this fact.
         handles = self._iter_passthrough_handles()
+        # Record the steering event with a timestamp for later replay at adoption time.
+        try:
+            from time import perf_counter as _pc  # local import to avoid top pollution
+        except Exception:  # pragma: no cover
+            _pc = lambda: 0.0  # type: ignore
+        rec = {
+            "t": _pc(),
+            "method": str(method_name or ""),
+            "args": tuple(args or ()),
+            "kwargs": dict(kwargs or {}),
+            "fallback": tuple(fallback or ()),
+            "had_passthrough": bool(handles),
+        }
+        try:
+            self._steer_log.append(rec)
+        except Exception:
+            pass
+        # Forward immediately to any active passthrough handles (multicast).
         if handles:
             for h in handles:
-                await self._forward_call_to_handle(h, method_name, kwargs, fallback)
-            return
-        if self._has_scheduled_tools():
-            try:
-                self._pending_passthrough_ops.append(
-                    (method_name, dict(kwargs or {}), tuple(fallback or ())),
+                await self._forward_call_to_handle(
+                    h,
+                    method_name,
+                    rec["kwargs"],
+                    rec["fallback"],
                 )
-            except Exception:
-                pass
 
     async def ask(
         self,
@@ -394,7 +450,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, parent_chat_context_cont)
 
-        # No delegate forwarding – outer loop remains in control.
+        # Unified steering: record and forward ask to any active passthrough handle(s)
+        await self._record_and_forward(
+            "ask",
+            kwargs={
+                "question": question,
+                "parent_chat_context_cont": parent_chat_context_cont,
+                "images": images,
+            },
+        )
 
         # 0.  Defensive guard: if the outer loop has already finished we can
         #     just answer from the final transcript without starting another
@@ -518,17 +582,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             recursive_tools[_proxy.__name__] = _proxy
         # ----------------------------------------------------------------
 
-        # Generalized passthrough forwarding/buffering
-        await self._replay_pending_passthrough_ops()
-        await self._try_forward_or_buffer(
-            "ask",
-            {
-                "question": question,
-                "parent_chat_context_cont": parent_chat_context_cont,
-                "images": images,
-            },
-        )
-
         # 4.  Fire off a *stand-alone* read-only loop.
         # Compose a clear loop identifier so logs show exactly which loop the
         # question refers to, e.g. "Question(TaskScheduler.execute)" or
@@ -606,17 +659,15 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # No delegate forwarding – outer loop remains in control.
         # Record user-visible immediately
         self._append_user_visible_user(message, parent_chat_context_cont)
-
-        # Generalized passthrough forwarding/buffering
-        await self._replay_pending_passthrough_ops()
-        await self._try_forward_or_buffer(
+        # Unified steering: record and forward to any active passthrough handle(s)
+        await self._record_and_forward(
             "interject",
-            {
+            kwargs={
                 "message": message,
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
             },
-            ("content", "message"),
+            fallback=("content", "message"),
         )
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
@@ -629,7 +680,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             if parent_chat_context_cont is not None or images is not None
             else message
         )
-        self._early_interjects.append(payload)
         await self._queue.put(payload)
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
@@ -639,11 +689,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         *,
         parent_chat_context_cont: list[dict] | None = None,
     ) -> None:
-        # Replay any pending buffered passthrough ops
-        with suppress(Exception):
-            asyncio.get_running_loop().create_task(
-                self._replay_pending_passthrough_ops(),
-            )
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
         if self._cancel_event.is_set():
             return
@@ -780,38 +825,48 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
     # --- targeted nested steerability (programmatic, no LLM) -----------------
     async def nested_steer(self, spec: dict) -> dict:
-        """Apply a nested steering spec to this loop and any matched child handles.
+        """Apply a nested steering spec using nested_structure’s vocabulary.
 
         Programmatic (no LLM) and best‑effort: unknown or missing children are
-        silently ignored and traversal stops naturally when no child is found.
+        ignored and traversal stops naturally when no child is found.
 
-        Spec schema (keys optional; omitted treated as None):
-        - steps: list[dict] – ordered actions to apply on the current handle.
-          Each step is a dict with keys:
-            - method: str – method name to invoke (e.g., "pause", "resume",
-              "interject", "stop", "ask").
-            - args: any – convenience single argument; mapped to a common
-              content key if not otherwise provided in ``kwargs``.
-            - kwargs: dict – keyword arguments to pass to the method.
-        - children: dict[str, dict] – mapping of selector → node to apply on
-          matched in‑flight child handles.
+        Spec schema (structure‑aligned; keys optional):
+        - steps: list[dict]
+            Each step is a dict with:
+              - method: str  (e.g., "pause", "resume", "interject", "stop", "ask")
+              - args: any    (positional argument or list of args; no aliasing)
+              - kwargs: dict (keyword arguments)
+        - children: list[dict]
+            A list of child node specs mirroring nested_structure nodes:
+              - tool: str     Canonicalized "Class.method" (preferred identifier)
+              - handle: str   Canonicalized handle chain "Leaf(Parent(...))"
+              - steps: list[dict]       Local steps to apply on that child
+              - children: list[dict]    Further descendants with the same shape
 
-        Selector matching (case‑insensitive):
-        - Matches against in‑flight tool names at this level (e.g., "TaskScheduler_execute").
-        - Dotted vs underscore tolerated ("TaskScheduler.execute").
-        - Method‑only suffix accepted ("execute").
+        Matching is done against live children discovered via loop task_info
+        and standardized wrapper discovery, using:
+          1) tool equality; else
+          2) base(handle) equality, where base(x) = x.split("(", 1)[0].
 
-        Returns a summary dict: {"applied": [...], "skipped": [...]}, useful for tests.
-        See module‑level ``nested_steer_on`` for full behaviour details.
+        Returns a summary dict:
+          {
+            "applied": [{"path": [...], "method": "..."}],
+            "skipped": [{"path": [...], "child": {"tool": "...", "handle": "..."}}],
+            "status":  {"<path>": {"self": "none|partial|full", "children": {...}}},
+            "conditions_fired": [...]
+          }
+        See module‑level ``_nested_steer_on`` for full behaviour details.
         """
 
-        return await nested_steer_on(self, spec)
+        return await _nested_steer_on(self, spec)
 
     async def nested_structure(self) -> dict:
         """Return a minimal nested, read-only structure of live child loops.
 
         Shape (per node):
-        - handle: class name of the handle (string)
+        - handle: inheritance chain up to AsyncToolLoopHandle, formatted as
+          "Leaf(Parent(...(AsyncToolLoopHandle)))" when applicable; otherwise
+          the concrete class name.
         - tool: canonical entrypoint label "Class.method" when available, else class name
         - children: list of the same node shape for live (in-flight) nested handles only
 
@@ -819,16 +874,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         -----
         - Non-steerable or pending base tool calls without an adopted handle are omitted.
         - Completed child handles are omitted.
-        - Canonicalization strips leading "Simulated"/"Base" from class names.
+        - Canonicalization strips leading "Simulated"/"Base" from class names for the "tool" field.
+        - The inheritance chain stops at AsyncToolLoopHandle and does not include
+          "SteerableToolHandle" or any ancestors above it.
         """
-        return await nested_structure_on(self)
+        return await _nested_structure_on(self)
 
     # --- snapshotting v1: read-only capture (flat only) ---------------------
     def serialize(
         self,
         recursive: bool = False,
-        *,
-        store: Optional[Callable[[dict], str]] = None,
     ) -> dict:  # type: ignore[override]
         """Return a v1 snapshot of this handle's current state.
 
@@ -839,8 +894,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         - When ``recursive=False`` (default), nested tool loops are not supported
           and a ``ValueError`` is raised if any are detected.
         - When ``recursive=True``, in‑flight nested child handles are captured into
-          ``meta.children``. For each child, an inline ``snapshot`` is embedded or a
-          ``ref.path`` is written using the optional ``store`` callback.
+          top-level ``children`` with inline ``snapshot`` for each child.
         """
         # Guard / discovery for nested tool loops. When recursive=False (default),
         # nested handles are not supported and will raise a ValueError. When
@@ -862,14 +916,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Stopping too early can cancel nested handles before they are recorded.
 
         # Resolve entrypoint candidate from loop_id label (e.g., "ContactManager.ask" or
-        # "ContactManager.ask(x2ab)")
+        # "ContactManager.update->ContactManager.ask(x2ab)")
         raw_label = str(getattr(self, "_log_label", None) or self._loop_id or "")
-        base = raw_label.split("(", 1)[0]
-        if "." not in base or not base:
-            # Fallback placeholder for generic tool loops; may be replaced by inline_tools entrypoint below
-            cls_name, meth_name = "ToolLoop", "run"
-        else:
-            cls_name, meth_name = base.split(".", 1)
+        cls_name, meth_name = _parse_entrypoint_from_loop_id_label(raw_label)
 
         # Gather transcript fragments
         msgs = []
@@ -878,74 +927,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         except Exception:
             msgs = []
 
-        # Build pruning context (allowed base tools for this manager method).
-        # Best-effort: resolve manager class and its tools; if not found, fall back
-        # to simple structural pruning (drop synthetic check_status_* calls).
+        # Minimal pruning policy: no inline-tool binding; keep all assistant tool_calls and final tool results.
         allowed_tool_names: set[str] | None = None
-        mgr_cls = None
-        try:
-            from .state_managers import (
-                BaseStateManager as _BaseStateManager,
-            )  # noqa: WPS433
-            from importlib import import_module as _import_module  # noqa: WPS433
-
-            # Ensure common managers are imported so __subclasses__ is populated
-            for _m in (
-                "unity.contact_manager.contact_manager",
-                "unity.transcript_manager.transcript_manager",
-                "unity.knowledge_manager.knowledge_manager",
-                "unity.guidance_manager.guidance_manager",
-                "unity.secret_manager.secret_manager",
-                "unity.skill_manager.skill_manager",
-                "unity.task_scheduler.task_scheduler",
-                "unity.file_manager.file_manager",
-                "unity.image_manager.image_manager",
-                "unity.web_searcher.web_searcher",
-                "unity.conductor.conductor",
-            ):
-                try:
-                    _import_module(_m)
-                except Exception:
-                    pass
-
-            def _all_subclasses(cls_):
-                out = set()
-                for sub in cls_.__subclasses__():
-                    out.add(sub)
-                    out.update(_all_subclasses(sub))
-                return out
-
-            for c in _all_subclasses(_BaseStateManager):
-                if getattr(c, "__name__", "") == cls_name:
-                    mgr_cls = c
-                    break
-            if mgr_cls is not None:
-                try:
-                    manager = mgr_cls()
-                    _tools_dict = manager.get_tools(meth_name, include_sub_tools=True)
-                    if isinstance(_tools_dict, dict) and _tools_dict:
-                        allowed_tool_names = set(_tools_dict.keys())
-                except Exception:
-                    allowed_tool_names = None
-        except Exception:
-            allowed_tool_names = None
-
-        # Determine if this looks like a non-manager loop with inline tools
-        inline_registry = []
-        with suppress(Exception):
-            inline_registry = list(getattr(self, "_inline_tools_registry", []) or [])
-        use_inline_entrypoint = mgr_cls is None and bool(inline_registry)
-        if use_inline_entrypoint and allowed_tool_names is None:
-            try:
-                allowed_tool_names = set(
-                    [
-                        t.get("name")
-                        for t in inline_registry
-                        if isinstance(t, dict) and t.get("name")
-                    ],
-                )
-            except Exception:
-                allowed_tool_names = None
 
         # Use shared transcript helpers to extract assistant/tool steps, interjections,
         # clarifications and the initial user-visible message.
@@ -963,6 +946,44 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             tool_results,
             callid_to_tool_name=extracted.get("callid_to_tool_name", {}),
         )
+        # Mirror pending interjection steering entries from steer_log which may not be in msgs yet.
+        # Represent them as system messages appended to the end with monotonically increasing indices.
+        try:
+            steer_log = list(getattr(self, "_steer_log", []) or [])
+        except Exception:
+            steer_log = []
+        # Build a set of existing interjection contents for simple de-duplication
+        existing_contents = set()
+        try:
+            for im in interjections:
+                c = im.get("content")
+                if isinstance(c, str):
+                    existing_contents.add(c)
+        except Exception:
+            existing_contents = set()
+        base_idx = len(msgs)
+        appended = 0
+        for rec in steer_log:
+            try:
+                if rec.get("method") != "interject":
+                    continue
+                kw = rec.get("kwargs") or {}
+                content = kw.get("message")
+                if not isinstance(content, str) or not content:
+                    # positional fallback: args[0] when present
+                    args = rec.get("args") or ()
+                    if isinstance(args, (list, tuple)) and args:
+                        content = args[0]
+                if not isinstance(content, str) or not content:
+                    continue
+                if content in existing_contents:
+                    continue
+                interjections.append({"role": "system", "content": content})
+                interjections_indices.append(base_idx + appended)
+                existing_contents.add(content)
+                appended += 1
+            except Exception:
+                continue
         initial_user_message = _initial_user_from_user_visible_history(
             getattr(self, "_user_visible_history", []) or [],
         )
@@ -1017,32 +1038,28 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             except Exception:
                 pass
 
-        # Finalise entrypoint selection
-        if use_inline_entrypoint:
-            entry_field = _EntryPointInlineTools(
-                tools=[_ToolRef(**t) for t in inline_registry if isinstance(t, dict)],
-            )
-        else:
-            entry_field = _EntryPointManagerMethod(
-                class_name=cls_name,
-                method_name=meth_name,
-            )
+        # Human-readable root summary from entrypoint (no additional parsing)
+        root_summary = {}
+        try:
+            root_summary["tool"] = f"{cls_name}.{meth_name}"
+            root_summary["handle"] = "AsyncToolLoopHandle"
+        except Exception:
+            root_summary = {}
 
         snap = _LoopSnapshot(
-            entrypoint=entry_field,
             loop_id=str(self._loop_id or ""),
             system_message=system_message,
+            root=root_summary or None,
             initial_user_message=initial_user_message,
-            assistant_steps=assistant_steps,
-            tool_results=tool_results,
-            assistant_indices=assistant_indices_raw,
-            tool_results_indices=tool_results_indices,
-            interjections=interjections,
-            interjections_indices=interjections_indices,
+            assistant=assistant_steps,
+            tools=tool_results,
+            assistant_positions=assistant_indices_raw,
+            tool_positions=tool_results_indices,
+            system_interjections=interjections,
+            interjection_positions=interjections_indices,
             clarifications=clarifications,
             notifications=notifications,
             images=images_list,
-            full_messages=msgs,
             meta={
                 "run_id": SESSION_ID,
                 "loop_created_at": str(getattr(self, "_created_at_iso", "") or ""),
@@ -1061,9 +1078,10 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         ).model_dump()
 
         # Enforce v1 shape
-        # If recursive capture was requested, attach a children manifest under meta.
+        # If recursive capture was requested, attach a children manifest at the top-level.
         if recursive and isinstance(task_info, dict):
             children: list[dict] = []
+            # Children via task_info (adopted handles)
             for _t, _inf in task_info.items():
                 child = getattr(_inf, "handle", None)
                 if child is None:
@@ -1076,33 +1094,163 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 child_snapshot = None
                 if state == "in_flight":
                     try:
-                        child_snapshot = child.serialize(recursive=True, store=store)
-                    except Exception:
+                        child_snapshot = child.serialize(recursive=True)
+                    except Exception as e:
+                        # Fallback: if we cannot build an inline snapshot for a live child,
+                        # record it as completed (state='done') to satisfy schema requirements.
+                        state = "done"
                         child_snapshot = None
+
+                # Identify child tool and handle for readability
+                def _canon_class(name: str) -> str:
+                    """Canonicalize a class-name string by stripping known prefixes.
+
+                    Rules (applied in order):
+                    - Strip leading 'Simulated' (e.g., SimulatedFoo → Foo)
+                    - Strip leading version prefix 'V<digits>' (e.g., V3Foo → Foo)
+                    - Strip leading 'Base' (e.g., BaseFoo → Foo)
+                    """
+                    s = str(name or "")
+                    try:
+                        if s.startswith("Simulated") and len(s) > 9:
+                            s = s[9:]
+                    except Exception:
+                        pass
+                    try:
+                        import re as _re  # noqa: WPS433
+
+                        s = _re.sub(r"^V\\d+", "", s)
+                    except Exception:
+                        pass
+                    try:
+                        if s.startswith("Base") and len(s) > 4:
+                            s = s[4:]
+                    except Exception:
+                        pass
+                    return s
+
+                def _child_tool(h) -> str | None:
+                    try:
+                        raw = getattr(h, "_loop_id", None) or ""
+                    except Exception:
+                        raw = ""
+                    base = str(raw).split("(", 1)[0]
+                    if "." in base:
+                        cls, meth = base.split(".", 1)
+                        return f"{_canon_class(cls)}.{meth}"
+                    try:
+                        cls_name = _canon_class(
+                            getattr(getattr(h, "__class__", object), "__name__", ""),
+                        )
+                        return cls_name or None
+                    except Exception:
+                        return None
+
+                def _child_handle_chain(h) -> str | None:
+                    try:
+                        cls = getattr(h, "__class__", object)
+                    except Exception:
+                        cls = object
+                    try:
+                        leaf = _canon_handle_name(cls) or "handle"
+                    except Exception:
+                        leaf = "handle"
+                    _SENTINELS = (
+                        (AsyncToolLoopHandle, "AsyncToolLoopHandle"),
+                        (SteerableToolHandle, "SteerableToolHandle"),
+                        (SteerableHandle, "SteerableHandle"),
+                    )
+                    for typ, label in _SENTINELS:
+                        if cls is typ:
+                            return label
+                    try:
+                        mro = list(getattr(cls, "__mro__", ()))
+                    except Exception:
+                        mro = []
+                    parts = [leaf]
+                    for base in (mro[1:] if len(mro) > 1 else []):
+                        try:
+                            bname = getattr(base, "__name__", "")
+                        except Exception:
+                            bname = ""
+                        included = False
+                        for typ, label in _SENTINELS:
+                            if base is typ:
+                                parts.append(label)
+                                included = True
+                                break
+                        if included:
+                            break
+                        from abc import ABC as _ABC  # noqa: WPS433
+
+                        if base is object or base is _ABC:
+                            break
+                        if bname and bname.startswith("Base"):
+                            continue
+                        try:
+                            canon = _canon_handle_name(base)
+                        except Exception:
+                            canon = bname
+                        if canon:
+                            parts.append(canon)
+                    try:
+                        s = parts[-1]
+                        for p in reversed(parts[:-1]):
+                            s = f"{p}({s})"
+                        return s
+                    except Exception:
+                        return leaf
+
                 entry = {
                     "call_id": getattr(_inf, "call_id", None),
-                    "tool_name": getattr(_inf, "name", None),
-                    "is_passthrough": bool(getattr(_inf, "is_passthrough", False)),
+                    "tool": _child_tool(child) or getattr(_inf, "name", None),
+                    "handle": _child_handle_chain(child),
+                    "passthrough": bool(getattr(_inf, "is_passthrough", False)),
                     "state": state,
                 }
                 if isinstance(child_snapshot, dict):
-                    ref_path = None
-                    try:
-                        if store is not None:
-                            ref_path = store(child_snapshot)
-                    except Exception:
-                        ref_path = None
-                    if ref_path:
-                        entry["ref"] = {"path": ref_path}
-                    else:
-                        entry["snapshot"] = child_snapshot
+                    entry["snapshot"] = child_snapshot
                 children.append(entry)
+            # Children via standardized wrapper discovery
+            try:
+                from .handle_wrappers import (  # noqa: WPS433
+                    discover_wrapped_handles as _discover_wrapped_handles,
+                )
+            except Exception:
+                _discover_wrapped_handles = None  # type: ignore
+            if _discover_wrapped_handles is not None:
+                try:
+                    pairs = list(_discover_wrapped_handles(self) or [])
+                except Exception:
+                    pairs = []
+                for _src, child in pairs:
+                    if child is None:
+                        continue
+                    state = "done"
+                    try:
+                        state = "in_flight" if not bool(child.done()) else "done"
+                    except Exception:
+                        pass
+                    child_snapshot = None
+                    if state == "in_flight":
+                        try:
+                            child_snapshot = child.serialize(recursive=True)
+                        except Exception as e:
+                            state = "done"
+                            child_snapshot = None
+                    entry = {
+                        "call_id": None,
+                        "tool": _child_tool(child),
+                        "handle": _child_handle_chain(child),
+                        "passthrough": False,
+                        "state": state,
+                    }
+                    if isinstance(child_snapshot, dict):
+                        entry["snapshot"] = child_snapshot
+                    children.append(entry)
             try:
                 if children:
-                    # Ensure meta exists before augmenting
-                    if snap.get("meta") is None:
-                        snap["meta"] = {}
-                    snap["meta"]["children"] = children
+                    snap["children"] = children
                     try:
                         LOGGER.info(
                             f"🧩 Snapshot captured {len(children)} in-flight child loop(s)",
@@ -1128,7 +1276,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         cls,
         snapshot: dict,
         *,
-        loader: Optional[Callable[[str], dict]] = None,
+        parent_lineage: list[str] | None = None,
     ) -> "SteerableToolHandle":  # type: ignore[override]
         """Recreate a running handle from a v1 snapshot (flat only).
 
@@ -1143,81 +1291,57 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         """
         snap = _validate_snapshot(_migrate_snapshot(snapshot))
 
-        from importlib import import_module as _import_module  # noqa: WPS433
         from .llm_client import (
             new_llm_client as _new_llm_client,
         )  # noqa: WPS433
 
-        # Build tools mapping depending on entrypoint type
+        # Build tools mapping depending on resolved entrypoint
         tools: Dict[str, Callable] = {}
         loop_label: str = snap.loop_id or ""
 
-        if snap.entrypoint.type == "manager_method":
-            # Resolve manager class by name and collect tools
-            from .state_managers import (
-                BaseStateManager as _BaseStateManager,
-            )  # noqa: WPS433
+        # Resolve manager class by name from the central registry
+        from .state_managers import (  # noqa: WPS433
+            discover_manager_modules as _discover_manager_modules,
+            get_manager_registry as _get_manager_registry,
+        )
 
-            _maybe_modules = (
-                "unity.contact_manager.contact_manager",
-                "unity.transcript_manager.transcript_manager",
-                "unity.knowledge_manager.knowledge_manager",
-                "unity.guidance_manager.guidance_manager",
-                "unity.secret_manager.secret_manager",
-                "unity.skill_manager.skill_manager",
-                "unity.task_scheduler.task_scheduler",
-                "unity.file_manager.file_manager",
-                "unity.image_manager.image_manager",
-                "unity.web_searcher.web_searcher",
-                "unity.conductor.conductor",
-            )
-            for _m in _maybe_modules:
-                try:
-                    _import_module(_m)
-                except Exception:
-                    pass
+        _discover_manager_modules()
+        _registry = _get_manager_registry()
 
-            def _all_subclasses(cls_):
-                out = set()
-                for sub in cls_.__subclasses__():
-                    out.add(sub)
-                    out.update(_all_subclasses(sub))
-                return out
-
-            mgr_cls = None
-            for c in _all_subclasses(_BaseStateManager):
-                if getattr(c, "__name__", "") == snap.entrypoint.class_name:
-                    mgr_cls = c
-                    break
-            if mgr_cls is None:
-                # Fallback: flat non-manager loop created via start_async_tool_loop
-                # with no manager context (our serializer encodes this as
-                # ToolLoop.run). In this case, resume with empty inline tools.
-                if str(snap.entrypoint.class_name) == "ToolLoop":
-                    tools = {}
-                    if not loop_label:
-                        loop_label = "InlineTools"
-                else:
-                    raise ValueError(
-                        f"Manager class not found: {snap.entrypoint.class_name}",
-                    )
+        # Resolve entrypoint: prefer loop_id lineage label; else fall back to root.tool
+        try:
+            if loop_label:
+                ep_class_name, ep_method_name = _parse_entrypoint_from_loop_id_label(
+                    loop_label,
+                )
             else:
-                manager = mgr_cls()
-                method_name = snap.entrypoint.method_name
-                tools = dict(manager.get_tools(method_name, include_sub_tools=True))
-                if not tools:
+                root = snap.root or {}
+                tool_val = root.get("tool") if isinstance(root, dict) else None
+                if not isinstance(tool_val, str) or "." not in tool_val:
                     raise ValueError(
-                        f"No tools registered for {snap.entrypoint.class_name}.{method_name}",
+                        "Manager class not found: missing loop_id and root.tool",
                     )
-                if not loop_label:
-                    loop_label = f"{snap.entrypoint.class_name}.{method_name}"
+                ep_class_name, ep_method_name = tool_val.split(".", 1)
+        except Exception as _exc:
+            # Ensure consistent error message for missing manager
+            raise ValueError(
+                "Manager class not found: unable to derive entrypoint",
+            ) from _exc
 
-        else:  # inline tools
-            tools = _resolve_inline_tools(snap.entrypoint.tools)
-            if not tools:
-                raise ValueError("Inline tools entrypoint contains no resolvable tools")
-            if not loop_label:
-                loop_label = "InlineTools"
+        mgr_cls = _registry.get(ep_class_name)
+        if mgr_cls is None:
+            raise ValueError(
+                f"Manager class not found: {ep_class_name}",
+            )
+        manager = mgr_cls()
+        method_name = ep_method_name
+        tools = dict(manager.get_tools(method_name, include_sub_tools=True))
+        if not tools:
+            raise ValueError(
+                f"No tools registered for {ep_class_name}.{method_name}",
+            )
+        if not loop_label:
+            loop_label = f"{ep_class_name}.{method_name}"
 
         # Build a fresh LLM client and restore system header.
         client = _new_llm_client()
@@ -1234,7 +1358,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         assistant_call_ids: set[str] = set()
         try:
-            for am in snap.assistant_steps or []:
+            for am in snap.assistant or []:
                 for tc in am.get("tool_calls", []) or []:
                     try:
                         _cid = tc.get("id")
@@ -1247,7 +1371,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         final_call_ids: set[str] = set()
         try:
-            for tm in snap.tool_results or []:
+            for tm in snap.tools or []:
                 try:
                     _cid = tm.get("tool_call_id")
                 except Exception:
@@ -1277,16 +1401,16 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # If indices are present, reconstruct exact ordering across assistants, tools, and interjections.
         if (
-            snap.assistant_indices
-            or snap.tool_results_indices
-            or snap.interjections_indices
+            snap.assistant_positions
+            or snap.tool_positions
+            or snap.interjection_positions
         ):
             combined: list[tuple[int, dict]] = []
             # Assistant messages with indices
             try:
                 for idx_val, amsg in zip(
-                    snap.assistant_indices or [],
-                    snap.assistant_steps or [],
+                    snap.assistant_positions or [],
+                    snap.assistant or [],
                 ):
                     if isinstance(amsg, dict) and amsg.get("role") == "assistant":
                         combined.append((int(idx_val), amsg))
@@ -1295,8 +1419,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             # Tool results with indices (skip clarification wrappers and any pending placeholders)
             try:
                 for idx_val, tmsg in zip(
-                    snap.tool_results_indices or [],
-                    snap.tool_results or [],
+                    snap.tool_positions or [],
+                    snap.tools or [],
                 ):
                     try:
                         nm = tmsg.get("name")
@@ -1314,8 +1438,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             # Interjections with indices
             try:
                 for idx_val, imsg in zip(
-                    snap.interjections_indices or [],
-                    snap.interjections or [],
+                    snap.interjection_positions or [],
+                    snap.system_interjections or [],
                 ):
                     if isinstance(imsg, dict) and imsg.get("role") == "system":
                         combined.append((int(idx_val), imsg))
@@ -1328,7 +1452,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         else:
             # Backward-compat path: pair tool results by call_id after each assistant
             by_call_id: dict[str, dict] = {}
-            for tm in snap.tool_results or []:
+            for tm in snap.tools or []:
                 try:
                     name_val = tm.get("name")
                     tcid = tm.get("tool_call_id")
@@ -1345,7 +1469,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 if isinstance(tcid, str) and tcid:
                     by_call_id[tcid] = tm
 
-            for amsg in snap.assistant_steps or []:
+            for amsg in snap.assistant or []:
                 if not isinstance(amsg, dict) or amsg.get("role") != "assistant":
                     continue
                 msgs.append(amsg)
@@ -1399,8 +1523,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Prepare resume_children payloads (if any) to adopt nested handles in-flight.
         _resume_children_payload: list[dict] = []
         try:
-            meta = getattr(snap, "meta", None) or {}
-            ch_list = meta.get("children") if isinstance(meta, dict) else None
+            ch_list = getattr(snap, "children", None)
             if isinstance(ch_list, list):
                 for rec in ch_list:
                     try:
@@ -1410,29 +1533,19 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                             continue
                         child_snap = rec.get("snapshot")
                         if not isinstance(child_snap, dict):
-                            # Try resolve by reference using loader callback
-                            try:
-                                ref = rec.get("ref") or {}
-                                path = (
-                                    ref.get("path") if isinstance(ref, dict) else None
-                                )
-                                if (
-                                    loader is not None
-                                    and isinstance(path, str)
-                                    and path
-                                ):
-                                    child_snap = loader(path)
-                            except Exception:
-                                child_snap = None
-                        if not isinstance(child_snap, dict):
-                            continue
-                        child_handle = cls.deserialize(child_snap, loader=loader)
+                            continue  # by-ref children not supported in simplified v1
+                        # Start child under the parent's entrypoint lineage so its logs reflect nested replay
+                        parent_entrypoint = f"{ep_class_name}.{ep_method_name}"
+                        child_handle = cls.deserialize(
+                            child_snap,
+                            parent_lineage=[parent_entrypoint],
+                        )
                         _resume_children_payload.append(
                             {
                                 "call_id": rec.get("call_id"),
-                                "tool_name": rec.get("tool_name"),
+                                "tool_name": rec.get("tool"),
                                 "is_passthrough": bool(
-                                    rec.get("is_passthrough", False),
+                                    rec.get("passthrough", False),
                                 ),
                                 "handle": child_handle,
                             },
@@ -1447,9 +1560,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             msgs if msgs else (init or ""),
             tools,
             loop_id=loop_label,
-            parent_lineage=TOOL_LOOP_LINEAGE.get([]),
+            parent_lineage=(
+                parent_lineage
+                if parent_lineage is not None
+                else TOOL_LOOP_LINEAGE.get([])
+            ),
             images=images_param,
             resume_children=_resume_children_payload or None,
+            replay_origin="deserialize",
         )
 
         # Diagnostics: log adopted children count
@@ -1464,8 +1582,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # If the last interjection occurred *after* the last assistant message,
         # request an immediate LLM turn without duplicating the interjection message.
         try:
-            ai = snap.assistant_indices or []
-            ii = snap.interjections_indices or []
+            ai = snap.assistant_positions or []
+            ii = snap.interjection_positions or []
             if ai or ii:
                 last_asst = max(ai) if ai else -1
                 last_intr = max(ii) if ii else -1
@@ -1491,32 +1609,62 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
 
 # --- module-level generic helper ----------------------------------------------
-async def nested_steer_on(handle: Any, spec: dict) -> dict:
-    """Apply a nested steering spec to any compatible handle without LLM calls.
+async def _nested_steer_on(handle: Any, spec: dict) -> dict:
+    """Apply a nested steering spec using the same vocabulary as nested_structure.
 
-    Node schema (keys optional; omitted treated as None):
-      - steps: list[dict] – ordered actions to apply on the current handle. Each
-        step supports:
-          - method: str – method name to invoke (e.g., "pause", "resume",
-            "interject", "stop", "ask").
-          - args: any – convenience single argument; mapped to a common content
-            key if not otherwise provided in kwargs.
-          - kwargs: dict – keyword arguments to pass to the method.
-      - children: dict[str, dict] – mapping of selector → child node, where selector
-        is matched against in-flight tool names at this level (from task_info metadata).
+    Spec schema (structure-aligned; keys optional):
+      - steps: list[dict]
+          Ordered actions to apply on the current handle. Each step supports:
+            - method: str  (e.g., "pause", "resume", "interject", "stop", "ask")
+            - args: any    (positional argument or list of args; no aliasing)
+            - kwargs: dict (keyword arguments)
+      - children: list[dict]
+          A list of child node specs. Each child node mirrors a node returned by
+          nested_structure and may include:
+            - tool: str     Canonicalized "Class.method" (preferred identifier)
+            - handle: str   Canonicalized handle chain "Leaf(Parent(...))"
+            - steps: list[dict]   Local steps to apply on that child
+            - children: list[dict]  Further descendants with the same shape
+          Matching is done against live children discovered at this node using:
+            1) tool equality (preferred), else
+            2) base(handle) equality, where base(x) = x.split(\"(\", 1)[0]
 
     Behaviour:
-      - Apply the local steps in order (when present), using robust forwarding.
-      - Discover loop-children via _task.task_info and recurse into matched child handles.
-      - If no loop-children matched, fall back to common wrapper attributes ("_actor_handle",
-        "_current_handle") when exactly one child node is provided.
-      - Unknown selectors are ignored; traversal stops naturally when no child is found.
+      - Apply local steps first on the current handle.
+      - Discover live children via both loop task_info and standardized wrappers
+        (discover_wrapped_handles), deduplicating by object id and skipping
+        completed handles.
+      - For each spec child, match one or more live children and recurse.
+      - Record a results object with:
+          results = {
+            "applied": [ {"path": [...], "method": "..."} ],
+            "skipped": [ {"path": [...], "child": {"tool": "...", "handle": "..."}} ],
+            "status":  {
+              "<path>": {"self": "none|partial|full", "children": {<child_id>: "..." }}
+            },
+            "conditions_fired": [ ... ]  # when conditions are provided
+          }
 
-    Selector matching rules (case-insensitive):
-      - Accept exact tool name matches (e.g., "TaskScheduler_execute").
-      - Accept dotted form (e.g., "TaskScheduler.execute") matching underscore names.
-      - Accept method-only suffix (e.g., "execute" matches "TaskScheduler_execute").
-    """
+    Conditions (optional, structure-aligned):
+      - Node may include "conditions": list[dict]. Each condition has:
+          {
+            "when": { ... boolean expression ... },
+            "then":  [steps...],
+            "else_then": [steps...]
+          }
+        Boolean expression supports:
+          - {"self": "none|partial|full"}
+          - {"child": {"tool": "..."} , "status": "none|partial|full"}
+          - {"child": {"handle": "..."} , "status": "none|partial|full"}
+          - {"path": "A.B.C", "status": "none|partial|full"}    # dotted tool-ids
+          - {"any": [expr, ...]}  / {"all": [expr, ...]}  / {"not": expr}
+
+    Notes:
+      - This refactor unifies naming and discovery with nested_structure:
+        canonicalized names, wrapper traversal, and identical child vocabulary.
+      - Selector/call_id matching from the previous design is removed in favour
+        of structure-based matching by "tool"/"handle".
+    """  # noqa: E501
 
     # Best-effort label for diagnostics
     try:
@@ -1528,6 +1676,69 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
     except Exception:
         label = "handle"
 
+    # Helper: derive a loop-style label for any target handle (child or current)
+    def _label_of(h) -> str:
+        try:
+            return (
+                getattr(h, "_log_label", None)
+                or getattr(h, "_loop_id", None)
+                or getattr(getattr(h, "__class__", object), "__name__", "handle")
+            )
+        except Exception:
+            return "handle"
+
+    # Helper: emit a pre-call log that mirrors native handle logs but marks nested_steer origin
+    def _log_pre_steer(h, method: str, args, kwargs: dict) -> None:
+        try:
+            target_label = _label_of(h)
+            m = (method or "").strip().lower()
+            # Extract a short text payload for well-known methods (best-effort)
+            txt = None
+            try:
+                if isinstance(args, (list, tuple)) and args:
+                    txt = args[0]
+            except Exception:
+                txt = None
+            if not isinstance(txt, str) or not txt:
+                # Try common kwargs for message/question/reason/content
+                for k in ("message", "content", "question", "reason", "text"):
+                    try:
+                        v = kwargs.get(k)
+                        if isinstance(v, str) and v:
+                            txt = v
+                            break
+                    except Exception:
+                        continue
+            # Choose icon and level to mirror direct logs
+            if m == "pause":
+                LOGGER.info(f"⏸️ [{target_label}] Pause requested – via nested_steer")
+            elif m == "resume":
+                LOGGER.info(f"▶️ [{target_label}] Resume requested – via nested_steer")
+            elif m == "stop":
+                suffix = f" – reason: {txt}" if isinstance(txt, str) and txt else ""
+                LOGGER.info(
+                    f"🛑 [{target_label}] Stop requested – via nested_steer{suffix}",
+                )
+            elif m == "interject":
+                suffix = f": {txt}" if isinstance(txt, str) and txt else ""
+                LOGGER.debug(
+                    f"💬 [{target_label}] Interject requested{suffix} – via nested_steer",
+                )
+            elif m == "ask":
+                suffix = f": {txt}" if isinstance(txt, str) and txt else ""
+                LOGGER.info(
+                    f"❓ [{target_label}] Ask requested{suffix} – via nested_steer",
+                )
+            else:
+                # Generic steering step
+                suffix = f": {txt}" if isinstance(txt, str) and txt else ""
+                LOGGER.info(
+                    f"🎯 [{target_label}] {method} requested{suffix} – via nested_steer",
+                )
+        except Exception:
+            # Never let logging failures affect control flow
+            pass
+
     try:
         steps_count = 0
         children_count = 0
@@ -1536,8 +1747,10 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                 steps = spec.get("steps") or []
                 if isinstance(steps, list):
                     steps_count = len(steps)
-                children = spec.get("children") or {}
-                if isinstance(children, dict):
+                children = spec.get("children")
+                if isinstance(children, list):
+                    children_count = len(children)
+                elif isinstance(children, dict):
                     children_count = len(children)
         except Exception:
             steps_count, children_count = 0, 0
@@ -1549,77 +1762,176 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
 
     results: dict = {"applied": [], "skipped": []}
 
-    def _norm(s: str) -> str:
+    # ───── shared canonicalization helpers (mirror nested_structure) ─────────
+    def _canon_name(name: str) -> str:
+        s = str(name or "")
+        if s.startswith("Simulated") and len(s) > 9:
+            s = s[9:]
+        # Strip leading version prefixes like V3/V12
         try:
-            return str(s).replace(".", "_").strip().lower()
-        except Exception:
-            return str(s).lower()
+            import re as _re  # noqa: WPS433
 
-    def _selector_matches_name(selector: str, candidate_name: str) -> bool:
-        """Name-only matching with relaxed rules (case-insensitive, suffix)."""
-        sel = _norm(selector)
-        cand = _norm(candidate_name)
-        if not sel or not cand:
-            return False
-        if sel == cand:
-            return True
-        # Suffix match: allow targeting by bare method name
+            s = _re.sub(r"^V\\d+", "", s)
+        except Exception:
+            pass
+        if s.startswith("Base") and len(s) > 4:
+            s = s[4:]
+        return s
+
+    def _handle_chain_of(h) -> str:
         try:
-            suffix = cand.split("_", 1)[1]
+            cls = getattr(h, "__class__", object)
         except Exception:
-            suffix = cand
-        return sel == suffix
-
-    def _selector_hits(
-        selector: str,
-        candidate_name: str,
-        candidate_call_id: str | None,
-    ) -> bool:
-        """Extended selector matcher supporting wildcard and call_id forms.
-
-        Accepted forms:
-        - "*" → match all children at the current level
-        - exact call_id → matches the tool with that call_id
-        - "#<id_suffix>" → match when call_id endswith(<id_suffix>)
-        - "<name>#<call_id|suffix>" → match by name AND call_id (or its suffix)
-        - name-only → uses relaxed name rules (dotted vs underscore; suffix method)
-        """
+            cls = object
         try:
-            s = str(selector or "").strip()
+            leaf_name = _canon_handle_name(cls) or "handle"
         except Exception:
-            s = str(selector)
+            leaf_name = "handle"
 
-        # Wildcard for broadcast at this level
-        if s == "*":
-            return True
+        _SENTINELS = (
+            (AsyncToolLoopHandle, "AsyncToolLoopHandle"),
+            (SteerableToolHandle, "SteerableToolHandle"),
+            (SteerableHandle, "SteerableHandle"),
+        )
+        for typ, label in _SENTINELS:
+            if cls is typ:
+                return label
 
-        # Direct call_id match
-        if candidate_call_id and s == str(candidate_call_id):
-            return True
+        try:
+            mro = list(getattr(cls, "__mro__", ()))
+        except Exception:
+            mro = []
 
-        # call_id suffix match via leading '#'
-        if s.startswith("#"):
-            suf = s[1:]
-            if candidate_call_id and (
-                candidate_call_id.endswith(suf) or candidate_call_id == suf
-            ):
-                return True
-            return False
-
-        # Combined name#id form
-        if "#" in s:
+        parts: list[str] = [leaf_name]
+        for base in (mro[1:] if len(mro) > 1 else []):
             try:
-                left, right = s.split("#", 1)
+                bname = getattr(base, "__name__", "")
             except Exception:
-                left, right = s, ""
-            if _selector_matches_name(left, candidate_name):
-                if not candidate_call_id:
-                    return False
-                return candidate_call_id == right or candidate_call_id.endswith(right)
-            return False
+                bname = ""
 
-        # Default: name-only
-        return _selector_matches_name(s, candidate_name)
+            included_sentinel = False
+            for typ, label in _SENTINELS:
+                if base is typ:
+                    parts.append(label)
+                    included_sentinel = True
+                    break
+            if included_sentinel:
+                break
+
+            from abc import ABC as _ABC  # noqa: WPS433
+
+            if base is object or base is _ABC:
+                break
+
+            if bname and bname.startswith("Base"):
+                continue
+            try:
+                canon = _canon_handle_name(base)
+            except Exception:
+                canon = bname
+            if canon:
+                parts.append(canon)
+
+        try:
+            s = parts[-1]
+            for p in reversed(parts[:-1]):
+                s = f"{p}({s})"
+            return s
+        except Exception:
+            return leaf_name
+
+    def _tool_of(h) -> str | None:
+        try:
+            raw = getattr(h, "_loop_id", None) or ""
+        except Exception:
+            raw = ""
+        base = str(raw).split("(", 1)[0]
+        if "." in base:
+            cls, meth = base.split(".", 1)
+            return f"{_canon_name(cls)}.{meth}"
+        try:
+            cls_name = _canon_name(
+                getattr(getattr(h, "__class__", object), "__name__", ""),
+            )
+            return cls_name or None
+        except Exception:
+            return None
+
+    def _is_live(child) -> bool:
+        try:
+            if hasattr(child, "done"):
+                d = child.done()
+                if isinstance(d, bool):
+                    return not d
+        except Exception:
+            pass
+        return True
+
+    def _base_handle_name(s: str | None) -> str:
+        try:
+            return str(s or "").split("(", 1)[0]
+        except Exception:
+            return str(s or "")
+
+    def _identity_for_path(h) -> str:
+        t = _tool_of(h)
+        if isinstance(t, str) and t:
+            return t
+        return _base_handle_name(_handle_chain_of(h))
+
+    def _discover_children(h) -> list:
+        # task_info discovery
+        task_info = {}
+        from contextlib import suppress as _s
+
+        with _s(Exception):
+            task_info = getattr(getattr(h, "_task", None), "task_info", {}) or {}
+
+        children: list = []
+        seen: set[int] = set()
+        if isinstance(task_info, dict) and task_info:
+            for meta in list(task_info.values()):
+                try:
+                    child = getattr(meta, "handle", None)
+                except Exception:
+                    child = None
+                if child is None or not _is_live(child):
+                    continue
+                try:
+                    cid = id(child)
+                    if cid in seen:
+                        continue
+                    seen.add(cid)
+                except Exception:
+                    pass
+                children.append(child)
+
+        # wrapper discovery (same helper as nested_structure)
+        try:
+            from .handle_wrappers import (  # noqa: WPS433
+                discover_wrapped_handles as _discover_wrapped_handles,
+            )
+        except Exception:
+            _discover_wrapped_handles = None  # type: ignore
+
+        if _discover_wrapped_handles is not None:
+            try:
+                pairs = list(_discover_wrapped_handles(h) or [])
+            except Exception:
+                pairs = []
+            for _src, child in pairs:
+                if child is None or not _is_live(child):
+                    continue
+                try:
+                    cid = id(child)
+                    if cid in seen:
+                        continue
+                    seen.add(cid)
+                except Exception:
+                    pass
+                children.append(child)
+
+        return children
 
     # ───── status helpers ──────────────────────────────────────────────────
     def _merge_status(a: str, b: str) -> str:
@@ -1668,10 +1980,13 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
 
     def _record_status(flat_key: str, node_status: dict) -> None:
         try:
-            children_view = {
-                k: (v.get("self") if isinstance(v, dict) else "none")
-                for k, v in (node_status.get("children", {}) or {}).items()
-            }
+            children_view = {}
+            try:
+                for k, v in (node_status.get("children", {}) or {}).items():
+                    if isinstance(v, dict):
+                        children_view[k] = v.get("self", "none")
+            except Exception:
+                children_view = {}
             results.setdefault("status", {})[flat_key] = {
                 "self": node_status.get("self", "none"),
                 "children": children_view,
@@ -1685,6 +2000,13 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
         except Exception:
             segs = []
         cur = node_status
+        # Fast path: allow a direct child key match for full literal (handles tool ids like "Class.method")
+        try:
+            direct = cur.get("children", {}).get(dotted)
+            if isinstance(direct, dict):
+                return str(direct.get("self", "none"))
+        except Exception:
+            pass
         for s in segs:
             try:
                 ch = cur.get("children", {}).get(s)
@@ -1702,7 +2024,6 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
         h,
         node: dict | None,
         path: list[str],
-        sel_path: list[str],
     ) -> dict:
         node = node or {}
         steps = node.get("steps") or []
@@ -1733,6 +2054,8 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                             call_args = [args]
                     attempted_local = True
                     try:
+                        # Emit a pre-call log with the target's own loop label so hierarchy is preserved
+                        _log_pre_steer(h, method, call_args, call_kwargs)
                         await forward_handle_call(
                             h,
                             method,
@@ -1765,79 +2088,92 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
                     # Continue to next step
                     pass
 
-        # 2) Recurse into matched children
-        children = node.get("children") or {}
+        # 2) Recurse into matched children (structure-based)
+        children_specs = node.get("children") or []
+        if not isinstance(children_specs, list):
+            children_specs = []
 
-        # Discover loop children via task_info when available
-        task_info = {}
-        with suppress(Exception):
-            task_info = getattr(getattr(h, "_task", None), "task_info", {}) or {}
+        live_children = _discover_children(h)
+        per_child_nodes: dict[str, list[dict]] = {}
 
-        matched_any = False
-        matched_selectors: set[str] = set()
-        per_selector_nodes: dict[str, list[dict]] = {}
+        for child_spec in children_specs:
+            if not isinstance(child_spec, dict):
+                continue
+            target_tool = child_spec.get("tool")
+            target_handle = _base_handle_name(child_spec.get("handle"))
 
-        if isinstance(children, dict) and children:
-            if isinstance(task_info, dict) and task_info:
-                for sel, child_node in children.items():
-                    for _t, _inf in list(task_info.items()):
-                        try:
-                            _name = getattr(_inf, "name", None)
-                            _cid = getattr(_inf, "call_id", None)
-                            _child = getattr(_inf, "handle", None)
-                        except Exception:
-                            _name, _cid, _child = None, None, None
-                        if (
-                            _name
-                            and _child is not None
-                            and _selector_hits(sel, _name, _cid)
-                        ):
-                            matched_any = True
-                            try:
-                                matched_selectors.add(str(sel))
-                            except Exception:
-                                pass
-                            try:
-                                _p = "/".join(str(p) for p in path)
-                                LOGGER.debug(
-                                    f"↘️ [{label}] Descend: selector {sel!r} matched child {_name!r} at {_p}",
-                                )
-                            except Exception:
-                                pass
-                            child_status = await _apply(
-                                _child,
-                                child_node,
-                                path + [str(_name)],
-                                sel_path + [str(sel)],
-                            )
-                            per_selector_nodes.setdefault(str(sel), []).append(
-                                child_status,
-                            )
+            matched = False
+            matched_nodes: list[dict] = []
+            for child in live_children:
+                live_tool = _tool_of(child)
+                live_handle = _handle_chain_of(child)
+                live_handle_base = _base_handle_name(live_handle)
 
-            # Record any unmatched selectors at this level as skipped
-            try:
-                for _sel in children.keys():
-                    if str(_sel) not in matched_selectors:
-                        try:
-                            results["skipped"].append(
-                                {"path": list(path), "selector": str(_sel)},
-                            )
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                is_match = False
+                if isinstance(target_tool, str) and target_tool:
+                    is_match = live_tool == target_tool
+                elif isinstance(target_handle, str) and target_handle:
+                    is_match = live_handle_base == target_handle
 
-        # Aggregate child statuses per selector
+                if is_match:
+                    matched = True
+                    child_id = target_tool or target_handle or _identity_for_path(child)
+                    try:
+                        _p = "/".join(str(p) for p in path)
+                        LOGGER.debug(
+                            f"↘️ [{label}] Descend: matched child at {_p} → "
+                            f"{child_id!r}",
+                        )
+                    except Exception:
+                        pass
+                    node_status = await _apply(
+                        child,
+                        child_spec,
+                        path + [child_id],
+                    )
+                    per_child_nodes.setdefault(child_id, []).append(node_status)
+                    matched_nodes.append(node_status)
+
+            if not matched:
+                # No live child matched this spec entry
+                ident = {}
+                if isinstance(target_tool, str) and target_tool:
+                    ident["tool"] = target_tool
+                if isinstance(target_handle, str) and target_handle:
+                    ident["handle"] = target_handle
+                try:
+                    results["skipped"].append(
+                        {"path": list(path), "child": ident or {"unknown": True}},
+                    )
+                except Exception:
+                    pass
+
+        # Aggregate child statuses by identity key
         aggregated_children: dict[str, dict] = {}
-        for sel, lst in per_selector_nodes.items():
-            aggregated_children[sel] = _aggregate_nodes(lst)
-        # Ensure explicit selectors exist (even if no match)
-        for sel in (children.keys() if isinstance(children, dict) else []):
-            aggregated_children.setdefault(str(sel), _empty_status_node())
+        for k, lst in per_child_nodes.items():
+            aggregated_children[k] = _aggregate_nodes(lst)
+        # Ensure explicitly specified children exist (even if no live match)
+        for child_spec in children_specs:
+            try:
+                ident = None
+                if isinstance(child_spec, dict):
+                    t = child_spec.get("tool")
+                    h = child_spec.get("handle")
+                    if isinstance(t, str) and t:
+                        ident = t
+                    elif isinstance(h, str) and h:
+                        ident = _base_handle_name(h)
+                if (
+                    isinstance(ident, str)
+                    and ident
+                    and ident not in aggregated_children
+                ):
+                    aggregated_children[ident] = _empty_status_node()
+            except Exception:
+                continue
 
         # Compute self status
-        if children:
-            # Based on direct child selectors' self statuses
+        if children_specs:
             direct = [
                 aggregated_children[s]["self"] for s in aggregated_children.keys()
             ]
@@ -1848,7 +2184,6 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
             ):
                 self_status = "partial"
             elif direct:
-                # all none
                 self_status = "none"
             else:
                 self_status = "none"
@@ -1882,11 +2217,21 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
             try:
                 if "self" in expr:
                     return str(node_status.get("self", "none")) == str(expr.get("self"))
-                if "selector" in expr:
-                    sel = str(expr.get("selector"))
+                if "child" in expr:
+                    child_expr = expr.get("child") or {}
+                    ident = None
+                    if isinstance(child_expr, dict):
+                        t = child_expr.get("tool")
+                        h = child_expr.get("handle")
+                        if isinstance(t, str) and t:
+                            ident = t
+                        elif isinstance(h, str) and h:
+                            ident = _base_handle_name(h)
+                    if not ident:
+                        return False
                     want = str(expr.get("status", "none"))
                     got = str(
-                        (node_status.get("children", {}).get(sel) or {}).get(
+                        (node_status.get("children", {}).get(ident) or {}).get(
                             "self",
                             "none",
                         ),
@@ -1966,15 +2311,12 @@ async def nested_steer_on(handle: Any, spec: dict) -> dict:
 
         return node_status
 
-    await _apply(handle, spec or {}, [str(label)], [])
-    return results
-
-    await _apply(handle, spec, [str(label)])
+    await _apply(handle, spec or {}, [str(label)])
     return results
 
 
 # --- module-level nested structure introspection (read-only) -------------------
-async def nested_structure_on(
+async def _nested_structure_on(
     handle: Any,
     *,
     max_depth: Optional[int] = None,
@@ -1982,21 +2324,105 @@ async def nested_structure_on(
     """Return a minimal nested structure for any compatible handle.
 
     Each node contains:
-      - handle: class name of the handle
-      - tool: canonical "Class.method" when available, else class name
+      - handle: canonicalized inheritance chain up to the first sentinel
+        (AsyncToolLoopHandle / SteerableToolHandle / SteerableHandle), rendered
+        as A(B(C)). Class segments are canonicalized by stripping Simulated,
+        V<digits>, and Base prefixes; Base* parents are elided entirely.
+      - tool: canonicalized "Class.method" when available (same prefix rules),
+        else the canonicalized class name.
       - children: only live, steerable nested handles (pending/done omitted)
     """
 
-    def _canon_cls(name: str) -> str:
-        try:
-            s = str(name or "")
-        except Exception:
-            s = str(name)
+    def _canon_name(name: str) -> str:
+        s = str(name or "")
         if s.startswith("Simulated") and len(s) > 9:
-            return s[9:]
+            s = s[9:]
+        # Strip leading version prefixes like V3/V12
+        try:
+            import re as _re  # local import
+
+            s = _re.sub(r"^V\\d+", "", s)
+        except Exception:
+            pass
         if s.startswith("Base") and len(s) > 4:
-            return s[4:]
+            s = s[4:]
         return s
+
+    def _handle_chain_of(h) -> str:
+        """Return the handle name with parent chain nested like A(B(C)).
+
+        Traverses base classes upward and nests the names until reaching one of
+        the sentinels: AsyncToolLoopHandle, SteerableToolHandle, or
+        SteerableHandle. The sentinel encountered is included once and then
+        traversal stops. If the leaf class itself is a sentinel, the result is
+        just that class name.
+        """
+        try:
+            cls = getattr(h, "__class__", object)
+        except Exception:
+            cls = object
+        try:
+            leaf_name = _canon_handle_name(cls) or "handle"
+        except Exception:
+            leaf_name = "handle"
+
+        # If the leaf itself is a sentinel, return it directly
+        _SENTINELS = (
+            (AsyncToolLoopHandle, "AsyncToolLoopHandle"),
+            (SteerableToolHandle, "SteerableToolHandle"),
+            (SteerableHandle, "SteerableHandle"),
+        )
+        for typ, label in _SENTINELS:
+            if cls is typ:
+                return label
+
+        try:
+            mro = list(getattr(cls, "__mro__", ()))
+        except Exception:
+            mro = []
+
+        parts: list[str] = [leaf_name]
+        # Walk parents (skip the leaf itself)
+        for base in (mro[1:] if len(mro) > 1 else []):
+            try:
+                bname = getattr(base, "__name__", "")
+            except Exception:
+                bname = ""
+
+            # Include the first sentinel encountered and then stop
+            included_sentinel = False
+            for typ, label in _SENTINELS:
+                if base is typ:
+                    parts.append(label)
+                    included_sentinel = True
+                    break
+            if included_sentinel:
+                break
+
+            # Skip Python/ABC/object sentinels
+            from abc import ABC as _ABC  # local to avoid top import confusion
+
+            if base is object or base is _ABC:
+                break
+
+            # Skip Base* classes entirely; include other intermediates canonicalized
+            if bname and bname.startswith("Base"):
+                continue
+            try:
+                canon = _canon_handle_name(base)
+            except Exception:
+                canon = bname
+            if canon:
+                parts.append(canon)
+
+        # Compose nested parentheses A(B(C)) from the top down
+        try:
+            s = parts[-1]
+            for p in reversed(parts[:-1]):
+                s = f"{p}({s})"
+            return s
+        except Exception:
+            return leaf_name
 
     def _tool_of(h) -> str | None:
         # Prefer stable loop_id set by starters (e.g., "ContactManager.ask")
@@ -2007,10 +2433,10 @@ async def nested_structure_on(
         base = str(raw).split("(", 1)[0]
         if "." in base:
             cls, meth = base.split(".", 1)
-            return f"{_canon_cls(cls)}.{meth}"
+            return f"{_canon_name(cls)}.{meth}"
         # Fallback to canonicalized class name
         try:
-            cls_name = _canon_cls(
+            cls_name = _canon_name(
                 getattr(getattr(h, "__class__", object), "__name__", ""),
             )
             return cls_name or None
@@ -2046,7 +2472,7 @@ async def nested_structure_on(
             visited.add(hid)
 
         node: dict = {
-            "handle": getattr(h, "__class__", object).__name__,
+            "handle": _handle_chain_of(h),
             "children": [],
         }
         _t = _tool_of(h)
@@ -2139,6 +2565,7 @@ def start_async_tool_loop(
     images: Optional["ImageRefs"] = None,
     evented: Optional[bool] = None,
     resume_children: Optional[list[dict]] = None,
+    replay_origin: Optional[str] = None,
 ) -> AsyncToolLoopHandle:
     """
     Kick off `_async_tool_use_loop_inner` in its own task and give the caller
@@ -2204,6 +2631,7 @@ def start_async_tool_loop(
                 semantic_cache_namespace=semantic_cache_namespace,
                 images=images,
                 resume_children=resume_children,
+                replay_origin=replay_origin,
             )
         except asyncio.CancelledError:
             raise
@@ -2247,8 +2675,20 @@ def start_async_tool_loop(
     except Exception:
         pass
 
+    # Prefer explicit entrypoint metadata over label parsing during serialize().
+    # If a semantic cache namespace like "Class.method" is provided by callers
+    # (manager methods do this), record a structured manager entrypoint.
     try:
-        setattr(handle, "_inline_tools_registry", _capture_inline_tools_registry(tools))
+        _ep: dict | None = None
+        if (
+            isinstance(semantic_cache_namespace, str)
+            and "." in semantic_cache_namespace
+        ):
+            cls, meth = semantic_cache_namespace.split(".", 1)
+            if cls and meth:
+                _ep = {"class_name": cls, "method_name": meth}
+        if _ep is not None:
+            setattr(handle, "_entrypoint_info", _ep)
     except Exception:
         pass
 

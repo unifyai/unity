@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from unity.common.async_tool_loop import nested_structure_on
+from unity.common.async_tool_loop import _nested_structure_on
 
 
 class _TaskInfoMeta:
@@ -103,6 +103,11 @@ class WrapperWithMethod:
 from unity.common.handle_wrappers import HandleWrapperMixin
 
 
+def _base_name(val: str | None) -> str:
+    s = str(val) if val is not None else ""
+    return s.split("(", 1)[0]
+
+
 class WrapperWithMixin(HandleWrapperMixin):
     """Wrapper that uses the mixin and wrap_handle registration."""
 
@@ -122,7 +127,7 @@ def _find_child(
             continue
         if wrapper_attr is not None and ch.get("wrapper_attr") != wrapper_attr:
             continue
-        if tool_name is not None and ch.get("tool_name") != tool_name:
+        if tool_name is not None and _base_name(ch.get("tool_name")) != tool_name:
             continue
         return ch
     return None
@@ -133,13 +138,13 @@ async def test_nested_structure_with_get_wrapped_handles_method():
     inner = SteeringHandle()
     wrapped = WrapperWithMethod(inner)
 
-    s = await nested_structure_on(wrapped)
+    s = await _nested_structure_on(wrapped)
 
     # Minimal structure: child node directly represents SteeringHandle
     wchild = None
     for ch in s.get("children", []):
-        if (ch.get("handle") == "SteeringHandle") or (
-            ch.get("tool") == "SteeringHandle"
+        if (_base_name(ch.get("handle")) == "SteeringHandle") or (
+            _base_name(ch.get("tool")) == "SteeringHandle"
         ):
             wchild = ch
             break
@@ -150,7 +155,9 @@ async def test_nested_structure_with_get_wrapped_handles_method():
     # The wrapped SteeringHandle should itself steer a deeper loop; its child must be ToyHandle
     deep_child = None
     for ch in wchild.get("children", []):
-        if (ch.get("handle") == "ToyHandle") or (ch.get("tool") == "ToyHandle"):
+        if (_base_name(ch.get("handle")) == "ToyHandle") or (
+            _base_name(ch.get("tool")) == "ToyHandle"
+        ):
             deep_child = ch
             break
     assert deep_child is not None, "Expected ToyHandle nested under SteeringHandle"
@@ -161,13 +168,13 @@ async def test_nested_structure_with_mixin_registration():
     inner = SteeringHandle()
     wrapped = WrapperWithMixin(inner)
 
-    s = await nested_structure_on(wrapped)
+    s = await _nested_structure_on(wrapped)
 
     # Minimal structure: child node directly represents SteeringHandle
     wchild = None
     for ch in s.get("children", []):
-        if (ch.get("handle") == "SteeringHandle") or (
-            ch.get("tool") == "SteeringHandle"
+        if (_base_name(ch.get("handle")) == "SteeringHandle") or (
+            _base_name(ch.get("tool")) == "SteeringHandle"
         ):
             wchild = ch
             break
@@ -178,7 +185,9 @@ async def test_nested_structure_with_mixin_registration():
     # And nested ToyHandle under SteeringHandle
     deep_child = None
     for ch in wchild.get("children", []):
-        if (ch.get("handle") == "ToyHandle") or (ch.get("tool") == "ToyHandle"):
+        if (_base_name(ch.get("handle")) == "ToyHandle") or (
+            _base_name(ch.get("tool")) == "ToyHandle"
+        ):
             deep_child = ch
             break
     assert deep_child is not None, "Expected ToyHandle nested under SteeringHandle"

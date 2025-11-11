@@ -29,7 +29,6 @@ from .messages import (
     find_unreplied_assistant_entries,
     chat_context_repr,
     generate_with_preprocess,
-    PENDING_PLACEHOLDER_TEXT,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -162,6 +161,7 @@ async def async_tool_loop_inner(
     semantic_cache_namespace: Optional[str] = None,
     images: "ImageRefs | None" = None,
     resume_children: Optional[list[dict]] = None,
+    replay_origin: Optional[str] = None,
 ) -> str:
     r"""
     Orchestrate an *interactive* "function-calling" dialogue between an LLM
@@ -453,9 +453,14 @@ async def async_tool_loop_inner(
                     )
                 # mark images up to current length as already logged
                 image_log_last_len = len(logs)
+            # If this loop is resuming from a snapshot, annotate this initial message log
+            suffix = f" – via {replay_origin}" if replay_origin else ""
+            if suffix:
+                combined_lines[0] = combined_lines[0] + suffix
             logger.info("\n".join(combined_lines), prefix="🧑‍💻")
         except Exception:
-            logger.info(f"User Message: {message}", prefix="🧑‍💻")
+            suffix = f" – via {replay_origin}" if replay_origin else ""
+            logger.info(f"User Message: {message}{suffix}", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -491,7 +496,77 @@ async def async_tool_loop_inner(
                 (m if isinstance(m, dict) else {"role": "user", "content": m})
                 for m in message
             ]
-        await _msg_dispatcher.append_msgs(seeded_batch)
+        await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
+        # Emit concise one-time banner and replay logs for seeded history (if requested)
+        if replay_origin:
+            try:
+                # One-time banner indicating number of replayed messages
+                try:
+                    n_msgs = sum(1 for _m in seeded_batch if isinstance(_m, dict))
+                except Exception:
+                    n_msgs = len(seeded_batch or [])
+                try:
+                    logger.info(
+                        f"Replaying {n_msgs} message(s) – via {replay_origin}",
+                        prefix="🔁",
+                    )
+                except Exception:
+                    pass
+                import copy as _copy  # local import
+                from .utils import try_parse_json as _try_parse_json  # noqa: WPS433
+            except Exception:
+                _copy = None
+                _try_parse_json = lambda v: v  # type: ignore
+            try:
+                for _m in seeded_batch:
+                    if not isinstance(_m, dict):
+                        continue
+                    _role = _m.get("role")
+                    if _role == "assistant":
+                        try:
+                            _msg_for_logging = _copy.deepcopy(_m) if _copy else dict(_m)
+                            for _tc in _msg_for_logging.get("tool_calls") or []:
+                                try:
+                                    _fn = _tc.get("function", {})
+                                    if isinstance(_fn, dict) and "arguments" in _fn:
+                                        _fn["arguments"] = _try_parse_json(
+                                            _fn.get("arguments"),
+                                        )
+                                except Exception:
+                                    continue
+                            logger.info(
+                                "Assistant turn replayed – via {origin}".format(
+                                    origin=replay_origin,
+                                ),
+                                prefix="🤖",
+                            )
+                            logger.info(f"{json.dumps(_msg_for_logging, indent=4)}")
+                        except Exception:
+                            pass
+                    elif _role == "tool":
+                        try:
+                            _tool_for_logging = (
+                                _copy.deepcopy(_m) if _copy else dict(_m)
+                            )
+                            try:
+                                if isinstance(_tool_for_logging.get("content"), str):
+                                    _tool_for_logging["content"] = _try_parse_json(
+                                        _tool_for_logging.get("content"),
+                                    )
+                            except Exception:
+                                pass
+                            logger.info(
+                                "ToolCall Completed (replayed) – via {origin}".format(
+                                    origin=replay_origin,
+                                ),
+                                prefix="✅  ",
+                            )
+                            logger.info(f"{json.dumps(_tool_for_logging, indent=4)}")
+                        except Exception:
+                            pass
+            except Exception:
+                # Never let replay logging break the loop
+                pass
         # Inject an initial snapshot of live images (if any) immediately by
         # appending assistant→tool messages directly to the client transcript.
         try:
@@ -1372,10 +1447,6 @@ async def async_tool_loop_inner(
             if tools_data.pending and not llm_turn_required:
                 # Ensure placeholders exist for any pending calls before the next assistant turn
                 await ensure_placeholders_for_pending(
-                    content=(
-                        "Still running… you can use any of the available helper tools "
-                        "to interact with this tool call while it is in progress."
-                    ),
                     tools_data=tools_data,
                     assistant_meta=assistant_meta,
                     client=client,
@@ -1485,10 +1556,6 @@ async def async_tool_loop_inner(
             # make sure every pending call already has a *tool* reply ──
             #  (a placeholder) before we let the assistant speak again.
             await ensure_placeholders_for_pending(
-                content=(
-                    "Still running… you can use any of the available helper tools "
-                    "to interact with this tool call while it is in progress."
-                ),
                 tools_data=tools_data,
                 assistant_meta=assistant_meta,
                 client=client,
@@ -2324,7 +2391,6 @@ async def async_tool_loop_inner(
                 try:
                     await ensure_placeholders_for_pending(
                         assistant_msg=msg,
-                        content=PENDING_PLACEHOLDER_TEXT,
                         tools_data=tools_data,
                         assistant_meta=assistant_meta,
                         client=client,

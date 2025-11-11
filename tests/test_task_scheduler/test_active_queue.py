@@ -16,7 +16,7 @@ from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.types import RawImageRef, AnnotatedImageRef
 from pathlib import Path
 import base64
-from unity.common.async_tool_loop import nested_structure_on
+import inspect
 
 
 async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
@@ -653,69 +653,6 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     assert "USER QUESTION:" in user_prompt and "How is the queue going?" in user_prompt
 
     # Cleanup: stop the active queue to avoid leaving background tasks running
-    h.stop(cancel=False)
-    await asyncio.wait_for(h.result(), timeout=10)
-
-
-# --------------------------------------------------------------------------- #
-#  9. nested_structure reveals ActiveTask and inner SimulatedActor handle      //
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_active_queue_nested_structure_reveals_all_layers():
-    """ActiveQueue → ActiveTask → SimulatedActorHandle should be visible via nested_structure."""
-
-    # Use a step-based actor so the inner handle persists during inspection
-    class _StepOnly(SimulatedActor):  # type: ignore[misc]
-        def __init__(self, *a, **kw):
-            kw["steps"] = 2
-            kw["duration"] = None
-            super().__init__(*a, **kw)
-
-    ts = TaskScheduler(actor=_StepOnly())
-
-    # Create a singleton queue and start execution by numeric id
-    (solo_id,) = tuple(await _make_ordered_queue(ts, ["Layered"]))
-    h = await ts.execute(text=str(solo_id))
-
-    # Inspect nested structure from the ActiveQueue handle
-    s = await nested_structure_on(h)
-    assert isinstance(s, dict)
-    # Outer layer is the queue wrapper; children should include wrapper-origin entry to ActiveTask
-    wrapper_child = None
-    for ch in s.get("children", []):
-        if ch.get("origin") == "wrapper" and str(ch.get("wrapper_attr", "")).startswith(
-            "get_wrapped_handles",
-        ):
-            wrapper_child = ch
-            break
-    assert (
-        wrapper_child is not None
-    ), "Expected wrapper child from ActiveQueue via get_wrapped_handles"
-
-    mid = wrapper_child.get("handle") or {}
-    assert (mid.get("class") == "ActiveTask") or (
-        (mid.get("label") or "").endswith("ActiveTask")
-    )
-
-    # The ActiveTask node should itself disclose the inner SimulatedActorHandle via wrapper discovery
-    inner_wrapper = None
-    for ch in mid.get("children", []):
-        if ch.get("origin") == "wrapper" and str(ch.get("wrapper_attr", "")).startswith(
-            "get_wrapped_handles",
-        ):
-            inner_wrapper = ch
-            break
-    assert inner_wrapper is not None, "Expected inner wrapper child from ActiveTask"
-
-    leaf = inner_wrapper.get("handle") or {}
-    assert (leaf.get("class") == "SimulatedActorHandle") or (
-        (leaf.get("label") or "").endswith("SimulatedActorHandle")
-    )
-
-    # Cleanup
     h.stop(cancel=False)
     await asyncio.wait_for(h.result(), timeout=10)
 
@@ -1425,6 +1362,171 @@ async def test_active_queue_emits_notifications(monkeypatch):
 
     # Ensure handle finalizes cleanly
     await h.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_helper_append_to_queue_is_exposed_and_callable():
+    """
+    Verify that the custom steering utility `append_to_queue` is surfaced by the
+    async tool loop's dynamic helper generation with an expressive docstring and
+    informative argspec, and that invoking the generated helper appends to the queue.
+    """
+    # Local imports for test isolation
+    from unity.task_scheduler.active_queue import ActiveQueue
+    from unity.common.async_tool_loop import SteerableToolHandle
+    from unity.common._async_tool.tools_data import ToolsData
+    from unity.common._async_tool.tools_utils import ToolCallMetadata
+    from unity.common.llm_helpers import method_to_schema
+
+    # Build scheduler with a singleton queue (A) and a standalone task (B) to append later
+    ts = TaskScheduler()
+    (a_id,) = tuple(await _make_ordered_queue(ts, ["Doc_A"]))  # type: ignore[misc]
+    b_id = ts._create_task(name="Doc_B", description="Doc_B")["details"]["task_id"]  # type: ignore[index]
+
+    # Minimal inner handle to satisfy ActiveQueue; completes immediately
+    class _StubInner(SteerableToolHandle):  # type: ignore[name-defined]
+        def __init__(self):
+            self._done = True
+
+        async def ask(self, question: str, *a, **kw):  # type: ignore[override]
+            return self
+
+        async def interject(self, message: str, *a, **kw):  # type: ignore[override]
+            return None
+
+        def stop(self, *, cancel: bool = False, reason: str | None = None):  # type: ignore[override]
+            return "stopped"
+
+        def pause(self):  # type: ignore[override]
+            return "paused"
+
+        def resume(self):  # type: ignore[override]
+            return "resumed"
+
+        def done(self) -> bool:  # type: ignore[override]
+            return self._done
+
+        async def result(self) -> str:  # type: ignore[override]
+            return "ok"
+
+        async def next_clarification(self) -> dict:  # type: ignore[override]
+            return {}
+
+        async def next_notification(self) -> dict:  # type: ignore[override]
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:  # type: ignore[override]
+            return None
+
+    # Construct ActiveQueue around A
+    aq = ActiveQueue(
+        ts,
+        first_task_id=a_id,
+        first_handle=_StubInner(),
+        parent_chat_context=None,
+        clarification_up_q=None,
+        clarification_down_q=None,
+    )
+
+    # Prepare ToolsData context with a pending task bound to our ActiveQueue handle
+    class _DummyLogger:
+        log_steps = False
+
+        def info(self, *a, **kw): ...
+
+        def error(self, *a, **kw): ...
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = []
+
+    tools_data = ToolsData({}, client=_DummyClient(), logger=_DummyLogger())
+
+    pending_task = asyncio.create_task(asyncio.sleep(10))
+    call_id = "dq-append-001"
+    asst_msg = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": "dummy_base", "arguments": "{}"},
+            },
+        ],
+        "content": "",
+    }
+    meta = ToolCallMetadata(
+        name="dummy_base",
+        call_id=call_id,
+        call_dict=asst_msg["tool_calls"][0],
+        call_idx=0,
+        chat_context=None,
+        assistant_msg=asst_msg,
+        is_interjectable=False,
+        tool_schema={},
+        llm_arguments={},
+        raw_arguments_json=asst_msg["tool_calls"][0]["function"]["arguments"],
+        handle=aq,
+        interject_queue=None,
+        clar_up_queue=None,
+        clar_down_queue=None,
+        notification_queue=None,
+        pause_event=None,
+    )
+    tools_data.save_task(pending_task, meta)
+
+    # Generate dynamic helpers
+    from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
+
+    factory = DynamicToolFactory(tools_data)
+    factory.generate()
+
+    # Locate the generated helper for append_to_queue
+    keys = [k for k in factory.dynamic_tools.keys() if k.startswith("append_to_queue_")]
+    assert keys, "expected append_to_queue helper to be generated"
+    helper = factory.dynamic_tools[keys[0]]
+
+    # 1) Docstring should be expressive (sourced from ActiveQueue.append_to_queue)
+    doc = inspect.getdoc(helper) or ""
+    assert "Append an existing runnable task" in doc
+    assert "Returns a short human-readable summary" in doc
+
+    # 2) Argspec/schema should expose integer task_id and require it
+    schema = method_to_schema(helper, include_class_name=False)
+    params = schema["function"]["parameters"]
+    assert "task_id" in params["properties"]
+    prop = params["properties"]["task_id"]
+    is_integer = (prop.get("type") == "integer") or any(
+        (d.get("type") == "integer")
+        for d in (prop.get("anyOf") or [])
+        if isinstance(prop, dict)
+    )
+    assert is_integer, f"expected integer type for task_id, got: {prop}"
+    assert "task_id" in params.get("required", [])
+
+    # 3) Invoking the helper should append B to the live queue behind A
+    result_text = helper(task_id=int(b_id))
+    if inspect.isawaitable(result_text):
+        result_text = await result_text
+    # Helper may return a dict payload with {'call_id': ..., 'result': <str>} or a plain string.
+    if isinstance(result_text, dict):
+        res_str = str(result_text.get("result", ""))
+    else:
+        res_str = str(result_text)
+    assert isinstance(res_str, str) and str(b_id) in res_str
+
+    # Verify queue now contains A then B
+    live = ts._get_queue_for_task(task_id=a_id)
+    ids = [getattr(r, "task_id", None) for r in (live or [])]
+    assert ids and ids[0] == a_id and b_id in ids and ids.index(b_id) == len(ids) - 1
+
+    # Cleanup pending task to avoid leakage
+    from contextlib import suppress as _suppress  # local import for cleanup
+
+    with _suppress(BaseException):
+        pending_task.cancel()
+        await pending_task
 
 
 @pytest.mark.asyncio

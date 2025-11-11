@@ -1,6 +1,6 @@
 import pytest
 
-from unity.common.async_tool_loop import nested_steer_on
+from unity.common.async_tool_loop import _nested_steer_on
 
 
 class _TaskInfoMeta:
@@ -20,6 +20,9 @@ class NodeHandle:
 
     def __init__(self, name: str):
         self.name = name
+        # Optional tool identity used by nested_steer matching (canonical "Class.method")
+        # For these tests we treat <Name>.run as the tool id when provided.
+        self._loop_id = None
         self.paused = 0
         self.resumed = 0
         self.stopped = 0
@@ -47,6 +50,9 @@ class NodeHandle:
 def _wire_children(parent: NodeHandle, mapping: dict[str, NodeHandle]):
     info = {}
     for i, (name, h) in enumerate(mapping.items()):
+        # Assign a unique tool identity per wired child so structure-based matching
+        # can target branches deterministically.
+        h._loop_id = f"{name}.run"
         info[id(h)] = _TaskInfoMeta(name=name, call_id=f"cid-{i}", handle=h)
     parent._task = _TaskContainer(info)
 
@@ -64,22 +70,24 @@ async def test_conditions_any_full_triggers_parent_then():
     _wire_children(root, {"A": a, "B": b})
 
     spec = {
-        "children": {
-            "A": {
-                "children": {
-                    "Deep1": {"steps": [{"method": "pause"}]},
-                },
+        "children": [
+            {
+                "tool": "A.run",
+                "children": [
+                    {"tool": "Deep1.run", "steps": [{"method": "pause"}]},
+                ],
             },
-            "B": {
+            {
+                "tool": "B.run",
                 # No children/steps – remains NONE
             },
-        },
+        ],
         "conditions": [
             {
                 "when": {
                     "any": [
-                        {"selector": "A", "status": "full"},
-                        {"selector": "B", "status": "full"},
+                        {"child": {"tool": "A.run"}, "status": "full"},
+                        {"child": {"tool": "B.run"}, "status": "full"},
                     ],
                 },
                 "then": [{"method": "interject", "args": "children ready"}],
@@ -87,15 +95,16 @@ async def test_conditions_any_full_triggers_parent_then():
         ],
     }
 
-    res = await nested_steer_on(root, spec)
+    res = await _nested_steer_on(root, spec)
 
-    # Parent interjection should have been applied
-    assert "children ready" in root.interjections
-    # Status map should indicate A is full
-    key = next(iter(res.get("status", {}).keys()))
-    # Locate the root entry (path contains class name or custom label); just ensure A is full in any entry
+    # Parent interjection should have been applied at the root path
     assert any(
-        (v.get("children", {}).get("A") == "full")
+        (item.get("method") == "interject") and (item.get("path") == ["NodeHandle"])
+        for item in (res.get("applied") or [])
+    ), "Expected root interject when any branch is full"
+    # Status map should indicate A.run is full at the root level entry
+    assert any(
+        (v.get("children", {}).get("A.run") == "full")
         for v in res.get("status", {}).values()
     )
 
@@ -116,26 +125,28 @@ async def test_conditions_all_partial_triggers_parent_pause():
     _wire_children(root, {"Branch1": b1, "Branch2": b2})
 
     spec = {
-        "children": {
-            "Branch1": {
-                "children": {
-                    "Deep1": {"steps": [{"method": "pause"}]},
-                    "Deep2": {"steps": [{"method": "pause"}]},
-                },
+        "children": [
+            {
+                "tool": "Branch1.run",
+                "children": [
+                    {"tool": "Deep1.run", "steps": [{"method": "pause"}]},
+                    {"tool": "Deep2.run", "steps": [{"method": "pause"}]},
+                ],
             },
-            "Branch2": {
-                "children": {
-                    "DeepA": {"steps": [{"method": "pause"}]},
-                    "DeepB": {"steps": [{"method": "pause"}]},
-                },
+            {
+                "tool": "Branch2.run",
+                "children": [
+                    {"tool": "DeepA.run", "steps": [{"method": "pause"}]},
+                    {"tool": "DeepB.run", "steps": [{"method": "pause"}]},
+                ],
             },
-        },
+        ],
         "conditions": [
             {
                 "when": {
                     "all": [
-                        {"selector": "Branch1", "status": "partial"},
-                        {"selector": "Branch2", "status": "partial"},
+                        {"child": {"tool": "Branch1.run"}, "status": "partial"},
+                        {"child": {"tool": "Branch2.run"}, "status": "partial"},
                     ],
                 },
                 "then": [{"method": "pause"}],
@@ -143,6 +154,10 @@ async def test_conditions_all_partial_triggers_parent_pause():
         ],
     }
 
-    await nested_steer_on(root, spec)
+    res = await _nested_steer_on(root, spec)
 
-    assert root.paused >= 1
+    # Root pause should have been applied as a "then" step at the current node
+    assert any(
+        (item.get("method") == "pause") and (item.get("path") == ["NodeHandle"])
+        for item in (res.get("applied") or [])
+    ), "Expected root pause to be applied when both branches are partial"

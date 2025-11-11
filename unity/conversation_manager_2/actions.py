@@ -11,21 +11,7 @@ from google.cloud import pubsub_v1
 from pydantic import BaseModel, Field, create_model
 
 
-project_id = "responsive-city-458413-a2"
-topic_name = (
-    "unity-"
-    + (os.getenv("ASSISTANT_ID") if os.getenv("ASSISTANT_ID") else "default-assistant")
-    + (
-        "-staging"
-        if (
-            os.getenv("STAGING")
-            and "default-assistant" not in os.getenv("ASSISTANT_ID", "")
-        )
-        else ""
-    )
-)
 publisher = pubsub_v1.PublisherClient()
-topic_path = publisher.topic_path(project_id, topic_name)
 
 
 # conductor
@@ -285,27 +271,43 @@ async def _send_unify_message(content: str) -> str:
     """
     Send a message to the boss chat.
     """
+    topic_name = (
+        "unity-"
+        + (
+            os.getenv("ASSISTANT_ID")
+            if os.getenv("ASSISTANT_ID")
+            else "default-assistant"
+        )
+        + (
+            "-staging"
+            if os.getenv("STAGING")
+            and "default-assistant" not in os.getenv("ASSISTANT_ID", "")
+            else ""
+        )
+    )
+    topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+
     print(f"Sending unify message: {content}")
     message_data = {
         "thread": "unify_message_outbound",
-        "event": {
-            "content": content,
-            "role": "assistant",
-        },
+        "event": {"content": content, "role": "assistant"},
     }
-
-    # Publish with attributes
-    future = publisher.publish(
-        topic_path,
-        json.dumps(message_data).encode("utf-8"),
-        thread="unify_message_outbound",
-    )
-    message_id = future.result()
-    print(f"Unify message published with ID: {message_id}")
-    if message_id:
-        return {"success": True}
-    else:
-        return {"success": False}
+    try:
+        # Publish with attributes
+        future = publisher.publish(
+            topic_path,
+            json.dumps(message_data).encode("utf-8"),
+            thread="unify_message_outbound",
+        )
+        message_id = future.result()
+        print(f"Unify message published with ID: {message_id}")
+        if message_id:
+            return {"success": True}
+        else:
+            return {"success": False}
+    except Exception as e:
+        print(f"Error sending unify message: {e}")
+        return {"success": False, "error": str(e)}
 
 
 async def _start_call(

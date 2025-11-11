@@ -26,7 +26,7 @@ ASYNCIO_VERBOSE_DEBUG = os.getenv("ASYNCIO_VERBOSE_DEBUG", "false").lower() in {
 # LLM I/O logging flag: when enabled, full raw LLM request/response payloads
 # are captured to a timestamped file per run. Enable with LLM_IO_DEBUG=true
 # (or 1/yes/on). This is intentionally separate from normal loop logging.
-LLM_IO_DEBUG = os.getenv("LLM_IO_DEBUG", "false").lower() in {
+LLM_IO_DEBUG = os.getenv("LLM_IO_DEBUG", "true").lower() in {
     "1",
     "true",
     "yes",

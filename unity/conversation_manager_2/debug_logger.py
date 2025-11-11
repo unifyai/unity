@@ -27,6 +27,41 @@ def log_job_startup(
     assistant_email: str,
 ):
     try:
+        # Create startup event log and get log instance
+        unify.create_logs(
+            project="AssistantJobs",
+            context="startup_events",
+            entries=[
+                {
+                    "job_name": job_name,
+                    "timestamp": timestamp,
+                    "medium": medium,
+                    "user_id": user_id,
+                    "assistant_id": assistant_id,
+                    "user_name": user_name,
+                    "assistant_name": assistant_name,
+                    "user_number": user_number,
+                    "user_whatsapp_number": user_whatsapp_number,
+                    "assistant_number": assistant_number,
+                    "user_email": user_email,
+                    "assistant_email": assistant_email,
+                    "running": True,
+                }
+            ],
+            api_key=api_key,
+        )
+        log = unify.get_logs(
+            project="AssistantJobs",
+            context="startup_events",
+            filter=f"job_name == '{job_name}'",
+            api_key=api_key,
+        )[0]
+        print("Logged Startup Event", job_name)
+    except Exception as e:
+        print(f"Error logging startup event: {e}")
+        traceback.print_exc()
+
+    try:
         # Resolve liveview URL via comms infra service
         liveview_url = None
         retries = 3
@@ -50,37 +85,10 @@ def log_job_startup(
                     addr = ((data or {}).get("external") or {}).get("address")
                     if isinstance(addr, str) and addr:
                         liveview_url = f"http://{addr}:6080/vnc.html"
+        log.update_entries(liveview_url=liveview_url)
+        print("Updated log with liveview URL:", job_name)
     except Exception as e:
-        print(f"Error resolving liveview URL for job {job_name}: {e}")
-        traceback.print_exc()
-
-    try:
-        unify.create_logs(
-            project="AssistantJobs",
-            context="startup_events",
-            params={},
-            entries={
-                "job_name": job_name,
-                "timestamp": timestamp,
-                "medium": medium,
-                "user_id": user_id,
-                "assistant_id": assistant_id,
-                "user_name": user_name,
-                "assistant_name": assistant_name,
-                "user_number": user_number,
-                "user_whatsapp_number": user_whatsapp_number,
-                "assistant_number": assistant_number,
-                "user_email": user_email,
-                "assistant_email": assistant_email,
-                "liveview_url": liveview_url,
-                "running": True,
-            },
-            api_key=api_key,
-            batched=False,
-        )
-        print("Logged Startup Event", job_name)
-    except Exception as e:
-        print(f"Error creating logs: {e}")
+        print(f"Error resolving liveview URL: {e}")
         traceback.print_exc()
 
 

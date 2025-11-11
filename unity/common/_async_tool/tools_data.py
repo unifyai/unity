@@ -19,6 +19,7 @@ from .messages import (
     insert_tool_message_after_assistant,
     chat_context_repr,
     _normalise_kwargs_for_bound_method,
+    forward_handle_call,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
@@ -484,14 +485,21 @@ class ToolsData:
 
         elif tool_reply_msg is not None:
             if _at_tail(tool_reply_msg):
-                # If the current tail tool message looks like a progress payload,
-                # do NOT emit another tool reply for the same call_id – instead
-                # create a synthetic assistant→tool pair to carry the final result.
+                # If the current tail tool message is a placeholder, choose the strategy:
+                # - For streaming progress placeholders, append a synthetic assistant→tool pair
+                #   (preserves progress history as append-only).
+                # - For simple 'pending' or 'nested_start' placeholders, update in-place so the
+                #   final result lives under the original tool message (restores pre-change UX).
+                placeholder_kind: Optional[str] = None
                 with suppress(Exception):
                     _content_str = tool_reply_msg.get("content") or ""
-                if "_content_str" not in locals():
-                    _content_str = ""
-                if isinstance(_content_str, str) and '"tool"' in _content_str:
+                    if isinstance(_content_str, str):
+                        parsed = json.loads(_content_str)
+                        if isinstance(parsed, dict):
+                            pk = parsed.get("_placeholder")
+                            if isinstance(pk, str) and pk:
+                                placeholder_kind = pk
+                if placeholder_kind == "progress":
                     tool_msg = await self._emit_completion_pair(
                         result,
                         call_id,
@@ -559,7 +567,8 @@ class ToolsData:
         channels, and synchronises passthrough interjections/pause/stop with the
         outer handle when applicable.
         """
-        # Passthrough wiring: replay early interjections and sync pause/stop
+        # Passthrough wiring: replay any steering commands issued after scheduling
+        # and before adoption, and sync pause/stop state minimally.
         try:
             if (
                 getattr(child_handle, "__passthrough__", False)
@@ -567,22 +576,39 @@ class ToolsData:
                 and outer_handle_container[0] is not None
             ):
                 _outer = outer_handle_container[0]
-                _early = list(getattr(_outer, "_early_interjects", []))
-                for _msg in _early:
-                    try:
-                        if isinstance(_msg, dict):
-                            maybe_coro = child_handle.interject(  # type: ignore[attr-defined]
-                                _msg.get("message", ""),
-                                parent_chat_context_cont=_msg.get(
-                                    "parent_chat_context_continuted",
-                                ),
-                            )
-                        else:
-                            maybe_coro = child_handle.interject(_msg)  # type: ignore[attr-defined]
-                        if asyncio.iscoroutine(maybe_coro):
-                            await maybe_coro
-                    except Exception:
-                        pass
+                # Replay steer events recorded on the outer handle that occurred
+                # after this tool was scheduled (with a small safety delta) and
+                # not later than adoption. We skip entries that were already
+                # forwarded immediately at record time (had_passthrough=True).
+                adopt_now = time.perf_counter()
+                SAFETY_DELTA = 0.2  # seconds; cushion to cover scheduling vs. interject ordering races
+                _log = list(getattr(_outer, "_steer_log", []) or [])
+                for rec in _log:
+                    if rec.get("had_passthrough") is True:
+                        continue
+                    t = rec.get("t", 0.0)
+                    if not isinstance(t, (int, float)):
+                        continue
+                    # Window: [scheduled_time - delta, adopt_now + delta]
+                    if (t + SAFETY_DELTA) < info.scheduled_time or (
+                        t - SAFETY_DELTA
+                    ) > adopt_now:
+                        continue
+                    method = rec.get("method") or ""
+                    if not isinstance(method, str) or not method:
+                        continue
+                    args = rec.get("args") or ()
+                    kwargs = rec.get("kwargs") or {}
+                    fb = rec.get("fallback") or ()
+                    await forward_handle_call(  # type: ignore[name-defined]
+                        child_handle,
+                        method,
+                        kwargs,
+                        call_args=args if isinstance(args, (list, tuple)) else (),
+                        fallback_positional_keys=(
+                            fb if isinstance(fb, (list, tuple)) else ()
+                        ),
+                    )
                 try:
                     if not getattr(_outer, "_pause_event", None).is_set() and hasattr(
                         child_handle,
@@ -629,7 +655,7 @@ class ToolsData:
             ph = create_tool_call_message(
                 name=info.name,
                 call_id=info.call_id,
-                content="Nested async tool loop started… waiting for result.",
+                content=json.dumps({"_placeholder": "nested_start"}, indent=4),
             )
             await insert_tool_message_after_assistant(
                 assistant_meta,
@@ -640,7 +666,7 @@ class ToolsData:
             )
             info.tool_reply_msg = ph
         else:
-            ph["content"] = "Nested async tool loop started… waiting for result."
+            ph["content"] = json.dumps({"_placeholder": "nested_start"}, indent=4)
 
         # Book-keeping for the new task (inherit, share placeholder)
         metadata = dataclasses.replace(

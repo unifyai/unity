@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+import os
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
@@ -390,6 +391,98 @@ async def test_execute_creates_new_task_and_executes(monkeypatch):
         phrase in t.name.casefold() or phrase in t.description.casefold()
         for t in created_tasks
     ), "A new task with the provided description should have been created"
+
+
+# --------------------------------------------------------------------------- #
+#  6.2. Dynamic helper append_to_queue – end-to-end via async tool loop       #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_dynamic_helper_append_to_queue_end_to_end():
+    """
+    End-to-end: start a tool loop that returns an ActiveQueue handle created
+    by TaskScheduler.execute, then instruct the LLM to call the dynamic
+    `append_to_queue` helper with an explicit task_id. Verify the helper is
+    called and the queue membership reflects the append.
+    """
+    import unify
+    from unity.common.async_tool_loop import start_async_tool_loop
+    from tests.test_async_tool_loop.async_helpers import (
+        _wait_for_tool_request,
+        _wait_for_assistant_call_prefix,
+        _wait_for_tool_message_prefix,
+    )
+    from tests.helpers import SETTINGS
+
+    # Build a scheduler with a singleton queue (A) and a standalone task (B).
+    # Use a short, step-based simulated actor so the inner handle stays alive.
+    actor = SimulatedActor(steps=3, duration=None)
+    ts = TaskScheduler(actor=actor)
+
+    # Create a singleton queue head A
+    qid = ts._allocate_new_queue_id()
+    a_id = ts._create_task(name="E2E_A", description="E2E_A", queue_id=qid)["details"][
+        "task_id"
+    ]  # type: ignore[index]
+    ts._set_queue(queue_id=qid, order=[a_id])
+
+    # Create a standalone follower candidate B (not queued yet)
+    b_id = ts._create_task(name="E2E_B", description="E2E_B")["details"]["task_id"]  # type: ignore[index]
+
+    # Tool that returns an ActiveQueue handle by executing A via numeric fast-path.
+    @unify.traced
+    async def start_queue_handle():
+        return await ts.execute(text=str(a_id))
+
+    # Start the async tool loop with a simple instruction to call our start tool.
+    client = unify.AsyncUnify(
+        os.getenv("UNIFY_MODEL", "gpt-5@openai"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+        reasoning_effort="high",
+        service_tier="priority",
+    )
+    client.set_system_message(
+        "Call `start_queue_handle` to start a task, then wait for further instructions.",
+    )
+
+    outer = start_async_tool_loop(
+        client,
+        message="start",
+        tools={"start_queue_handle": start_queue_handle},
+        timeout=120,
+        max_steps=30,
+    )
+
+    # Ensure the start tool has been requested so the dynamic helpers are exposed.
+    await _wait_for_tool_request(client, "start_queue_handle")
+
+    # Now ask the model to call the dynamic append_to_queue helper explicitly.
+    await outer.interject(f"Now call append_to_queue(task_id={int(b_id)}).")
+
+    # Wait until the assistant requests a helper whose name starts with 'append_to_queue_'.
+    await _wait_for_assistant_call_prefix(client, "append_to_queue_")
+    # And wait for the corresponding tool message to appear.
+    await _wait_for_tool_message_prefix(client, "append_to_queue_")
+
+    # Immediately verify the live queue now contains A followed by the newly appended B.
+    # We assert right after the tool completed to avoid later lifecycle operations (e.g., defer)
+    # altering the queue snapshot.
+    live = ts._get_queue_for_task(task_id=a_id)
+    ids = [getattr(r, "task_id", None) for r in (live or [])]
+    assert ids and ids[0] == a_id and b_id in ids and ids.index(b_id) == len(ids) - 1
+
+    # Instruct the model to stop the running queue so no background tasks linger,
+    # then reply only with "done" for determinism.
+    await outer.interject("Now call stop(cancel=false). Then reply only with: done")
+    await _wait_for_assistant_call_prefix(client, "stop_")
+
+    # Final assistant answer should be 'done' (case-insensitive) after stop; queue
+    # membership was already asserted immediately after append.
+    final = await outer.result()
+    assert isinstance(final, str) and "done" in final.strip().lower()
 
 
 # --------------------------------------------------------------------------- #

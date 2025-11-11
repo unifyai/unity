@@ -2,22 +2,23 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
+from .types.message import Message
+from .types.exchange import Exchange
 
 
 class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
     """
     *Public* contract that every concrete **transcript-manager** must satisfy.
 
-    Exposes exactly two user-facing operations:
+    Exposes exactly one user-facing operation:
 
-    • **ask**       — answer questions about stored transcripts
-    • **summarize** — create & persist summaries of message exchanges
+    • **ask** — answer questions about stored transcripts
     """
 
     # ------------------------------------------------------------------ #
@@ -105,6 +106,130 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
 
     @abstractmethod
     def clear(self) -> None:
+        raise NotImplementedError
+
+    # ------------------------------------------------------------------ #
+    # Additional public helpers (programmatic, non-LLM entrypoints)       #
+    # ------------------------------------------------------------------ #
+    def log_messages(
+        self,
+        messages: Union[
+            Union[Dict[str, Any], Message],
+            List[Union[Dict[str, Any], Message]],
+        ],
+        synchronous: bool = False,
+    ) -> List[Message]:
+        """
+        Insert one or more transcript messages.
+
+        Parameters
+        ----------
+        messages : dict | Message | list[dict | Message]
+            Message payload(s) following the Message schema. Implementations
+            must validate inputs and return the persisted Message models with
+            assigned identifiers.
+        synchronous : bool, default False
+            Hint to publish related events synchronously (when supported).
+
+        Returns
+        -------
+        list[Message]
+            The created messages as validated Message models.
+        """
+        raise NotImplementedError
+
+    def join_published(self) -> None:
+        """
+        Block until any internally queued publish operations have drained.
+
+        Implementations may no-op if publishing is synchronous.
+        """
+        raise NotImplementedError
+
+    @staticmethod
+    def build_plain_transcript(
+        messages: list[dict],
+        *,
+        contact_manager: Optional[Any] = None,
+    ) -> str:
+        """
+        Return a plain-text transcript ("Full Name: content") for provided messages.
+
+        The optional contact resolver may be supplied to map numeric sender ids
+        to human-readable names. When omitted, an implementation-defined default
+        resolution strategy may be used.
+        """
+        raise NotImplementedError
+
+    def update_contact_id(
+        self,
+        *,
+        original_contact_id: int,
+        new_contact_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Replace all occurrences of one contact id with another across messages.
+
+        The substitution applies to both sender_id and entries inside receiver_ids.
+
+        Returns a summary payload describing how many messages were updated.
+        """
+        raise NotImplementedError
+
+    def get_exchange_metadata(self, exchange_id: int) -> Exchange:
+        """
+        Fetch the Exchanges row for the given exchange_id as an Exchange model.
+        """
+        raise NotImplementedError
+
+    def update_exchange_metadata(
+        self,
+        exchange_id: int,
+        metadata: Dict[str, Any],
+    ) -> Exchange:
+        """
+        Update (or create) metadata for the specified exchange and return the updated Exchange.
+        """
+        raise NotImplementedError
+
+    def log_first_message_in_new_exchange(
+        self,
+        message: Union[Dict[str, Any], Message],
+        *,
+        exchange_initial_metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """
+        Log the first message of a new exchange and set initial exchange metadata.
+
+        Returns the newly assigned exchange_id.
+        """
+        raise NotImplementedError
+
+    def filter_exchanges(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int | None = 100,
+    ) -> Dict[str, Any]:
+        """
+        Filter Exchanges rows using a boolean Python expression evaluated per row.
+
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python boolean expression evaluated with column names in scope.
+            When None, returns all exchanges.
+        offset : int, default 0
+            Zero-based index of the first result to include.
+        limit : int | None, default 100
+            Maximum number of records to return. Implementations may cap this value.
+
+        Returns
+        -------
+        Dict[str, Any]
+            A payload containing the matching exchanges (e.g., {"exchanges": [Exchange, ...]}).
+        """
         raise NotImplementedError
 
 
