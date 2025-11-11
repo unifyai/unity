@@ -188,6 +188,7 @@ class ToolsData:
         parent_chat_context,
         propagate_chat_context,
         assistant_meta,
+        initial_paused: bool = False,
     ) -> None:
         # Base tool must exist
         if name not in self.normalized:
@@ -225,7 +226,10 @@ class ToolsData:
         pause_ev: Optional[asyncio.Event] = None
         if sig_accepts_pause_event:
             pause_ev = asyncio.Event()
-            pause_ev.set()  # start running
+            if initial_paused:
+                pause_ev.clear()  # start paused
+            else:
+                pause_ev.set()  # start running
             extra_kwargs["_pause_event"] = pause_ev
 
         clar_up_q: Optional[asyncio.Queue[str]] = None
