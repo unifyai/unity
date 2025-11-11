@@ -201,7 +201,7 @@ class _QueueSnapshot:
             try:
                 _full_chain = (
                     scheduler._walk_queue_from_task(  # type: ignore[attr-defined]
-                        task_id=int(current_task_id),
+                        task_id=current_task_id,
                     )
                 )
             except Exception:
@@ -437,10 +437,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             # When the current task is no longer a member of any queue (isolated/detached),
             # treat the queue as a singleton for pass-through purposes.
             try:
-                contains_current = any(
-                    int(getattr(t, "task_id", -1)) == int(self._current_task_id)
-                    for t in (q or [])
-                )
+                contains_current = any(t.task_id == self._current_task_id for t in q)
             except Exception:
                 contains_current = True
             if not contains_current:
@@ -473,19 +470,11 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         current task's stored ``schedule.next_task`` to identify the follower.
         """
         try:
-            live_queue = (
-                self._s._get_queue_for_task(task_id=self._current_task_id) or []
-            )
+            live_queue = self._s._get_queue_for_task(task_id=self._current_task_id)
         except Exception:
             live_queue = []
 
-        ids: list[int] = []
-        for t in live_queue:
-            try:
-                tid_val = int(getattr(t, "task_id", -1))
-            except Exception:
-                continue
-            ids.append(tid_val)
+        ids: list[int] = [t.task_id for t in live_queue]
 
         if not ids:
             return None

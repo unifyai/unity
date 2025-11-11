@@ -2489,7 +2489,7 @@ class TaskScheduler(BaseTaskScheduler):
         # Keep monotonic allocator in sync when caller specifies a higher id
         try:
             if target_qid is not None:
-                self._view.sync_max_queue_id_seen(int(target_qid))
+                self._view.sync_max_queue_id_seen(target_qid)
         except Exception:
             pass
 
@@ -2527,30 +2527,30 @@ class TaskScheduler(BaseTaskScheduler):
 
         def _current_order_for(qid: int) -> List[int]:
             try:
-                cached = self._view.get_member_ids(int(qid))
+                cached = self._view.get_member_ids(qid)
                 if cached is not None and len(cached) > 0:
                     return list(cached)
                 raise RuntimeError
             except Exception:
-                return [t.task_id for t in self._get_queue(queue_id=int(qid))]
+                return [t.task_id for t in self._get_queue(queue_id=qid)]
 
         source_orders: Dict[int, List[int]] = {}
-        for q in list(source_qids):
+        for q_id in list(source_qids):
             try:
-                cur = _current_order_for(int(q))
+                cur = _current_order_for(q_id)
             except Exception:
                 cur = []
             if not cur:
                 continue
             reduced = [tid for tid in cur if tid not in block]
-            source_orders[int(q)] = reduced
+            source_orders[q_id] = reduced
 
         # Materialize edits: source queues first (detach cleanly), then target queue
         checkpoint_id = None
         for qid, cur_order in source_orders.items():
             # Skip when no member actually moved
             try:
-                if cur_order == _current_order_for(int(qid)):
+                if cur_order == _current_order_for(q_id):
                     continue
             except Exception:
                 pass
@@ -3134,13 +3134,11 @@ class TaskScheduler(BaseTaskScheduler):
         # Pre-allocate a fresh queue id ONCE, then increment locally for subsequent queues
         next_qid: Optional[int] = None
         if groups:
-            next_qid = int(self._allocate_new_queue_id())
+            next_qid = self._allocate_new_queue_id()
 
         for j, tids in groups.items():
             ordered = _ordered(tids)
-            qid = (
-                int(next_qid) if next_qid is not None else self._allocate_new_queue_id()
-            )
+            qid = next_qid if next_qid is not None else self._allocate_new_queue_id()
             # Advance next_qid for the next created queue within this tool call
             if next_qid is not None:
                 next_qid = qid + 1
@@ -4393,10 +4391,9 @@ class TaskScheduler(BaseTaskScheduler):
         except Exception:
             logs = []
 
-        rows_by_id: Dict[int, Dict[str, Any]] = {}
-        for lg in logs:
-            tid = lg.entries["task_id"]
-            rows_by_id[tid] = lg.entries
+        rows_by_id: Dict[int, Dict[str, Any]] = {
+            lg.entries["task_id"]: lg.entries for lg in logs
+        }
         return rows_by_id
 
     def _find_name_desc_collisions(
@@ -4458,5 +4455,3 @@ class TaskScheduler(BaseTaskScheduler):
         if task.status != Status.active:
             task.activated_by = None
         return task
-
-    # Steering intent classifier moved to ActiveTask.classify_steering_intent
