@@ -1252,10 +1252,19 @@ async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
         )
 
     async def _ack_present():
+        # Find all assistant tool_call ids for interject_*
+        helper_ids = [
+            tc["id"]
+            for m in client.messages
+            if m.get("role") == "assistant"
+            for tc in (m.get("tool_calls") or [])
+            if isinstance(tc, dict)
+            and isinstance(tc.get("function"), dict)
+            and str(tc["function"].get("name", "")).startswith("interject_")
+        ]
+        # Ack present if any tool message ties back to those ids
         return any(
-            m.get("role") == "tool"
-            and isinstance(m.get("name"), str)
-            and m["name"].startswith("interject_")
+            m.get("role") == "tool" and m.get("tool_call_id") in helper_ids
             for m in client.messages
         )
 
@@ -1384,10 +1393,19 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
         )
 
     async def _ask_ack_present():
+        # Find all assistant tool_call ids for ask_*
+        helper_ids = [
+            tc["id"]
+            for m in client.messages
+            if m.get("role") == "assistant"
+            for tc in (m.get("tool_calls") or [])
+            if isinstance(tc, dict)
+            and isinstance(tc.get("function"), dict)
+            and str(tc["function"].get("name", "")).startswith("ask_")
+        ]
+        # Ack present if any tool message ties back to those ids
         return any(
-            m.get("role") == "tool"
-            and isinstance(m.get("name"), str)
-            and m["name"].startswith("ask_")
+            m.get("role") == "tool" and m.get("tool_call_id") in helper_ids
             for m in client.messages
         )
 
