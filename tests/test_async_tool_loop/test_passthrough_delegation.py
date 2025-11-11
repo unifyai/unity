@@ -1121,3 +1121,380 @@ async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
         inner.paused == 0
     ), "pause() should not be replayed when outer is resumed by adoption"
     assert inner.resumed == 0, "resume() should not be replayed at adoption"
+
+
+# ---------------------------------------------------------------------------
+#  New mirror synthesis tests: immediate forward + transcript tool_calls
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
+    """Programmatic interject should:
+    - forward immediately to adopted passthrough handle(s) (no LLM step)
+    - produce an assistant helper tool_call 'interject_*' and an ack tool message
+    """
+
+    recv: list[str] = []
+
+    class Inner(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+
+        async def ask(self, question: str, **_):
+            return self
+
+        async def interject(self, message: str, **_):
+            recv.append(message)
+            return None
+
+        def stop(self, *_, **__):
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *_, **__):
+            return "paused"
+
+        def resume(self, *_, **__):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    inner = Inner()
+
+    async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
+        return inner
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
+        "Wait for it to finish before replying.",
+    )
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"spawn": spawn},
+    )
+
+    # Wait until the tool request for spawn is made and the child is adopted
+    from tests.test_async_tool_loop.async_helpers import (
+        _wait_for_tool_request,
+        _wait_for_condition,
+    )
+
+    await _wait_for_tool_request(client, "spawn")
+
+    # Wait until passthrough handle is registered
+    async def _wait_adopted(timeout: float = 5.0):
+        import time as _time
+
+        start = _time.perf_counter()
+        while _time.perf_counter() - start < timeout:
+            try:
+                ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    pts = [
+                        _inf
+                        for _inf in ti.values()
+                        if getattr(_inf, "handle", None) is not None
+                        and getattr(_inf, "is_passthrough", False)
+                    ]
+                    if pts:
+                        return
+            except Exception:
+                pass
+            await asyncio.sleep(0)
+        raise TimeoutError("timeout waiting for passthrough adoption")
+
+    await _wait_adopted()
+
+    # Immediate interject → should record instantly
+    msg = "GUIDE_NOW"
+    await outer.interject(msg)
+
+    async def _received():
+        return msg in recv
+
+    await _wait_for_condition(_received, poll=0.01, timeout=60.0)
+
+    # Wait for mirror synthesis to appear in transcript
+    async def _helper_tool_present():
+        return any(
+            m.get("role") == "assistant"
+            and any(
+                (tc.get("function", {}) or {}).get("name", "").startswith("interject_")
+                for tc in (m.get("tool_calls") or [])
+            )
+            for m in client.messages
+        )
+
+    async def _ack_present():
+        return any(
+            m.get("role") == "tool"
+            and isinstance(m.get("name"), str)
+            and m["name"].startswith("interject_")
+            for m in client.messages
+        )
+
+    await _wait_for_condition(_helper_tool_present, poll=0.01, timeout=60.0)
+    await _wait_for_condition(_ack_present, poll=0.01, timeout=60.0)
+    helper_seen = await _helper_tool_present()
+    ack_seen = await _ack_present()
+    assert helper_seen, "expected assistant helper tool_call interject_* in transcript"
+    assert ack_seen, "expected ack tool message interject_* in transcript"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
+    """Programmatic ask should:
+    - forward immediately to adopted passthrough handle(s) (no LLM step)
+    - produce an assistant helper tool_call 'ask_*' and an ack tool message
+    """
+
+    class AskSpy(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+            self.ask_count = 0
+
+        async def ask(self, question: str, **_):
+            self.ask_count += 1
+            return self
+
+        async def interject(self, message: str, **_):
+            return None
+
+        def stop(self, *_, **__):
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *_, **__):
+            return "paused"
+
+        def resume(self, *_, **__):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    inner = AskSpy()
+
+    async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
+        return inner
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
+        "Wait for it to finish before replying.",
+    )
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"spawn": spawn},
+    )
+
+    from tests.test_async_tool_loop.async_helpers import (
+        _wait_for_tool_request,
+        _wait_for_condition,
+    )
+
+    await _wait_for_tool_request(client, "spawn")
+
+    # Wait until passthrough handle is registered
+    async def _wait_adopted(timeout: float = 5.0):
+        import time as _time
+
+        start = _time.perf_counter()
+        while _time.perf_counter() - start < timeout:
+            try:
+                ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    pts = [
+                        _inf
+                        for _inf in ti.values()
+                        if getattr(_inf, "handle", None) is not None
+                        and getattr(_inf, "is_passthrough", False)
+                    ]
+                    if pts:
+                        return
+            except Exception:
+                pass
+            await asyncio.sleep(0)
+        raise TimeoutError("timeout waiting for passthrough adoption")
+
+    await _wait_adopted()
+
+    # Immediate ask → should increment ask_count synchronously
+    await outer.ask("STATUS?")
+    assert inner.ask_count >= 1, "programmatic ask was not forwarded immediately"
+
+    # Wait for mirrored helper tool_call and ack tool message to be present
+    async def _ask_helper_tool_present():
+        return any(
+            m.get("role") == "assistant"
+            and any(
+                (tc.get("function", {}) or {}).get("name", "").startswith("ask_")
+                for tc in (m.get("tool_calls") or [])
+            )
+            for m in client.messages
+        )
+
+    async def _ask_ack_present():
+        return any(
+            m.get("role") == "tool"
+            and isinstance(m.get("name"), str)
+            and m["name"].startswith("ask_")
+            for m in client.messages
+        )
+
+    await _wait_for_condition(_ask_helper_tool_present, poll=0.01, timeout=60.0)
+    await _wait_for_condition(_ask_ack_present, poll=0.01, timeout=60.0)
+    helper_seen = await _ask_helper_tool_present()
+    ack_seen = await _ask_ack_present()
+    assert helper_seen, "expected assistant helper tool_call ask_* in transcript"
+    assert ack_seen, "expected ack tool message ask_* in transcript"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
+    """An interject sent before adoption should be mirrored on adoption and functionally forwarded once."""
+
+    calls = {"count": 0}
+
+    class InterjectSpy(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+
+        async def ask(self, question: str, **_):
+            return self
+
+        async def interject(self, message: str, **_):
+            calls["count"] += 1
+            return None
+
+        def stop(self, *_, **__):
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *_, **__):
+            return "paused"
+
+        def resume(self, *_, **__):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    gate = asyncio.Event()
+    inner = InterjectSpy()
+
+    async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
+        await gate.wait()
+        return inner
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
+        "Wait for it to finish before replying.",
+    )
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"spawn": spawn},
+    )
+
+    from tests.test_async_tool_loop.async_helpers import (
+        _wait_for_tool_request,
+        _wait_for_condition,
+    )
+
+    await _wait_for_tool_request(client, "spawn")
+
+    # Send interject BEFORE adoption so replay should deliver it once on adoption
+    await outer.interject("HELLO_BEFORE_ADOPTION")
+    gate.set()
+
+    async def _got_once():
+        return calls["count"] >= 1
+
+    await _wait_for_condition(_got_once, poll=0.01, timeout=60.0)
+    assert calls["count"] == 1, "interject should be delivered exactly once on adoption"
+
+    # Assert mirrored helper tool_call exists for interject_*
+    helper_seen = any(
+        m.get("role") == "assistant"
+        and any(
+            (tc.get("function", {}) or {}).get("name", "").startswith("interject_")
+            for tc in (m.get("tool_calls") or [])
+        )
+        for m in client.messages
+    )
+    assert (
+        helper_seen
+    ), "expected assistant helper tool_call interject_* mirrored on adoption"
