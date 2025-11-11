@@ -958,7 +958,8 @@ async def async_tool_loop_inner(
             if imgs is not None and append_images_with_source(imgs):
                 await _inject_live_images_overview(f"{method}_helper_images")
 
-        # Insert ack tool messages and forward steering immediately
+        # Insert ack tool messages (no additional forwarding here; forwarding is handled
+        # immediately by handle methods or by adoption-time replay for not-yet-adopted children)
         for call in tool_calls:
             try:
                 cid = call.get("id")
@@ -978,55 +979,6 @@ async def async_tool_loop_inner(
                         client=client,
                         msg_dispatcher=_msg_dispatcher,
                     )
-
-                # Forward steering to child handle or channels
-                base = str(method or "").lower().strip()
-                h = inf.handle
-                if base == "interject":
-                    iq = inf.interject_queue
-                    new_text = args.get("content")
-                    if iq is not None:
-                        await iq.put(new_text)
-                    elif h is not None:
-                        await forward_handle_call(
-                            h,
-                            "interject",
-                            {"message": new_text, "images": args.get("images")},
-                            fallback_positional_keys=["content", "message"],
-                        )
-                elif base == "ask":
-                    if h is not None:
-                        await forward_handle_call(
-                            h,
-                            "ask",
-                            {
-                                "question": args.get("question"),
-                                "images": args.get("images"),
-                            },
-                            fallback_positional_keys=["question", "content"],
-                        )
-                elif base == "pause":
-                    if h is not None and hasattr(h, "pause"):
-                        maybe = h.pause()
-                        if asyncio.iscoroutine(maybe):
-                            await maybe
-                elif base == "resume":
-                    if h is not None and hasattr(h, "resume"):
-                        maybe = h.resume()
-                        if asyncio.iscoroutine(maybe):
-                            await maybe
-                elif base == "stop":
-                    if h is not None and hasattr(h, "stop"):
-                        maybe = h.stop(args.get("reason"))
-                        if asyncio.iscoroutine(maybe):
-                            await maybe
-                elif base == "clarify":
-                    # deliver to the clarification down queue if available
-                    with suppress(Exception):
-                        if inf.call_id in tools_data.clarification_channels:
-                            _up, _down = tools_data.clarification_channels[inf.call_id]
-                            if _down is not None:
-                                await _down.put(args.get("answer"))
             except Exception:
                 continue
 
