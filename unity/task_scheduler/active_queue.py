@@ -23,6 +23,7 @@ import unify
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.handle_wrappers import HandleWrapperMixin
 from .types.activated_by import ActivatedBy
+from .types.status import to_status
 
 if TYPE_CHECKING:  # avoid import cycles at runtime
     from .task_scheduler import TaskScheduler
@@ -249,7 +250,7 @@ class _QueueSnapshot:
             # Count statuses
             def _to_status_str(row: dict) -> str:
                 try:
-                    return str(scheduler._to_status(row.get("status")))
+                    return str(to_status(row.get("status")))
                 except Exception:
                     return str(row.get("status"))
 

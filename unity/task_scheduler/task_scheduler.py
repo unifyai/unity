@@ -30,7 +30,7 @@ from ..common.async_tool_loop import (
     TOOL_LOOP_LINEAGE,
 )
 from ..common.tool_outcome import ToolOutcome
-from .types.status import Status
+from .types.status import Status, to_status
 from .types.priority import Priority
 from .types.schedule import Schedule
 from .types.trigger import Trigger
@@ -1021,7 +1021,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
         assert len(log_objs) == 1, "Composite primary key must be unique."
         # Normalise status to enum for consistent comparisons
-        new_status_enum = self._to_status(new_status)
+        new_status_enum = to_status(new_status)
         entries: Dict[str, Any] = {"status": new_status_enum}
         # Only allow `activated_by` to be set during transition to 'active'.
         # For transitions away from 'active', preserve the existing value for auditability.
@@ -1111,7 +1111,7 @@ class TaskScheduler(BaseTaskScheduler):
             return
 
         # Normalise status and extract linkage/timestamp
-        status = self._to_status(status)
+        status = to_status(status)
         prev_task_id = _q_prev(schedule)
         start_at_ts = self._extract_start_at(schedule)
 
@@ -1328,7 +1328,7 @@ class TaskScheduler(BaseTaskScheduler):
         #  derive status when caller omitted   #
         # ----------------------------------- #
         if status is not None and isinstance(status, str):
-            status = self._to_status(status)
+            status = to_status(status)
 
         # Convert schedule dict to Schedule model if needed
         if schedule is not None and isinstance(schedule, dict):
@@ -1360,7 +1360,7 @@ class TaskScheduler(BaseTaskScheduler):
             # --------  event-driven task  -------- #
             if status is None:
                 status = Status.triggerable
-            elif self._to_status(status) != Status.triggerable:
+            elif to_status(status) != Status.triggerable:
                 raise ValueError(
                     "Tasks with a *trigger* must start in the 'triggerable' state.",
                 )
@@ -2087,7 +2087,7 @@ class TaskScheduler(BaseTaskScheduler):
                 row = rows_by_id.get(int(tid))
                 if row is None:
                     continue
-                st = self._to_status(row.get("status"))  # type: ignore[arg-type]
+                st = to_status(row.get("status"))  # type: ignore[arg-type]
                 if st in self._TERMINAL_STATUSES:
                     continue
                 row = self._sanitize_activation(row)
@@ -2371,8 +2371,8 @@ class TaskScheduler(BaseTaskScheduler):
             desired_sched = {**(payload.get("schedule") or {})}
             need_status = False
             try:
-                existing_status = self._to_status(cur_row.get("status"))
-                desired_status = self._to_status(payload.get("status", existing_status))
+                existing_status = to_status(cur_row.get("status"))
+                desired_status = to_status(payload.get("status", existing_status))
                 need_status = existing_status != desired_status
             except Exception:
                 need_status = "status" in payload
@@ -3004,7 +3004,7 @@ class TaskScheduler(BaseTaskScheduler):
                 **({"queue_id": int(top_qid)} if isinstance(top_qid, int) else {}),
             }
             try:
-                if existing_status != self._to_status(desired_status):  # type: ignore[arg-type]
+                if existing_status != to_status(desired_status):  # type: ignore[arg-type]
                     entries["status"] = desired_status
             except Exception:
                 entries["status"] = desired_status
@@ -3274,7 +3274,7 @@ class TaskScheduler(BaseTaskScheduler):
         norm_status = None
         if "status" in entries:
             try:
-                norm_status = self._to_status(entries["status"])  # type: ignore[arg-type]
+                norm_status = to_status(entries["status"])  # type: ignore[arg-type]
             except Exception:
                 norm_status = None
         if norm_status == Status.active:
@@ -3618,7 +3618,7 @@ class TaskScheduler(BaseTaskScheduler):
         desired_status: Optional["Status"] = None
         if status is not None:
             # Forbid forcing 'active'
-            status_enum = self._to_status(status)  # type: ignore[arg-type]
+            status_enum = to_status(status)  # type: ignore[arg-type]
             if status_enum == Status.active:
                 raise ValueError(
                     "Direct status changes to 'active' are not allowed; use the execution method.",
@@ -3773,7 +3773,7 @@ class TaskScheduler(BaseTaskScheduler):
         current_sched = current_row.get("schedule") or {}
 
         if "status" in kwargs:
-            new_status = self._to_status(kwargs["status"])
+            new_status = to_status(kwargs["status"])
             if new_status == Status.active:
                 raise ValueError("Direct status changes to 'active' are not allowed.")
             self._validate_scheduled_invariants(
@@ -3941,18 +3941,6 @@ class TaskScheduler(BaseTaskScheduler):
                 "outcome": "none",
                 "details": {"checkpoint_id": None, "label": None},
             }
-
-    @staticmethod
-    def _to_status(value: Union[Status, str]) -> Status:
-        """Canonicalise a status-like value to the Status enum.
-
-        Tolerate missing values by treating None as 'queued'.
-        """
-        if isinstance(value, Status):
-            return value
-        if value is None:
-            return Status.queued
-        return Status(value)
 
     # Default tool-policy helpers
     @staticmethod
@@ -4455,7 +4443,7 @@ class TaskScheduler(BaseTaskScheduler):
         payloads clean and Pydantic construction predictable.
         """
         try:
-            if self._to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
+            if to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
                 row.pop("activated_by", None)
         except Exception:
             if str(row.get("status")) != str(Status.active):

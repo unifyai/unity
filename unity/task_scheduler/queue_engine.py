@@ -13,17 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .types.status import Status
-
-
-def _to_status(value: Any) -> Status:
-    if isinstance(value, Status):
-        return value
-    try:
-        return Status(value)
-    except Exception:
-        # Fallback: treat unknown as queued to avoid raising inside planning
-        return Status.queued
+from .types.status import Status, to_status
 
 
 def _sched_prev(sched: Any) -> Optional[int]:
@@ -60,7 +50,7 @@ def derive_status_after_queue_edit(
     - If the task is the head and has a start_at timestamp, set "scheduled".
     - Otherwise keep the current status, except a non-head "scheduled" becomes "queued".
     """
-    current = _to_status(existing_status)
+    current = to_status(existing_status)
     if current == Status.active:
         return Status.active
     if is_head and head_has_start_at:
@@ -121,7 +111,7 @@ def plan_reorder_queue(
             desired_status = Status.queued
 
         payload: Dict[str, Any] = {"schedule": sched_payload}
-        if _to_status(existing_status) != desired_status:
+        if to_status(existing_status) != desired_status:
             payload["status"] = desired_status
 
         updates[tid] = payload
