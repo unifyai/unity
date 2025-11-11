@@ -1538,12 +1538,18 @@ async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
     early_msgs: list[str] = []
     late_msgs: list[str] = []
 
+    # Gates to keep inner handles alive long enough for deterministic adoption checks.
+    # We release these near the end of the test to avoid racy, ultra-short lifetimes.
+    early_done_gate = asyncio.Event()
+    late_done_gate = asyncio.Event()
+
     class SpyHandle(SteerableToolHandle):
         __passthrough__ = True
 
-        def __init__(self, bucket: list[str]):
+        def __init__(self, bucket: list[str], done_gate: asyncio.Event | None = None):
             self._done = asyncio.Event()
             self._bucket = bucket
+            self._done_gate = done_gate
 
         async def ask(self, question: str, **_):
             return self
@@ -1566,7 +1572,17 @@ async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
             return self._done.is_set()
 
         async def result(self) -> str:
-            await asyncio.sleep(0.01)
+            # Keep the handle alive until the test signals completion, to ensure
+            # adoption remains observable and interjections can be forwarded.
+            if self._done_gate is not None:
+                try:
+                    await self._done_gate.wait()
+                except asyncio.CancelledError:
+                    # Allow graceful cancellation during outer.stop()
+                    self._done.set()
+                    raise
+            else:
+                await asyncio.sleep(0.05)
             self._done.set()
             return "ok"
 
@@ -1579,8 +1595,8 @@ async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
         async def answer_clarification(self, call_id: str, answer: str) -> None:
             return None
 
-    early = SpyHandle(early_msgs)
-    late = SpyHandle(late_msgs)
+    early = SpyHandle(early_msgs, done_gate=early_done_gate)
+    late = SpyHandle(late_msgs, done_gate=late_done_gate)
     gate = asyncio.Event()
 
     async def delegate_early() -> SteerableToolHandle:  # type: ignore[name-defined]
@@ -1680,6 +1696,10 @@ async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
     assert (
         late_msgs.count(msg) == 1
     ), "late child should receive interject once (replay)"
+
+    # Release inner handles to complete cleanly, then stop the outer loop.
+    early_done_gate.set()
+    late_done_gate.set()
 
     outer.stop("done")
     await outer.result()
