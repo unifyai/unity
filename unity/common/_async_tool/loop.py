@@ -1043,24 +1043,33 @@ async def async_tool_loop_inner(
                 helper_name = f"{base}_{inf.name}_{str(inf.call_id)[-6:]}"
                 # Normalise arguments per helper convention
                 args: dict[str, Any] = {}
+                args_json: dict[str, Any] = {}
                 if base == "interject":
                     msg = payload.get("message") or payload.get("content")
                     if msg is not None:
                         args["content"] = msg
+                        args_json["content"] = msg
                     if "images" in payload:
+                        # Do not embed non-JSON-serializable objects in the helper call
                         args["images"] = payload.get("images")
+                        args_json["images_present"] = True
                 elif base == "ask":
                     q = payload.get("question")
                     if q is not None:
                         args["question"] = q
+                        args_json["question"] = q
                     if "images" in payload:
+                        # Preserve full object for dispatch; only log presence in helper args
                         args["images"] = payload.get("images")
+                        args_json["images_present"] = True
                 elif base == "stop":
                     if "reason" in payload:
                         args["reason"] = payload.get("reason")
+                        args_json["reason"] = payload.get("reason")
                 elif base == "clarify":
                     if "answer" in payload:
                         args["answer"] = payload.get("answer")
+                        args_json["answer"] = payload.get("answer")
                 # pause/resume carry no args
                 call_id = f"mirror_{short_id(6)}"
                 tool_calls.append(
@@ -1069,7 +1078,7 @@ async def async_tool_loop_inner(
                         "type": "function",
                         "function": {
                             "name": helper_name,
-                            "arguments": json.dumps(args or {}),
+                            "arguments": json.dumps(args_json or {}),
                         },
                     },
                 )
