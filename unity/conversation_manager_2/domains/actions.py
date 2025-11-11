@@ -313,8 +313,8 @@ async def conductor_ask_request(cm: 'ConversationManager', action_name: str, *ar
     asyncio.create_task(managers_utils.conductor_watch_clarifications(handle_id, handle))
 
 
-@Action.register()
-async def handle_conductor_handle_request(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+@Action.register([...])
+async def conductor_handle_actions(cm: 'ConversationManager', action_name: str, *args, **kwargs):
     handle_id = kwargs["handle_id"]
     query = kwargs["query"]
     handle_data = cm.handle_registry.get(handle_id)
@@ -375,3 +375,13 @@ async def handle_conductor_handle_request(cm: 'ConversationManager', action_name
             response=f"Intervened: {action_name} {result}",
         ).to_json(),
     )
+
+@Action.register()
+async def summarize_conversation(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+    pass
+    # cm.transcript_manager
+    # tasks = [
+    #         cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid)
+    #         for cid, contact in zip(cm.contact_index.active_conversations)
+    #     ]
+    # await asyncio.gather(*tasks)

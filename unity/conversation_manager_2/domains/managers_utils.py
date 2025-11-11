@@ -1,3 +1,4 @@
+from datetime import timedelta
 import os
 import asyncio
 from time import perf_counter
@@ -6,6 +7,7 @@ from typing import TYPE_CHECKING
 import unity
 
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager_2.event_broker import get_event_broker
 from unity.conversation_manager_2.new_events import *
 from unity.contact_manager.contact_manager import ContactManager
@@ -26,6 +28,7 @@ event_broker = get_event_broker()
 # EVENT BUS
 async def get_bus_events():
     bus_events = await EVENT_BUS.search(filter='type == "Comms"', limit=50)
+    return [Event.from_bus_event(e).to_dict() for e in bus_events][::-1]
 
 async def publish_bus_events(event):
     try:
@@ -37,10 +40,6 @@ async def publish_bus_events(event):
         await EVENT_BUS.publish(bus_event)
     except Exception as e:
         print(f"[ManagersWorker] Error publishing bus event: {e}")
-
-# CONTACT MANAGER
-async def get_contacts():
-    ...
 
 # CONDUCTOR
 async def conductor_watch_result(
@@ -62,11 +61,6 @@ async def conductor_watch_result(
             result=result,
         ).to_json(),
     )
-
-    # TODO: move this to the conversation manager
-    # cleanup registry entry
-    # self._handle_registry.pop(handle_id, None)
-    # self._handle_meta.pop(handle_id, None)
 
 async def conductor_watch_notifications(
     handle_id: int,
@@ -121,6 +115,7 @@ async def conductor_watch_clarifications(
 
 async def log_message(cm: 'ConversationManager', event: Event) -> None:
         """Log a message via TranscriptManager."""
+        event_name = event.__class__.__name__
         print("publishing transcript", event_name)
         if "unify" in event_name:
             medium = "unify_call" if "call" in event_name else "unify_message"
@@ -141,10 +136,6 @@ async def log_message(cm: 'ConversationManager', event: Event) -> None:
             content = event.content
 
         contact_id = None
-        contacts_map = {
-            **self.state.email_contacts_map,
-            **self.state.phone_contacts_map,
-        }
         if isinstance(
             event,
             (
@@ -155,8 +146,8 @@ async def log_message(cm: 'ConversationManager', event: Event) -> None:
             ),
         ):
             contact_id = 1
-        elif event.contact in contacts_map:
-            contact_id = contacts_map[event.contact].contact_id
+        elif event.contact["contact_id"] in cm.contact_index.contacts:
+            contact_id = event.contact["contact_id"]
         if role == "Assistant":
             sender_id, receiver_ids = 0, [contact_id]
         else:
@@ -164,18 +155,18 @@ async def log_message(cm: 'ConversationManager', event: Event) -> None:
 
         exchange_id = UNASSIGNED
         if medium == "phone_call":
-            exchange_id = self.state.call_exchange_id
+            exchange_id = cm.call_exchange_id
         if medium == "unify_call":
-            exchange_id = self.state.unify_call_exchange_id
+            exchange_id = cm.unify_call_exchange_id
 
         call_utterance_timestamp = ""
         call_url = ""
         # compute utterance timestamp based on active call type
         timestamp = (
-            self.state.call_start_timestamp
+           cm.call_start_timestamp
             if medium == "phone_call"
             else (
-                self.state.unify_call_start_timestamp
+               cm.unify_call_start_timestamp
                 if medium == "unify_call"
                 else None
             )
@@ -187,19 +178,13 @@ async def log_message(cm: 'ConversationManager', event: Event) -> None:
             minutes, seconds = divmod(int(delta.total_seconds()), 60)
             # ToDo: Make this MM:SS once we have explicit types working
             call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
-        if "default-assistant" not in self.state.assistant_id:
+        if "default-assistant" not in cm.assistant_id:
             call_url = (
                 "https://storage.cloud.google.com/assistant-call-recordings/staging/"
-                f"{self.state.assistant_id}/{self.state.conference_name}.mp3"
+                f"{cm.assistant_id}/{cm.conference_name}.mp3"
             )
         try:
-            print(f"[ManagersWorker] Logging message: {message}")
-            medium = event.medium or "unify_message"
-            sender_id = int(event.sender_id)
-            receiver_ids = [int(r) for r in (event.receiver_ids or [])]
-            content = event.content
-            timestamp = event.timestamp
-            exchange_id = event.exchange_id
+            print(f"[ManagersWorker] Logging message: {event.to_dict()}")
             # call_utterance_timestamp = event.call_utterance_timestamp
             # call_url = event.call_url
             metadata = getattr(event, "metadata", None)
@@ -210,7 +195,8 @@ async def log_message(cm: 'ConversationManager', event: Event) -> None:
                     "medium": medium,
                     "sender_id": sender_id,
                     "receiver_ids": receiver_ids,
-                    "timestamp": timestamp,
+                    # not sure if this is right but that's how it is in the code in main
+                    "timestamp": event.timestamp,
                     "content": content,
                     "exchange_id": exchange_id,
                     # "call_utterance_timestamp": call_utterance_timestamp,

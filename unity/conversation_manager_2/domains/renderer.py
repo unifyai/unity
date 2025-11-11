@@ -84,20 +84,21 @@ class Renderer:
     
     # conductor stuff
     def render_conductor_handles(self, handles):
-        if not handles:
-            return ""
         out = "<active_conductor_handles>\n"
-        for handle_id, handle_data in handles.items():
-            out += f"<conductor_handle handle_id='{handle_id}'>\n"
-            out += f"<query>{handle_data['query']}</query>\n"
-            out += f"<handle_actions>\n"
-            for a in handle_data['handle_actions']:
-                out += f"<action action_name={a['action_name']}>\n"
-                out += f"<query>{a['query']}</query>\n"
-                if a_res := a.get('response'):
-                    out += f"<response>{a_res}</response>\n"
-                # the original code has a 'call_id'here, which i dont fully understand
-                out += "</handle_actions>\n"
-            out += '</conductor_handle>\n'
+        if not handles:
+            out += "No active condcuter handles\n"
+        else:
+            for handle_id, handle_data in handles.items():
+                out += f"<conductor_handle handle_id='{handle_id}'>\n"
+                out += f"<query>{handle_data['query']}</query>\n"
+                out += f"<handle_actions>\n"
+                for a in handle_data['handle_actions']:
+                    out += f"<action action_name={a['action_name']}>\n"
+                    out += f"<query>{a['query']}</query>\n"
+                    if a_res := a.get('response'):
+                        out += f"<response>{a_res}</response>\n"
+                    # the original code has a 'call_id'here, which i dont fully understand
+                    out += "</handle_actions>\n"
+                out += '</conductor_handle>\n'
         out += "</active_conductor_handles>"
         return out

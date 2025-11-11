@@ -2,6 +2,7 @@ import asyncio
 from time import perf_counter
 from typing import TYPE_CHECKING, Union
 
+from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager_2.new_events import *
 from unity.conversation_manager_2.domains import managers_utils
 
@@ -93,6 +94,8 @@ async def _(event, cm: 'ConversationManager', *args, **kwargs):
                     UnifyMessageRecieved,
                 ))
 async def _(event, cm: 'ConversationManager', *args, **kwargs):
+    asyncio.create_task(managers_utils.log_message(cm, event))
+    
     # update state
     thread = None
     message_content = None
@@ -190,3 +193,16 @@ async def _(event: ConductorResult, cm: 'ConversationManager', *args, **kwargs):
         )
     cm.conductor_handles.pop(event.handle_id)
     await cm.run_llm()
+
+@EventHandler.register(LogMessageResponse)
+async def _(event: LogMessageResponse, cm: 'ConversationManager', *args, **kwargs):
+    # ToDo: Get this working for email and whatsapp as well
+    # Email: Replying to the same thread
+    # Whatsapp: Managing different kinds of chat such as groups, etc.
+    if event.medium == "phone_call" and cm.call_exchange_id == UNASSIGNED:
+        cm.call_exchange_id = event.exchange_id
+    if (
+        event.medium == "unify_call"
+        and cm.unify_call_exchange_id == UNASSIGNED
+    ):
+        cm.unify_call_exchange_id = event.exchange_id

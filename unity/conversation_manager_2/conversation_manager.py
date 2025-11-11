@@ -145,11 +145,17 @@ class ConversationManager:
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
-        # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
-        self.conductor_handles: dict[int, dict] = {}
+        self.conductor_handles: dict[int, dict] = {}  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
         self.last_snapshot = datetime.now()
         self._current_snapshot = None
-    
+        self.call_exchange_id = None
+        self.unify_call_exchange_id = None
+        self.call_start_timestamp = None
+        self.unify_call_start_timestamp = None
+        self.conference_name = ""
+        self.is_summarizing = None
+        self.max_messages = 30
+
     def snapshot(self):
         self._current_snapshot = datetime.now()
         return self._current_snapshot
@@ -213,7 +219,7 @@ class ConversationManager:
                     )
 
         print(f"parsed_out {parsed_out}")
-        actions = parsed_out.get("actions", [])
+        actions = parsed_out.get("actions") or [] # sometimes actions exist but is None
         for action in actions:
             print("taking actions...")
             Action.take_action(self, action.pop("action_name"), **action, realtime=self.realtime)
@@ -222,11 +228,11 @@ class ConversationManager:
         print("commiting...")
         self.chat_history.append(input_message)
         self.chat_history.append({"role": "assistant", "content": out})
-        # event = LLMInput(chat_history=self.state.chat_history)
-        # asyncio.create_task(self.publish_bus_events(event))
 
+        # if len(self.chat_history) >= int(0.7 * self.max_messages) and not self.is_summarizing:
+        #    print("summarizing conversation...")
+        #    Action.take_action(self, "summarize_conversation")
 
-    
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
             await pubsub.psubscribe(
@@ -257,14 +263,6 @@ class ConversationManager:
                 # process events
                 event = Event.from_json(msg["data"])
                 await EventHandler.handle_event(event, self, realtime=self.realtime)
-
-
-    async def publish_bus_events(self, event: Event):
-        await self.event_broker.publish(
-            "app:managers:input",
-            PublishBusEventRequest(event=event.to_dict()).to_json(),
-        )
-
         
     async def check_inactivity(self):
         """Monitor for inactivity and shut down gracefully after timeout"""

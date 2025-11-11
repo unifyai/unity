@@ -411,7 +411,6 @@ class ConductorClarificationRequest(Event):
 @dataclass
 class ConductorClarificationResponse(Event):
     """Event to respond to a Conductor clarification request."""
-
     handle_id: int
     response: str
     call_id: str
