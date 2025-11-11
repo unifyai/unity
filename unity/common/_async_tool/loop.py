@@ -2329,8 +2329,8 @@ async def async_tool_loop_inner(
                             tools_data.pop_task(task_to_cancel)
 
                     # Record any images provided with the stop helper and capture reason text
-                    # EXTRA GUARD: ensure this ack is emitted only for stop_* helpers
-                    if lname_cf.startswith("stop_"):
+                    # Acknowledge only when a live target was actually affected
+                    if lname_cf.startswith("stop_") and task_to_cancel:
                         with suppress(Exception):
                             try:
                                 reason_txt = payload.get("reason")
@@ -2354,7 +2354,7 @@ async def async_tool_loop_inner(
                                 _msg_dispatcher,
                             )
 
-                            continue  # nothing else to schedule
+                            continue  # helper handled for a live target
 
                     # ── _pause helper ────────────────────────────────────────────────
                     elif lname_cf.startswith("pause_") and not lname_cf.startswith(
@@ -2393,19 +2393,19 @@ async def async_tool_loop_inner(
                                     tools_data.info[tgt_task],
                                 )
 
-                        tool_msg = create_tool_call_message(
-                            name=pretty_name,
-                            call_id=call["id"],
-                            content=f"The tool call [{call_id_suffix}] has been paused successfully.",
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            msg,
-                            tool_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
-                        continue  # helper handled, move on
+                            tool_msg = create_tool_call_message(
+                                name=pretty_name,
+                                call_id=call["id"],
+                                content=f"The tool call [{call_id_suffix}] has been paused successfully.",
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue  # helper handled for live target; otherwise fall through
 
                     # ── _resume helper ───────────────────────────────────────────────
                     elif lname_cf.startswith("resume_") and not lname_cf.startswith(
@@ -2444,19 +2444,20 @@ async def async_tool_loop_inner(
                                     tools_data.info[tgt_task],
                                 )
 
-                        tool_msg = create_tool_call_message(
-                            name=pretty_name,
-                            call_id=call["id"],
-                            content=f"The tool call [{call_id_suffix}] has been resumed successfully.",
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            msg,
-                            tool_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
-                        continue  # helper handled
+                        if tgt_task:
+                            tool_msg = create_tool_call_message(
+                                name=pretty_name,
+                                call_id=call["id"],
+                                content=f"The tool call [{call_id_suffix}] has been resumed successfully.",
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue  # helper handled (live target); otherwise fall through to base
 
                     elif lname_cf.startswith("clarify_"):
                         # Helper names are of the form: clarify_{toolName}_{safeId}
@@ -2487,40 +2488,44 @@ async def async_tool_loop_inner(
                                         _inf.waiting_for_clarification = False
                                         break
 
-                        # Record any images provided with the clarification answer
-                        with suppress(Exception):
-                            if _append_and_log_images_safely(
-                                (args.get("images") if isinstance(args, dict) else None)
-                                or (
-                                    args.get("images")
-                                    if isinstance(args, dict)
-                                    else None
+                        if tgt_task:
+                            # Record any images provided with the clarification answer
+                            with suppress(Exception):
+                                if _append_and_log_images_safely(
+                                    (
+                                        args.get("images")
+                                        if isinstance(args, dict)
+                                        else None
+                                    )
+                                    or (
+                                        args.get("images")
+                                        if isinstance(args, dict)
+                                        else None
+                                    ),
+                                ):
+                                    await _inject_live_images_overview(
+                                        "clarify_helper_images",
+                                    )
+                            # Always publish a tool reply acknowledging the clarify helper
+                            tool_reply_msg = create_tool_call_message(
+                                name=name,
+                                call_id=call["id"],
+                                content=(
+                                    f"Clarification answer sent upstream: {ans!r}\n"
+                                    "⏳ Waiting for the original tool to finish…"
                                 ),
-                            ):
-                                await _inject_live_images_overview(
-                                    "clarify_helper_images",
-                                )
-                        # Always publish a tool reply acknowledging the clarify helper
-                        tool_reply_msg = create_tool_call_message(
-                            name=name,
-                            call_id=call["id"],
-                            content=(
-                                f"Clarification answer sent upstream: {ans!r}\n"
-                                "⏳ Waiting for the original tool to finish…"
-                            ),
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            msg,
-                            tool_reply_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
-                        if tgt_task is not None:
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_reply_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
                             tools_data.info[tgt_task].clarify_placeholder = (
                                 tool_reply_msg
                             )
-                        continue
+                            continue  # handled clarify helper for live target
 
                     elif lname_cf.startswith("interject_"):
                         # helper signature mirrors downstream handle.interject (content plus any extras)
@@ -2561,29 +2566,28 @@ async def async_tool_loop_inner(
                                     tools_data.info[tgt_task],
                                 )
 
-                        # Record any images provided with the interjection helper
-                        with suppress(Exception):
-                            if _append_and_log_images_safely(
-                                payload.get("images", payload.get("images")),
-                            ):
-                                await _inject_live_images_overview(
-                                    "interject_helper_images",
-                                )
-
-                        # ― emit a tool message so the chat log stays tidy ---
-                        tool_msg = create_tool_call_message(
-                            name=pretty_name,
-                            call_id=call["id"],
-                            content=f'Guidance "{new_text}" forwarded to the running tool.',
-                        )
-                        await insert_tool_message_after_assistant(
-                            assistant_meta,
-                            msg,
-                            tool_msg,
-                            client,
-                            _msg_dispatcher,
-                        )
-                        continue  # nothing else to schedule
+                            # Record any images provided with the interjection helper
+                            with suppress(Exception):
+                                if _append_and_log_images_safely(
+                                    payload.get("images", payload.get("images")),
+                                ):
+                                    await _inject_live_images_overview(
+                                        "interject_helper_images",
+                                    )
+                            # ― emit a tool message so the chat log stays tidy ---
+                            tool_msg = create_tool_call_message(
+                                name=pretty_name,
+                                call_id=call["id"],
+                                content=f'Guidance "{new_text}" forwarded to the running tool.',
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue  # handled interject helper for live target
 
                     elif lname_cf.startswith("ask_"):
                         # Forward 'ask' helper to the specific child
@@ -2661,93 +2665,109 @@ async def async_tool_loop_inner(
 
                     # first check any dynamic helpers we generated for long-running handles
                     if name in dynamic_tools:
-                        fn = dynamic_tools[name]
+                        # Disambiguation: only treat as a dynamic helper when its suffix targets a live call
+                        _helper_targets_live = True
+                        try:
+                            _suffix = str(name).split("_")[-1]
+                            _helper_targets_live = any(
+                                str(inf.call_id).endswith(_suffix)
+                                for inf in tools_data.info.values()
+                            )
+                        except Exception:
+                            _helper_targets_live = True
+                        if _helper_targets_live:
+                            fn = dynamic_tools[name]
 
-                        # ── build **extra** kwargs (chat context + queue) for dynamic helper ──
-                        extra_kwargs: dict = {}
-                        if propagate_chat_context:
-                            cur_msgs = [
-                                m for m in client.messages if not m.get("_ctx_header")
-                            ]
-                            ctx_repr = chat_context_repr(parent_chat_context, cur_msgs)
-                            extra_kwargs["_parent_chat_context"] = ctx_repr
-
-                        sig = inspect.signature(fn)
-                        params = sig.parameters
-                        has_varkw = any(
-                            p.kind == inspect.Parameter.VAR_KEYWORD
-                            for p in params.values()
-                        )
-                        filtered_extras = {
-                            k: v
-                            for k, v in extra_kwargs.items()
-                            if k in params or has_varkw
-                        }
-                        # Forward ALL call args verbatim. Let the callee raise if unsupported.
-                        allowed_call_args = args
-                        merged_kwargs = {**allowed_call_args, **filtered_extras}
-
-                        if asyncio.iscoroutinefunction(fn):
-                            coro = fn(**merged_kwargs)
-                        else:
-                            coro = asyncio.to_thread(fn, **merged_kwargs)
-
-                        # (Argument pretty-printing now handled in assistant message logs only)
-
-                        call_dict = {
-                            "id": call["id"],
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": call["function"]["arguments"],
-                            },
-                        }
-                        # If this dynamic helper is marked as write-only, acknowledge immediately
-                        # and run fire-and-forget without tracking in pending/task_info.
-                        if getattr(fn, "__write_only__", False):
-                            with suppress(Exception):
-                                tool_msg = create_tool_call_message(
-                                    name=name,
-                                    call_id=call["id"],
-                                    content=build_helper_ack_content(
-                                        name,
-                                        call["function"]["arguments"],
-                                    ),
+                            # ── build **extra** kwargs (chat context + queue) for dynamic helper ──
+                            extra_kwargs: dict = {}
+                            if propagate_chat_context:
+                                cur_msgs = [
+                                    m
+                                    for m in client.messages
+                                    if not m.get("_ctx_header")
+                                ]
+                                ctx_repr = chat_context_repr(
+                                    parent_chat_context,
+                                    cur_msgs,
                                 )
-                                await insert_tool_message_after_assistant(
-                                    assistant_meta,
-                                    msg,
-                                    tool_msg,
-                                    client,
-                                    _msg_dispatcher,
-                                )
-                            with suppress(Exception):
-                                asyncio.create_task(coro, name=f"ToolCall_{name}")
-                            continue
+                                extra_kwargs["_parent_chat_context"] = ctx_repr
 
-                        # Scheduling dynamic helper call
-                        t = asyncio.create_task(coro, name=f"ToolCall_{name}")
-                        metadata = ToolCallMetadata(
-                            name=name,
-                            call_id=call["id"],
-                            assistant_msg=msg,
-                            call_dict=call_dict,
-                            call_idx=idx,
-                            is_interjectable=False,
-                            chat_context=extra_kwargs.get("_parent_chat_context"),
-                            pause_event=None,
-                            # Debug helpers for failure logging
-                            tool_schema=method_to_schema(
-                                fn,
-                                include_class_name=include_class_in_dynamic_tool_names,
-                            ),
-                            llm_arguments=allowed_call_args,
-                            raw_arguments_json=call["function"]["arguments"],
-                        )
-                        tools_data.save_task(
-                            coro=t,
-                            metadata=metadata,
-                        )
+                            sig = inspect.signature(fn)
+                            params = sig.parameters
+                            has_varkw = any(
+                                p.kind == inspect.Parameter.VAR_KEYWORD
+                                for p in params.values()
+                            )
+                            filtered_extras = {
+                                k: v
+                                for k, v in extra_kwargs.items()
+                                if k in params or has_varkw
+                            }
+                            # Forward ALL call args verbatim. Let the callee raise if unsupported.
+                            allowed_call_args = args
+                            merged_kwargs = {**allowed_call_args, **filtered_extras}
+
+                            if asyncio.iscoroutinefunction(fn):
+                                coro = fn(**merged_kwargs)
+                            else:
+                                coro = asyncio.to_thread(fn, **merged_kwargs)
+
+                            # (Argument pretty-printing now handled in assistant message logs only)
+
+                            call_dict = {
+                                "id": call["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": call["function"]["arguments"],
+                                },
+                            }
+                            # If this dynamic helper is marked as write-only, acknowledge immediately
+                            # and run fire-and-forget without tracking in pending/task_info.
+                            if getattr(fn, "__write_only__", False):
+                                with suppress(Exception):
+                                    tool_msg = create_tool_call_message(
+                                        name=name,
+                                        call_id=call["id"],
+                                        content=build_helper_ack_content(
+                                            name,
+                                            call["function"]["arguments"],
+                                        ),
+                                    )
+                                    await insert_tool_message_after_assistant(
+                                        assistant_meta,
+                                        msg,
+                                        tool_msg,
+                                        client,
+                                        _msg_dispatcher,
+                                    )
+                                with suppress(Exception):
+                                    asyncio.create_task(coro, name=f"ToolCall_{name}")
+                                continue
+
+                            # Scheduling dynamic helper call
+                            t = asyncio.create_task(coro, name=f"ToolCall_{name}")
+                            metadata = ToolCallMetadata(
+                                name=name,
+                                call_id=call["id"],
+                                assistant_msg=msg,
+                                call_dict=call_dict,
+                                call_idx=idx,
+                                is_interjectable=False,
+                                chat_context=extra_kwargs.get("_parent_chat_context"),
+                                pause_event=None,
+                                # Debug helpers for failure logging
+                                tool_schema=method_to_schema(
+                                    fn,
+                                    include_class_name=include_class_in_dynamic_tool_names,
+                                ),
+                                llm_arguments=allowed_call_args,
+                                raw_arguments_json=call["function"]["arguments"],
+                            )
+                            tools_data.save_task(
+                                coro=t,
+                                metadata=metadata,
+                            )
                     else:
                         # Use shared helper for base tools
                         await tools_data.schedule_base_tool_call(
