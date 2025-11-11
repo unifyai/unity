@@ -583,6 +583,7 @@ async def schedule_missing_for_message(
     assistant_meta,
     client,
     msg_dispatcher,
+    initial_paused: bool = False,
 ) -> list[str]:
     scheduled: list[str] = []
     try:
@@ -654,6 +655,7 @@ async def schedule_missing_for_message(
                 parent_chat_context=parent_chat_context,
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
+                initial_paused=initial_paused,
             )
             scheduled.append(cid)
     except Exception:
