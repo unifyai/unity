@@ -9,7 +9,8 @@ This rule standardizes how we add temporary debug logging during failing tests a
 1) Always start with hardcoded, unconditional debug logs
 - Add logs immediately, without flags or guards. Do not gate behind environment variables or configuration.
 - Use ONLY the dedicated function: CURSOR_DEBUG_LOG(...)
-- Function location: tests/helpers.py
+- Primary import (for production modules): `from unity.common.debug import CURSOR_DEBUG_LOG`
+- Re-export (for tests and convenience): `from tests.helpers import CURSOR_DEBUG_LOG`
 - Signature: CURSOR_DEBUG_LOG(*message_parts)
 - Behavior: Prints a one-line entry to stderr with timestamp and caller location, making it easy to correlate with test runs.
 
@@ -26,6 +27,12 @@ This rule standardizes how we add temporary debug logging during failing tests a
   - ripgrep: rg -n "CURSOR_DEBUG_LOG\\(" -S
   - grep:    grep -Rin "CURSOR_DEBUG_LOG(" .
 - Delete each call site (and any now-unused imports) before finalizing the fix.
+
+Notes to avoid circular imports
+- Import `CURSOR_DEBUG_LOG` from `unity.common.debug` when instrumenting production code. This module has no project/runtime dependencies and is safe to import anywhere.
+- If you still encounter a cycle in a particularly tight module, use a local inline import right before the call site:
+  `from unity.common.debug import CURSOR_DEBUG_LOG`
+- Do not place debug calls at module import time; keep them inside functions/methods.
 
 4) Alignment with workspace rules
 - No fast paths or heuristics: Logging should not add conditional shortcuts; it merely reports state unconditionally.
