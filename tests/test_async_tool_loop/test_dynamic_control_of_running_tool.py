@@ -92,6 +92,65 @@ def _tool_results(msgs: List[dict], tool_name: str) -> int:
 
 
 # --------------------------------------------------------------------------- #
+#  HELPERS – NEW: classify helper-only assistant messages (mirrored control)  #
+# --------------------------------------------------------------------------- #
+def _is_helper_tool_name(name: str) -> bool:
+    try:
+        n = str(name or "")
+    except Exception:
+        n = ""
+    return bool(
+        (n == "wait")
+        or n.startswith("pause_")
+        or n.startswith("resume_")
+        or n.startswith("stop_")
+        or n.startswith("clarify_")
+        or n.startswith("interject_")
+        or n.startswith("ask_"),
+    )
+
+
+def _assistant_is_helper_only(msg: dict) -> bool:
+    """Return True when the assistant message only contains helper tool_calls (no LLM turn)."""
+    try:
+        if msg.get("role") != "assistant":
+            return False
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            return False  # plain assistant text or no tool_calls → counts as a real LLM turn
+        # helper-only if every tool_call is a known helper
+        return all(
+            _is_helper_tool_name((tc.get("function") or {}).get("name")) for tc in calls
+        )
+    except Exception:
+        return False
+
+
+def _assistant_is_check_status_only(msg: dict) -> bool:
+    """
+    Return True if the assistant message is a synthetic check-status stub:
+      - role == assistant
+      - tool_calls present
+      - every tool_call function.name startswith 'check_status_'
+    These are non-LLM synthetic pairs used to carry final tool results.
+    """
+    try:
+        if msg.get("role") != "assistant":
+            return False
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            return False
+        return all(
+            str((tc.get("function") or {}).get("name") or "").startswith(
+                "check_status_",
+            )
+            for tc in calls
+        )
+    except Exception:
+        return False
+
+
+# --------------------------------------------------------------------------- #
 #  FIXTURE                                                                    #
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="function")
@@ -399,9 +458,11 @@ async def test_global_pause_blocks_llm_until_resume(client):
     last_request_idx = assistant_tool_call_indices[-1]
 
     # While paused, there must be no further assistant messages after the tool
-    # result messages that were appended during pause
+    # result messages that were appended during pause. Ignore mirrored helper-only
+    # assistant messages inserted to represent control actions while paused.
     assistant_after_pause = any(
-        m.get("role") == "assistant" for m in msgs[last_request_idx + 1 :]
+        (m.get("role") == "assistant") and (not _assistant_is_helper_only(m))
+        for m in msgs[last_request_idx + 1 :]
     )
     assert (
         not assistant_after_pause
@@ -457,8 +518,13 @@ async def test_global_resume_idempotent_no_extra_turns(client):
             last_req_idx = i
     assert last_req_idx != -1, "expected an assistant tool-call to `slow`"
 
+    # Count only non-helper, non-check_status assistant messages
     assistant_after = [
-        m for m in msgs[last_req_idx + 1 :] if m.get("role") == "assistant"
+        m
+        for m in msgs[last_req_idx + 1 :]
+        if (m.get("role") == "assistant")
+        and (not _assistant_is_helper_only(m))
+        and (not _assistant_is_check_status_only(m))
     ]
     assert (
         len(assistant_after) == 1
