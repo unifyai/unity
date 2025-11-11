@@ -862,6 +862,159 @@ async def async_tool_loop_inner(
             pass
 
     # ── helper: synthesize mirrored helper tool_calls (no LLM step) ───────────
+    # Centralized steering: target selection + per-child dispatcher
+    def _select_steering_targets(
+        method: str,
+        payload: dict | None,
+    ) -> list[Tuple[asyncio.Task, "ToolCallMetadata"]]:
+        """
+        Choose which child tool calls should receive a steering signal.
+        Policy:
+          - clarify: target the specified call_id only (exact or suffix match)
+          - pause/resume/stop: target ALL children (treat as if passthrough)
+          - interject/ask: target only passthrough children
+          - otherwise: no targets
+        """
+        base = str(method or "").lower().strip()
+        payload = payload or {}
+        selected: list[Tuple[asyncio.Task, ToolCallMetadata]] = []
+        # Clarify always targets a single child by id
+        if base == "clarify":
+            try:
+                target_call_id = payload.get("call_id")
+            except Exception:
+                target_call_id = None
+            if isinstance(target_call_id, str) and target_call_id:
+                for t, inf in list(tools_data.info.items()):
+                    try:
+                        if str(inf.call_id) == target_call_id or str(
+                            inf.call_id,
+                        ).endswith(target_call_id):
+                            selected.append((t, inf))
+                            break
+                    except Exception:
+                        continue
+            return selected
+        # Control signals go to all children
+        if base in ("pause", "resume", "stop"):
+            for t, inf in list(tools_data.info.items()):
+                try:
+                    # Include even when no handle is adopted yet, so pause/resume can toggle pause_event
+                    selected.append((t, inf))
+                except Exception:
+                    continue
+            return selected
+        # Message-like signals go only to passthrough children
+        if base in ("interject", "ask"):
+            for t, inf in list(tools_data.info.items()):
+                try:
+                    if getattr(inf, "is_passthrough", False):
+                        selected.append((t, inf))
+                except Exception:
+                    continue
+        return selected
+
+    async def _dispatch_steering_to_child(
+        method: str,
+        payload: dict | None,
+        inf: "ToolCallMetadata",
+    ) -> None:
+        """
+        Execute a steering operation on a single child according to standard conventions:
+          - interject: prefer the private interject_queue; else call handle.interject(...)
+          - ask: call handle.ask(...)
+          - pause/resume: call handle.pause()/resume() when available; else toggle pause_event
+          - stop: call handle.stop(...)
+          - clarify: put answer onto clarification down-queue (by call_id)
+          - default: best-effort generic forward to the handle
+        """
+        base = str(method or "").lower().strip()
+        args = dict(payload or {})
+        h = getattr(inf, "handle", None)
+        # interject
+        if base == "interject":
+            try:
+                new_text = args.get("content") if isinstance(args, dict) else None
+                if new_text is None and isinstance(args, dict):
+                    new_text = args.get("message")
+            except Exception:
+                new_text = None
+            iq = getattr(inf, "interject_queue", None)
+            if iq is not None:
+                await iq.put(new_text)
+                return
+            if h is not None:
+                await forward_handle_call(  # type: ignore[name-defined]
+                    h,
+                    "interject",
+                    args if isinstance(args, dict) else {},
+                    fallback_positional_keys=["content", "message"],
+                )
+            return
+        # ask
+        if base == "ask":
+            if h is not None:
+                await forward_handle_call(  # type: ignore[name-defined]
+                    h,
+                    "ask",
+                    args if isinstance(args, dict) else {},
+                    fallback_positional_keys=["question", "content"],
+                )
+            return
+        # pause
+        if base == "pause":
+            if h is not None and hasattr(h, "pause"):
+                await maybe_await(h.pause())  # type: ignore[func-returns-value]
+                return
+            ev = getattr(inf, "pause_event", None)
+            if ev is not None:
+                ev.clear()
+            return
+        # resume
+        if base == "resume":
+            if h is not None and hasattr(h, "resume"):
+                await maybe_await(h.resume())  # type: ignore[func-returns-value]
+                return
+            ev = getattr(inf, "pause_event", None)
+            if ev is not None:
+                ev.set()
+            return
+        # stop
+        if base == "stop":
+            if h is not None and hasattr(h, "stop"):
+                await forward_handle_call(  # type: ignore[name-defined]
+                    h,
+                    "stop",
+                    args if isinstance(args, dict) else {},
+                    fallback_positional_keys=["reason"],
+                )
+            return
+        # clarify
+        if base == "clarify":
+            with suppress(Exception):
+                _cid = str(inf.call_id)
+                _clar_map = tools_data.clarification_channels
+                # Prefer exact id; fall back to suffix lookup
+                if _cid in _clar_map:
+                    down_q = _clar_map[_cid][1]
+                else:
+                    down_q = None
+                    for k, (_u, _d) in list(_clar_map.items()):
+                        if str(k).endswith(_cid[-6:]):
+                            down_q = _d
+                            break
+                if down_q is not None:
+                    await down_q.put((args or {}).get("answer"))
+            return
+        # default: best-effort generic forward
+        if h is not None:
+            await forward_handle_call(  # type: ignore[name-defined]
+                h,
+                base,
+                args if isinstance(args, dict) else {},
+                fallback_positional_keys=[],
+            )
+
     async def _synthesize_mirrored_helper_calls(
         method: str,
         payload: dict | None = None,
@@ -873,37 +1026,11 @@ async def async_tool_loop_inner(
         """
         payload = payload or {}
 
-        # Select targets
-        targets: list[Tuple[asyncio.Task, ToolCallMetadata]] = []
-        # Special-case clarify: target by call_id if provided
-        target_call_id = None
-        with suppress(Exception):
-            target_call_id = payload.get("call_id")
-        if isinstance(target_call_id, str) and target_call_id:
-            for t, inf in list(tools_data.info.items()):
-                try:
-                    if str(inf.call_id) == target_call_id or str(inf.call_id).endswith(
-                        target_call_id,
-                    ):
-                        targets.append((t, inf))
-                        break
-                except Exception:
-                    continue
-        else:
-            for t, inf in list(tools_data.info.items()):
-                try:
-                    if inf.handle is None:
-                        continue
-                    base_sel = str(method or "").lower().strip()
-                    # Control signals should propagate to ALL child handles (passthrough or not)
-                    if base_sel in ("pause", "resume", "stop"):
-                        targets.append((t, inf))
-                    else:
-                        # Interject/ask remain restricted to passthrough children
-                        if getattr(inf, "is_passthrough", False):
-                            targets.append((t, inf))
-                except Exception:
-                    continue
+        # Select targets via central policy
+        targets: list[Tuple[asyncio.Task, ToolCallMetadata]] = _select_steering_targets(
+            method,
+            payload if isinstance(payload, dict) else {},
+        )
         if not targets:
             return
 
@@ -987,79 +1114,9 @@ async def async_tool_loop_inner(
                         msg_dispatcher=_msg_dispatcher,
                     )
                 # Forward steering to child handle or channels
+                # Centralized steering dispatch
                 base = str(method or "").lower().strip()
-                h = inf.handle
-                if base == "interject":
-                    iq = inf.interject_queue
-                    new_text = args.get("content") if isinstance(args, dict) else None
-                    if iq is not None:
-                        await iq.put(new_text)
-                    elif h is not None:
-                        await forward_handle_call(
-                            h,
-                            "interject",
-                            {
-                                "message": new_text,
-                                "images": (
-                                    (args or {}).get("images")
-                                    if isinstance(args, dict)
-                                    else None
-                                ),
-                            },
-                            fallback_positional_keys=["content", "message"],
-                        )
-                elif base == "ask":
-                    if h is not None:
-                        await forward_handle_call(
-                            h,
-                            "ask",
-                            {
-                                "question": (
-                                    (args or {}).get("question")
-                                    if isinstance(args, dict)
-                                    else None
-                                ),
-                                "images": (
-                                    (args or {}).get("images")
-                                    if isinstance(args, dict)
-                                    else None
-                                ),
-                            },
-                            fallback_positional_keys=["question", "content"],
-                        )
-                elif base == "pause":
-                    if h is not None and hasattr(h, "pause"):
-                        maybe = h.pause()
-                        if asyncio.iscoroutine(maybe):
-                            await maybe
-                elif base == "resume":
-                    if h is not None and hasattr(h, "resume"):
-                        maybe = h.resume()
-                        if asyncio.iscoroutine(maybe):
-                            await maybe
-                elif base == "stop":
-                    if h is not None and hasattr(h, "stop"):
-                        reason = (
-                            (args or {}).get("reason")
-                            if isinstance(args, dict)
-                            else None
-                        )
-                        maybe = h.stop(reason)
-                        if asyncio.iscoroutine(maybe):
-                            await maybe
-                elif base == "clarify":
-                    # deliver to the clarification down queue if available
-                    with suppress(Exception):
-                        if inf.call_id in tools_data.clarification_channels:
-                            _up, _down = tools_data.clarification_channels[inf.call_id]
-                            if _down is not None:
-                                await _down.put(
-                                    (
-                                        (args or {}).get("answer")
-                                        if isinstance(args, dict)
-                                        else None
-                                    ),
-                                )
+                await _dispatch_steering_to_child(base, args, inf)
             except Exception:
                 continue
 
@@ -2256,16 +2313,13 @@ async def async_tool_loop_inner(
                         if "payload" not in locals():
                             payload = {}
 
-                        # ── gracefully shut down any *nested* async-tool loop first ──────
+                        # ── gracefully shut down any *nested* async-tool loop first (central dispatcher) ──────
                         if task_to_cancel:
-                            nested_handle = tools_data.info[task_to_cancel].handle
-                            if nested_handle is not None:
-                                # public API call – propagates cancellation downwards
-                                await forward_handle_call(
-                                    nested_handle,
+                            with suppress(Exception):
+                                await _dispatch_steering_to_child(
                                     "stop",
-                                    payload,
-                                    fallback_positional_keys=["reason"],
+                                    payload if isinstance(payload, dict) else {},
+                                    tools_data.info[task_to_cancel],
                                 )
 
                         # ── then cancel the waiter coroutine itself ───────────────────────────
@@ -2325,19 +2379,19 @@ async def async_tool_loop_inner(
                         )
                         pretty_name = f"pause {orig_fn}({arg_json})"
 
-                        # Forward any extra kwargs to handle.pause if available
+                        # Forward via central dispatcher (pause)
                         with suppress(Exception):
                             payload = json.loads(call["function"]["arguments"]) or {}
                         if "payload" not in locals():
                             payload = {}
 
                         if tgt_task:
-                            h = tools_data.info[tgt_task].handle
-                            ev = tools_data.info[tgt_task].pause_event
-                            if h is not None and hasattr(h, "pause"):
-                                await forward_handle_call(h, "pause", payload)
-                            elif ev is not None:
-                                ev.clear()
+                            with suppress(Exception):
+                                await _dispatch_steering_to_child(
+                                    "pause",
+                                    payload,
+                                    tools_data.info[tgt_task],
+                                )
 
                         tool_msg = create_tool_call_message(
                             name=pretty_name,
@@ -2376,19 +2430,19 @@ async def async_tool_loop_inner(
                         )
                         pretty_name = f"resume {orig_fn}({arg_json})"
 
-                        # Forward any extra kwargs to handle.resume if available
+                        # Forward via central dispatcher (resume)
                         with suppress(Exception):
                             payload = json.loads(call["function"]["arguments"]) or {}
                         if "payload" not in locals():
                             payload = {}
 
                         if tgt_task:
-                            h = tools_data.info[tgt_task].handle
-                            ev = tools_data.info[tgt_task].pause_event
-                            if h is not None and hasattr(h, "resume"):
-                                await forward_handle_call(h, "resume", payload)
-                            elif ev is not None:
-                                ev.set()
+                            with suppress(Exception):
+                                await _dispatch_steering_to_child(
+                                    "resume",
+                                    payload,
+                                    tools_data.info[tgt_task],
+                                )
 
                         tool_msg = create_tool_call_message(
                             name=pretty_name,
@@ -2419,26 +2473,19 @@ async def async_tool_loop_inner(
                             None,
                         )
 
-                        # Find clarification channel by matching call-id suffix
-                        _clar_key = next(
-                            (
-                                k
-                                for k in tools_data.clarification_channels.keys()
-                                if k.endswith(call_id_suffix)
-                            ),
-                            None,
-                        )
-                        if _clar_key is not None:
-                            await tools_data.clarification_channels[_clar_key][1].put(
-                                ans,
-                            )  # down-queue
-                            # ✔️ the tool is un-blocked – start watching it again
-                            for _t, _inf in tools_data.info.items():
-                                if str(_inf.call_id).endswith(
-                                    call_id_suffix,
-                                ):
-                                    _inf.waiting_for_clarification = False
-                                    break
+                        # Deliver via central dispatcher, then clear waiting flag
+                        if tgt_task:
+                            with suppress(Exception):
+                                await _dispatch_steering_to_child(
+                                    "clarify",
+                                    {"answer": ans},
+                                    tools_data.info[tgt_task],
+                                )
+                                # ✔️ the tool is un-blocked – start watching it again
+                                for _t, _inf in tools_data.info.items():
+                                    if str(_inf.call_id).endswith(call_id_suffix):
+                                        _inf.waiting_for_clarification = False
+                                        break
 
                         # Record any images provided with the clarification answer
                         with suppress(Exception):
@@ -2505,19 +2552,13 @@ async def async_tool_loop_inner(
                             else name
                         )
 
-                        # ― push guidance onto the private queue or forward to handle with full kwargs -------------
+                        # ― forward via central dispatcher -------------
                         if tgt_task:
-                            iq = tools_data.info[tgt_task].interject_queue
-                            h = tools_data.info[tgt_task].handle
-
-                            if iq is not None:
-                                await iq.put(new_text)
-                            elif h is not None and hasattr(h, "interject"):
-                                await forward_handle_call(
-                                    h,
+                            with suppress(Exception):
+                                await _dispatch_steering_to_child(
                                     "interject",
                                     payload,
-                                    fallback_positional_keys=["content", "message"],
+                                    tools_data.info[tgt_task],
                                 )
 
                         # Record any images provided with the interjection helper
@@ -2543,6 +2584,52 @@ async def async_tool_loop_inner(
                             _msg_dispatcher,
                         )
                         continue  # nothing else to schedule
+
+                    elif lname_cf.startswith("ask_"):
+                        # Forward 'ask' helper to the specific child
+                        with suppress(Exception):
+                            payload = json.loads(call["function"]["arguments"]) or {}
+                            question = payload.get("question") or payload.get("content")
+                            if question is None:
+                                question = ""
+                        if "payload" not in locals():
+                            payload = {}
+                            question = "<unparsable>"
+
+                        call_id_suffix = name.split("_")[-1]
+                        tgt_task = next(
+                            (
+                                t
+                                for t, inf in tools_data.info.items()
+                                if str(inf.call_id).endswith(call_id_suffix)
+                            ),
+                            None,
+                        )
+                        pretty_name = (
+                            f"ask {tools_data.info[tgt_task].name}({question})"
+                            if tgt_task
+                            else name
+                        )
+                        if tgt_task:
+                            with suppress(Exception):
+                                await _dispatch_steering_to_child(
+                                    "ask",
+                                    payload,
+                                    tools_data.info[tgt_task],
+                                )
+                        tool_msg = create_tool_call_message(
+                            name=pretty_name,
+                            call_id=call["id"],
+                            content=f'Question "{question}" forwarded to the running tool.',
+                        )
+                        await insert_tool_message_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
+                        continue
 
                     # Respect hidden per-tool total-call quotas (pre-pruned); guard
                     if tools_data.has_exceeded_quota_for_tool(name):
