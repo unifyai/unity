@@ -601,6 +601,10 @@ class ToolsData:
                     method = rec.get("method") or ""
                     if not isinstance(method, str) or not method:
                         continue
+                    # Do NOT replay pause/resume; adoption will sync current state below
+                    _m_base = method.lower().strip()
+                    if _m_base in ("pause", "resume"):
+                        continue
                     args = rec.get("args") or ()
                     kwargs = rec.get("kwargs") or {}
                     fb = rec.get("fallback") or ()
@@ -615,8 +619,11 @@ class ToolsData:
                     )
                     # Also mirror as a synthetic helper tool_call and acknowledgement (no LLM step)
                     try:
-                        base = method.lower().strip()
+                        base = _m_base
                         helper_name = f"{base}_{info.name}_{str(info.call_id)[-6:]}"
+                        if base in ("pause", "resume"):
+                            # Already skipped replay; do not synthesize mirrors either
+                            continue
                         # Build assistant message with a single tool_call
                         call_id = f"mirror_{int(time.perf_counter()*1000)}"
                         args_json = {}
