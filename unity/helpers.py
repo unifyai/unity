@@ -161,3 +161,66 @@ def terminate_process(proc: subprocess.Popen) -> None:
             proc.wait()
     except Exception as e:
         print(f"Error during process termination: {e}")
+
+
+def cleanup_dangling_call_processes() -> int:
+    """
+    Find and force-kill all dangling call processes from previous runs.
+
+    This searches for Python processes running call/unify_call/realtime_call scripts
+    and immediately terminates them with SIGKILL. Since these are leftover processes
+    from crashed/ungraceful shutdowns, there's no need for graceful termination.
+
+    Returns
+    -------
+    int
+        Number of processes terminated
+    """
+    if sys.platform.startswith("win"):
+        # Windows implementation would use tasklist/taskkill
+        print(
+            "Warning: cleanup_dangling_call_processes not yet implemented for Windows"
+        )
+        return 0
+
+    try:
+        # Find all Python processes running call scripts
+        output = subprocess.getoutput(
+            "ps -eo pid,command | grep -E 'medium_scripts/(call|unify_call|realtime_call)\\.py'"
+        )
+
+        # Parse PIDs and commands, excluding the grep process itself
+        processes = {
+            int(line.strip().split(" ")[0]): line.strip().split(" ")[1]
+            for line in output.split("\n")
+            if line.strip() and "grep" not in line
+        }
+
+        if not processes:
+            print("No dangling call processes found")
+            return 0
+
+        terminated_count = 0
+        for pid, command in processes.items():
+            try:
+                print(
+                    f"Force killing dangling call process PID {pid} with command {command}"
+                )
+                os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
+                print(f"✅ Killed process {pid}")
+            except ProcessLookupError:
+                print(f"❌ Process {pid} -> {command} not found")
+            except PermissionError:
+                print(f"❌ Permission denied to kill process {pid} -> {command}")
+            except ValueError:
+                print(f"❌ Invalid PID: {pid} -> {command}")
+            except Exception as e:
+                print(f"❌ Error terminating process {pid} -> {command}: {e}")
+                continue
+
+        print(f"Terminated {terminated_count} dangling call process(es)")
+        return terminated_count
+
+    except Exception as e:
+        print(f"Error during dangling process cleanup: {e}")
+        return 0
