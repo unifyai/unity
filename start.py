@@ -4,6 +4,7 @@ import time
 
 # import unity.conversation_manager as conversation_manager
 import unity.conversation_manager_2 as conversation_manager
+from unity.helpers import cleanup_dangling_call_processes
 
 
 # Graceful shutdown handler
@@ -18,7 +19,14 @@ signal.signal(signal.SIGINT, signal_handler)
 
 if __name__ == "__main__":
     import sys
+
     use_realtime = "--realtime" in sys.argv
+
+    # Clean up any dangling call processes from previous runs
+    # This prevents conflicts when multiple call processes can't run simultaneously
+    print("Checking for dangling call processes from previous runs...")
+    cleanup_dangling_call_processes()
+
     print("Starting convo manager...")
 
     # Start the convo manager
