@@ -24,6 +24,7 @@ from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.messages import is_non_final_tool_reply as _is_non_final_tool_reply
 from ._async_tool.loop import async_tool_loop_inner
+from typing import Iterable
 
 # inline-tools support removed in simplified manager-only snapshots
 from .loop_snapshot import (
@@ -2836,3 +2837,115 @@ def start_async_tool_loop(
     outer_handle_container[0] = handle
 
     return handle
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom steering decorator
+# ─────────────────────────────────────────────────────────────────────────────
+def custom_steering_method(
+    *,
+    aliases: Iterable[str] | None = None,
+    fallback: Iterable[str] | None = None,
+):
+    """
+    Decorator for custom public steering methods defined on classes derived from
+    AsyncToolLoopHandle.
+
+    Behaviour
+    ---------
+    - Executes the original method.
+    - Records the steering event into the handle's steer log so adoption can replay.
+    - Enqueues a mirror sentinel that the inner loop consumes to:
+        • synthesize helper tool_calls/acks, and
+        • forward the call to all in‑flight passthrough children that implement it.
+    - The mirror payload carries control keys ("_custom", "_aliases", "_fallback")
+      used only by the inner loop; these are NOT forwarded to child handles.
+
+    Parameters
+    ----------
+    aliases : Iterable[str] | None
+        Optional alternative method names to try on children during forwarding.
+    fallback : Iterable[str] | None
+        Optional ordered list of argument keys to use as positional fallbacks
+        when a child's method signature does not accept kwargs (passed to
+        forward_handle_call as fallback_positional_keys).
+    """
+
+    def _decorator(fn):
+        is_async = asyncio.iscoroutinefunction(fn)
+        alias_list = list(aliases or [])
+        fb_list = list(fallback or [])
+
+        async def _post_call(self: "AsyncToolLoopHandle", args, kwargs, result):
+            # Record without control keys
+            await self._record_and_forward(
+                fn.__name__,
+                args=list(args or ()),
+                kwargs=dict(kwargs or {}),
+                fallback=tuple(fb_list),
+                had_passthrough=False,
+                forwarded_to=[],
+            )
+            # Mirror to the inner loop with control keys for routing/dispatch
+            try:
+                await self._queue.put(
+                    {
+                        "_mirror": {
+                            "method": fn.__name__,
+                            "kwargs": dict(kwargs or {}),
+                            "_custom": True,
+                            "_aliases": list(alias_list),
+                            "_fallback": list(fb_list),
+                        },
+                    },
+                )
+            except Exception:
+                pass
+            return result
+
+        if is_async:
+
+            @functools.wraps(fn, updated=())
+            async def _async_wrapped(self: "AsyncToolLoopHandle", *a, **kw):
+                res = await fn(self, *a, **kw)
+                return await _post_call(self, a, kw, res)
+
+            return _async_wrapped
+
+        @functools.wraps(fn, updated=())
+        def _sync_wrapped(self: "AsyncToolLoopHandle", *a, **kw):
+            res = fn(self, *a, **kw)
+            # Fire-and-forget record (do not block caller)
+            try:
+                asyncio.create_task(
+                    self._record_and_forward(
+                        fn.__name__,
+                        args=list(a or ()),
+                        kwargs=dict(kw or {}),
+                        fallback=tuple(fb_list),
+                        had_passthrough=False,
+                        forwarded_to=[],
+                    ),
+                )
+            except Exception:
+                pass
+            # Mirror sentinel nowait
+            try:
+                self._queue.put_nowait(
+                    {
+                        "_mirror": {
+                            "method": fn.__name__,
+                            "kwargs": dict(kw or {}),
+                            "_custom": True,
+                            "_aliases": list(alias_list),
+                            "_fallback": list(fb_list),
+                        },
+                    },
+                )
+            except Exception:
+                pass
+            return res
+
+        return _sync_wrapped
+
+    return _decorator

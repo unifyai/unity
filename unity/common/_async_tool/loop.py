@@ -896,7 +896,8 @@ async def async_tool_loop_inner(
           - clarify: target the specified call_id only (exact or suffix match)
           - pause/resume/stop: target ALL children (treat as if passthrough)
           - interject/ask: target only passthrough children
-          - otherwise: no targets
+          - custom methods (payload['_custom']): target only passthrough children
+            whose adopted handle implements the method (or one of its aliases)
         """
         base = str(method or "").lower().strip()
         payload = payload or {}
@@ -935,6 +936,52 @@ async def async_tool_loop_inner(
                         selected.append((t, inf))
                 except Exception:
                     continue
+            return selected
+        # Custom steering routing: only passthrough children that implement method/alias
+        try:
+            is_custom = bool(payload.get("_custom"))
+        except Exception:
+            is_custom = False
+        if is_custom:
+            try:
+                original_name = str(method or "")
+            except Exception:
+                original_name = base
+            try:
+                aliases = list(payload.get("_aliases") or [])
+            except Exception:
+                aliases = []
+            name_candidates: list[str] = []
+            if original_name:
+                name_candidates.append(original_name)
+            # include provided aliases
+            for nm in aliases:
+                if isinstance(nm, str) and nm:
+                    name_candidates.append(nm)
+            # add lowercased base as last resort
+            if base and base not in name_candidates:
+                name_candidates.append(base)
+            for t, inf in list(tools_data.info.items()):
+                try:
+                    if not getattr(inf, "is_passthrough", False):
+                        continue
+                    h = getattr(inf, "handle", None)
+                    if h is None:
+                        continue
+                    matched = False
+                    for nm in name_candidates:
+                        try:
+                            attr = getattr(h, nm, None)
+                            if callable(attr):
+                                matched = True
+                                break
+                        except Exception:
+                            continue
+                    if matched:
+                        selected.append((t, inf))
+                except Exception:
+                    continue
+            return selected
         return selected
 
     async def _dispatch_steering_to_child(
@@ -1031,12 +1078,44 @@ async def async_tool_loop_inner(
             return
         # default: best-effort generic forward
         if h is not None:
-            await forward_handle_call(  # type: ignore[name-defined]
-                h,
-                base,
-                args if isinstance(args, dict) else {},
-                fallback_positional_keys=[],
-            )
+            # Remove control keys (custom steering metadata)
+            try:
+                args.pop("_custom", None)
+                aliases = list(args.pop("_aliases", []) or [])
+            except Exception:
+                aliases = []
+            try:
+                fb_keys = tuple(args.pop("_fallback", ()) or ())
+            except Exception:
+                fb_keys = ()
+            # Build method candidates: original, aliases, then base
+            try:
+                original_name = str(method or "")
+            except Exception:
+                original_name = base
+            candidates: list[str] = []
+            if original_name:
+                candidates.append(original_name)
+            for nm in aliases:
+                if isinstance(nm, str) and nm:
+                    candidates.append(nm)
+            if base and base not in candidates:
+                candidates.append(base)
+            # Try each candidate method in order
+            for nm in candidates:
+                try:
+                    attr = getattr(h, nm, None)
+                    if not callable(attr):
+                        continue
+                    await forward_handle_call(  # type: ignore[name-defined]
+                        h,
+                        nm,
+                        args if isinstance(args, dict) else {},
+                        fallback_positional_keys=fb_keys,
+                    )
+                    return
+                except Exception:
+                    continue
 
     async def _synthesize_mirrored_helper_calls(
         method: str,
@@ -1093,6 +1172,20 @@ async def async_tool_loop_inner(
                     if "answer" in payload:
                         args["answer"] = payload.get("answer")
                         args_json["answer"] = payload.get("answer")
+                else:
+                    # Custom steering: forward original payload (minus control keys) to dispatch,
+                    # but keep helper tool_call arguments minimal to avoid transcript bloat.
+                    try:
+                        forward_args = dict(payload or {})
+                    except Exception:
+                        forward_args = {}
+                    # Strip control keys
+                    for _k in ("_custom", "_aliases", "_fallback"):
+                        try:
+                            forward_args.pop(_k, None)
+                        except Exception:
+                            pass
+                    args = forward_args
                 # pause/resume carry no args
                 call_id = f"mirror_{short_id(6)}"
                 tool_calls.append(
@@ -1358,10 +1451,31 @@ async def async_tool_loop_inner(
                             _m = _ms.get("method")
                             _kw = _ms.get("kwargs") or {}
                             if isinstance(_m, str) and _m:
-                                await _synthesize_mirrored_helper_calls(
-                                    _m,
-                                    _kw if isinstance(_kw, dict) else {},
-                                )
+                                # Merge control keys into payload for routing/dispatch
+                                try:
+                                    merged = dict(_kw if isinstance(_kw, dict) else {})
+                                except Exception:
+                                    merged = {}
+                                try:
+                                    if _ms.get("_custom"):
+                                        merged["_custom"] = True
+                                except Exception:
+                                    pass
+                                try:
+                                    if "_aliases" in _ms:
+                                        merged["_aliases"] = list(
+                                            _ms.get("_aliases") or [],
+                                        )
+                                except Exception:
+                                    pass
+                                try:
+                                    if "_fallback" in _ms:
+                                        merged["_fallback"] = list(
+                                            _ms.get("_fallback") or [],
+                                        )
+                                except Exception:
+                                    pass
+                                await _synthesize_mirrored_helper_calls(_m, merged)
                             continue
                         else:
                             # Re-queue non-mirror entries for later processing once resumed
@@ -1552,10 +1666,28 @@ async def async_tool_loop_inner(
                         _m = _ms.get("method")
                         _kw = _ms.get("kwargs") or {}
                         if isinstance(_m, str) and _m:
-                            await _synthesize_mirrored_helper_calls(
-                                _m,
-                                _kw if isinstance(_kw, dict) else {},
-                            )
+                            try:
+                                merged = dict(_kw if isinstance(_kw, dict) else {})
+                            except Exception:
+                                merged = {}
+                            try:
+                                if _ms.get("_custom"):
+                                    merged["_custom"] = True
+                            except Exception:
+                                pass
+                            try:
+                                if "_aliases" in _ms:
+                                    merged["_aliases"] = list(_ms.get("_aliases") or [])
+                            except Exception:
+                                pass
+                            try:
+                                if "_fallback" in _ms:
+                                    merged["_fallback"] = list(
+                                        _ms.get("_fallback") or [],
+                                    )
+                            except Exception:
+                                pass
+                            await _synthesize_mirrored_helper_calls(_m, merged)
                             continue
                 except Exception:
                     pass
