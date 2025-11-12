@@ -93,15 +93,31 @@ def log_job_startup(
 
 
 def mark_job_done(job_name: str):
+    # mark job done in the logs
+    # try:
+    #     job_log = unify.get_logs(
+    #         project="AssistantJobs",
+    #         context="startup_events",
+    #         filter=f"job_name == '{job_name}'",
+    #         api_key=api_key,
+    #     )[0]
+    #     job_log.update_entries(running=False)
+    #     print("Job marked done", job_name)
+    # except Exception as e:
+    #     print(f"Error finding job: {e}")
+    #     traceback.print_exc()
+
+    # delete the job service
     try:
-        job_log = unify.get_logs(
-            project="AssistantJobs",
-            context="startup_events",
-            filter=f"job_name == '{job_name}'",
-            api_key=api_key,
-        )[0]
-        job_log.update_entries(running=False)
-        print("Job marked done", job_name)
+        comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
+        admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
+        svc = f"unity-svc-{job_name}"
+        response = requests.delete(
+            f"{comms_url}/infra/job/service",
+            data={"service_name": svc},
+            headers={"Authorization": f"Bearer {admin_key}"},
+        )
+        print(f"Job service deleted: {response.text}")
     except Exception as e:
-        print(f"Error finding job: {e}")
+        print(f"Error deleting job service: {e}")
         traceback.print_exc()

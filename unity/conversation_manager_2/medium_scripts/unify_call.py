@@ -58,6 +58,7 @@ def prewarm(_ctx=None):
         LLM = None
         VAD = None
 
+
 class Assistant(Agent):
     def __init__(self, contact_id: int = 1) -> None:
         self.contact_id = contact_id
