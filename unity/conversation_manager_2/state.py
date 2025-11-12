@@ -67,7 +67,7 @@ class ConversationManagerState:
         assistant_id: str,
         assistant_name: str,
         assistant_age: str,
-        assistant_region: str,
+        assistant_nationality: str,
         assistant_about: str,
         voice_provider: str,
         voice_id: str,
@@ -136,7 +136,7 @@ class ConversationManagerState:
         self.assistant_id = assistant_id
         self.assistant_name = assistant_name
         self.assistant_age = assistant_age
-        self.assistant_region = assistant_region
+        self.assistant_nationality = assistant_nationality
         self.assistant_about = assistant_about
         self.voice_provider = voice_provider
         self.voice_id = voice_id
@@ -588,7 +588,7 @@ class ConversationManagerState:
         self.assistant_id = payload["assistant_id"]
         self.assistant_name = payload["assistant_name"]
         self.assistant_age = payload["assistant_age"]
-        self.assistant_region = payload["assistant_region"]
+        self.assistant_nationality = payload["assistant_nationality"]
         self.assistant_about = payload["assistant_about"]
         self.assistant_number = payload["assistant_number"]
         self.assistant_email = payload["assistant_email"]

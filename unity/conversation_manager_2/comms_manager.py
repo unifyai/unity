@@ -107,7 +107,7 @@ class CommsManager:
                     "user_id": event["user_id"],
                     "assistant_name": event["assistant_name"],
                     "assistant_age": event["assistant_age"],
-                    "assistant_region": event["assistant_region"],
+                    "assistant_nationality": event["assistant_nationality"],
                     "assistant_about": event["assistant_about"],
                     "assistant_number": event["assistant_number"],
                     "assistant_email": event["assistant_email"],

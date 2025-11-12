@@ -88,7 +88,7 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
         os.getenv("USER_NAME", ""),
         os.getenv("ASSISTANT_NAME", ""),
         os.getenv("ASSISTANT_AGE", ""),
-        os.getenv("ASSISTANT_REGION", ""),
+        os.getenv("ASSISTANT_NATIONALITY", ""),
         os.getenv("ASSISTANT_ABOUT", ""),
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("ASSISTANT_EMAIL", ""),

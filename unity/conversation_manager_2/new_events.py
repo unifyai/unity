@@ -210,7 +210,7 @@ class StartupEvent(Event):
     user_id: str
     assistant_name: str
     assistant_age: str
-    assistant_region: str
+    assistant_nationality: str
     assistant_about: str
     assistant_number: str
     assistant_email: str
@@ -231,7 +231,7 @@ class AssistantUpdateEvent(Event):
     user_id: str
     assistant_name: str
     assistant_age: str
-    assistant_region: str
+    assistant_nationality: str
     assistant_about: str
     assistant_number: str
     assistant_email: str
@@ -260,7 +260,7 @@ class ManagersStartupRequest(Event):
     agent_id: str
     first_name: str
     age: str
-    region: str
+    nationality: str
     about: str
     phone: str
     email: str
