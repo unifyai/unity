@@ -6,6 +6,42 @@ import uuid
 import unify
 
 from unity.common.search_utils import table_search_top_k
+from unity.common.filter_utils import normalize_filter_expr
+from unity.common.embed_utils import list_private_fields
+
+
+def ctx_for_table(self, table: str) -> str:
+    """
+    Resolve a logical table name (as exposed by FileManager.tables_overview) to a
+    fully-qualified Unify context.
+
+    Accepted logical forms:
+    - "FileRecords" → global index context (`self._ctx`)
+    - "<root>" → per-file Content context (root is `safe(file_path)` or `unified_label`)
+    - "<root>.Tables.<label>" → per-file Tables context for the given table label
+
+    Notes
+    -----
+    - Roots and table labels should be taken from `tables_overview()` keys; callers
+      should not construct raw context strings.
+    - All returned contexts are built by prefixing the manager base +
+      "/Files/<alias>/…" via the ops helpers.
+    """
+    t = (table or "").strip()
+    if not t:
+        raise ValueError("table must be non-empty")
+    if t.lower() == "filerecords":
+        return self._ctx
+    # Per-file Content
+    if ".tables." not in t.lower():
+        from .storage import ctx_for_file as _ctx_for_file
+
+        return _ctx_for_file(self, file_path=t)
+    # Per-file table
+    root, label = t.split(".Tables.", 1)
+    from .storage import ctx_for_file_table as _ctx_for_file_table
+
+    return _ctx_for_file_table(self, file_path=root, table=label)
 
 
 def resolve_table_ref(self, ref: str) -> str:
@@ -13,15 +49,33 @@ def resolve_table_ref(self, ref: str) -> str:
     Resolve a table reference to a fully-qualified context.
 
     Accepted forms:
-    - "FileRecords" → global index context (self._ctx)
-    - "<file_path>:<table>" → per-table context for the given file
-    - "id=<file_id>:<table>" or "#<file_id>:<table>" → resolve file_path by id then per-table context
+    - Logical names from tables_overview (preferred):
+      - "FileRecords" → index
+      - "<root>" → Content
+      - "<root>.Tables.<label>" → per-file table
+    - Backward-compatible legacy forms:
+      - "<file_path>:<table>"
+      - "id=<file_id>:<table>" or "#<file_id>:<table>"
     """
+    # If the ref already looks like a fully-qualified context under this manager,
+    # return as-is using known manager roots (no hard-coded labels).
+    try:
+        _index_ctx = getattr(self, "_ctx")
+    except Exception:
+        _index_ctx = None
+    try:
+        _files_root = getattr(self, "_per_file_root")
+    except Exception:
+        _files_root = None
+    if isinstance(ref, str):
+        r = ref.strip()
+        if _index_ctx and r == _index_ctx:
+            return r
+        if _files_root and r.startswith(f"{_files_root}/"):
+            return r
     if ":" not in ref:
-        # Special token to reference the FileRecords/<alias> index context
-        if ref.strip().lower() in {"filerecords", "records"}:
-            return self._ctx
-        raise ValueError("Table reference must be 'filename:table' or 'FileRecords'")
+        # Treat as logical name from tables_overview
+        return ctx_for_table(self, ref)
     left, tbl = ref.split(":", 1)
     key = left.strip()
 
@@ -43,14 +97,153 @@ def resolve_table_ref(self, ref: str) -> str:
     if key.startswith("id="):
         file_id = int(key.split("=", 1)[1])
         filename = _lookup_path_by_id(file_id)
-        return self._ctx_for_table(filename, tbl)
+        from .storage import ctx_for_file_table as _ctx_for_file_table
+
+        return _ctx_for_file_table(self, file_path=filename, table=tbl)
     if key.startswith("#") and key[1:].isdigit():
         file_id = int(key[1:])
         filename = _lookup_path_by_id(file_id)
-        return self._ctx_for_table(filename, tbl)
+        from .storage import ctx_for_file_table as _ctx_for_file_table
+
+        return _ctx_for_file_table(self, file_path=filename, table=tbl)
     # Fallback: treat as file path / display name
     filename = key
-    return self._ctx_for_table(filename, tbl)
+    from .storage import ctx_for_file_table as _ctx_for_file_table
+
+    return _ctx_for_file_table(self, file_path=filename, table=tbl)
+
+
+# --------------------- Index-level filter/search (FileRecords) ---------------- #
+
+
+def filter_files(
+    self,
+    *,
+    filter: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 100,
+    tables: Optional[Union[str, List[str]]] = None,
+) -> List[Dict[str, Any]]:
+    """Filter rows from one or more contexts (index by default).
+
+    - When `tables` is None, filters the FileRecords index and returns a flat list.
+    - When `tables` is provided (logical names or legacy refs), resolves each to
+      a fully-qualified context and filters them in parallel; returns concatenated
+      rows (flat list).
+    """
+    normalized = normalize_filter_expr(filter)
+    if tables is None:
+        excl = list_private_fields(self._ctx)
+        logs = unify.get_logs(
+            context=self._ctx,
+            filter=normalized,
+            offset=offset,
+            limit=limit,
+            exclude_fields=excl,
+        )
+        return [lg.entries for lg in logs]
+
+    # Normalize tables to list
+    if isinstance(tables, str):
+        table_names = [tables]
+    else:
+        table_names = list(tables)
+
+    # Resolve contexts for each table name
+    to_contexts: List[tuple[str, str]] = []
+    for name in table_names:
+        ctx = ctx_for_table(self, name)
+        to_contexts.append((name, ctx))
+
+    # Parallel filter across contexts (KM-style shape but flattened)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results: List[Dict[str, Any]] = []
+
+    def _fetch(_ctx: str) -> List[Dict[str, Any]]:
+        excl = list_private_fields(_ctx)
+        rows = [
+            lg.entries
+            for lg in unify.get_logs(
+                context=_ctx,
+                filter=normalized,
+                offset=offset,
+                limit=limit,
+                exclude_fields=excl,
+            )
+        ]
+        return rows
+
+    max_workers = min(8, max(1, len(to_contexts)))
+    if len(to_contexts) <= 1:
+        name, ctx = to_contexts[0]
+        results.extend(_fetch(ctx))
+        return results
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_fetch, ctx): name for name, ctx in to_contexts}
+        for fut in as_completed(futures):
+            rows = fut.result()
+            results.extend(rows)
+
+    return results
+
+
+# Removed the separate `filter(...)` – multi-table support is now in filter_files
+
+
+def search_files(
+    self,
+    *,
+    references: Optional[Dict[str, str]] = None,
+    k: int = 10,
+    table: Optional[str] = None,
+    filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Semantic search over a resolved context and return entry dicts.
+
+    Parameters
+    ----------
+    references : dict[str, str] | None
+        Mapping of source_expr → reference_text used to compute similarity.
+    k : int
+        Number of rows to return (1..1000).
+    table: str | None
+        Logical table name or legacy ref to target the search context. When None,
+        defaults to the global FileRecords index. Logical forms match
+        tables_overview(), e.g. "FileRecords", "<root>", "<root>.Tables.<label>".
+    filter: str | None
+        Row-level predicate (evaluated with column names as variables).
+        *None* returns all rows.
+
+    Notes
+    -----
+    This helper accepts an optional `table` parameter (logical name as in
+    tables_overview or legacy refs) to select the target context. When
+    omitted, it defaults to the global FileRecords index.
+    """
+    normalized = normalize_filter_expr(filter)
+
+    if table is None:
+        context = getattr(self, "_ctx", None)
+        unique_id_field = "file_id"
+    else:
+        context = ctx_for_table(self, table)
+        # Choose unique id based on context category
+        if isinstance(context, str) and context.endswith("/Content"):
+            unique_id_field = "row_id"
+        elif isinstance(context, str) and "/Tables/" in context:
+            unique_id_field = "row_id"
+        else:
+            unique_id_field = None
+    rows = table_search_top_k(
+        context=context,
+        references=references,
+        k=k,
+        row_filter=normalized,
+        unique_id_field=unique_id_field,  # type: ignore[arg-type]
+    )
+    return rows
 
 
 def create_join(
@@ -119,6 +312,32 @@ def filter_join(
     result_limit: int = 100,
     result_offset: int = 0,
 ) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Join two tables and return filtered rows from the join result.
+
+    Parameters
+    ----------
+    tables : str | list[str]
+        Logical table names (preferred) or legacy refs. Use names from
+        `tables_overview()` such as `<root>.Tables.<label>`.
+    join_expr : str
+        Join expression using the same refs as provided in `tables`.
+    select : dict[str, str]
+        Mapping of output column → source column (use refs as in `tables`).
+    mode : str
+        One of 'inner', 'left', 'right', 'outer'.
+    left_where, right_where : str | None
+        Optional filter expressions applied to left and right inputs.
+    result_where : str | None
+        Optional filter applied to the joined result.
+    result_limit, result_offset : int
+        Pagination parameters.
+
+    Returns
+    -------
+    dict
+        {"rows": list[dict]} from the temporary join context.
+    """
     if isinstance(tables, str):
         tables = [tables]
     if len(tables) != 2:
@@ -137,6 +356,7 @@ def filter_join(
         left_where=left_where,
         right_where=right_where,
     )
+    base_excl = list_private_fields(tmp_ctx)
     rows = [
         e.entries
         for e in unify.get_logs(
@@ -144,6 +364,7 @@ def filter_join(
             filter=result_where,
             offset=result_offset,
             limit=result_limit,
+            exclude_fields=base_excl,
         )
     ]
     return {"rows": rows}
@@ -162,6 +383,14 @@ def search_join(
     k: int = 10,
     filter: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    """
+    Join two tables and return top-k semantic matches from the join result.
+
+    Parameters mirror filter_join; additionally:
+    - references: mapping of ref → example text to bias embedding search
+    - k: number of results to return
+    - filter: optional filter on the joined result before search
+    """
     if isinstance(tables, str):
         tables = [tables]
     if len(tables) != 2:
@@ -180,14 +409,14 @@ def search_join(
         left_where=left_where,
         right_where=right_where,
     )
-    return table_search_top_k(
+    rows = table_search_top_k(
         context=tmp_ctx,
         references=references,
         k=k,
-        allowed_fields=None,
         unique_id_field=None,
-        filter_expr=filter,
+        row_filter=filter,
     )
+    return rows
 
 
 def filter_multi_join(
@@ -198,6 +427,13 @@ def filter_multi_join(
     result_limit: int = 100,
     result_offset: int = 0,
 ) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Execute a sequence of joins. Each step:
+    - tables: [left, right] (logical names or "$prev")
+    - join_expr, select, mode, left_where, right_where
+
+    Returns {"rows": [...]} from the final join context.
+    """
     if not joins:
         return {"rows": []}
 
@@ -231,6 +467,7 @@ def filter_multi_join(
         )
         prev_ctx = tmp_ctx
 
+    base_excl = list_private_fields(prev_ctx)
     rows = [
         e.entries
         for e in unify.get_logs(
@@ -238,6 +475,7 @@ def filter_multi_join(
             filter=result_where,
             offset=result_offset,
             limit=result_limit,
+            exclude_fields=base_excl,
         )
     ]
     return {"rows": rows}
@@ -251,6 +489,10 @@ def search_multi_join(
     k: int = 10,
     filter: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    """
+    Execute a sequence of joins then run semantic search (top-k) over the
+    final materialized result. See filter_multi_join for step semantics.
+    """
     if not joins:
         return []
     out = filter_multi_join(
@@ -265,11 +507,11 @@ def search_multi_join(
     rows = out.get("rows", [])
     if rows:
         unify.create_logs(context=tmp_ctx, entries=rows, batched=True)
-    return table_search_top_k(
+    rows = table_search_top_k(
         context=tmp_ctx,
         references=references,
         k=k,
-        allowed_fields=None,
         unique_id_field=None,
-        filter_expr=filter,
+        row_filter=filter,
     )
+    return rows
