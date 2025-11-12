@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import pytest
 from unity.task_scheduler.types.priority import Priority
 from unity.task_scheduler.types.schedule import Schedule
+from unity.task_scheduler.types.status import Status
 
 
 # --------------------------------------------------------------------------- #
@@ -38,7 +39,7 @@ async def test_update_reorder_queue(basic_task_scenario):
 
     # After update, verify that the new order matches expectation by reading the queue that contains ids[0]
     row = ts._filter_tasks(filter=f"task_id == {ids[0]}")[0]
-    qid = row.get("queue_id")
+    qid = row.queue_id
     # Resolve the queue that contains the report task under explicit-queue semantics
     chain = (
         ts._get_queue(queue_id=qid)
@@ -69,10 +70,10 @@ async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
 
     tasks = ts._filter_tasks()
     for t in tasks:
-        if "email" in t["description"].lower():
-            assert t["status"] == "cancelled"
+        if "email" in t.description.lower():
+            assert t.status == Status.cancelled
         else:
-            assert t["status"] != "cancelled"
+            assert t.status != Status.cancelled
 
 
 # --------------------------------------------------------------------------- #
@@ -96,7 +97,7 @@ async def test_update_lower_priority_for_future_date(basic_task_scenario):
     # create one future scheduled task with high priority
     # Use an explicit queue id; no implicit default exists
     row0 = ts._filter_tasks(limit=1)[0]
-    existing_qid = row0.get("queue_id")
+    existing_qid = row0.queue_id
     # If no existing queue, allocate one
     qid = existing_qid if existing_qid is not None else ts._allocate_new_queue_id()
     sched = Schedule(
@@ -117,7 +118,7 @@ async def test_update_lower_priority_for_future_date(basic_task_scenario):
     await handle.result()
 
     task = ts._filter_tasks(filter="'KPI report' in name")[0]
-    assert task["priority"] == Priority.normal
+    assert task.priority == Priority.normal
 
 
 # --------------------------------------------------------------------------- #
@@ -146,4 +147,4 @@ async def test_update_bulk_description_replace(basic_task_scenario):
     await handle.result()
 
     for t in ts._filter_tasks(filter="'Mr. Smith' in description"):
-        assert re.search(r"Mr\.\s?Smith", t["description"]) is not None
+        assert re.search(r"Mr\.\s?Smith", t.description) is not None

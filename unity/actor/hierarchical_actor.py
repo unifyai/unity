@@ -306,10 +306,10 @@ class VerificationAssessment(BaseModel):
         None,
         description="The specific question to ask the user if status is 'request_clarification'.",
     )
-    refinements: Optional[List["FunctionPatch"]] = Field(
-        None,
-        description="Optional list of functions (self or children) to refine. Use this to suggest improvements to docstrings or implementation based on an inefficient execution trajectory, even if the overall status is 'ok'.",
-    )
+    # refinements: Optional[List["FunctionPatch"]] = Field(
+    #     None,
+    #     description="Optional list of functions (self or children) to refine. Use this to suggest improvements to docstrings or implementation based on an inefficient execution trajectory, even if the overall status is 'ok'.",
+    # )
 
 
 # TODO: DEPRECATED
@@ -1296,7 +1296,7 @@ class _SteerableToolHandleProxy:
 
                 try:
                     url = (
-                        await self._plan.actor.action_provider.browser.get_current_url()
+                        await self._plan._get_action_provider().browser.get_current_url()
                     )
                 except Exception:
                     url = None
@@ -1332,7 +1332,7 @@ class _SteerableToolHandleProxy:
 
                 try:
                     url = (
-                        await self._plan.actor.action_provider.browser.get_current_url()
+                        await self._plan._get_action_provider().browser.get_current_url()
                     )
                 except Exception:
                     url = None
@@ -1551,7 +1551,7 @@ class _ActionProviderProxy:
             )
             logger.debug(f"{diag_prefix} CACHE MISS for key: {cache_key}")
 
-            backend = self._plan.actor.action_provider.browser.backend
+            backend = self._real_action_provider.browser.backend
             is_magnitude = isinstance(backend, MagnitudeBrowserBackend)
             magnitude_logs = []
 
@@ -1566,6 +1566,16 @@ class _ActionProviderProxy:
                     context=context,
                     **kwargs,
                 )
+            except BrowserAgentError as e:
+                if e.error_type == "cancelled":
+                    logger.info(
+                        f"🔴 Action interrupted by immediate pause: {call_repr}",
+                    )
+
+                    raise _ControlledInterruptionException(
+                        f"Action '{call_repr}' interrupted by immediate pause.",
+                    )
+                raise
             finally:
                 if is_magnitude:
                     await asyncio.sleep(0.25)
@@ -1600,7 +1610,7 @@ class _ActionProviderProxy:
             interactions_log.append(interaction_to_cache)
 
             try:
-                url = await self._plan.actor.action_provider.browser.get_current_url()
+                url = await self._real_action_provider.browser.get_current_url()
             except Exception:
                 url = None
 
@@ -1617,7 +1627,7 @@ class _ActionProviderProxy:
             if meta["impure"]:
                 try:
                     post_screenshot = (
-                        await self._plan.actor.action_provider.browser.get_screenshot()
+                        await self._real_action_provider.browser.get_screenshot()
                     )
                     meta["post_state_screenshot"] = post_screenshot
                 except Exception as e:
@@ -1764,7 +1774,10 @@ class HierarchicalPlan(BaseActiveTask):
         max_local_retries: Optional[int] = None,
         persist: bool = True,
         images: Optional[dict[str, Any]] = None,
-        entrypoint_function_id: Optional[int] = None,
+        entrypoint: Optional[int] = None,
+        entrypoint_args: Optional[list[Any]] = None,
+        entrypoint_kwargs: Optional[dict[str, Any]] = None,
+        dedicated_action_provider: Optional[ActionProvider] = None,
     ):
         """
         Initializes the Hierarchical Plan active task.
@@ -1779,8 +1792,10 @@ class HierarchicalPlan(BaseActiveTask):
             max_local_retries: Max number of tactical retries for a function.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
             images: Optional mapping of source-scoped keys to ImageHandle objects.
-            entrypoint_function_id: Optional. If provided, bypasses LLM plan generation
+            entrypoint: Optional. If provided, bypasses LLM plan generation
                 and directly executes the function from the FunctionManager as the main plan.
+            dedicated_action_provider: Optional. If provided, use this action provider for the plan.
+            If not provided, use the actor's action provider instead.
         """
         self.actor = actor
         self.goal = goal
@@ -1788,6 +1803,10 @@ class HierarchicalPlan(BaseActiveTask):
         self.plan_source_code: Optional[str] = None
         self.execution_namespace: Dict[str, Any] = {}
         self.persist = persist
+        self.entrypoint = entrypoint
+        self.entrypoint_args = entrypoint_args or []
+        self.entrypoint_kwargs = entrypoint_kwargs or {}
+        self.dedicated_action_provider = dedicated_action_provider
 
         self.idempotency_cache: Dict[tuple, Any] = {}
         self.live_handles: Dict[str, SteerableToolHandle] = {}
@@ -1902,6 +1921,13 @@ class HierarchicalPlan(BaseActiveTask):
             return_full_completion=True,
         )
 
+    def _get_action_provider(self) -> ActionProvider:
+        return (
+            self.dedicated_action_provider
+            if self.dedicated_action_provider is not None
+            else self.actor.action_provider
+        )
+
     def _set_final_result(self, result: str):
         """Sets the final result and the completion event."""
         if not self._completion_event.is_set():
@@ -1938,9 +1964,9 @@ class HierarchicalPlan(BaseActiveTask):
                 self._set_state(_HierarchicalPlanState.RUNNING)
 
             if self.plan_source_code is None:
-                if self.entrypoint_function_id is not None:
+                if self.entrypoint is not None:
                     self.action_log.append(
-                        f"Bypassing LLM generation. Using entrypoint function_id {self.entrypoint_function_id}.",
+                        f"Bypassing LLM generation. Using entrypoint function_id {self.entrypoint}.",
                     )
                     if not self.actor.function_manager:
                         raise ValueError(
@@ -1948,12 +1974,12 @@ class HierarchicalPlan(BaseActiveTask):
                         )
 
                     search_results = self.actor.function_manager.search_functions(
-                        filter=f"function_id == {self.entrypoint_function_id}",
+                        filter=f"function_id == {self.entrypoint}",
                         limit=1,
                     )
                     if not search_results:
                         raise ValueError(
-                            f"Entrypoint function_id {self.entrypoint_function_id} not found in FunctionManager.",
+                            f"Entrypoint function_id {self.entrypoint} not found in FunctionManager.",
                         )
 
                     entrypoint_func_data = search_results[0]
@@ -1962,13 +1988,22 @@ class HierarchicalPlan(BaseActiveTask):
 
                     if not entrypoint_code or not entrypoint_name:
                         raise ValueError(
-                            f"Invalid function data for entrypoint {self.entrypoint_function_id}.",
+                            f"Invalid function data for entrypoint {self.entrypoint}.",
                         )
+
+                    # Build argument string for entrypoint call from plan-provided args/kwargs
+                    def _render_value(v: Any) -> str:
+                        return repr(v)
+
+                    args_list = [_render_value(v) for v in (self.entrypoint_args or [])]
+                    for k, v in (self.entrypoint_kwargs or {}).items():
+                        args_list.append(f"{k}={_render_value(v)}")
+                    rendered_args = ", ".join(args_list)
 
                     synthetic_main = f"""
 async def main_plan():
     '''Auto-generated main_plan to run entrypoint function {entrypoint_name}.'''
-    return await {entrypoint_name}()
+    return await {entrypoint_name}({rendered_args})
 """
                     base_code = f"{entrypoint_code}\n\n{synthetic_main}"
 
@@ -2426,16 +2461,15 @@ async def main_plan():
                         reason="Skipped verification for fully cached replay step.",
                     )
                 else:
+                    action_provider = self._get_action_provider()
                     if isinstance(
-                        self.actor.action_provider.browser.backend,
+                        action_provider.browser.backend,
                         MagnitudeBrowserBackend,
                     ):
-                        await self.actor.action_provider.browser.backend.barrier(
+                        await action_provider.browser.backend.barrier(
                             up_to_seq=item.exit_seq,
                         )
-                    post_state_screenshot = (
-                        await self.actor.action_provider.browser.get_screenshot()
-                    )
+                    post_state_screenshot = item.post_state.get("screenshot")
 
                     assessment = await self.actor._check_state_against_goal(
                         plan=self,
@@ -2452,20 +2486,21 @@ async def main_plan():
                 else:
                     await self._on_verification_failure(item, assessment)
 
-                if assessment.refinements:
-                    logger.info(
-                        f"Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
-                    )
-                    self.action_log.append(
-                        f"SELF-IMPROVEMENT: Applying {len(assessment.refinements)} refinement(s) to child functions.",
-                    )
+                # TODO: DEPRECATED - Remove this if we no longer use it
+                # if assessment.refinements:
+                #     logger.info(
+                #         f"Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
+                #     )
+                #     self.action_log.append(
+                #         f"SELF-IMPROVEMENT: Applying {len(assessment.refinements)} refinement(s) to child functions.",
+                #     )
 
-                    async with self._interject_lock:
-                        for patch in assessment.refinements:
-                            self._update_plan_with_new_code(
-                                patch.function_name,
-                                patch.new_code,
-                            )
+                #     async with self._interject_lock:
+                #         for patch in assessment.refinements:
+                #             self._update_plan_with_new_code(
+                #                 patch.function_name,
+                #                 patch.new_code,
+                #             )
 
             except asyncio.CancelledError:
                 logger.warning(
@@ -2507,17 +2542,18 @@ async def main_plan():
         logger.info(
             f"[V-TASK-{item.ordinal}] Verification SUCCEEDED for '{item.function_name}'. Reason: {assessment.reason}",
         )
-        if assessment.refinements:
-            logger.info(
-                f"[V-TASK-{item.ordinal}] Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
-            )
-            logger.info(
-                f"[V-TASK-{item.ordinal}] Refinements: {assessment.refinements}",
-            )
+        return
+        # if assessment.refinements:
+        #     logger.info(
+        #         f"[V-TASK-{item.ordinal}] Applying {len(assessment.refinements)} suggested refinement(s) from verification of '{item.function_name}'.",
+        #     )
+        #     logger.info(
+        #         f"[V-TASK-{item.ordinal}] Refinements: {assessment.refinements}",
+        #     )
 
-        self.action_log.append(
-            f"Async Verification for {item.function_name}: ok - '{assessment.reason}'",
-        )
+        # self.action_log.append(
+        #     f"Async Verification for {item.function_name}: ok - '{assessment.reason}'",
+        # )
 
         self.last_verified_function_name = item.function_name
         self.last_verified_url = item.post_state["url"]
@@ -2747,11 +2783,12 @@ async def main_plan():
                 f"verification failure targeting '{target_function_name_override}'",
             )
             await self._clear_browser_queue_for_run(run_id_being_cancelled)
+            action_provider = self._get_action_provider()
             if hasattr(
-                self.actor.action_provider.browser.backend,
+                action_provider.browser.backend,
                 "interrupt_current_action",
             ):
-                await self.actor.action_provider.browser.backend.interrupt_current_action()
+                await action_provider.browser.backend.interrupt_current_action()
 
             await self._handle_dynamic_implementation(
                 function_name=target_function_name_override,
@@ -2778,6 +2815,7 @@ async def main_plan():
 
                 if target_screenshot and trajectory:
                     await self.actor._run_course_correction_agent(
+                        plan=self,
                         target_screenshot=target_screenshot,
                         trajectory=trajectory,
                     )
@@ -3084,7 +3122,7 @@ async def main_plan():
         This prevents stale commands from an old execution run from executing after
         the run has been cancelled and a new one has started.
         """
-        backend = self.actor.action_provider.browser.backend
+        backend = self._get_action_provider().browser.backend
         if hasattr(backend, "clear_pending_commands"):
             try:
                 self.action_log.append(
@@ -3224,11 +3262,12 @@ async def main_plan():
             return "Cannot interject: plan not running."
 
         async with self._interject_lock:
+            action_provider = self._get_action_provider()
             if hasattr(
-                self.actor.action_provider.browser.backend,
+                action_provider.browser.backend,
                 "interrupt_current_action",
             ):
-                await self.actor.action_provider.browser.backend.interrupt_current_action()
+                await action_provider.browser.backend.interrupt_current_action()
             await self.pause()
             decision = None
             try:
@@ -3405,6 +3444,7 @@ async def main_plan():
                 )
                 try:
                     await self.actor._run_course_correction_agent(
+                        plan=self,
                         target_screenshot=target_screenshot,
                         trajectory=trajectory,
                     )
@@ -3509,11 +3549,12 @@ async def main_plan():
                 if self.clean_function_source_map
                 else ""
             )
+            action_provider = self._get_action_provider()
             refactor_prompt = prompt_builders.build_refactor_prompt(
                 monolithic_code=monolithic_code,
                 generalization_request=decision.generalization_context,
                 action_log="\n".join(self.action_log),
-                current_url=await self.actor.action_provider.browser.get_current_url(),
+                current_url=await action_provider.browser.get_current_url(),
                 tools=self.actor.tools,
             )
 
@@ -3559,6 +3600,7 @@ async def main_plan():
                 f"Executing decision: explore_detached for goal: '{decision.new_goal}'",
             )
 
+            action_provider = self._get_action_provider()
             try:
                 try:
 
@@ -3568,22 +3610,18 @@ async def main_plan():
                             description="The index of the current tab. Return None if the tab index cannot be determined from the visible content.",
                         )
 
-                    original_tab_index = await self.actor.action_provider.observe(
+                    original_tab_index = await action_provider.observe(
                         "Look at the browser tabs at the top of the screen. What is the numerical index (starting from 0) of the currently active/selected tab? If you cannot see clear tab indicators or determine the active tab index, return null for current_tab_index.",
                         response_format=TabState,
                     )
-                    original_url = (
-                        await self.actor.action_provider.browser.get_current_url()
-                    )
+                    original_url = await action_provider.browser.get_current_url()
                 except Exception as e:
                     self.action_log.append(f"SANDBOX: Could not record tab state: {e}")
                     original_tab_index = TabState(current_tab_index=0)
-                    original_url = (
-                        await self.actor.action_provider.browser.get_current_url()
-                    )
+                    original_url = await action_provider.browser.get_current_url()
 
                 self.action_log.append("SANDBOX: Opening new tab for exploration")
-                await self.actor.action_provider.act(
+                await action_provider.act(
                     f"Open a new tab navigating to the url {original_url} and ensure the new tab is active",
                 )
 
@@ -3663,7 +3701,7 @@ async def main_plan():
                         if original_tab_index.current_tab_index is not None
                         else 0
                     )
-                    await self.actor.action_provider.act(
+                    await action_provider.act(
                         f"Switch to tab {tab_index} which was on the url {original_url} to go back to the original tab",
                     )
                     self.action_log.append("SANDBOX: Returned to original tab")
@@ -3732,6 +3770,23 @@ async def main_plan():
             A status message.
         """
 
+        if self.dedicated_action_provider is not None:
+            try:
+                logger.info(
+                    "Stopping dedicated action provider session for plan %s.",
+                    self._module_name,
+                )
+                self.dedicated_action_provider.browser.stop()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to stop dedicated action provider session for plan %s: %s",
+                    self._module_name,
+                    exc,
+                    exc_info=True,
+                )
+            finally:
+                self.dedicated_action_provider = None
+
         await self._cancel_all_background_tasks()
         if self._is_complete:
             return f"Plan already in terminal state: {self._state.name}."
@@ -3792,9 +3847,12 @@ async def main_plan():
             pass
         return result_str
 
-    async def pause(self) -> str:
+    async def pause(self, immediate: bool = False) -> str:
         """
         Pauses the plan's execution.
+
+        Args:
+            immediate: If True, interrupts any currently executing browser action.
 
         Returns:
             A status message.
@@ -3803,9 +3861,18 @@ async def main_plan():
             _HierarchicalPlanState.RUNNING,
             _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
         ):
+            if immediate:
+                action_provider = self._get_action_provider()
+                if action_provider and hasattr(action_provider.browser, "backend"):
+                    backend = action_provider.browser.backend
+                    if hasattr(backend, "interrupt_current_action"):
+                        logger.info("⚡ Sending interrupt to browser action...")
+                        await backend.interrupt_current_action()
+
             self.runtime.pause()
             self._set_state(_HierarchicalPlanState.PAUSED)
-            self.action_log.append("Plan paused by user.")
+            pause_type = "immediately" if immediate else "by user"
+            self.action_log.append(f"Plan paused {pause_type}.")
             return "Plan paused."
 
         if self._state in (
@@ -3858,7 +3925,7 @@ async def main_plan():
             Query the browser agent's memory and action history to answer a question.
             """
             try:
-                return await self.actor.action_provider.browser_query(query)
+                return await self._get_action_provider().browser_query(query)
             except Exception as e:
                 return f"Error querying browser: {e}"
 
@@ -3966,6 +4033,12 @@ class HierarchicalActor(BaseActor):
         # TODO: enable auto fetch desktop_url later
         # agent_server_url = self._get_desktop_url(agent_server_url)
         self.function_manager = function_manager or FunctionManager()
+        self._session_connect_url = session_connect_url
+        self._headless = headless
+        self._browser_mode = browser_mode
+        self._agent_mode = agent_mode
+        self._agent_server_url = agent_server_url
+        self._connect_now = connect_now
         self.action_provider = ActionProvider(
             session_connect_url=session_connect_url,
             headless=headless,
@@ -4226,7 +4299,10 @@ class HierarchicalActor(BaseActor):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         persist: bool = True,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
-        entrypoint_function_id: Optional[int] = None,
+        entrypoint: Optional[int] = None,
+        new_session: bool = False,
+        entrypoint_args: Optional[list[Any]] = None,
+        entrypoint_kwargs: Optional[dict[str, Any]] = None,
         **kwargs,
     ) -> HierarchicalPlan:
         """
@@ -4239,12 +4315,24 @@ class HierarchicalActor(BaseActor):
             clarification_down_q: Queue for receiving clarification answers.
             persist: If True, plan will pause for interjections after completion. If False, plan will complete immediately.
             images: Optional mapping of source-scoped keys to ImageHandle objects.
-            entrypoint_function_id: Optional. If provided, bypasses LLM plan generation
+            entrypoint: Optional. If provided, bypasses LLM plan generation
                 and directly executes the specified function from the FunctionManager.
+            new_session: If True, creates a new browser/desktop session for this plan. If False (default), reuses the actor's shared session.
 
         Returns:
             An active handle to the running HierarchicalPlan.
         """
+        dedicated_action_provider = None
+        if new_session:
+            dedicated_action_provider = ActionProvider(
+                session_connect_url=self._session_connect_url,
+                headless=self._headless,
+                browser_mode=self._browser_mode,
+                agent_mode=self._agent_mode,
+                agent_server_url=self._agent_server_url,
+                connect_now=self._connect_now,
+            )
+
         plan_handle = HierarchicalPlan(
             actor=self,
             goal=description,
@@ -4255,7 +4343,10 @@ class HierarchicalActor(BaseActor):
             max_local_retries=self.max_local_retries,
             persist=persist,
             images=images,
-            entrypoint_function_id=entrypoint_function_id,
+            entrypoint=entrypoint,
+            entrypoint_args=entrypoint_args,
+            entrypoint_kwargs=entrypoint_kwargs,
+            dedicated_action_provider=dedicated_action_provider,
         )
         setattr(plan_handle, "__passthrough__", True)
         self._plan_handles.add(plan_handle)
@@ -4408,6 +4499,8 @@ class HierarchicalActor(BaseActor):
         plan.execution_namespace.update(sandbox_globals)
         plan.execution_namespace["_cp"] = plan.runtime.checkpoint
 
+        action_provider = plan._get_action_provider()
+
         async def _int(func_name: str):
             req = plan.interruption_request
             if req and any(
@@ -4431,7 +4524,7 @@ class HierarchicalActor(BaseActor):
 
         plan.execution_namespace.update(
             {
-                "action_provider": _ActionProviderProxy(self.action_provider, plan),
+                "action_provider": _ActionProviderProxy(action_provider, plan),
                 "request_clarification": request_clarification_primitive,
                 "runtime": plan.runtime,
                 "verify": self._create_verify_decorator(plan),
@@ -4454,8 +4547,10 @@ class HierarchicalActor(BaseActor):
         A reusable helper to verify the current browser state against a target
         precondition and execute a correction script if they do not match.
         """
+        action_provider = plan._get_action_provider()
+
         try:
-            screenshot = await self.action_provider.browser.get_screenshot()
+            screenshot = await action_provider.browser.get_screenshot()
             verification_prompt = prompt_builders.build_state_verification_prompt(
                 precondition=target_precondition,
             )
@@ -4488,7 +4583,7 @@ class HierarchicalActor(BaseActor):
                 f"STATE DRIFT for '{context_label}': {verification_decision.reason}",
             )
 
-            current_url = await self.action_provider.browser.get_current_url()
+            current_url = await action_provider.browser.get_current_url()
             correction_prompt = prompt_builders.build_proactive_correction_prompt(
                 precondition=target_precondition,
                 current_url=current_url,
@@ -4547,8 +4642,10 @@ class HierarchicalActor(BaseActor):
         if not precondition or precondition.get("status") == "not_applicable":
             return
 
-        if isinstance(self.action_provider.browser.backend, MagnitudeBrowserBackend):
-            await self.action_provider.browser.backend.barrier()
+        action_provider = plan._get_action_provider()
+
+        if isinstance(action_provider.browser.backend, MagnitudeBrowserBackend):
+            await action_provider.browser.backend.barrier()
 
         await self._verify_and_correct_state(
             plan=plan,
@@ -4558,19 +4655,22 @@ class HierarchicalActor(BaseActor):
 
     async def _run_course_correction_agent(
         self,
+        plan: HierarchicalPlan,
         target_screenshot: bytes,
         trajectory: list[str],
     ) -> None:
         """Spawns a new CodeActActor instance as a sub-agent to perform state recovery."""
         logger.info(
-            f"[COURSE_CORRECTION] Starting course correction agent. Trajectory has {len(trajectory)} steps.",
+            f"[COURSE_CORRECTION] Starting course correction agent.",
         )
-
+        logger.debug(f"[COURSE_CORRECTION] Trajectory: {trajectory}")
         from .code_act_actor import CodeActActor
         from unity.image_manager.image_manager import ImageManager
 
+        action_provider = plan._get_action_provider()
+
         logger.info("[COURSE_CORRECTION] Getting current screenshot...")
-        current_screenshot = await self.action_provider.browser.get_screenshot()
+        current_screenshot = await action_provider.browser.get_screenshot()
         logger.info("[COURSE_CORRECTION] Got current screenshot.")
 
         if isinstance(current_screenshot, str):
@@ -4630,7 +4730,7 @@ class HierarchicalActor(BaseActor):
         logger.info("COURSE CORRECTION: Starting recovery sub-agent...")
 
         correction_agent = CodeActActor(
-            action_provider=self.action_provider,
+            action_provider=action_provider,
             timeout=300,
         )
 
@@ -4661,6 +4761,7 @@ class HierarchicalActor(BaseActor):
             @functools.wraps(fn)
             async def wrapper(*args, **kwargs):
                 """The wrapper that performs verification and correction."""
+                action_provider = plan._get_action_provider()
                 while True:
                     context_rid = current_run_id_var.get()
                     plan_rid = plan.run_id
@@ -4720,8 +4821,8 @@ class HierarchicalActor(BaseActor):
                     #     await self._ensure_precondition(plan, func_name)
 
                     pre_state = {
-                        "url": await self.action_provider.browser.get_current_url(),
-                        "screenshot": await self.action_provider.browser.get_screenshot(),
+                        "url": await action_provider.browser.get_current_url(),
+                        "screenshot": await action_provider.browser.get_screenshot(),
                     }
 
                     last_error_reason = ""
@@ -4775,12 +4876,12 @@ class HierarchicalActor(BaseActor):
 
                                 break
 
-                            except _ControlledInterruptionException:
+                            except _ControlledInterruptionException as e:
                                 plan.action_log.append(
-                                    f"{diag_prefix} Retrying '{func_name}' after user interjection.",
+                                    f"{diag_prefix} Retrying '{func_name}' Reason: {e}",
                                 )
                                 logger.info(
-                                    f"{diag_prefix} Retrying '{func_name}' after user interjection.",
+                                    f"{diag_prefix} Retrying '{func_name}' Reason: {e}",
                                 )
                                 local_interactions.clear()
                                 continue
@@ -4914,14 +5015,14 @@ class HierarchicalActor(BaseActor):
 
                         exit_seq = -1
                         if isinstance(
-                            self.action_provider.browser.backend,
+                            action_provider.browser.backend,
                             MagnitudeBrowserBackend,
                         ):
-                            exit_seq = self.action_provider.browser.backend.current_seq
+                            exit_seq = action_provider.browser.backend.current_seq
 
                         post_state = {
-                            "url": await self.action_provider.browser.get_current_url(),
-                            "screenshot": None,
+                            "url": await action_provider.browser.get_current_url(),
+                            "screenshot": await action_provider.browser.get_screenshot(),
                         }
 
                         if plan.runtime.cache_miss_counter:
@@ -5125,9 +5226,6 @@ class HierarchicalActor(BaseActor):
                 continue
 
             if not search_results:
-                logger.debug(
-                    f"'{function_name}' not found in FunctionManager, assuming built-in/method.",
-                )
                 continue
 
             library_func_data = search_results[0]
@@ -5533,7 +5631,8 @@ class HierarchicalActor(BaseActor):
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
-        # for plan in self._plan_handles:
-        #     if hasattr(plan, "_cleanup_temp_file"):
-        #         plan._cleanup_temp_file()
+        plan: HierarchicalPlan = None
+        for plan in self._plan_handles:
+            await plan.stop()
         self.action_provider.browser.stop()
+        self._plan_handles.clear()

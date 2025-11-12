@@ -10,7 +10,7 @@ from .utils import maybe_await
 from ...constants import LOGGER
 from contextlib import suppress
 from .tools_utils import create_tool_call_message
-from .images import append_image_refs_with_source
+from .images import append_images_with_source
 
 
 # TODO: Some of these helpers should not be placed here, but in utils.py or their own files
@@ -18,6 +18,37 @@ from .images import append_image_refs_with_source
 
 # Helper: scan transcript for assistant messages that have tool_calls with
 # missing tool replies (before the next assistant message).
+
+
+def is_non_final_tool_reply(msg: dict) -> bool:
+    """Return True when a tool message looks like a placeholder/progress, not a final result.
+
+    Rules:
+    - Clarification wrappers (name startswith "clarification_request_") are non-final.
+    - Any tool message whose content parses to a dict containing the top-level key
+      "_placeholder" is non-final (used for pending/progress/nested-start placeholders).
+    """
+    try:
+        if msg.get("role") != "tool":
+            return False
+        name = str(msg.get("name") or "")
+        if name.startswith("clarification_request_"):
+            return True
+        content = msg.get("content")
+        if isinstance(content, str):
+            try:
+                import json as _json
+
+                parsed = _json.loads(content)
+                if isinstance(parsed, dict) and "_placeholder" in parsed:
+                    return True
+            except Exception:
+                pass
+    except Exception:
+        return False
+    return False
+
+
 def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
     findings: list[dict] = []
     try:
@@ -39,7 +70,8 @@ def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
                 mm = client.messages[j]
                 if mm.get("role") == "tool":
                     tcid = mm.get("tool_call_id")
-                    if tcid in ids:
+                    # Count as responded only when the tool reply looks **final**.
+                    if tcid in ids and not is_non_final_tool_reply(mm):
                         responded.add(tcid)
                 j += 1
             missing = [c for c in ids if c not in responded]
@@ -65,6 +97,30 @@ async def generate_with_preprocess(
     **gen_kwargs,
 ):
     if preprocess_msgs is None:
+        # Even without a preprocessing hook, emit exactly what will be sent
+        # to the LLM so LLM I/O debug captures requests as well as responses.
+        original_msgs = client.messages  # reference to canonical log
+        msgs_copy = copy.deepcopy(original_msgs)
+
+        # Remove a raw leading system prompt (used only for generation) to
+        # match the behaviour of the preprocessed path
+        try:
+            if msgs_copy and isinstance(msgs_copy[0], dict):
+                top_p = msgs_copy[0]
+                if top_p.get("role") == "system" and not top_p.get("_ctx_header"):
+                    msgs_copy.pop(0)
+        except Exception:
+            pass
+
+        # Capture the system message
+        sys_txt = getattr(client, "system_message", "") or ""
+
+        # Late-stage request log: emit exactly what will be sent to the LLM
+        try:
+            debug_log(msgs_copy, gen_kwargs, sys_txt)
+        except Exception:
+            pass
+
         return await maybe_await(client.generate(**gen_kwargs))
 
     original_msgs = client.messages  # reference to canonical log
@@ -87,22 +143,9 @@ async def generate_with_preprocess(
     except Exception:
         pass
 
-    # Compute a system message with {broader_context} injected (if any)
+    # Capture the system message
     sys_txt = getattr(client, "system_message", "") or ""
     sys_patched = sys_txt
-    try:
-        # Local import to avoid any import-time cycles
-        from ..llm_helpers import inject_broader_context as _inject_bc  # type: ignore
-
-        sys_list = _inject_bc(
-            [
-                {"role": "system", "content": sys_txt},
-            ],
-        )
-        if sys_list and isinstance(sys_list[0], dict):
-            sys_patched = sys_list[0].get("content") or sys_txt
-    except Exception:
-        sys_patched = sys_txt
 
     # Late-stage debug log: emit exactly what will be sent to the LLM
     try:
@@ -241,6 +284,7 @@ async def forward_handle_call(
     method_name: str,
     kwargs: dict | None,
     *,
+    call_args: list | tuple | None = None,
     fallback_positional_keys: list[str] | tuple[str, ...] = (),
 ):
     """Invoke a steering method on a handle with robust kwargs handling.
@@ -256,14 +300,37 @@ async def forward_handle_call(
         return None
 
     try:
+        args = list(call_args or [])
         normalised = _normalise_kwargs_for_bound_method(bound, kwargs or {})
-        return await maybe_await(bound(**normalised))
+        return await maybe_await(bound(*args, **normalised))
     except TypeError:
-        # Fallbacks for legacy signatures
+        # Fallbacks: try positional-only, then kwargs-only, then legacy single-key
+        # positional extraction via fallback_positional_keys for maximum tolerance.
+        try:
+            args2 = list(call_args or [])
+            return await maybe_await(bound(*args2))  # type: ignore[misc]
+        except Exception:
+            pass
+        try:
+            return await maybe_await(bound(**(normalised if isinstance(normalised, dict) else {})))  # type: ignore[misc]
+        except Exception:
+            pass
         for k in fallback_positional_keys:
             if kwargs and k in kwargs:
                 try:
-                    return await maybe_await(bound(kwargs.get(k)))  # type: ignore[misc]
+                    # Preserve additional kwargs (e.g., images) alongside the positional message
+                    rest_kwargs = (
+                        dict(normalised) if isinstance(normalised, dict) else {}
+                    )
+                except Exception:
+                    rest_kwargs = {}
+                try:
+                    # Avoid passing the alias key twice if it accidentally matched a parameter
+                    rest_kwargs.pop(k, None)
+                except Exception:
+                    pass
+                try:
+                    return await maybe_await(bound(kwargs.get(k), **rest_kwargs))  # type: ignore[misc]
                 except Exception:
                     pass
         try:
@@ -284,6 +351,7 @@ def _is_helper_tool(name: str) -> bool:
         or name.startswith("resume_")
         or name.startswith("clarify_")
         or name.startswith("interject_")
+        or name.startswith("ask_")
     )
 
 
@@ -452,31 +520,43 @@ async def acknowledge_helper_call(
 async def ensure_placeholders_for_pending(
     assistant_msg: Optional[dict] = None,
     *,
-    content: Optional[str] = None,
     tools_data,
     assistant_meta,
     client,
     msg_dispatcher,
 ) -> list[str]:
     created: list[str] = []
-    placeholder_content = (
-        content
-        if content is not None
-        else "Pending… tool call accepted. Working on it."
-    )
     for task in list(tools_data.pending):
         _inf = tools_data.info.get(task)
         if not _inf:
             continue
         if assistant_msg is not None and _inf.assistant_msg is not assistant_msg:
             continue
+        # Reuse any existing tool reply message in the transcript for this call_id
+        try:
+            if _inf.tool_reply_msg is None:
+                existing = None
+                msgs = client.messages or []
+                for m in msgs:
+                    try:
+                        if m.get("role") == "tool" and str(
+                            m.get("tool_call_id"),
+                        ) == str(_inf.call_id):
+                            existing = m
+                            break
+                    except Exception:
+                        continue
+                if existing is not None:
+                    _inf.tool_reply_msg = existing
+        except Exception:
+            pass
         if _inf.tool_reply_msg or _inf.clarify_placeholder:
             continue
 
         placeholder = create_tool_call_message(
             name=_inf.name,
             call_id=_inf.call_id,
-            content=placeholder_content,
+            content=json.dumps({"_placeholder": "pending"}, indent=4),
         )
         await insert_tool_message_after_assistant(
             assistant_meta,
@@ -503,6 +583,7 @@ async def schedule_missing_for_message(
     assistant_meta,
     client,
     msg_dispatcher,
+    initial_paused: bool = False,
 ) -> list[str]:
     scheduled: list[str] = []
     try:
@@ -541,8 +622,8 @@ async def schedule_missing_for_message(
                     )
                     imgs = payload.get("images") if isinstance(payload, dict) else None
                     if imgs is None and isinstance(payload, dict):
-                        imgs = payload.get("image_refs")
-                    append_image_refs_with_source(imgs)
+                        imgs = payload.get("images")
+                    append_images_with_source(imgs)
 
                 # Other helpers: acknowledge but do not execute during backfill
                 try:
@@ -574,6 +655,7 @@ async def schedule_missing_for_message(
                 parent_chat_context=parent_chat_context,
                 propagate_chat_context=propagate_chat_context,
                 assistant_meta=assistant_meta,
+                initial_paused=initial_paused,
             )
             scheduled.append(cid)
     except Exception:

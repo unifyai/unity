@@ -81,6 +81,10 @@ def sync_assistant_contact(self) -> None:
             },
         )
 
+    # Temporary: hard-code system contacts to UTC so a timezone exists for these
+    # canonical contacts until frontend configuration is available.
+    base_fields["utc_offset_hours"] = 0.0
+
     existing_logs = unify.get_logs(
         context=self._ctx,
         filter="contact_id == 0",
@@ -90,7 +94,14 @@ def sync_assistant_contact(self) -> None:
 
     if existing_logs:
         try:
-            self._data_store.put(existing_logs[0].entries)
+            entries = existing_logs[0].entries
+            current = entries.get("utc_offset_hours")
+            if current != 0.0:
+                # Only update the timezone field to avoid clobbering other values
+                self.update_contact(contact_id=0, utc_offset_hours=0.0)
+            else:
+                # Warm local cache when no change needed
+                self._data_store.put(entries)
         except Exception:
             pass
         return
@@ -165,6 +176,10 @@ def sync_user_contact(self) -> None:
         },
     )
 
+    # Temporary: hard-code system contacts to UTC so a timezone exists for these
+    # canonical contacts until frontend configuration is available.
+    base_fields["utc_offset_hours"] = 0.0
+
     extra_fields = {
         k: v
         for k, v in user_info.items()
@@ -189,7 +204,14 @@ def sync_user_contact(self) -> None:
 
     if existing_logs:
         try:
-            self._data_store.put(existing_logs[0].entries)
+            entries = existing_logs[0].entries
+            current = entries.get("utc_offset_hours")
+            if current != 0.0:
+                # Only update the timezone field to avoid clobbering other values
+                self.update_contact(contact_id=1, utc_offset_hours=0.0)
+            else:
+                # Warm local cache when no change needed
+                self._data_store.put(entries)
         except Exception:
             pass
         return

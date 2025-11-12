@@ -14,7 +14,6 @@ from ..common.embed_utils import ensure_vector_column, list_private_fields
 from .types import ColumnType
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    inject_broader_context,
     make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
@@ -351,7 +350,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_refactor_tool_policy,
-            preprocess_msgs=inject_broader_context,
         )
 
         # 4️⃣  Optionally wrap .result() to expose hidden reasoning
@@ -461,7 +459,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
-            preprocess_msgs=inject_broader_context,
         )
 
         # Optionally wrap .result() to expose reasoning
@@ -588,7 +585,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=tool_policy_fn,
-            preprocess_msgs=inject_broader_context,
             response_format=response_format,
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",

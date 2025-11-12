@@ -19,6 +19,7 @@ from .messages import (
     insert_tool_message_after_assistant,
     chat_context_repr,
     _normalise_kwargs_for_bound_method,
+    forward_handle_call,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
@@ -187,6 +188,7 @@ class ToolsData:
         parent_chat_context,
         propagate_chat_context,
         assistant_meta,
+        initial_paused: bool = False,
     ) -> None:
         # Base tool must exist
         if name not in self.normalized:
@@ -224,7 +226,10 @@ class ToolsData:
         pause_ev: Optional[asyncio.Event] = None
         if sig_accepts_pause_event:
             pause_ev = asyncio.Event()
-            pause_ev.set()  # start running
+            if initial_paused:
+                pause_ev.clear()  # start paused
+            else:
+                pause_ev.set()  # start running
             extra_kwargs["_pause_event"] = pause_ev
 
         clar_up_q: Optional[asyncio.Queue[str]] = None
@@ -421,118 +426,13 @@ class ToolsData:
             from unity.common.async_tool_loop import SteerableToolHandle
 
             if isinstance(raw, SteerableToolHandle):
-                # Passthrough: do NOT hand over control to the nested handle.
-                # Keep the outer loop alive. We still want to forward early
-                # interjections and synchronise pause/stop state with the
-                # newly created handle, but without adopting it as a delegate.
-                if (
-                    getattr(raw, "__passthrough__", False)
-                    and outer_handle_container
-                    and outer_handle_container[0] is not None
-                ):
-                    try:
-                        _outer = outer_handle_container[0]
-                        # Wire pause/stop state with the new handle; outer loop keeps running.
-                        # Forward any early interjections that were queued before
-                        # this passthrough handle existed. Do NOT consume the outer
-                        # buffer so that subsequent passthrough handles also receive them.
-                        _early = list(getattr(_outer, "_early_interjects", []))
-                        for _msg in _early:
-                            try:
-                                if isinstance(_msg, dict):
-                                    maybe_coro = raw.interject(  # type: ignore[attr-defined]
-                                        _msg.get("message", ""),
-                                        parent_chat_context_cont=_msg.get(
-                                            "parent_chat_context_continuted",
-                                        ),
-                                    )
-                                else:
-                                    maybe_coro = raw.interject(_msg)  # type: ignore[attr-defined]
-                                if asyncio.iscoroutine(maybe_coro):
-                                    await maybe_coro
-                            except Exception as _exc:
-                                pass
-                        # Synchronise pause/cancel signals with the new handle
-                        try:
-                            if not getattr(
-                                _outer,
-                                "_pause_event",
-                                None,
-                            ).is_set() and hasattr(raw, "pause"):
-                                raw.pause()  # type: ignore[attr-defined]
-                        except Exception:
-                            pass
-                        try:
-                            if getattr(
-                                _outer,
-                                "_cancel_event",
-                                None,
-                            ).is_set() and hasattr(raw, "stop"):
-                                maybe = raw.stop()  # type: ignore[attr-defined]
-                                if asyncio.iscoroutine(maybe):
-                                    asyncio.create_task(maybe)
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-
-                # ── upgrade interject / clarification flags from handle ─────
-                if hasattr(raw, "interject"):
-                    info.is_interjectable = True
-
-                h_up_q = getattr(raw, "clarification_up_q", info.clar_up_queue)
-                h_down_q = getattr(raw, "clarification_down_q", info.clar_down_queue)
-
-                if (h_up_q is not None) ^ (h_down_q is not None):
-                    raise AttributeError(
-                        f"Handle returned by tool {info.name!r} exposes only "
-                        "one of 'clarification_up_q' / 'clarification_down_q'. "
-                        "Both queues are required (or neither).",
-                    )
-
-                # 1️⃣ spawn the nested waiter (passthrough/non-passthrough nested handle)
-                if inspect.iscoroutinefunction(raw.result):
-                    nested_coro = raw.result()  # already a coroutine
-                else:
-                    nested_coro = asyncio.to_thread(raw.result)  # turn sync → coroutine
-
-                nested_task = asyncio.create_task(nested_coro)
-
-                # 2️⃣ insert / update a single placeholder
-                ph = info.tool_reply_msg
-                if ph is None:
-                    ph = create_tool_call_message(
-                        name=info.name,
-                        call_id=call_id,
-                        content="Nested async tool loop started… waiting for result.",
-                    )
-                    await insert_tool_message_after_assistant(
-                        assistant_meta,
-                        info.assistant_msg,
-                        ph,
-                        self._client,
-                        msg_dispatcher,
-                    )
-                    info.tool_reply_msg = ph  # remember on *parent*
-                else:
-                    ph["content"] = (
-                        "Nested async tool loop started… waiting for result."
-                    )
-
-                # 3️⃣ book-keeping for the *new* task (inherit + share placeholder)
-                metadata = dataclasses.replace(
+                await self.adopt_nested(
                     info,
-                    handle=raw,
-                    is_interjectable=hasattr(raw, "interject"),
-                    tool_reply_msg=ph,
-                    clar_up_queue=h_up_q,
-                    clar_down_queue=h_down_q,
-                    notification_queue=info.notification_queue,
-                    is_passthrough=getattr(raw, "__passthrough__", False),
+                    raw,
+                    msg_dispatcher=msg_dispatcher,
+                    assistant_meta=assistant_meta,
+                    outer_handle_container=outer_handle_container,
                 )
-                self.save_task(nested_task, metadata)
-                if h_up_q is not None:
-                    self.clarification_channels[call_id] = (h_up_q, h_down_q)
                 return False  # ⬅️  no LLM turn required
 
             # ───────────────────────────────────────────────────────────────
@@ -589,14 +489,21 @@ class ToolsData:
 
         elif tool_reply_msg is not None:
             if _at_tail(tool_reply_msg):
-                # If the current tail tool message looks like a progress payload,
-                # do NOT emit another tool reply for the same call_id – instead
-                # create a synthetic assistant→tool pair to carry the final result.
+                # If the current tail tool message is a placeholder, choose the strategy:
+                # - For streaming progress placeholders, append a synthetic assistant→tool pair
+                #   (preserves progress history as append-only).
+                # - For simple 'pending' or 'nested_start' placeholders, update in-place so the
+                #   final result lives under the original tool message (restores pre-change UX).
+                placeholder_kind: Optional[str] = None
                 with suppress(Exception):
                     _content_str = tool_reply_msg.get("content") or ""
-                if "_content_str" not in locals():
-                    _content_str = ""
-                if isinstance(_content_str, str) and '"tool"' in _content_str:
+                    if isinstance(_content_str, str):
+                        parsed = json.loads(_content_str)
+                        if isinstance(parsed, dict):
+                            pk = parsed.get("_placeholder")
+                            if isinstance(pk, str) and pk:
+                                placeholder_kind = pk
+                if placeholder_kind == "progress":
                     tool_msg = await self._emit_completion_pair(
                         result,
                         call_id,
@@ -646,3 +553,237 @@ class ToolsData:
 
         # successful (or failed) *final* result → LLM may need to react
         return True
+
+    # ── Helper: adopt a nested SteerableToolHandle into the current loop -----
+    async def adopt_nested(
+        self,
+        info: "ToolCallMetadata",
+        child_handle,
+        *,
+        msg_dispatcher,
+        assistant_meta,
+        outer_handle_container,
+    ) -> None:
+        """Adopt a child SteerableToolHandle returned by a tool into this loop.
+
+        Creates/updates a single placeholder tool message, schedules the child's
+        result as a nested task with inherited metadata, wires clarification
+        channels, and synchronises passthrough interjections/pause/stop with the
+        outer handle when applicable.
+        """
+        # Passthrough wiring: replay steering commands that were issued AFTER this
+        # tool was scheduled and BEFORE adoption (per-child, no duplication), then
+        # sync pause/stop state minimally.
+        try:
+            if (
+                getattr(child_handle, "__passthrough__", False)
+                and outer_handle_container
+                and outer_handle_container[0] is not None
+            ):
+                _outer = outer_handle_container[0]
+                adopt_now = time.perf_counter()
+                POST_ADOPT_EPSILON = (
+                    0.05  # small cushion to exclude post-adoption events
+                )
+                _log = list(getattr(_outer, "_steer_log", []) or [])
+                for rec in _log:
+                    # Skip replay for this child if the event was already forwarded to it
+                    try:
+                        fwd_list = rec.get("forwarded_to", [])
+                        if isinstance(fwd_list, (list, tuple)) and str(
+                            info.call_id,
+                        ) in set(str(x) for x in fwd_list):
+                            continue
+                    except Exception:
+                        pass
+                    # Lower bound: event must have been recorded when this call_id
+                    # was already scheduled (state-based, robust to timing races).
+                    try:
+                        sched_ids = rec.get("scheduled_call_ids") or []
+                        if str(info.call_id) not in set(str(x) for x in sched_ids):
+                            continue
+                    except Exception:
+                        continue
+                    # Upper bound: exclude events that clearly arrived after adoption.
+                    try:
+                        t = rec.get("t", 0.0)
+                        if (
+                            isinstance(t, (int, float))
+                            and (t - POST_ADOPT_EPSILON) > adopt_now
+                        ):
+                            continue
+                    except Exception:
+                        pass
+                    method = rec.get("method") or ""
+                    if not isinstance(method, str) or not method:
+                        continue
+                    # Do NOT replay pause/resume; adoption will sync current state below
+                    _m_base = method.lower().strip()
+                    if _m_base in ("pause", "resume"):
+                        continue
+                    args = rec.get("args") or ()
+                    kwargs = rec.get("kwargs") or {}
+                    fb = rec.get("fallback") or ()
+                    # For custom methods (non built-ins), only replay when the child supports it
+                    is_builtin = _m_base in (
+                        "interject",
+                        "ask",
+                        "pause",
+                        "resume",
+                        "stop",
+                        "clarify",
+                    )
+                    if not is_builtin:
+                        try:
+                            has_exact = callable(getattr(child_handle, method, None))
+                        except Exception:
+                            has_exact = False
+                        try:
+                            has_base = callable(getattr(child_handle, _m_base, None))
+                        except Exception:
+                            has_base = False
+                        if not (has_exact or has_base):
+                            # Skip replay and do not synthesize mirrors when unsupported
+                            continue
+                        # Prefer exact name if present
+                        method_to_call = method if has_exact else _m_base
+                    else:
+                        method_to_call = method
+                    await forward_handle_call(  # type: ignore[name-defined]
+                        child_handle,
+                        method_to_call,
+                        kwargs,
+                        call_args=args if isinstance(args, (list, tuple)) else (),
+                        fallback_positional_keys=(
+                            fb if isinstance(fb, (list, tuple)) else ()
+                        ),
+                    )
+                    # Also mirror as a synthetic helper tool_call and acknowledgement (no LLM step)
+                    try:
+                        base = _m_base
+                        helper_name = f"{base}_{info.name}_{str(info.call_id)[-6:]}"
+                        if base in ("pause", "resume"):
+                            # Already skipped replay; do not synthesize mirrors either
+                            continue
+                        # Build assistant message with a single tool_call
+                        call_id = f"mirror_{int(time.perf_counter()*1000)}"
+                        args_json = {}
+                        if base == "interject":
+                            msg = (kwargs or {}).get("message") or (kwargs or {}).get(
+                                "content",
+                            )
+                            if msg is not None:
+                                args_json["content"] = msg
+                        elif base == "ask":
+                            q = (kwargs or {}).get("question")
+                            if q is not None:
+                                args_json["question"] = q
+                        elif base == "stop":
+                            if "reason" in (kwargs or {}):
+                                args_json["reason"] = kwargs.get("reason")
+                        elif base == "clarify":
+                            if "answer" in (kwargs or {}):
+                                args_json["answer"] = kwargs.get("answer")
+                        asst_msg = {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": helper_name,
+                                        "arguments": json.dumps(args_json or {}),
+                                    },
+                                },
+                            ],
+                        }
+                        await msg_dispatcher.append_msgs([asst_msg])
+                        # Ensure assistant_meta bookkeeping before inserting ack
+                        assistant_meta[id(asst_msg)] = {"results_count": 0}
+                        from .messages import acknowledge_helper_call  # local import
+
+                        await acknowledge_helper_call(
+                            asst_msg,
+                            call_id,
+                            helper_name,
+                            json.dumps(args_json or {}),
+                            assistant_meta=assistant_meta,
+                            client=self._client,
+                            msg_dispatcher=msg_dispatcher,
+                        )
+                    except Exception:
+                        pass
+                try:
+                    if not getattr(_outer, "_pause_event", None).is_set() and hasattr(
+                        child_handle,
+                        "pause",
+                    ):
+                        child_handle.pause()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                try:
+                    if getattr(_outer, "_cancel_event", None).is_set() and hasattr(
+                        child_handle,
+                        "stop",
+                    ):
+                        maybe = child_handle.stop()  # type: ignore[attr-defined]
+                        if asyncio.iscoroutine(maybe):
+                            asyncio.create_task(maybe)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Upgrade interject flag based on child capability
+        if hasattr(child_handle, "interject"):
+            info.is_interjectable = True
+
+        h_up_q = getattr(child_handle, "clarification_up_q", info.clar_up_queue)
+        h_down_q = getattr(child_handle, "clarification_down_q", info.clar_down_queue)
+        if (h_up_q is not None) ^ (h_down_q is not None):
+            raise AttributeError(
+                f"Handle returned by tool {info.name!r} exposes only one of "
+                "'clarification_up_q' / 'clarification_down_q'. Both are required (or neither).",
+            )
+
+        # Schedule child's result as nested task
+        if inspect.iscoroutinefunction(child_handle.result):
+            nested_coro = child_handle.result()
+        else:
+            nested_coro = asyncio.to_thread(child_handle.result)
+        nested_task = asyncio.create_task(nested_coro)
+
+        # Insert/update single placeholder for this call_id
+        ph = info.tool_reply_msg
+        if ph is None:
+            ph = create_tool_call_message(
+                name=info.name,
+                call_id=info.call_id,
+                content=json.dumps({"_placeholder": "nested_start"}, indent=4),
+            )
+            await insert_tool_message_after_assistant(
+                assistant_meta,
+                info.assistant_msg,
+                ph,
+                self._client,
+                msg_dispatcher,
+            )
+            info.tool_reply_msg = ph
+        else:
+            ph["content"] = json.dumps({"_placeholder": "nested_start"}, indent=4)
+
+        # Book-keeping for the new task (inherit, share placeholder)
+        metadata = dataclasses.replace(
+            info,
+            handle=child_handle,
+            is_interjectable=hasattr(child_handle, "interject"),
+            tool_reply_msg=ph,
+            clar_up_queue=h_up_q,
+            clar_down_queue=h_down_q,
+            notification_queue=info.notification_queue,
+            is_passthrough=getattr(child_handle, "__passthrough__", False),
+        )
+        self.save_task(nested_task, metadata)
+        if h_up_q is not None:
+            self.clarification_channels[info.call_id] = (h_up_q, h_down_q)

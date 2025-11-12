@@ -10,8 +10,9 @@ import os
 import unify
 import functools
 import inspect
+import weakref
+import contextlib
 
-from typing import Callable, Dict
 
 from ..conversation_manager_2.base import BaseConversationManagerHandle
 from ..conversation_manager_2.handle import ConversationManagerHandle
@@ -19,8 +20,11 @@ from ..conversation_manager_2.event_broker import get_event_broker
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     ToolSpec,
+    short_id,
 )
 from ..common.async_tool_loop import start_async_tool_loop
+from ..common.async_tool_loop import AsyncToolLoopHandle
+from .request_handle import ConductorRequestHandle
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from .types import StateManager
@@ -50,6 +54,7 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..constants import is_semantic_cache_enabled
+from .concurrency_guard import ActiveSessionRegistry
 
 
 class Conductor(BaseConductor):
@@ -162,6 +167,9 @@ class Conductor(BaseConductor):
 
         #  Run-time state & tool-dict helpers
         self._active_task = None  # type: ignore
+        self._session_guard = ActiveSessionRegistry()
+        # Track live Conductor.request handles (weakly) for quick nested scans
+        self._live_requests: "weakref.WeakSet[AsyncToolLoopHandle]" = weakref.WeakSet()
 
         # These two dicts are rebuilt lazily before every ask/request
         """Re-compute passive / active tool maps based on current active task."""
@@ -213,31 +221,42 @@ class Conductor(BaseConductor):
 
         # Enforce mutual exclusion between Actor.act and TaskScheduler.execute by
         # tracking a single active handle and masking both tools while one is active.
-        def _wrap_and_track(orig_callable):
+        def _wrap_and_track(orig_callable, *, kind: str):
             @functools.wraps(orig_callable)
             async def _wrapper(*args, **kwargs):
+                # 1) Reserve the global interactive slot
+                kind_norm = "actor" if kind == "actor" else "execute"
+                reserved = await self._session_guard.try_reserve(kind_norm)
+                if not reserved:
+                    return (
+                        "An interactive session is already in progress. "
+                        "Use interject/ask/stop on the current session instead of starting a new one."
+                    )
+
+                # 2) Call underlying tool and adopt the handle
                 res = orig_callable(*args, **kwargs)
                 if asyncio.iscoroutine(res):
                     res = await res
-                try:
-                    from unity.common.async_tool_loop import SteerableToolHandle  # type: ignore
+                from unity.common.async_tool_loop import SteerableToolHandle  # type: ignore
 
-                    if isinstance(res, SteerableToolHandle):
-                        self._active_task = res  # type: ignore[assignment]
+                if isinstance(res, SteerableToolHandle):
+                    # Track on Conductor and registry for masking and steering
+                    self._active_task = res  # type: ignore[assignment]
+                    await self._session_guard.adopt(res, kind_norm)
 
-                        async def _clear_when_done(h):
-                            try:
-                                await h.result()
-                            except Exception:
-                                pass
-                            finally:
-                                if getattr(self, "_active_task", None) is h:
-                                    self._active_task = None  # type: ignore[assignment]
+                    async def _clear_when_done(h):
+                        try:
+                            await h.result()
+                        finally:
+                            # Clear both registry and Conductor state if still owned by this handle
+                            await self._session_guard.release_if(h)
+                            if getattr(self, "_active_task", None) is h:
+                                self._active_task = None  # type: ignore[assignment]
 
-                        asyncio.create_task(_clear_when_done(res))
-                except Exception:
-                    # Best-effort tracking only; never break the tool call
-                    pass
+                    asyncio.create_task(_clear_when_done(res))
+                else:
+                    # No handle returned – release reservation immediately
+                    await self._session_guard.release_if(None)
                 return res
 
             # Preserve original signature/annotations so tool schema stays accurate
@@ -254,7 +273,24 @@ class Conductor(BaseConductor):
             return _wrapper
 
         # Locate canonical keys for the two entry-points (names include class prefixes)
-        actor_key = next((k for k in active if "actor_act" in k.lower()), None)
+        # Actor: resolve by bound-method identity rather than name so it works for any actor class
+        actor_key = None
+        try:
+            for _k, _v in list(active.items()):
+                fn = _v.fn if isinstance(_v, ToolSpec) else _v  # type: ignore[attr-defined]
+                try:
+                    # Identify bound method to the configured actor instance
+                    if (
+                        hasattr(fn, "__self__")
+                        and getattr(fn, "__self__", None) is self._actor
+                        and getattr(fn, "__name__", "") == "act"
+                    ):
+                        actor_key = _k
+                        break
+                except Exception:
+                    continue
+        except Exception:
+            actor_key = None
         exec_key = next(
             (k for k in active if "taskscheduler_execute" in k.lower()),
             None,
@@ -264,23 +300,26 @@ class Conductor(BaseConductor):
             _orig = active[actor_key]
             if isinstance(_orig, ToolSpec):
                 active[actor_key] = ToolSpec(
-                    fn=_wrap_and_track(_orig.fn),
+                    fn=_wrap_and_track(_orig.fn, kind="actor"),
                     max_concurrent=_orig.max_concurrent,
                     max_total_calls=_orig.max_total_calls,
                 )
             else:
-                active[actor_key] = _wrap_and_track(_orig)  # type: ignore[arg-type]
+                active[actor_key] = _wrap_and_track(_orig, kind="actor")  # type: ignore[arg-type]
+            # Provide a stable alias 'Actor_act' so the LLM consistently recognizes the entry-point
+            if "Actor_act" not in active:
+                active["Actor_act"] = active[actor_key]
 
         if exec_key is not None:
             _orig = active[exec_key]
             if isinstance(_orig, ToolSpec):
                 active[exec_key] = ToolSpec(
-                    fn=_wrap_and_track(_orig.fn),
+                    fn=_wrap_and_track(_orig.fn, kind="execute"),
                     max_concurrent=_orig.max_concurrent,
                     max_total_calls=_orig.max_total_calls,
                 )
             else:
-                active[exec_key] = _wrap_and_track(_orig)  # type: ignore[arg-type]
+                active[exec_key] = _wrap_and_track(_orig, kind="execute")  # type: ignore[arg-type]
 
         self.add_tools("request", active)
 
@@ -386,6 +425,76 @@ class Conductor(BaseConductor):
 
             handle.result = _wrapped_result
 
+        return handle
+
+    # ------------------------------------------------------------------ #
+    #  start_task – auto-start request loop to execute a task       #
+    # ------------------------------------------------------------------ #
+
+    @functools.wraps(BaseConductor.start_task, updated=())
+    async def start_task(self, task_id: int, trigger_reason: str):
+        """
+        Return a steerable `Conductor.request` handle that immediately executes
+        `TaskScheduler.execute` for the provided `task_id` without an initial LLM turn.
+
+        Behaviour
+        ---------
+        - Seeds a minimal snapshot for the `Conductor.request` entrypoint with a
+          single assistant tool_call targeting the exposed `TaskScheduler.execute` tool.
+        - Deserialization triggers preflight backfill which schedules the tool call
+          immediately (no LLM thinking step). The returned ActiveQueue handle is
+          adopted with passthrough, so interject/pause/resume/stop/notifications
+          work as usual via the returned handle.
+        """
+
+        # Resolve the exact tool name as exposed on the Conductor.request surface
+        tools: Dict[str, Callable] = dict(self.get_tools("request"))
+        exec_tool_name = next(
+            (n for n in tools.keys() if "taskscheduler_execute" in n.lower()),
+            None,
+        )
+        if exec_tool_name is None:
+            raise ValueError(
+                "TaskScheduler.execute tool is not available on request surface",
+            )
+
+        # Build a minimal v1 snapshot that instructs Conductor.request to call execute
+        call_id = f"tc_{short_id(8)}"
+        try:
+            task_id_int = int(task_id)
+        except Exception:
+            # Be strict to avoid ambiguous execution routing
+            raise ValueError("task_id must be an integer")
+
+        snapshot = {
+            "version": 1,
+            "loop_id": f"{self.__class__.__name__}.request",
+            "initial_user_message": (
+                f"<This task has been *automatically* triggered due to {str(trigger_reason).strip()}>."
+            ),
+            "assistant": [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": exec_tool_name,
+                                "arguments": json.dumps({"text": str(task_id_int)}),
+                            },
+                        },
+                    ],
+                },
+            ],
+            "tools": [],
+        }
+
+        # Deserialize into a live handle; preflight backfill will run the execute call immediately
+        handle = AsyncToolLoopHandle.deserialize(snapshot)
+        # Ensure handle is tracked for properties and cleaned up when finished
+        self._register_live_request_handle(handle)
         return handle
 
     # ------------------------------------------------------------------ #
@@ -500,6 +609,7 @@ class Conductor(BaseConductor):
             log_steps=_log_tool_steps,
             # Hide Actor.act and TaskScheduler.execute while a session is active
             tool_policy=self._mask_act_execute_policy(),
+            handle_cls=ConductorRequestHandle,
         )
 
         if should_log and call_id is not None:
@@ -509,6 +619,9 @@ class Conductor(BaseConductor):
                 "Conductor",
                 "request",
             )
+
+        # Register this request handle for live scans and schedule cleanup when done
+        self._register_live_request_handle(handle)
 
         if _return_reasoning_steps:
             original_result = handle.result
@@ -520,6 +633,86 @@ class Conductor(BaseConductor):
             handle.result = _wrapped_result
 
         return handle
+
+    # ----------------------------
+    #  Internal: live handle registry
+    # ----------------------------
+    def _register_live_request_handle(self, handle) -> None:
+        """Track the given request handle for fast property scans and auto-cleanup."""
+        try:
+            _h = getattr(handle, "_inner", handle)
+            self._live_requests.add(_h)
+
+            async def _cleanup_when_done(h):
+                try:
+                    await h.result()
+                except Exception:
+                    pass
+                finally:
+                    with contextlib.suppress(Exception):
+                        self._live_requests.discard(h)
+
+            asyncio.create_task(_cleanup_when_done(_h))
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
+    #  Live handle discovery via nested_structure                         #
+    # ------------------------------------------------------------------ #
+
+    def _tree_has_any(self, node: dict, prefixes: tuple[str, ...]) -> bool:
+        """Return True if any node in the nested_structure tree has a handle label starting with any prefix."""
+        try:
+            handle_label = str(node.get("handle", "")).strip()
+        except Exception:
+            handle_label = ""
+        try:
+            if any(handle_label.startswith(p) for p in prefixes):
+                return True
+        except Exception:
+            pass
+        try:
+            for child in node.get("children", []) or []:
+                if self._tree_has_any(child, prefixes):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    async def task_handle(self) -> Optional[ConductorRequestHandle]:
+        """
+        Return the live Conductor.request handle when a TaskScheduler.execute is active,
+        detected purely via `nested_structure()` (presence of ActiveQueue/ActiveTask).
+        """
+        for h in list(getattr(self, "_live_requests", [])):
+            try:
+                if hasattr(h, "done") and h.done():
+                    continue
+                tree = await h.nested_structure()
+            except Exception:
+                continue
+            if self._tree_has_any(tree, ("ActiveQueue(", "ActiveTask(")):
+                return h  # type: ignore[return-value]
+        return None  # type: ignore[return-value]
+
+    async def actor_handle(self) -> Optional[ConductorRequestHandle]:
+        """
+        Return the live Conductor.request handle when an Actor session is active.
+        If a TaskScheduler.execute session is active, return the same handle.
+        """
+        th = await self.task_handle()
+        if th is not None:
+            return th
+        for h in list(getattr(self, "_live_requests", [])):
+            try:
+                if hasattr(h, "done") and h.done():
+                    continue
+                tree = await h.nested_structure()
+            except Exception:
+                continue
+            if self._tree_has_any(tree, ("ActorHandle(",)):
+                return h  # type: ignore[return-value]
+        return None  # type: ignore[return-value]
 
     # ------------------------------------------------------------------ #
     #  Internal policy – mask Actor.act and TaskScheduler.execute while active
@@ -534,10 +727,11 @@ class Conductor(BaseConductor):
                 active = getattr(self, "_active_task", None)
                 if active is not None and not active.done():
                     # Remove both entry-points from the base toolkit; dynamic helpers remain available
-                    actor_key = next(
-                        (k for k in list(filtered) if "actor_act" in k.lower()),
-                        None,
-                    )
+                    actor_keys = [
+                        k
+                        for k in list(filtered)
+                        if k.lower().startswith("actor_") and k.lower().endswith("act")
+                    ]
                     exec_key = next(
                         (
                             k
@@ -546,8 +740,8 @@ class Conductor(BaseConductor):
                         ),
                         None,
                     )
-                    if actor_key:
-                        filtered.pop(actor_key, None)
+                    for ak in actor_keys:
+                        filtered.pop(ak, None)
                     if exec_key:
                         filtered.pop(exec_key, None)
             except Exception:

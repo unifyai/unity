@@ -11,11 +11,8 @@ from typing import Optional, Dict, Any, TYPE_CHECKING
 
 import unify
 
-from .queue_utils import (
-    sched_prev as _q_prev,
-    sched_next as _q_next,
-)
 from .types.reintegration_plan import ReintegrationPlan
+from .types.task import Task
 
 if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
@@ -62,16 +59,18 @@ def detach_from_queue_for_activation(
     )
     if not candidate_rows:
         raise ValueError(f"No runnable task found with id={task_id}")
-    task_row = sorted(candidate_rows, key=lambda r: r.get("instance_id", 0))[0]
+    task_row = sorted(
+        candidate_rows,
+        key=lambda r: r.instance_id,
+    )[0]
 
-    sched = task_row.get("schedule") or {}
-    prev_tid = _q_prev(sched)
-    next_tid = _q_next(sched)
-    start_at = sched.get("start_at") if isinstance(sched, dict) else None
+    prev_tid = task_row.schedule_prev
+    next_tid = task_row.schedule_next
+    start_at = task_row.schedule_start_at
 
     # Derive the current head's start_at so downstream tasks can be reinstated as
     # head-scheduled later if their original predecessor becomes terminal.
-    def _get_row(tid: int) -> Optional[dict]:
+    def _get_row(tid: int) -> Optional[Task]:
         rows = scheduler._filter_tasks(filter=f"task_id == {tid}", limit=1)
         return rows[0] if rows else None
 
@@ -79,13 +78,10 @@ def detach_from_queue_for_activation(
     # Fast path: when current task is the head, reuse its own start_at.
     head_start_at: Optional[str] = None
     if prev_tid is None:
-        head_start_at = start_at
+        head_start_at = start_at.isoformat() if start_at is not None else None
     else:
         # Prefer LocalTaskView for a single-step head start_at resolution.
-        try:
-            _qid = task_row.get("queue_id")
-        except Exception:
-            _qid = None
+        _qid = task_row.queue_id
         if isinstance(_qid, int):
             try:
                 head_start_at = scheduler._view.get_head_start_at(int(_qid))  # type: ignore[attr-defined]
@@ -95,14 +91,15 @@ def detach_from_queue_for_activation(
         if head_start_at is None:
             # Fallback: walk prev pointers (rare case when queue_id is absent)
             cur_head = _get_row(task_id)
-            while (
-                cur_head is not None and _q_prev(cur_head.get("schedule")) is not None
-            ):
-                cur_head = _get_row(_q_prev(cur_head.get("schedule")))
+            while cur_head is not None and cur_head.schedule_prev is not None:
+                cur_head = _get_row(cur_head.schedule_prev)
             if cur_head is not None:
-                _sched_head = cur_head.get("schedule") or {}
-                if isinstance(_sched_head, dict):
-                    head_start_at = _sched_head.get("start_at")
+                if cur_head.schedule is not None:
+                    head_start_at = (
+                        cur_head.schedule_start_at.isoformat()
+                        if cur_head.schedule_start_at is not None
+                        else None
+                    )
 
     # Batch-fetch log objects for all relevant task_ids in one backend call (reuse scheduler helper)
     needed_ids: list[int] = []
@@ -161,30 +158,22 @@ def detach_from_queue_for_activation(
     # regardless of execution scope. This enables queue execution with later
     # reinstatement to the original position when requested.
     # Capture current queue_id from the row (top-level), never from schedule
-    try:
-        queue_id = task_row.get("queue_id")
-    except Exception:
-        queue_id = None
 
     plan = ReintegrationPlan(
         task_id=task_id,
-        instance_id=task_row.get("instance_id"),
+        instance_id=task_row.instance_id,
         prev_task=prev_tid,
         next_task=next_tid,
         start_at=start_at,
         was_head=prev_tid is None,
-        original_status=task_row.get("status"),
+        original_status=task_row.status,
         head_start_at=head_start_at,
-        queue_id=queue_id,
+        queue_id=task_row.queue_id,
     )
     # Store per-instance plan (single source of truth)
     key = (
         task_id,
-        (
-            task_row.get("instance_id")
-            if task_row.get("instance_id") is not None
-            else -1
-        ),
+        task_row.instance_id,
     )
     scheduler._reintegration_plans[key] = plan  # type: ignore[attr-defined]
 

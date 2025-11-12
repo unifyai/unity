@@ -52,7 +52,7 @@ def test_images_container_mixed_types():
 
 @pytest.mark.unit
 @_handle_project
-def test_raw_image_refs_accepts_only_raw():
+def test_raw_images_accepts_only_raw():
     r1 = RawImageRef(image_id=10)
     r2 = RawImageRef(image_id=11)
 
@@ -64,7 +64,7 @@ def test_raw_image_refs_accepts_only_raw():
 
 @pytest.mark.unit
 @_handle_project
-def test_raw_image_refs_rejects_annotated():
+def test_raw_images_rejects_annotated():
     ann = AnnotatedImageRef(
         raw_image_ref=RawImageRef(image_id=5),
         annotation="note",
@@ -76,7 +76,7 @@ def test_raw_image_refs_rejects_annotated():
 
 @pytest.mark.unit
 @_handle_project
-def test_annotated_image_refs_accepts_only_annotated():
+def test_annotated_images_accepts_only_annotated():
     ann1 = AnnotatedImageRef(
         raw_image_ref=RawImageRef(image_id=21),
         annotation="first",
@@ -94,7 +94,7 @@ def test_annotated_image_refs_accepts_only_annotated():
 
 @pytest.mark.unit
 @_handle_project
-def test_annotated_image_refs_rejects_raw():
+def test_annotated_images_rejects_raw():
     raw = RawImageRef(image_id=99)
 
     with pytest.raises(ValidationError):
@@ -189,7 +189,7 @@ def test_backend_schema_annotated_image_ref_field_enforced():
 
 @pytest.mark.unit
 @_handle_project
-def test_backend_schema_image_refs_field_enforced():
+def test_backend_schema_images_field_enforced():
     class _ImageRefsRow(_RowIdModel):
         refs: ImageRefs
 
@@ -229,7 +229,7 @@ def test_backend_schema_image_refs_field_enforced():
 
 @pytest.mark.unit
 @_handle_project
-def test_backend_schema_raw_image_refs_field_enforced():
+def test_backend_schema_raw_images_field_enforced():
     class _RawImageRefsRow(_RowIdModel):
         refs: RawImageRefs
 
@@ -264,7 +264,7 @@ def test_backend_schema_raw_image_refs_field_enforced():
 
 @pytest.mark.unit
 @_handle_project
-def test_backend_schema_annotated_image_refs_field_enforced():
+def test_backend_schema_annotated_images_field_enforced():
     class _AnnotatedImageRefsRow(_RowIdModel):
         refs: AnnotatedImageRefs
 

@@ -7,7 +7,7 @@ from typing import Callable, Dict, List
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
-    now_utc_str,
+    now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
@@ -24,10 +24,6 @@ def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
 
 def _require_tools(pairs: Dict[str, str | None], tools: Dict[str, Callable]) -> None:
     _shared_require_tools(pairs, tools)
-
-
-def _now() -> str:
-    return now_utc_str()
 
 
 def build_ask_prompt(
@@ -106,7 +102,6 @@ def build_ask_prompt(
         """,
     ).strip()
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_sentence = (
         f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
         if request_clar_fname
@@ -148,7 +143,6 @@ def build_ask_prompt(
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specialised in describing the assistant's high‑level skills.",
             "Work strictly through the tools provided to discover skills and their details.",
             clar_sentence,
@@ -166,6 +160,6 @@ def build_ask_prompt(
             "",
             read_only_ask_mutation_exit_block(),
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now()}.",
         ],
     )

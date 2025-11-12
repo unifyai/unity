@@ -10,7 +10,6 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.common._async_tool.semantic_cache import _Config
 from unity.common._async_tool import semantic_cache as sc
-from unity.transcript_manager.types.message import Message
 
 
 @pytest.fixture(autouse=True)
@@ -52,15 +51,14 @@ async def test_semantic_cache_exact_match():
     sc_id = second_contact["details"]["contact_id"]
 
     tm = TranscriptManager()
-    tm.log_messages(
-        Message(
-            medium="email",
-            sender_id=fc_id,
-            receiver_ids=[sc_id],
-            timestamp=datetime.now(),
-            content="Hey there!",
-            synchronous=True,
-        ),
+    tm.log_first_message_in_new_exchange(
+        {
+            "medium": "email",
+            "sender_id": fc_id,
+            "receiver_ids": [sc_id],
+            "timestamp": datetime.now(),
+            "content": "Hey there!",
+        },
     )
 
     with patch(
@@ -106,15 +104,14 @@ async def test_semantic_cache_no_exact_match():
     sc_id = second_contact["details"]["contact_id"]
 
     tm = TranscriptManager()
-    tm.log_messages(
-        Message(
-            medium="email",
-            sender_id=fc_id,
-            receiver_ids=[sc_id],
-            timestamp=datetime.now(),
-            content="Hey there!",
-            synchronous=True,
-        ),
+    tm.log_first_message_in_new_exchange(
+        {
+            "medium": "email",
+            "sender_id": fc_id,
+            "receiver_ids": [sc_id],
+            "timestamp": datetime.now(),
+            "content": "Hey there!",
+        },
     )
 
     with patch(
@@ -160,26 +157,24 @@ async def test_semantic_cache_similar_query_benefit():
     sc_id = second_contact["details"]["contact_id"]
 
     tm = TranscriptManager()
-    tm.log_messages(
-        Message(
-            medium="email",
-            sender_id=fc_id,
-            receiver_ids=[sc_id],
-            timestamp=datetime.now(),
-            content="Hey there!",
-            synchronous=True,
-        ),
+    tm.log_first_message_in_new_exchange(
+        {
+            "medium": "email",
+            "sender_id": fc_id,
+            "receiver_ids": [sc_id],
+            "timestamp": datetime.now(),
+            "content": "Hey there!",
+        },
     )
 
-    tm.log_messages(
-        Message(
-            medium="email",
-            sender_id=sc_id,
-            receiver_ids=[fc_id],
-            timestamp=datetime.now(),
-            content="This is Bob!",
-            synchronous=True,
-        ),
+    tm.log_first_message_in_new_exchange(
+        {
+            "medium": "email",
+            "sender_id": sc_id,
+            "receiver_ids": [fc_id],
+            "timestamp": datetime.now(),
+            "content": "This is Bob!",
+        },
     )
 
     with patch(

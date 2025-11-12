@@ -18,22 +18,22 @@ def test_create_task():
     assert len(task_list) == 1
     row = task_list[0]
     # After refactor, _filter_tasks returns raw JSON-serialisable values (enums as strings)
-    assert row["name"] == "Promote Jeff Smith"
+    assert row.name == "Promote Jeff Smith"
     assert (
-        row["description"]
+        row.description
         == "Send an email to Jeff Smith, kindly congratulating him and explaining that he has been promoted from sales rep to sales manager."
     )
-    assert Status(row["status"]) == Status.primed
-    assert row["trigger"] is None
-    assert row["schedule"] is None
-    assert row["deadline"] is None
-    assert row["repeat"] is None
-    assert Priority(row["priority"]) == Priority.normal
-    assert row["task_id"] == 0
-    assert row["instance_id"] == 0
-    assert row["response_policy"] is None
-    assert "entrypoint" in row and row["entrypoint"] == 101
-    assert "activated_by" in row and row["activated_by"] is None
+    assert row.status == Status.primed
+    assert row.trigger is None
+    assert row.schedule is None
+    assert row.deadline is None
+    assert row.repeat is None
+    assert row.priority == Priority.normal
+    assert row.task_id == 0
+    assert row.instance_id == 0
+    assert row.response_policy is None
+    assert row.entrypoint == 101
+    assert row.activated_by is None
 
 
 @_handle_project
@@ -73,7 +73,7 @@ def test_create_task_with_response_policy():
 
     rows = ts._filter_tasks()
     assert len(rows) == 1
-    assert rows[0]["response_policy"] == policy
+    assert rows[0].response_policy == policy
 
 
 @_handle_project
@@ -104,7 +104,7 @@ def test_create_tasks_single_queue_and_ids():
     # Primed head with no start_at
     assert not (q[0].schedule and q[0].schedule.start_at)
     head_row = ts._filter_tasks(filter="task_id == 0", limit=1)[0]
-    assert head_row["status"] == "primed"
+    assert head_row.status == Status.primed
 
 
 @_handle_project
@@ -140,7 +140,7 @@ def test_create_tasks_multi_queues_with_start_times():
     assert q0[0].schedule and q0[0].schedule.start_at
     assert q0[0].schedule.start_at.isoformat() == "2036-01-01T10:00:00+00:00"
     row0 = ts._filter_tasks(filter="task_id == 0", limit=1)[0]
-    assert row0["status"] == "scheduled"
+    assert row0.status == Status.scheduled
 
     # Second queue should be [1,3] with scheduled head (explicit start_at provided)
     q1 = ts._get_queue(queue_id=qid1)
@@ -148,7 +148,7 @@ def test_create_tasks_multi_queues_with_start_times():
     assert q1[0].schedule and q1[0].schedule.start_at
     assert q1[0].schedule.start_at.isoformat() == "2036-01-02T10:00:00+00:00"
     row1 = ts._filter_tasks(filter="task_id == 1", limit=1)[0]
-    assert row1["status"] == "scheduled"
+    assert row1.status == Status.scheduled
 
 
 @_handle_project

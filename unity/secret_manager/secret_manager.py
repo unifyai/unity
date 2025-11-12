@@ -9,7 +9,6 @@ from typing import Any, Callable, Dict, List, Optional
 import unify
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    inject_broader_context,
     make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
@@ -99,7 +98,8 @@ class SecretManager(BaseSecretManager):
         # Fixed schema derived from Secret model
         self._store = TableStore(
             self._ctx,
-            unique_keys={"name": "str"},
+            unique_keys={"secret_id": "int", "name": "str"},
+            auto_counting={"secret_id": None},
             description="Key-value secrets with descriptions and embeddings.",
             fields=model_to_fields(Secret),
         )
@@ -174,7 +174,9 @@ class SecretManager(BaseSecretManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Default update-side tool policy (no-op, retain current tools)."""
+        """Require 'ask' on the first step; auto thereafter (mirrors ContactManager)."""
+        if step_index < 1 and "ask" in current_tools:
+            return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
     # --------------------- Internal helpers (.env sync) --------------------- #
@@ -484,7 +486,6 @@ class SecretManager(BaseSecretManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_ask_tool_policy,
-            preprocess_msgs=inject_broader_context,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
@@ -571,7 +572,6 @@ class SecretManager(BaseSecretManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=self._default_update_tool_policy,
-            preprocess_msgs=inject_broader_context,
         )
 
         if _return_reasoning_steps:
@@ -699,12 +699,19 @@ class SecretManager(BaseSecretManager):
             context=self._ctx,
             references=safe_refs,
             k=k,
-            allowed_fields=["name", "description"],  # Never return the secret value
+            allowed_fields=[
+                "secret_id",
+                "name",
+                "description",
+            ],  # Never return the secret value
             row_filter=None,
             unique_id_field="name",
         )
         return [
             Secret(
+                secret_id=(
+                    int(r.get("secret_id")) if r.get("secret_id") is not None else -1
+                ),
                 name=r.get("name"),
                 value="",
                 description=r.get("description", ""),
@@ -742,11 +749,16 @@ class SecretManager(BaseSecretManager):
             filter=normalized,
             offset=offset,
             limit=limit,
-            from_fields=["name", "description"],
+            from_fields=["secret_id", "name", "description"],
         )
         # Never expose values in read tools
         return [
             Secret(
+                secret_id=(
+                    int(lg.entries.get("secret_id"))
+                    if lg.entries.get("secret_id") is not None
+                    else -1
+                ),
                 name=lg.entries.get("name"),
                 value="",
                 description=lg.entries.get("description", ""),

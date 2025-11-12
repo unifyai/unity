@@ -22,6 +22,7 @@ import unify
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.priority import Priority
 from unity.task_scheduler.types.schedule import Schedule
+from unity.task_scheduler.types.status import Status
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import SETTINGS
@@ -75,7 +76,7 @@ class ScenarioBuilder:
         sched = Schedule(  # Scheduled
             prev_task=None,
             next_task=None,
-            start_at=datetime(2050, 6, 1, 9, 0, tzinfo=timezone.utc).isoformat(),
+            start_at=datetime(2050, 6, 1, 9, 0, tzinfo=timezone.utc),
         )
         self._create_if_missing(
             name="Client meeting",
@@ -106,18 +107,18 @@ def _answer_semantic(ts: TaskScheduler, question: str) -> str:
     tasks = ts._filter_tasks()
 
     if "currently primed" in q:
-        return next(t for t in tasks if t["status"] == "primed")["name"]
+        return next(t for t in tasks if t.status == Status.primed).name
 
     if "tasks are queued" in q:
-        return str(sum(1 for t in tasks if t["status"] == "queued"))
+        return str(sum(1 for t in tasks if t.status == Status.queued))
 
     if "client meeting" in q and "scheduled" in q:
-        mtg = next(t for t in tasks if "client meeting" in t["name"].lower())
-        return mtg["schedule"]["start_at"].split("T")[0]
+        mtg = next(t for t in tasks if "client meeting" in t.name.lower())
+        return mtg.schedule.start_at.isoformat().split("T")[0]
 
     if "priority" in q and "hotfix" in q:
-        hotfix = next(t for t in tasks if "hotfix" in t["name"].lower())
-        return str(hotfix["priority"])
+        hotfix = next(t for t in tasks if "hotfix" in t.name.lower())
+        return str(hotfix.priority)
 
     return "N/A"
 

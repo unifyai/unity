@@ -110,6 +110,40 @@ def _canonical_tool_owner_name(cls: type) -> str:
         return ""
 
 
+def canonicalize_handle_class_name(cls: type) -> str:
+    """Return a canonicalized class name for handle display.
+
+    Rules (prefix stripping applied in this order):
+    - Strip leading "Simulated" → e.g., SimulatedFoo → Foo
+    - Strip leading version prefix "V<digits>" → e.g., V3Foo → Foo
+    - Strip leading "Base" → e.g., BaseFoo → Foo
+    """
+    try:
+        name = getattr(cls, "__name__", "") or ""
+    except Exception:
+        name = ""
+
+    s = str(name)
+    try:
+        if s.startswith("Simulated") and len(s) > 9:
+            s = s[9:]
+    except Exception:
+        pass
+    # Strip version prefix like V3, V12, etc.
+    try:
+        import re as _re  # local import to avoid polluting module scope
+
+        s = _re.sub(r"^V\d+", "", s)
+    except Exception:
+        pass
+    try:
+        if s.startswith("Base") and len(s) > 4:
+            s = s[4:]
+    except Exception:
+        pass
+    return s
+
+
 def methods_to_tool_dict(
     *methods: Tuple[Union[Callable, "ToolSpec"]],
     include_class_name: bool = True,
@@ -341,6 +375,53 @@ def _strip_hidden_params_from_doc(
     return doc_clean
 
 
+def _resolve_doc_with_mro_fallback(bound_method) -> str:
+    """
+    Return a docstring for `bound_method`, falling back to the first ancestor
+    in the MRO that defines a docstring for a method with the same name.
+    """
+    import inspect as _inspect  # local import to avoid polluting global scope
+
+    # 1) Prefer the method's own docstring (after unwrap)
+    try:
+        unwrapped = _inspect.unwrap(bound_method)
+    except Exception:
+        unwrapped = bound_method
+    try:
+        doc = _inspect.getdoc(unwrapped)
+        if isinstance(doc, str) and doc.strip():
+            return doc.strip()
+    except Exception:
+        pass
+
+    # 2) MRO fallback for bound methods: find an ancestor method with a docstring
+    try:
+        name = getattr(unwrapped, "__name__", None) or getattr(
+            bound_method,
+            "__name__",
+            "",
+        )
+        owner = getattr(getattr(bound_method, "__self__", None), "__class__", None)
+        if not name or owner is None:
+            return ""
+        for base in getattr(owner, "__mro__", ())[1:]:
+            try:
+                cand = getattr(base, name, None)
+            except Exception:
+                cand = None
+            if cand is None:
+                continue
+            fn_obj = getattr(cand, "__func__", cand)
+            base_doc = _inspect.getdoc(fn_obj)
+            if isinstance(base_doc, str) and base_doc.strip():
+                return base_doc.strip()
+    except Exception:
+        pass
+
+    # 3) No doc found
+    return ""
+
+
 def annotation_to_schema(ann: Any) -> Dict[str, Any]:
     """Convert a Python annotation into a JSON Schema fragment (supports Pydantic)."""
 
@@ -469,8 +550,8 @@ def method_to_schema(
         if param.default is inspect._empty:
             required.append(name)
 
-    # ── scrub the docstring so hidden args disappear from "Args:"/"Parameters" ──
-    raw_doc = bound_method.__doc__ or ""
+    # ── resolve docstring with MRO fallback, then scrub hidden args ───────────
+    raw_doc = _resolve_doc_with_mro_fallback(bound_method) or ""
     cleaned_doc = _strip_hidden_params_from_doc(raw_doc, hidden)
 
     if hasattr(bound_method, "__self__") and hasattr(
@@ -507,40 +588,6 @@ def method_to_schema(
     if has_var_keyword:
         schema["function"]["parameters"]["additionalProperties"] = True
     return schema
-
-
-# Shared helpers used across managers
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def inject_broader_context(msgs: list[dict]) -> list[dict]:
-    """Replace {broader_context} placeholders inside system messages.
-
-    Mirrors the per-manager helpers but centralised so both managers share
-    identical behaviour and error handling.
-    """
-    import copy
-
-    try:
-        from unity.memory_manager.memory_manager import (
-            MemoryManager,
-        )  # local import to avoid cycles
-    except Exception:  # pragma: no cover - defensive import guard
-        MemoryManager = None  # type: ignore[assignment]
-
-    patched = copy.deepcopy(msgs)
-
-    try:
-        broader_ctx = MemoryManager.get_rolling_activity() if MemoryManager else ""
-    except Exception:
-        broader_ctx = ""
-
-    for m in patched:
-        content = m.get("content") or ""
-        if m.get("role") == "system" and "{broader_context}" in content:
-            m["content"] = content.replace("{broader_context}", broader_ctx)
-
-    return patched
 
 
 def make_request_clarification_tool(

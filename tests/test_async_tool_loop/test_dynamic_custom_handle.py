@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import inspect
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -14,7 +15,10 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
 )
 from tests.helpers import _handle_project, SETTINGS
-from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
+from tests.test_async_tool_loop.async_helpers import (
+    _wait_for_tool_request,
+    _wait_for_condition,
+)
 
 
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
@@ -289,3 +293,440 @@ async def test_handle_cls_custom_outer_handle_is_instantiated(client):
     outer.stop(cancel=True, reason="test")
     # Wait for graceful shutdown of the handle task
     await outer.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_helpers_use_base_docstrings_when_not_overridden(client):
+    """
+    Verify that when a custom handle does not provide docstrings for standard
+    steering methods (pause/resume/interject/ask/stop), the dynamic helpers
+    adopt informative base docstrings from the abstract/base classes.
+    """
+
+    class BaseLikeHandle(SteerableToolHandle):
+        # No docstrings on purpose – rely on base docstrings via MRO fallback
+        def __init__(self) -> None:
+            self._done = asyncio.Event()
+
+        async def ask(self, question: str) -> "SteerableToolHandle":
+            return self
+
+        async def interject(self, message: str):
+            return None
+
+        def stop(self, reason: Optional[str] = None):
+            return "stopped"
+
+        def pause(self):
+            return "paused"
+
+        def resume(self):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    @unify.traced
+    async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
+        return BaseLikeHandle()
+
+    # Spy dynamic registrations to capture effective docstrings
+    from unity.common._async_tool import dynamic_tools_factory as _dtf
+
+    registered_docs: Dict[str, str] = {}
+    orig_register_tool = _dtf.DynamicToolFactory._register_tool
+
+    def _spy_register_tool(self, func_name: str, fallback_doc: str, fn):  # type: ignore[no-redef]
+        doc = inspect.getdoc(fn) or ""
+        registered_docs[func_name] = doc
+        return orig_register_tool(self, func_name, fallback_doc, fn)
+
+    setattr(_dtf.DynamicToolFactory, "_register_tool", _spy_register_tool)
+
+    client.set_system_message("Call `spawn_handle` to start a nested handle.")
+    outer = start_async_tool_loop(
+        client,
+        message="start",
+        tools={"spawn_handle": spawn_handle},
+        timeout=120,
+    )
+
+    await _wait_for_tool_request(client, "spawn_handle")
+
+    # Trigger an immediate assistant turn so helpers are exposed/registered
+    await outer.interject("probe helpers")
+
+    async def _helpers_registered() -> bool:
+        return any(
+            any(k.startswith(p) for k in registered_docs.keys())
+            for p in ("pause_", "resume_", "interject_", "ask_", "stop_")
+        )
+
+    await _wait_for_condition(_helpers_registered, poll=0.05, timeout=30.0)
+
+    # Assertions: base docstrings should be visible (substrings)
+    # pause
+    for k, v in registered_docs.items():
+        if k.startswith("pause_"):
+            assert "Pause the outer conversational loop" in v
+    # resume
+    for k, v in registered_docs.items():
+        if k.startswith("resume_"):
+            assert "Resume a loop previously paused" in v
+    # interject
+    for k, v in registered_docs.items():
+        if k.startswith("interject_"):
+            assert "Inject an additional" in v
+    # ask (from SteerableHandle.ask)
+    for k, v in registered_docs.items():
+        if k.startswith("ask_"):
+            assert "Ask a question to the running process" in v
+    # stop – either base or explicit; ensure it's non-empty and informative
+    for k, v in registered_docs.items():
+        if k.startswith("stop_"):
+            assert isinstance(v, str) and len(v.strip()) > 0
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_helpers_use_overridden_docstrings_when_provided(client):
+    """
+    Verify that when a custom handle overrides docstrings (or adds extra kwargs),
+    the dynamic helpers expose those overridden docstrings in their schema.
+    """
+
+    class OverrideDocHandle(SteerableToolHandle):
+        def __init__(self) -> None:
+            self._done = asyncio.Event()
+
+        async def ask(self, question: str) -> "SteerableToolHandle":
+            """Ask override doc: consult safe cache only."""
+            return self
+
+        async def interject(self, message: str, *, importance: int = 1):
+            """Interject override doc: only interject if importance >= 1."""
+            return None
+
+        def stop(self, reason: Optional[str] = None):
+            """Stop override doc: stop only if safe to cancel."""
+            return "stopped"
+
+        def pause(self, *, gate: Optional[str] = None):
+            """Pause override doc: only pause if XYZ precondition holds."""
+            return "paused"
+
+        def resume(self, *, token: Optional[str] = None):
+            """Resume override doc: resume with a session token if required."""
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    @unify.traced
+    async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
+        return OverrideDocHandle()
+
+    from unity.common._async_tool import dynamic_tools_factory as _dtf
+
+    registered_docs: Dict[str, str] = {}
+    orig_register_tool = _dtf.DynamicToolFactory._register_tool
+
+    def _spy_register_tool(self, func_name: str, fallback_doc: str, fn):  # type: ignore[no-redef]
+        doc = inspect.getdoc(fn) or ""
+        registered_docs[func_name] = doc
+        return orig_register_tool(self, func_name, fallback_doc, fn)
+
+    setattr(_dtf.DynamicToolFactory, "_register_tool", _spy_register_tool)
+
+    client.set_system_message("Call `spawn_handle` to start a nested handle.")
+    outer = start_async_tool_loop(
+        client,
+        message="start",
+        tools={"spawn_handle": spawn_handle},
+        timeout=120,
+    )
+
+    await _wait_for_tool_request(client, "spawn_handle")
+    await outer.interject("expose helpers now")
+
+    async def _helpers_registered() -> bool:
+        return any(
+            any(k.startswith(p) for k in registered_docs.keys())
+            for p in ("pause_", "resume_", "interject_", "ask_", "stop_")
+        )
+
+    await _wait_for_condition(_helpers_registered, poll=0.05, timeout=30.0)
+
+    # Assertions: overridden text should appear
+    for k, v in registered_docs.items():
+        if k.startswith("pause_"):
+            assert "Pause override doc: only pause if XYZ precondition holds." in v
+        if k.startswith("resume_"):
+            assert "Resume override doc: resume with a session token if required." in v
+        if k.startswith("interject_"):
+            assert "Interject override doc: only interject if importance >= 1." in v
+        if k.startswith("ask_"):
+            assert "Ask override doc: consult safe cache only." in v
+        if k.startswith("stop_"):
+            assert "Stop override doc: stop only if safe to cancel." in v
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_helpers_adopt_custom_method_docstring(client):
+    """
+    Verify a brand-new custom steering method on the handle has its docstring
+    adopted by the dynamically generated helper.
+    """
+
+    class CustomMethodHandle(SteerableToolHandle):
+        def __init__(self) -> None:
+            self._done = asyncio.Event()
+
+        # Standard methods (minimal, no docstrings needed here)
+        async def ask(self, question: str) -> "SteerableToolHandle":
+            return self
+
+        async def interject(self, message: str):
+            return None
+
+        def stop(self, reason: Optional[str] = None):
+            return "stopped"
+
+        def pause(self):
+            return "paused"
+
+        def resume(self):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+        # New custom steering method
+        def escalate(self, level: int) -> str:
+            """Escalate override doc: raise escalation to the specified level."""
+            return f"escalated:{level}"
+
+    @unify.traced
+    async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
+        return CustomMethodHandle()
+
+    from unity.common._async_tool import dynamic_tools_factory as _dtf
+
+    registered_docs: Dict[str, str] = {}
+    orig_register_tool = _dtf.DynamicToolFactory._register_tool
+
+    def _spy_register_tool(self, func_name: str, fallback_doc: str, fn):  # type: ignore[no-redef]
+        doc = inspect.getdoc(fn) or ""
+        registered_docs[func_name] = doc
+        return orig_register_tool(self, func_name, fallback_doc, fn)
+
+    setattr(_dtf.DynamicToolFactory, "_register_tool", _spy_register_tool)
+
+    client.set_system_message("Call `spawn_handle` to start a nested handle.")
+    outer = start_async_tool_loop(
+        client,
+        message="start",
+        tools={"spawn_handle": spawn_handle},
+        timeout=120,
+    )
+
+    await _wait_for_tool_request(client, "spawn_handle")
+    await outer.interject("expose custom methods")
+
+    async def _custom_registered() -> bool:
+        return any(k.startswith("escalate_") for k in registered_docs.keys())
+
+    await _wait_for_condition(_custom_registered, poll=0.05, timeout=30.0)
+
+    # Assert the custom helper's docstring matches the original method docstring
+    found = False
+    for k, v in registered_docs.items():
+        if k.startswith("escalate_"):
+            assert (
+                "Escalate override doc: raise escalation to the specified level." in v
+            )
+            found = True
+    assert found, "expected an escalate_* helper to be registered"
+
+
+@unify.traced
+async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
+    """Return a CustomArgsHandle to exercise dynamic helper schemas/args."""
+    return CustomArgsHandle()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_helper_preserves_annotations_for_public_methods():
+    """
+    Lower-level factory test: ensure public-method helpers preserve annotations
+    so their generated tool schema exposes correct JSON types (e.g., integer).
+    This test is independent of the task scheduler and queue logic.
+    """
+    import asyncio
+    import inspect
+    from contextlib import suppress
+
+    from unity.common.async_tool_loop import SteerableToolHandle
+    from unity.common._async_tool.tools_data import ToolsData
+    from unity.common._async_tool.tools_utils import ToolCallMetadata
+    from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
+    from unity.common.llm_helpers import method_to_schema
+
+    class _AnnotatedHandle(SteerableToolHandle):
+        def __init__(self) -> None:
+            pass
+
+        def set_value(self, task_id: int, note: str | None = None) -> str:
+            return f"set:{task_id}:{note or ''}"
+
+        async def ask(self, question: str, *, images=None):  # type: ignore[override]
+            return self
+
+        async def interject(self, message: str, *, images=None):  # type: ignore[override]
+            return None
+
+        def stop(self, reason: str | None = None, *, parent_chat_context_cont=None):  # type: ignore[override]
+            return "stopped"
+
+        def pause(self):  # type: ignore[override]
+            return "paused"
+
+        def resume(self):  # type: ignore[override]
+            return "resumed"
+
+        def done(self) -> bool:  # type: ignore[override]
+            return True
+
+        async def result(self) -> str:  # type: ignore[override]
+            return "OK"
+
+        async def next_clarification(self) -> dict:  # type: ignore[override]
+            return {}
+
+        async def next_notification(self) -> dict:  # type: ignore[override]
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:  # type: ignore[override]
+            return None
+
+    class _DummyLogger:
+        log_steps = False
+
+        def info(self, *a, **kw): ...
+
+        def error(self, *a, **kw): ...
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = []
+
+    tools_data = ToolsData({}, client=_DummyClient(), logger=_DummyLogger())
+
+    pending_task = asyncio.create_task(asyncio.sleep(10))
+    call_id = "abc123"
+    asst_msg = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": "dummy_base", "arguments": "{}"},
+            },
+        ],
+        "content": "",
+    }
+    meta = ToolCallMetadata(
+        name="dummy_base",
+        call_id=call_id,
+        call_dict=asst_msg["tool_calls"][0],
+        call_idx=0,
+        chat_context=None,
+        assistant_msg=asst_msg,
+        is_interjectable=False,
+        tool_schema={},
+        llm_arguments={},
+        raw_arguments_json=asst_msg["tool_calls"][0]["function"]["arguments"],
+        handle=_AnnotatedHandle(),
+        interject_queue=None,
+        clar_up_queue=None,
+        clar_down_queue=None,
+        notification_queue=None,
+        pause_event=None,
+    )
+    tools_data.save_task(pending_task, meta)
+
+    factory = DynamicToolFactory(tools_data)
+    factory.generate()
+
+    keys = [k for k in factory.dynamic_tools.keys() if k.startswith("set_value_")]
+    assert keys, "expected set_value helper to be generated"
+    helper = factory.dynamic_tools[keys[0]]
+
+    sig = inspect.signature(helper)
+    assert "task_id" in sig.parameters
+    ann = sig.parameters["task_id"].annotation
+    if ann is not inspect._empty:
+        assert (
+            (ann is int)
+            or (ann == int)
+            or (ann == "int")
+            or (getattr(ann, "__name__", None) == "int")
+        )
+
+    schema = method_to_schema(helper, include_class_name=False)
+    params = schema["function"]["parameters"]
+    assert "task_id" in params["properties"]
+    prop = params["properties"]["task_id"]
+    is_integer = (prop.get("type") == "integer") or any(
+        (d.get("type") == "integer")
+        for d in prop.get("anyOf", [])
+        if isinstance(prop, dict)
+    )
+    assert is_integer, f"expected integer type for task_id, got: {prop}"
+    assert "task_id" in params.get("required", [])
+
+    with suppress(BaseException):
+        pending_task.cancel()
+        await pending_task

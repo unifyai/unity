@@ -6,13 +6,9 @@ from typing import Dict, Callable
 from ..common.prompt_helpers import (
     sig_dict,
     clarification_guidance,
-    now_utc_str,
+    now,
 )
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
-
-
-def _now() -> str:
-    return now_utc_str()
 
 
 def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
@@ -39,6 +35,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "-------------------",
         "- Provide concise answers. Never echo raw values.",
         "- When referring to a secret, use its placeholder, e.g. ${NAME}.",
+        "- You MAY surface non-sensitive metadata such as the secret name and secret_id.",
         "- When enumerating stored secrets, ALWAYS call `_list_secret_keys` (do not rely on memory).",
         "- If you just observed new creations in this conversation, prefer listing via `_list_secret_keys` and, if needed, confirm specific names with `_filter_secrets`.",
         "- All writes must keep raw values out of messages – only tool I/O may carry them internally.",
@@ -50,7 +47,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     # Clarification guidance (only shown when request_clarification is present)
     lines += ["", clarification_guidance(tools)]
 
-    lines += ["", f"Current UTC time is {_now()}."]
+    lines += ["", f"Current UTC time is {now()}."]
     return "\n".join(lines)
 
 
@@ -76,7 +73,7 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
         "- After performing creations/updates/deletions, VERIFY results using `_list_secret_keys` and/or `_filter_secrets` and reflect the confirmed outcomes in your message.",
         "- Avoid claiming success unless verification tools confirm the new/updated keys exist (or were removed).",
         "- Do not reference external stores like .env – Unify is the single source of truth.",
-        "- In messages, always reference secrets via ${name}.",
+        "- In messages, always reference secrets via ${name}. You MAY include non-sensitive metadata like secret_id; NEVER include raw values.",
         "",
         "Naming When User Omits Key",
         "--------------------------",
@@ -101,5 +98,5 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
     # Clarification guidance (only shown when request_clarification is present)
     lines += ["", clarification_guidance(tools)]
 
-    lines += ["", f"Current UTC time is {_now()}."]
+    lines += ["", f"Current UTC time is {now()}."]
     return "\n".join(lines)

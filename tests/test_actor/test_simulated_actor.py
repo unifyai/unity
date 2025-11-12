@@ -4,6 +4,11 @@ import pytest
 
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
 from tests.helpers import _handle_project
+from unity.function_manager.function_manager import FunctionManager
+from unity.image_manager.image_manager import ImageManager
+from unity.image_manager.types import RawImageRef, AnnotatedImageRef
+from pathlib import Path
+import base64
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -95,7 +100,7 @@ async def test_handle_stop(monkeypatch):
 @pytest.mark.asyncio
 @_handle_project
 async def test_handle_requests_clarification():
-    actor = SimulatedActor(steps=1, _requests_clarification=True)
+    actor = SimulatedActor(steps=2, _requests_clarification=True)
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
@@ -151,7 +156,7 @@ async def test_handle_pause_and_resume(monkeypatch):
         raising=True,
     )
 
-    actor = SimulatedActor(steps=2)
+    actor = SimulatedActor(steps=3)
     handle = await actor.act("Summarise all open opportunities.")
 
     pause_reply = handle.pause()
@@ -218,3 +223,135 @@ async def test_pause_freezes_duration():
     assert (
         elapsed_after_resume >= 0.05
     ), "Should wait after resume; clock was frozen while paused"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 9.  Entrypoint observes FunctionManager docstring via ask (LinkedIn flow)   #
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_entrypoint_demonstrates_function_knowledge_during_ask():
+    """
+    Simulate a browser-style function that works on LinkedIn sales leads.
+    The docstring should state:
+      1) trouble logging into LinkedIn; 2) then resolved.
+
+    When we ask the running SimulatedActor if it is encountering problems,
+    the response should reference LinkedIn, proving function metadata was observed.
+    """
+
+    fm = FunctionManager()
+
+    impl = '''
+def simulate_linkedin_sales_leads() -> str:
+    """Simulated browser flow:
+    1) Trouble logging into LinkedIn (login blocked initially).
+    2) Issue resolved; proceed to search sales leads on LinkedIn."""
+    print("Trouble logging into LinkedIn: login blocked")
+    print("Issue resolved: Login successful; searching sales leads on LinkedIn")
+    return "ok"
+'''.strip()
+
+    res = fm.add_functions(implementations=impl)
+    status = res.get("simulate_linkedin_sales_leads", "")
+    assert any(s in str(status) for s in ("added", "updated", "skipped"))
+
+    fid = (
+        fm.list_functions().get("simulate_linkedin_sales_leads", {}).get("function_id")
+    )
+    assert isinstance(fid, int)
+
+    actor = SimulatedActor(steps=2, duration=None)
+    handle = await actor.act("Search sales leads.", entrypoint=fid)
+
+    reply = await handle.ask(
+        "Did you or are you encountering any problems logging in? Reply briefly, explaining any relevant websites.",
+    )
+    assert isinstance(reply, str) and reply.strip(), "Expected a non-empty reply"
+    assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
+
+    await handle.result()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 10.  Interject with image → simulation recognises spreadsheet               #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_interject_image_guides_simulation_to_spreadsheet(monkeypatch):
+    """
+    Start a simulated task, interject with a screenshot (Google Sheets), then
+    ask about progress; the reply should reference a sheet/spreadsheet.
+    """
+
+    # Store the screenshot and obtain an image id
+    img_path = (
+        Path(__file__).parent.parent
+        / "test_task_scheduler"
+        / "organize_weekly_rotar.png"
+    )
+    raw_bytes = img_path.read_bytes()
+    img_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    im = ImageManager()
+    [img_id] = im.add_images(
+        [
+            {"caption": "weekly rota", "data": img_b64},
+        ],
+    )
+
+    actor = SimulatedActor(steps=3, duration=None)
+    handle = await actor.act(
+        "We'll start working on organizing the rota for the admin assistants.",
+    )
+
+    # Interject with the image attached; annotation intentionally does not say "spreadsheet"
+    await handle.interject(
+        "Please start working on this file.",
+        images=[
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_id)),
+                annotation="rota file",
+            ),
+        ],
+    )
+
+    # Ask about status and infer file type from the visual context
+    reply = await handle.ask(
+        "How is it going? What file are you working on? What file type is it?",
+    )
+    assert isinstance(reply, str) and reply.strip()
+    assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
+
+    await handle.result()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 11. next_notification emits progress and consumes a step                    #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_next_notification_emits_and_consumes_step():
+    actor = SimulatedActor(steps=2, duration=None)
+    handle = await actor.act("Quick simulated task.")
+
+    # Capture remaining steps before
+    before = handle.get_remaining_steps()
+    assert isinstance(before, int) and before == 2
+
+    # next_notification should return a real event and consume one step
+    evt = await asyncio.wait_for(handle.next_notification(), timeout=30)
+    assert isinstance(evt, dict)
+    assert evt.get("type") == "notification"
+    assert evt.get("tool_name") == "simulated_actor"
+    assert isinstance(evt.get("message"), str) and evt.get("message").strip()
+
+    after = handle.get_remaining_steps()
+    assert isinstance(after, int) and after == before - 1
+
+    # Complete the simulation and ensure result is available
+    handle.simulate_step()
+    res = await asyncio.wait_for(handle.result(), timeout=30)
+    assert isinstance(res, str) and res.strip()

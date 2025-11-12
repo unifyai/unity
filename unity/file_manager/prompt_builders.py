@@ -6,7 +6,7 @@ from typing import Dict, Callable
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
-    now_utc_str,
+    now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
@@ -20,11 +20,6 @@ from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     """Return {name: '(<argspec>)', …} using shared helper."""
     return sig_dict(tools)
-
-
-def _now() -> str:
-    """Current UTC timestamp in a compact, human-readable form."""
-    return now_utc_str()
 
 
 def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
@@ -182,7 +177,6 @@ Anti‑patterns to avoid
             ],
         )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # Conditional guidance about asking questions in final responses
@@ -196,7 +190,6 @@ Anti‑patterns to avoid
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specializing in **retrieving file information and analyzing file contents**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
@@ -218,7 +211,7 @@ Anti‑patterns to avoid
             "",
             clar_section,
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now()}.",
         ],
     )
 

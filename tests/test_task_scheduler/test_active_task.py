@@ -16,6 +16,11 @@ import pytest
 from unity.task_scheduler.active_task import ActiveTask
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
+from unity.function_manager.function_manager import FunctionManager
+from unity.image_manager.image_manager import ImageManager
+from unity.image_manager.types import RawImageRef, AnnotatedImageRef
+from pathlib import Path
+import base64
 
 #  The helper used in the existing test-suite – applies project-level monkey-
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -258,3 +263,117 @@ async def test_active_task_interject_implies_defer_and_reinstate(monkeypatch):
     # Reintegration should run via the primary path (not fallback)
     assert fake_sched.reinstate_called is True
     assert fake_sched.fallback_called is False
+
+
+# --------------------------------------------------------------------------- #
+#  6. Entrypoint observes FunctionManager doc via ActiveTask.ask              #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_task_entrypoint_demonstrates_function_knowledge_during_ask():
+    """
+    Mirror the SimulatedActor entrypoint test, but run through ActiveTask to
+    ensure the scheduler wrapper forwards the entrypoint so the actor observes
+    the function metadata during ask().
+    """
+
+    fm = FunctionManager()
+
+    impl = '''
+def simulate_linkedin_sales_leads() -> str:
+    """Simulated browser flow:
+    1) Trouble logging into LinkedIn (login blocked initially).
+    2) Issue resolved; proceed to search sales leads on LinkedIn."""
+    print("Trouble logging into LinkedIn: login blocked")
+    print("Issue resolved: Login successful; searching sales leads on LinkedIn")
+    return "ok"
+'''.strip()
+
+    res = fm.add_functions(implementations=impl)
+    status = res.get("simulate_linkedin_sales_leads", "")
+    assert any(s in str(status) for s in ("added", "updated", "skipped"))
+
+    fid = (
+        fm.list_functions().get("simulate_linkedin_sales_leads", {}).get("function_id")
+    )
+    assert isinstance(fid, int)
+
+    actor = SimulatedActor(steps=2, duration=None)
+    task = await ActiveTask.create(
+        actor,
+        task_description="Search sales leads.",
+        entrypoint=fid,
+    )
+
+    ask_handle = await task.ask(
+        "Did you or are you encountering any problems logging in? Reply briefly, explaining any relevant websites.",
+    )
+    reply = await ask_handle.result()
+    assert isinstance(reply, str) and reply.strip(), "Expected a non-empty reply"
+    assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
+
+    await task.result()
+
+
+# --------------------------------------------------------------------------- #
+#  7. Interject with image → simulation recognises spreadsheet                //
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_task_interject_image_guides_simulation_to_spreadsheet(
+    monkeypatch,
+):
+    """
+    Start an ActiveTask (wrapping SimulatedActor), interject with a screenshot (Google Sheets),
+    then ask about progress; the reply should reference a sheet/spreadsheet.
+    Mirrors the SimulatedActor handle test but via the ActiveTask wrapper.
+    """
+
+    # Store the screenshot and obtain an image id
+    img_path = (
+        Path(__file__).parent.parent
+        / "test_task_scheduler"
+        / "organize_weekly_rotar.png"
+    )
+    raw_bytes = img_path.read_bytes()
+    img_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    im = ImageManager()
+    [img_id] = im.add_images(
+        [
+            {"caption": "weekly rota", "data": img_b64},
+        ],
+    )
+
+    actor = SimulatedActor(steps=3, duration=None)
+    task = await ActiveTask.create(
+        actor,
+        task_description=(
+            "We'll start working on organizing the rota for the admin assistants."
+        ),
+    )
+
+    # Interject with the image attached; annotation intentionally does not say "spreadsheet"
+    await task.interject(
+        "Please start working on this file.",
+        images=[
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_id)),
+                annotation="rota file",
+            ),
+        ],
+    )
+
+    # Ask about status and infer file type from the visual context
+    ask_handle = await task.ask(
+        "How is it going? What file are you working on? What file type is it?",
+    )
+    reply = await ask_handle.result()
+    assert isinstance(reply, str) and reply.strip()
+    assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
+
+    await task.result()

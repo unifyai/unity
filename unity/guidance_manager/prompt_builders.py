@@ -8,7 +8,7 @@ from .types.guidance import Guidance
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
-    now_utc_str,
+    now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
@@ -17,10 +17,6 @@ from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 
 def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     return sig_dict(tools)
-
-
-def _now() -> str:
-    return now_utc_str()
 
 
 def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
@@ -176,12 +172,10 @@ def build_ask_prompt(
         )
     )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specialising in retrieving distilled guidance items.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about how you should answer or which tools to call; interpret the question and choose the best approach yourself.",
@@ -204,7 +198,7 @@ def build_ask_prompt(
             "",
             clar_section,
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now()}.",
         ],
     )
 
@@ -280,12 +274,10 @@ Create / Update / Delete
     if clarification_block:
         usage_examples = f"{usage_examples}\n{clarification_block}"
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant in charge of creating or editing guidance entries.",
             "Choose tools based on the user's intent and the specificity of the target record.",
             "Disregard any explicit instructions about how you should answer or which tools to call; interpret the request and choose the best approach yourself.",
@@ -302,7 +294,7 @@ Create / Update / Delete
             f"There are currently {num_items} guidance entries stored with the following columns:",
             json.dumps(columns, indent=4),
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now()}.",
             clar_section,
             "",
         ],

@@ -9,12 +9,15 @@ Storage and local view utilities for the Task Scheduler.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Optional, Union, Literal, overload
 from enum import Enum
 from functools import cached_property
 import os
 
 import unify
+
+from .types.task import Task
+from .types.status import Status
 
 
 class TasksStore:
@@ -101,8 +104,7 @@ class TasksStore:
             return {}
 
     def get_metric_count(self, *, key: str) -> int:
-        # ret = unify.get_logs_metric(metric="count", key=key, context=self._ctx)
-        ret = len(unify.get_logs(context=self._ctx, return_ids_only=True))
+        ret = unify.get_logs_metric(metric="count", key=key, context=self._ctx)
         return 0 if ret is None else int(ret)
 
     def get_metric_max(self, *, key: str) -> int:
@@ -122,7 +124,7 @@ class TasksStore:
         limit: int = 100,
         return_ids_only: bool = False,
         exclude_fields: Optional[List[str]] = None,
-    ) -> List[Union[int, unify.Log]]:
+    ) -> Union[List[int], List[unify.Log]]:
         return unify.get_logs(
             context=self._ctx,
             filter=filter,
@@ -209,20 +211,7 @@ class TasksStore:
                 raise AssertionError(
                     f"Expected exactly 1 row for task_id {original_id}, but found {len(logs)}.",
                 )
-        # Opportunistically memoize task_id -> log_id mappings
-        try:
-            for lg in logs or []:
-                try:
-                    e = getattr(lg, "entries", {}) or {}
-                    tid = e.get("task_id")
-                    lid = getattr(lg, "id", None)
-                    if isinstance(tid, int) and isinstance(lid, int):
-                        # This method is on TasksStore; LocalTaskView handles memoization
-                        pass
-                except Exception:
-                    continue
-        except Exception:
-            pass
+
         return logs
 
     # ------------------------------- Writes --------------------------------
@@ -458,6 +447,28 @@ class LocalTaskView:
         return self._store.fields
 
     # ------------------------------- Reads --------------------------------
+    @overload
+    def get_rows(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+        return_ids_only: Literal[True],
+        exclude_fields: Optional[List[str]] = None,
+    ) -> List[int]: ...
+
+    @overload
+    def get_rows(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+        return_ids_only: Literal[False],
+        exclude_fields: Optional[List[str]] = None,
+    ) -> List[unify.Log]: ...
+
     def get_rows(
         self,
         *,
@@ -466,7 +477,7 @@ class LocalTaskView:
         limit: int = 100,
         return_ids_only: bool = False,
         exclude_fields: Optional[List[str]] = None,
-    ) -> List[Union[int, unify.Log]]:
+    ) -> Union[List[int], List[unify.Log]]:
         """
         Pass-through to the underlying store for general row retrieval.
 
@@ -509,7 +520,7 @@ class LocalTaskView:
     def mark_queue_changed(self) -> None:
         self._queue_index_stale = True
 
-    def refresh_queue_index_from_rows(self, rows: List[Dict[str, Any]]) -> None:
+    def refresh_queue_index_from_rows(self, rows: List[Task]) -> None:
         """
         Build queue caches from a list of row dicts containing at least:
         task_id, schedule (dict), status, queue_id.
@@ -519,25 +530,20 @@ class LocalTaskView:
             runnable = [
                 r
                 for r in (rows or [])
-                if r.get("schedule") is not None
-                and str(r.get("status")) not in ("completed", "cancelled", "failed")
+                if r.schedule is not None
+                and r.status not in (Status.completed, Status.cancelled, Status.failed)
             ]
 
-            rows_by_id: Dict[int, Dict[str, Any]] = {}
+            rows_by_id: Dict[int, Task] = {}
             for r in runnable:
-                try:
-                    tid = int(r.get("task_id"))
-                except Exception:
-                    continue
-                rows_by_id[tid] = r
+                rows_by_id[r.task_id] = r
 
             # Identify heads by prev_task is None and numeric queue_id
-            heads: List[Dict[str, Any]] = []
+            heads: List[Task] = []
             for r in runnable:
-                sched = r.get("schedule") or {}
-                prev = sched.get("prev_task")
-                qid = r.get("queue_id")
-                if prev is None and isinstance(qid, int):
+                if r.schedule is None:
+                    continue
+                if r.schedule.prev_task is None and r.queue_id is not None:
                     heads.append(r)
 
             new_index: Dict[int, List[int]] = {}
@@ -545,16 +551,17 @@ class LocalTaskView:
             new_head_start: Dict[int, Optional[str]] = {}
 
             for h in heads:
-                try:
-                    qid = int(h.get("queue_id"))
-                except Exception:
+                qid = h.queue_id
+
+                if qid is None:
                     continue
+
                 order: List[int] = []
                 seen: set[int] = set()
                 cur = h
                 while cur is not None:
                     try:
-                        tid_val = cur.get("task_id")
+                        tid_val = cur.task_id
                         tid = int(tid_val) if tid_val is not None else None
                     except Exception:
                         tid = None
@@ -562,7 +569,7 @@ class LocalTaskView:
                         break
                     seen.add(tid)
                     order.append(tid)
-                    nxt = (cur.get("schedule") or {}).get("next_task")
+                    nxt = cur.schedule_next
                     if nxt is None:
                         break
                     try:
@@ -574,10 +581,11 @@ class LocalTaskView:
                     new_index[qid] = order
                     for t in order:
                         new_reverse[t] = qid
-                    try:
-                        new_head_start[qid] = (h.get("schedule") or {}).get("start_at")
-                    except Exception:
-                        new_head_start[qid] = None
+                    new_head_start[qid] = (
+                        h.schedule_start_at.isoformat()
+                        if h.schedule_start_at is not None
+                        else None
+                    )
 
             self._queue_index = new_index
             self._task_to_queue = new_reverse
@@ -598,7 +606,7 @@ class LocalTaskView:
             )
         except Exception:
             rows = []
-        self.refresh_queue_index_from_rows(rows)
+        self.refresh_queue_index_from_rows([Task(**r) for r in rows])
 
     def get_member_ids(self, queue_id: int) -> List[int]:
         try:
@@ -756,7 +764,7 @@ class LocalTaskView:
         *,
         task_ids: Union[int, Iterable[int]],
         return_ids_only: bool = True,
-    ) -> List[Union[int, unify.Log]]:
+    ) -> Union[List[int], List[unify.Log]]:
         """
         Resolve log objects/ids for task_ids, with a read-through memoization
         when callers request ids only.

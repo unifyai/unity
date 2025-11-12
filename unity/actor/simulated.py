@@ -9,6 +9,7 @@ import logging
 from .base import BaseActor
 from typing import Optional
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.function_manager.function_manager import FunctionManager
 
 
 class SimulatedActorHandle(SteerableToolHandle):
@@ -36,6 +37,9 @@ class SimulatedActorHandle(SteerableToolHandle):
         clarification_up_q: asyncio.Queue[str] | None = None,
         clarification_down_q: asyncio.Queue[str] | None = None,
         log_mode: "str | None" = "log",
+        # Optional: function entrypoint context and prebaked result
+        entrypoint_info: dict | None = None,
+        planned_result: str | None = None,
     ) -> None:
         self._llm = llm
         self._description = description
@@ -48,6 +52,10 @@ class SimulatedActorHandle(SteerableToolHandle):
         self._log_mode: str | None = (
             log_mode if log_mode in ("print", "log", None) else "log"
         )
+
+        # Store optional entrypoint metadata and a planned completion result
+        self._entrypoint_info: dict | None = entrypoint_info
+        self._planned_result: str | None = planned_result or None
 
         self._steps_taken = 0
         self._step_lock = threading.Lock()
@@ -99,14 +107,19 @@ class SimulatedActorHandle(SteerableToolHandle):
                     and (time.monotonic() - self._last_started_at)
                     >= self._remaining_duration
                 ):
-                    self._complete(
-                        f"Completed '{description}' after {self._duration}\u2009s duration.",
+                    # Prefer prebaked function-aware result if available
+                    msg = (
+                        self._planned_result
+                        or f"Completed '{description}' after {self._duration}\u2009s duration."
                     )
+                    self._complete(msg)
                     return
                 if self._steps is not None and self._steps_taken >= (self._steps or 0):
-                    self._complete(
-                        f"Completed '{description}' in {self._steps} steps.",
+                    msg = (
+                        self._planned_result
+                        or f"Completed '{description}' in {self._steps} steps."
                     )
+                    self._complete(msg)
                     return
                 self._pause_event.wait()
                 time.sleep(0.1)
@@ -204,14 +217,202 @@ class SimulatedActorHandle(SteerableToolHandle):
         self._complete(msg)
         return msg
 
-    async def interject(self, instruction: str) -> None:
+    async def interject(
+        self,
+        message: str,
+        *,
+        images: object | None = None,
+    ) -> None:
         if not self._description:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
-        prompt = (
-            f"Current simulated actions:\n{self._description}\n\n"
-            f"User instruction to adjust the plan:\n{instruction}"
-        )
+
+        # Build a content list for a user message that includes the instruction and any attached images.
+        # Images are resolved to handles and added as image_url blocks (data URLs or signed URLs where available).
+        content_blocks: list[dict] = [{"type": "text", "text": str(message)}]
+
+        # Best-effort image resolution and block construction
+        if images is not None:
+            try:
+                # Support ImageRefs containers (duck-typed via .root) and plain lists
+                items = list(getattr(images, "root", images) or [])
+            except Exception:
+                items = []
+
+            # Collect candidate handles by id or direct handle objects
+            handles: list[object] = []
+            ids_to_fetch: list[int] = []
+
+            # Local imports to avoid module import cycles
+            try:
+                from unity.image_manager.types import (
+                    RawImageRef as _RawImageRef,
+                    AnnotatedImageRef as _AnnotatedImageRef,
+                )
+            except Exception:  # pragma: no cover - robustness
+                _RawImageRef = object  # type: ignore
+                _AnnotatedImageRef = object  # type: ignore
+
+            for ref in items:
+                try:
+                    # Direct handle case (has raw() method and image_id attr)
+                    if hasattr(ref, "raw") and hasattr(ref, "image_id"):
+                        handles.append(ref)
+                        continue
+                    # Typed refs
+                    if isinstance(ref, _AnnotatedImageRef):
+                        ids_to_fetch.append(int(ref.raw_image_ref.image_id))
+                    elif isinstance(ref, _RawImageRef):
+                        ids_to_fetch.append(int(ref.image_id))
+                    # Primitive id
+                    elif isinstance(ref, int):
+                        ids_to_fetch.append(int(ref))
+                except Exception:
+                    continue
+
+            # Resolve any remaining ids to handles via ImageManager
+            if ids_to_fetch:
+                try:
+                    from unity.image_manager.image_manager import (
+                        ImageManager as _ImageManager,
+                    )
+
+                    mgr = _ImageManager()
+                    fetched = mgr.get_images(ids_to_fetch)
+                    for h in fetched:
+                        if h is not None:
+                            handles.append(h)
+                except Exception:
+                    pass
+
+            # Convert handles to content blocks and append
+            for ih in handles:
+                try:
+                    # Prefer direct URLs when present on the underlying image record
+                    data_str = getattr(getattr(ih, "_image", object), "data", None)
+                    content_block: dict
+                    if isinstance(data_str, str) and (
+                        data_str.startswith("http://")
+                        or data_str.startswith("https://")
+                        or data_str.startswith("data:image/")
+                        or data_str.startswith("gs://")
+                    ):
+                        # Best-effort: sign GCS URLs if a storage client is available, else fall back to raw bytes
+                        if data_str.startswith("gs://") or data_str.startswith(
+                            "https://storage.googleapis.com/",
+                        ):
+                            try:
+                                from datetime import timedelta as _timedelta
+
+                                storage_client = getattr(
+                                    getattr(ih, "_manager", object),
+                                    "storage_client",
+                                    None,
+                                )
+                                if storage_client is not None:
+                                    from urllib.parse import urlparse as _urlparse
+
+                                    parsed_url = _urlparse(data_str)
+                                    bucket_name = ""
+                                    object_path = ""
+                                    if parsed_url.scheme == "gs":
+                                        bucket_name = parsed_url.netloc
+                                        object_path = parsed_url.path.lstrip("/")
+                                    elif (
+                                        parsed_url.hostname == "storage.googleapis.com"
+                                    ):
+                                        parts = parsed_url.path.lstrip("/").split(
+                                            "/",
+                                            1,
+                                        )
+                                        if len(parts) == 2:
+                                            bucket_name, object_path = parts
+                                    bucket = storage_client.bucket(bucket_name)
+                                    blob = bucket.blob(object_path)
+                                    signed_url = blob.generate_signed_url(
+                                        version="v4",
+                                        expiration=_timedelta(hours=1),
+                                        method="GET",
+                                    )
+                                    content_block = {
+                                        "type": "image_url",
+                                        "image_url": {"url": signed_url},
+                                    }
+                                else:
+                                    raise RuntimeError("no storage client")
+                            except Exception:
+                                raw = ih.raw()  # type: ignore[attr-defined]
+                                import base64 as _b64  # local import
+
+                                head = (
+                                    bytes(raw[:10])
+                                    if isinstance(raw, (bytes, bytearray))
+                                    else b""
+                                )
+                                if head.startswith(b"\xff\xd8"):
+                                    mime = "image/jpeg"
+                                elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                                    mime = "image/png"
+                                else:
+                                    mime = "image/png"
+                                b64 = _b64.b64encode(raw).decode("ascii")
+                                content_block = {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                                }
+                        else:
+                            content_block = {
+                                "type": "image_url",
+                                "image_url": {"url": data_str},
+                            }
+                    else:
+                        # Fallback to raw bytes from handle
+                        raw = ih.raw()  # type: ignore[attr-defined]
+                        import base64 as _b64  # local import
+
+                        head = (
+                            bytes(raw[:10])
+                            if isinstance(raw, (bytes, bytearray))
+                            else b""
+                        )
+                        if head.startswith(b"\xff\xd8"):
+                            mime = "image/jpeg"
+                        elif head.startswith(b"\x89PNG\r\n\x1a\n"):
+                            mime = "image/png"
+                        else:
+                            mime = "image/png"
+                        b64 = _b64.b64encode(raw).decode("ascii")
+                        content_block = {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
+                        }
+
+                    content_blocks.append(content_block)
+                except Exception:
+                    # Skip malformed handle entries; continue attaching the rest
+                    continue
+
+        # Append a single composite user message so the vision model can "see" the images with the instruction
+        try:
+            self._llm.messages.append({"role": "user", "content": content_blocks})
+        except Exception:
+            pass
+
+        # Preserve prior behavior: kick the LLM once to acknowledge the interjection and advance the simulation.
+        if self._entrypoint_info:
+            fn = self._entrypoint_info
+            prompt = (
+                "You are mid-execution of a function-driven simulated task.\n"
+                f"Task: {self._description}\n"
+                f"Entrypoint: {fn.get('name')} {fn.get('argspec','')} (id={fn.get('function_id')})\n"
+                f"Docstring:\n{fn.get('docstring','')}\n\n"
+                "Use any images attached in the most recent user message as ground truth for visual details."
+            )
+        else:
+            prompt = (
+                f"Current simulated actions:\n{self._description}\n\n"
+                "Use any images attached in the most recent user message as ground truth for visual details."
+            )
         await self._llm.generate(prompt)
 
     def pause(self) -> str:
@@ -246,10 +447,20 @@ class SimulatedActorHandle(SteerableToolHandle):
         if not self._description:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
-        prompt = (
-            f"You are working on simulating these actions:\n{self._description}\n\n"
-            f"User asks: {question}"
-        )
+        if self._entrypoint_info:
+            fn = self._entrypoint_info
+            prompt = (
+                "You are executing a simulated function as part of a task. Answer briefly.\n"
+                f"Task: {self._description}\n"
+                f"Entrypoint: {fn.get('name')} {fn.get('argspec','')} (id={fn.get('function_id')})\n"
+                f"Docstring:\n{fn.get('docstring','')}\n\n"
+                f"User asks: {question}"
+            )
+        else:
+            prompt = (
+                f"You are working on simulating these actions:\n{self._description}\n\n"
+                f"User asks: {question}"
+            )
         return await self._llm.generate(prompt)
 
     def done(self) -> bool:
@@ -301,7 +512,42 @@ class SimulatedActorHandle(SteerableToolHandle):
         return {}
 
     async def next_notification(self) -> dict:
-        return {}
+        # Consume a unit of progress and report a concise, simulation‑consistent update
+        try:
+            self.simulate_step()
+        except Exception:
+            pass
+
+        # Compose a small progress message consistent with the configured mode
+        try:
+            desc = str(self._description) if self._description else "activity"
+        except Exception:
+            desc = "activity"
+
+        message = f"Progress update for '{desc}'."
+        try:
+            rem_steps = self.get_remaining_steps()
+            rem_secs = self.get_remaining_duration_seconds()
+            if rem_steps is not None:
+                message = f"Progress update: working on '{desc}'. Steps remaining: {max(0, rem_steps)}"
+            elif rem_secs is not None:
+                # Round to one decimal place for readability
+                try:
+                    rem_str = f"{max(0.0, float(rem_secs)):.1f}s"
+                except Exception:
+                    rem_str = str(rem_secs)
+                message = (
+                    f"Progress update: working on '{desc}'. Time remaining: {rem_str}"
+                )
+        except Exception:
+            # Fall back to the generic message
+            pass
+
+        return {
+            "type": "notification",
+            "tool_name": "simulated_actor",
+            "message": message,
+        }
 
     async def answer_clarification(self, call_id: str, answer: str) -> None:
         try:
@@ -370,8 +616,50 @@ class SimulatedActor(BaseActor):
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        # optional function entrypoint id
+        entrypoint: Optional[int] = None,
+        **kwargs,
     ) -> SimulatedActorHandle:
-        # Pass the original TaskScheduler-provided description unchanged.
+        entrypoint_info: dict | None = None
+        planned_result: str | None = None
+
+        # If an entrypoint is provided, fetch real function metadata/code and prebake a result
+        if entrypoint is not None:
+            try:
+                fm = FunctionManager()
+                log = fm._get_log_by_function_id(function_id=int(entrypoint), raise_if_missing=True)  # type: ignore[attr-defined]
+                ent = log.entries if hasattr(log, "entries") else {}
+                entrypoint_info = {
+                    "function_id": ent.get("function_id", entrypoint),
+                    "name": ent.get("name"),
+                    "argspec": ent.get("argspec"),
+                    "docstring": ent.get("docstring") or "",
+                    "implementation": ent.get("implementation") or "",
+                }
+
+                # Compose a concise final completion sentence consistent with the function
+                impl = entrypoint_info.get("implementation", "")
+                name = entrypoint_info.get("name") or f"function_{entrypoint}"
+                sig = entrypoint_info.get("argspec", "")
+                doc = entrypoint_info.get("docstring", "")
+                prompt = (
+                    "You are simulating the execution of a Python function inside a task.\n"
+                    "Return ONE short past-tense sentence that STARTS with 'Completed',\n"
+                    "summarising the concrete outcome of running the function in the context below.\n"
+                    "Do not include code or steps. Keep it under two sentences.\n\n"
+                    f"Task description: {description}\n"
+                    f"Function: {name} {sig} (id={entrypoint})\n"
+                    f"Docstring:\n{doc}\n\n"
+                    f"Implementation:\n{impl}"
+                )
+                planned_result = await self._llm.generate(prompt)
+                if not isinstance(planned_result, str) or not planned_result.strip():
+                    planned_result = None
+            except Exception:
+                entrypoint_info = None
+                planned_result = None
+
+        # Construct the simulated handle with optional entrypoint context
         return SimulatedActorHandle(
             self._llm,
             description,
@@ -382,4 +670,6 @@ class SimulatedActor(BaseActor):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
             log_mode=self._log_mode,
+            entrypoint_info=entrypoint_info,
+            planned_result=planned_result,
         )

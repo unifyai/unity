@@ -1,4 +1,5 @@
 .env
+*.env
 .sensitive_data
 __pycache__/
 implementations.py
@@ -7,6 +8,8 @@ implementations.py
 log.txt
 .logs.txt
 logs.txt
+.pytest_logs/
+.llm_io_debug/
 test.py
 .env.latest
 .env.old

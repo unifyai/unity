@@ -19,6 +19,7 @@ from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
 from .llm import new_llm_client
 import logging
+from ..common.handle_wrappers import HandleWrapperMixin
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 
 
-class ActiveTask(BaseActiveTask):
+class ActiveTask(BaseActiveTask, HandleWrapperMixin):
     def __init__(
         self,
         actor_handle: SteerableToolHandle,
@@ -121,6 +122,9 @@ class ActiveTask(BaseActiveTask):
         self._last_intent: Optional[str] = None
         self._last_intent_reason: Optional[str] = None
 
+        # Register the underlying actor handle for standardized wrapper discovery
+        self.wrap_handle(actor_handle)
+
     @classmethod
     async def create(
         cls,
@@ -133,7 +137,7 @@ class ActiveTask(BaseActiveTask):
         task_id: Optional[int] = None,
         instance_id: Optional[int] = None,
         scheduler: Optional["TaskScheduler"] = None,
-        entrypoint_function_id: Optional[int] = None,
+        entrypoint: Optional[int] = None,
     ) -> "ActiveTask":
         """
         Create an ActiveTask by starting work on the provided ``actor``.
@@ -146,8 +150,9 @@ class ActiveTask(BaseActiveTask):
             _parent_chat_context=_parent_chat_context,
             _clarification_up_q=_clarification_up_q,
             _clarification_down_q=_clarification_down_q,
-            entrypoint_function_id=entrypoint_function_id,
-            persist=False, # Scheduler-run plans should complete instead of pausing for interjection
+            # Always pass entrypoint to the actor so it can immediately run the function
+            entrypoint=entrypoint,
+            persist=False,  # Scheduler-run plans should complete instead of pausing for interjection
         )
         return cls(
             actor_steerable_handle,  # type: ignore[arg-type]
@@ -202,7 +207,7 @@ class ActiveTask(BaseActiveTask):
         return _AnswerHandle()
 
     @functools.wraps(BaseActiveTask.interject, updated=())
-    async def interject(self, message: str) -> None:
+    async def interject(self, message: str, *, images: object | None = None) -> None:
         # Classify steering intent and enforce lifecycle synchronization for stop/defer/cancel.
         intent: Optional[str] = None
         reason: Optional[str] = None
@@ -277,11 +282,16 @@ class ActiveTask(BaseActiveTask):
             self._clear_active_pointer()
             return
 
-        # No stop/defer/cancel intent ⇒ forward interjection to the actor.
-        await self._actor_handle.interject(message)
+        # No stop/defer/cancel intent ⇒ forward interjection to the actor (with images).
+        await self._actor_handle.interject(message, images=images)  # type: ignore[arg-type]
 
     @functools.wraps(BaseActiveTask.stop, updated=())
-    def stop(self, *, cancel: bool, reason: Optional[str] = None) -> Optional[str]:
+    def stop(
+        self,
+        *,
+        cancel: bool = False,
+        reason: Optional[str] = None,
+    ) -> Optional[str]:
         """Stop the running activity with explicit intent.
 
         When ``cancel`` is True the task instance is marked cancelled. When False, the

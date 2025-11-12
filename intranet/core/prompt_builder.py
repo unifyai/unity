@@ -6,11 +6,7 @@ from __future__ import annotations
 import json
 import textwrap
 from typing import List, Dict, Any, Optional
-from unity.common.prompt_helpers import now_utc_str
-
-
-def _now() -> str:  # UTC timestamp helper
-    return now_utc_str()
+from unity.common.prompt_helpers import now
 
 
 # Enhanced metadata extraction prompt for new parser
@@ -282,7 +278,7 @@ def build_intranet_ask_llm_prompt(
         "",
         documents_block,
         extra,
-        f"Current UTC time: {_now()}.",
+        f"Current UTC time: {now()}.",
     ]
 
     return "\n".join(parts)

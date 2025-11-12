@@ -35,6 +35,12 @@ class TestingSettings(BaseSettings):
 SETTINGS = TestingSettings()
 
 
+# ---------- CURSOR DEBUG LOGGER --------------------------------
+# Re-export the leaf logger from the production module to keep a single
+# grep-able function name while avoiding circular imports in production code.
+from unity.common.debug import CURSOR_DEBUG_LOG  # noqa: E402,F401
+
+
 # ---------- helper -------------------------------------------------
 def _ctx_name(fn: Callable, fn_name: str) -> str:
     file_path = fn.__code__.co_filename

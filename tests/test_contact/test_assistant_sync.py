@@ -75,6 +75,13 @@ def test_dummy_assistant_created(monkeypatch):
     assert a.surname == "Assistant"
     assert a.email_address == "unify.assistant@unify.ai"
     assert a.phone_number == "+10000000000"
+    # System contact timezone should be hard-coded to UTC for now
+    assert a.utc_offset_hours == 0.0
+
+    # Default user (id 1) should also have UTC for now
+    users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
+    assert users, "Default user should exist"
+    assert users[0].utc_offset_hours == 0.0
 
 
 @pytest.mark.unit
@@ -111,3 +118,9 @@ def test_real_assistant_synced(monkeypatch):
     assert a.surname == "Smith"
     assert a.email_address == "alice.smith@example.com"
     assert a.phone_number == "+15551234567"
+    # System contact timezone should be hard-coded to UTC for now
+    assert a.utc_offset_hours == 0.0
+
+    users = cm.filter_contacts(filter="contact_id == 1")["contacts"]
+    assert users, "Default user should exist"
+    assert users[0].utc_offset_hours == 0.0

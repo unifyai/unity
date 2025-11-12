@@ -11,30 +11,14 @@ from .repetition import RepeatPattern
 from .activated_by import ActivatedBy
 from datetime import datetime
 
-UNASSIGNED = -1
 
-
-class Task(BaseModel):
+class TaskBase(BaseModel):
     # Top-level queue identifier for tasks that are members of a runnable queue.
     # When a task is queued/scheduled, this must be populated. The schedule
     # object never carries a queue_id field; use this top-level column solely.
     queue_id: Optional[int] = Field(
         default=None,
         description=("Identifier of the runnable queue this task belongs to."),
-    )
-    task_id: int = Field(
-        default=UNASSIGNED,
-        description="Unique identifier for the task",
-        ge=UNASSIGNED,
-    )
-    instance_id: int = Field(
-        default=UNASSIGNED,
-        description=(
-            "Auto-incrementing counter that distinguishes multiple *instances* "
-            "of the same logical task.  The very first row receives `0`; "
-            "each subsequent clone is incremented by the backend."
-        ),
-        ge=UNASSIGNED,
     )
     name: str = Field(description="Short title of the task")
     description: str = Field(
@@ -89,13 +73,6 @@ class Task(BaseModel):
         description="A summary of what happened during the execution of the task, generated upon completion.",
     )
 
-    @model_validator(mode="before")
-    @classmethod
-    def _inject_sentinel(cls, data: dict) -> dict:
-        data.setdefault("task_id", UNASSIGNED)
-        data.setdefault("instance_id", UNASSIGNED)
-        return data
-
     @model_validator(mode="after")
     def _mutually_exclusive_schedule_trigger(self):
         """
@@ -106,31 +83,52 @@ class Task(BaseModel):
         if self.schedule is not None and self.trigger is not None:
             raise ValueError("A task cannot have both *schedule* and *trigger*.")
 
-        if self.trigger is not None and self.status != Status.triggerable:
-            raise ValueError(
-                "When *trigger* is set the status must be 'triggerable'.",
-            )
+        # TODO: These rules are a bit constraining and hide information
+        # and not necessarily replicating the backend state.
+        # if self.trigger is not None and self.status != Status.triggerable:
+        #     raise ValueError(
+        #         "When *trigger* is set the status must be 'triggerable'.",
+        #     )
 
-        if self.status == Status.triggerable and self.trigger is None:
-            raise ValueError(
-                "Status 'triggerable' requires a non-null *trigger* definition.",
-            )
+        # if self.status == Status.triggerable and self.trigger is None:
+        #     raise ValueError(
+        #         "Status 'triggerable' requires a non-null *trigger* definition.",
+        #     )
 
         # `activated_by` may only be present once the task is actually active
-        if self.status != Status.active and self.activated_by is not None:
-            raise ValueError(
-                "`activated_by` may only be set when status is 'active'",
-            )
+        # if self.status != Status.active and self.activated_by is not None:
+        #     raise ValueError(
+        #         "`activated_by` may only be set when status is 'active'",
+        #     )
 
         return self
 
     def to_post_json(self) -> dict:
         exclude: set[str] = set()
-        if self.task_id == UNASSIGNED:
-            exclude.add("task_id")
-        if self.instance_id == UNASSIGNED:
-            exclude.add("instance_id")
         # Allow backend auto-increment for queue_id by omitting it when unset
         if self.queue_id is None:
             exclude.add("queue_id")
         return self.model_dump(mode="json", exclude=exclude)
+
+    @property
+    def schedule_next(self) -> Optional[int]:
+        return self.schedule.next_task if self.schedule is not None else None
+
+    @property
+    def schedule_prev(self) -> Optional[int]:
+        return self.schedule.prev_task if self.schedule is not None else None
+
+    @property
+    def schedule_start_at(self) -> Optional[datetime]:
+        return self.schedule.start_at if self.schedule is not None else None
+
+
+class Task(TaskBase):
+    task_id: int = Field(description="Unique identifier for the task")
+    instance_id: int = Field(
+        description=(
+            "Auto-incrementing counter that distinguishes multiple *instances* "
+            "of the same logical task.  The very first row receives `0`; "
+            "each subsequent clone is incremented by the backend."
+        ),
+    )

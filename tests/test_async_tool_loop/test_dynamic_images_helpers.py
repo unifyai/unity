@@ -67,7 +67,7 @@ async def test_interject_dynamic_helper_appends_images() -> None:
 
     await _wait_for_tool_request(client, "do_work")
     await _wait_for_tool_message_prefix(client, "do_work")
-    await h.interject("please proceed", image_refs=[RawImageRef(image_id=img_id)])
+    await h.interject("please proceed", images=[RawImageRef(image_id=img_id)])
     await _wait_for_assistant_call_prefix(client, "interject_")
     await _wait_for_tool_message_prefix(client, "interject ")
     final = await h.result()
@@ -114,7 +114,7 @@ async def test_stop_dynamic_helper_appends_images() -> None:
 
     await _wait_for_tool_request(client, "wait_forever")
     await _wait_for_tool_message_prefix(client, "wait_forever")
-    await h.interject("stop", image_refs=[RawImageRef(image_id=img_id)])
+    await h.interject("stop", images=[RawImageRef(image_id=img_id)])
     await _wait_for_assistant_call_prefix(client, "stop_")
     await _wait_for_tool_message_prefix(client, "stop ")
     assert any(
@@ -297,7 +297,7 @@ async def test_overview_reinjected_on_interjection_images(monkeypatch) -> None:
             {"caption": "second", "data": make_solid_png_base64(2, 2, (255, 0, 0))},
         ],
     )
-    await h.interject("new image", image_refs=[RawImageRef(image_id=id2)])
+    await h.interject("new image", images=[RawImageRef(image_id=id2)])
 
     # Wait briefly for reinjection to occur
     for _ in range(100):
@@ -442,7 +442,7 @@ async def test_two_images_then_interjection_three_asks_real_llm() -> None:
     )
     await handle.interject(
         interjection_msg,
-        image_refs=[
+        images=[
             AnnotatedImageRef(
                 raw_image_ref=RawImageRef(image_id=jenny_id),
                 annotation="Jennny's paint",

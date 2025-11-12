@@ -227,6 +227,53 @@ async def test_ask_with_parent_context(
 @_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
+async def test_ask_sensible_time_email_negative_due_to_timezone(
+    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+):
+    """If it's 17:00 UTC and the contact is at UTC+9, local time is ~02:00 → not sensible."""
+    cm, _ = contact_manager_scenario
+
+    # Ensure Bob Johnson has a timezone of UTC+9.0 (02:00 local when 17:00 UTC)
+    results = cm.filter_contacts(filter="email_address == 'bobbyj@example.net'")[
+        "contacts"
+    ]
+    assert results, "Bob Johnson must exist for this test"
+    bob_id = results[0].contact_id
+    cm.update_contact(contact_id=bob_id, utc_offset_hours=9.0)
+
+    # Ask the high-level question; include the UTC time in the user message
+    question = (
+        "It's 17:00 UTC now. I'd like to send an email to Bob Johnson. "
+        "Is now a sensible time? Please consider his timezone and include his local time."
+    )
+    handle = await cm.ask(question, _return_reasoning_steps=True)
+    candidate_answer, reasoning_steps = await handle.result()
+
+    answer_lower = (candidate_answer or "").lower()
+    # Expect a negative recommendation and mention of ~2am local time
+    neg = any(token in answer_lower for token in ["no", "not a good time", "not ideal"])
+    mentions_two_am = any(
+        pat in answer_lower
+        for pat in [
+            "2am",
+            "2 am",
+            "02:00",
+            "2:00 am",
+            "02:00 am",
+            "2:00am",
+            "02:00am",
+        ]
+    )
+
+    assert neg, f"Expected a negative recommendation, got: {candidate_answer!r}"
+    assert (
+        mentions_two_am
+    ), f"Expected mention of ~02:00 local time, got: {candidate_answer!r}"
+
+
+@_handle_project
+@pytest.mark.eval
+@pytest.mark.asyncio
 async def test_ask_with_clarification(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):

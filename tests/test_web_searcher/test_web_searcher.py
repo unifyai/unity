@@ -119,3 +119,79 @@ def test_web_searcher_clear_initialises_and_resets_caches():
     assert {"search", "extract", "crawl", "map"}.issubset(
         set(ws.get_tools("ask").keys()),
     )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_gated_site_routes_to_search_gated_website(monkeypatch):
+    """When a gated site is requested, the ask loop should call _search_gated_website.
+
+    We patch the tool method to avoid invoking the real actor/browser and record calls.
+    """
+
+    calls = {"gated_website_count": 0}
+
+    async def _stub_search_gated(self, *, query: str, website):  # type: ignore[no-redef]
+        calls["gated_website_count"] += 1
+        return "stubbed gated search"
+
+    # Patch before instantiation so the tool mapping picks up the stub
+    monkeypatch.setattr(
+        WebSearcher,
+        "_search_gated_website",
+        _stub_search_gated,
+        raising=True,
+    )
+
+    ws = WebSearcher()
+    ws._create_website(
+        name="Medium",
+        host="medium.com",
+        gated=True,
+        subscribed=True,
+        notes="Tech writing, tutorials, subscription",
+        credentials=[101, 102],
+    )
+
+    handle = await ws.ask(
+        "Search medium.com for the latest subscribed AI updates and summarize the key point.",
+    )
+    _ = await handle.result()
+
+    assert calls["gated_website_count"] >= 1
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_non_gated_site_does_not_call_search_gated_website(monkeypatch):
+    """When a non-gated site is requested, _search_gated_website should not be called."""
+
+    calls = {"gated_website_count": 0}
+
+    async def _stub_search_gated(self, *, query: str, website):  # type: ignore[no-redef]
+        calls["gated_website_count"] += 1
+        return "stubbed gated search"
+
+    monkeypatch.setattr(
+        WebSearcher,
+        "_search_gated_website",
+        _stub_search_gated,
+        raising=True,
+    )
+
+    ws = WebSearcher()
+    ws._create_website(
+        name="Example Blog",
+        host="example.com",
+        gated=False,
+        subscribed=False,
+        notes="Public blog",
+    )
+
+    handle = await ws.ask(
+        "Search example.com for the latest post about product announcements.",
+    )
+    _ = await handle.result()
+
+    # Ensure gated tool was never called
+    assert calls["gated_website_count"] == 0

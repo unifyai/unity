@@ -13,6 +13,7 @@ from unity.conversation_manager_2.event_broker import (
 )
 from unity.conversation_manager_2.domains.utils import log_task_exc
 from unity.conversation_manager_2.conversation_manager import ConversationManager
+from unity.helpers import cleanup_dangling_call_processes
 
 
 stop = None
@@ -32,6 +33,10 @@ def signal_handler(signum, frame):
         print("Cleaning up conversation manager...")
         conversation_manager.cleanup()
         print("Cleanup finished")
+    # Set the stop event to trigger graceful shutdown in main()
+    # This ensures cleanup happens only once, in the main async function
+    if stop:
+        stop.set()
 
 
 async def main(use_realtime=False, project_name: str = "Assistants"):
@@ -44,6 +49,11 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
     # Ensure Unify traced logging is disabled outside the main thread
     # (avoids ValueError: signal only works in main thread)
     os.environ.setdefault("UNIFY_TRACED", "false")
+
+    # Clean up any dangling call processes from previous runs
+    # This prevents conflicts when multiple call processes can't run simultaneously
+    print("Checking for dangling call processes from previous runs...")
+    cleanup_dangling_call_processes()
 
     stop = asyncio.Event()
 
@@ -59,7 +69,7 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
         os.getenv("USER_NAME", ""),
         os.getenv("ASSISTANT_NAME", ""),
         os.getenv("ASSISTANT_AGE", ""),
-        os.getenv("ASSISTANT_REGION", ""),
+        os.getenv("ASSISTANT_NATIONALITY", ""),
         os.getenv("ASSISTANT_ABOUT", ""),
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("ASSISTANT_EMAIL", ""),

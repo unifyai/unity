@@ -376,9 +376,9 @@ if __name__ == "__main__":
 
     # dispatch agent
     if sys.argv[1] == "dev":
-        print("Dispatching agent")
+        print(f"Dispatching agent {agent_name}")
         dispatch_agent(agent_name)
-        print("Agent dispatched")
+        print(f"Agent {agent_name} dispatched")
 
     agents.cli.run_app(
         agents.WorkerOptions(

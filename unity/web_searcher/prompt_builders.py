@@ -1,10 +1,6 @@
 from typing import Dict, Callable
-from ..common.prompt_helpers import clarification_guidance, now_utc_str
+from ..common.prompt_helpers import clarification_guidance, now
 from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
-
-
-def _now() -> str:
-    return now_utc_str()
 
 
 def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
@@ -13,6 +9,9 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     have_extract = "extract" in tools
     have_crawl = "crawl" in tools
     have_map = "map" in tools
+    have_filter_websites = "_filter_websites" in tools
+    have_search_websites = "_search_websites" in tools
+    have_search_gated = "_search_gated_website" in tools
 
     lines: list[str] = []
     # Purpose
@@ -61,6 +60,28 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
             "  • Example:",
             '    - map(query="AI evaluation frameworks", instructions="Group by approach", max_depth=1, max_breadth=3, limit=30)',
         ]
+    if have_filter_websites:
+        lines += [
+            "- _filter_websites: list websites matching a boolean filter over columns.",
+            "  • Parameters: filter, offset, limit",
+            "  • Examples:",
+            '    - _filter_websites(filter="gated == True")',
+            "    - _filter_websites(filter=\"host == 'medium.com'\", limit=1)",
+        ]
+    if have_search_websites:
+        lines += [
+            "- _search_websites: semantic search over the Websites catalog using notes similarity.",
+            "  • Parameters: notes, k",
+            "  • Example:",
+            '    - _search_websites(notes="subscription sources for ML news", k=5)',
+        ]
+    if have_search_gated:
+        lines += [
+            "- _search_gated_website: search a specific website via the Actor (handles login if gated).",
+            "  • Parameters: query, website",
+            "  • Examples:",
+            '    - _search_gated_website(query="latest AI trends", website={"host": "medium.com"})',
+        ]
 
     # General rules and guidance
     lines += [
@@ -70,6 +91,44 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "- Keep queries concise; if complex, split into smaller, focused searches.",
         "- Prefer a small, high-quality set of sources; cite them in the answer.",
         "- Only fetch page content when you need details beyond snippets.",
+        "- Do not claim inability to log into personal accounts. When a Website entry exists and credentials are available, the Actor can attempt sign-in securely. If credentials are missing or login fails, proceed with public content and clearly state assumptions.",
+        "- If the request mentions a specific website (host like 'medium.com' or a human-friendly name like 'Medium'), first consult the Websites catalog:",
+        "  • Use `_filter_websites` for exact host/name filters; use `_search_websites` when only thematic notes are given.",
+        "  • If a row exists and `gated=True`, use `_search_gated_website(query=..., website=...)` to browse with login.",
+        "  • Otherwise, use general tools (`search`, `extract`, `crawl`, `map`).",
+    ]
+
+    # Website-aware routing guidance
+    lines += [
+        "",
+        "Website-aware Routing",
+        "----------------------",
+        "- Use `_search_websites` to find relevant Website entries by notes similarity (catalog lookup only; does not browse).",
+        "- Use `_filter_websites` for exact/boolean matches over columns (including host like 'medium.com' or name like 'Medium').",
+        "- When answering a question that targets a specific site:",
+        "  1) Look up the site using `_filter_websites` or `_search_websites`.",
+        "  2) If the site exists and `gated=True`, use `_search_gated_website(query=..., website=...)` to login with saved credentials and browse.",
+        "  3) If not gated or no matching Website entry exists, use general tools (`search`, then optionally `extract`/`crawl`/`map`).",
+        "- Do NOT use `_search_websites` to read web content; it only searches the Websites catalog.",
+    ]
+
+    # Concrete examples for routing
+    lines += [
+        "",
+        "Examples",
+        "--------",
+        "- Login to my GitHub and summarize my profile:",
+        "  1) `_filter_websites(filter=\"host == 'github.com' or name == 'GitHub'\", limit=1)`",
+        "  2) If found and gated=True: `_search_gated_website(query='summarize my GitHub profile', website=<row>)`",
+        "  3) Else: use `crawl`/`extract` as appropriate.",
+        "- Access my Towards Data Science subscription article and summarize:",
+        "  1) `_filter_websites(filter=\"host == 'towardsdatascience.com' or name == 'Towards Data Science'\", limit=1)`",
+        "  2) If found and gated=True: `_search_gated_website(query='summarize the latest paywalled article on my reading list', website=<row>)`",
+        "- Summarize updates on docs.example.com:",
+        "  1) `_filter_websites(filter=\"host == 'docs.example.com'\")`",
+        "  2) If gated=False or absent: `crawl(start_url='https://docs.example.com', instructions='Find recent updates')`",
+        "- General web query (non-site specific):",
+        '  1) `search(query="how is the uk temperature in london tomorrow?", max_results=3)`',
     ]
 
     # Decision policy and when to stop
@@ -98,7 +157,132 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
     # Early exit policy for mutation-intent requests reaching ask()
     lines += ["", read_only_ask_mutation_exit_block()]
     # Current time (for reproducibility and deterministic caching in tests)
-    lines += ["", f"Current UTC time is {_now()}."]
+    lines += ["", f"Current UTC time is {now()}."]
+
+    return "\n".join(lines)
+
+
+def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
+    """Return the system prompt used by WebSearcher.update formatted as sections."""
+    have_create = "_create_website" in tools
+    have_update = "_update_website" in tools
+    have_delete = "_delete_website" in tools
+    have_ask = "ask" in tools
+
+    lines: list[str] = []
+    # Purpose
+    lines += [
+        "Purpose",
+        "-------",
+        "- You manage mutations to the WebSearcher configuration.",
+        "- Specifically, you create and delete entries in the Websites table, and use `ask` to inspect/verify.",
+        "- Do not answer general web research questions here; use `ask` for read-only inspection when needed.",
+    ]
+
+    # Tools available (dynamic, like ask)
+    lines += [
+        "",
+        "Tools Available",
+        "---------------",
+    ]
+    if have_create:
+        lines += [
+            "- _create_website: create a new Website row (unique by host).",
+            "  • Parameters: name, host, gated, subscribed, credentials, actor_entrypoint, notes",
+            "  • Examples:",
+            "    - _create_website(name='Medium', host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')",
+            "    - _create_website(name='arXiv', host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')",
+        ]
+    if have_update:
+        lines += [
+            "- _update_website: update fields of an existing Website.",
+            "  • Identify by one of: website_id, match_host, match_name",
+            "  • Updatable fields: name, host, gated, subscribed, credentials, actor_entrypoint, notes",
+            "  • Examples:",
+            "    - _update_website(match_host='medium.com', subscribed=False)",
+            "    - _update_website(website_id=3, name='NYTimes', host='nytimes.com')",
+        ]
+    if have_delete:
+        lines += [
+            "- _delete_website: delete a Website row by host or website_id (exact match).",
+            "  • Parameters: name, host, website_id",
+            "  • Examples:",
+            "    - _delete_website(name='Financial Times')",
+            "    - _delete_website(host='example.com')",
+            "    - _delete_website(website_id=42)",
+        ]
+    if have_ask:
+        lines += [
+            "- ask: read-only inspection helper (calls catalog tools like _filter_websites/_search_websites).",
+            "  • Parameters: text",
+            "  • Examples:",
+            "    - ask(text='List gated websites')  → should call _filter_websites(filter=\"gated == True\")",
+            "    - ask(text='Which websites match ML news subscriptions?')  → should call _search_websites(notes='ML news subscription')",
+        ]
+
+    # General rules
+    lines += [
+        "",
+        "General Rules",
+        "-------------",
+        "- Treat `host` as the natural unique key for a website entry.",
+        "- After any mutation (create/delete), verify results using `ask` (e.g., `_filter_websites` or `_search_websites`).",
+        "- Prefer minimal, targeted tool calls; handle multiple entries comprehensively when requested.",
+    ]
+
+    # Ask vs Mutation guidance
+    lines += [
+        "",
+        "Ask vs Mutations",
+        "-----------------",
+        "- Use `ask` strictly for read-only inspection of the Websites table (e.g., to check if a host exists).",
+        "- Use `_create_website` to add a new entry; use `_delete_website` to remove an entry.",
+        "- Do not try to browse the web from `update`; web research belongs in `ask`.",
+    ]
+
+    # Tool selection (aligned with ask routing, but for mutations)
+    lines += [
+        "",
+        "Tool selection (read carefully)",
+        "--------------------------------",
+        "- When the user describes target sites semantically (e.g., 'ML news subscriptions'), first call `ask` to identify candidates using `_search_websites(notes=...)`.",
+        "- When the user specifies exact columns (e.g., host or gated), first call `ask` with `_filter_websites(filter=...)` to confirm matches before mutating.",
+        "- Never call `_search_gated_website` from `update` (that is a browsing action in `ask`).",
+        "- Do not call `search`/`extract`/`crawl`/`map` from `update`.",
+    ]
+
+    # Security and data hygiene
+    lines += [
+        "",
+        "Security & Data Hygiene",
+        "------------------------",
+        "- Never include raw credential values in messages. Only reference `credentials` by their integer `secret_id`s.",
+        "- When creating a website entry, pass `credentials=[int, ...]` only; do not attempt to resolve secret values.",
+        "- Prefer `actor_entrypoint` ids when bespoke behaviour is available; otherwise the system default will be used at runtime.",
+    ]
+
+    # Examples
+    lines += [
+        "",
+        "Examples",
+        "--------",
+        "- Create a gated site with credentials and verify:",
+        "  1) _create_website(host='medium.com', gated=True, subscribed=True, credentials=[101, 102], notes='Tech journalism and tutorials')",
+        "  2) ask(text='List gated websites')  → should call _filter_websites(filter=\"gated == True\")",
+        "- Find relevant sites by notes then delete one:",
+        "  1) ask(text='Which websites are for ML news subscriptions?') → should call _search_websites(notes='ML news subscription')",
+        "  2) _delete_website(host='example.com')",
+        "- Bulk creation from a list in one turn (handle ALL entries):",
+        "  • _create_website(host='arxiv.org', gated=False, subscribed=False, notes='Academic preprints')",
+        "  • _create_website(host='ft.com', gated=True, subscribed=True, credentials=[205, 206], notes='Finance and markets')",
+        '  Then verify via ask using _filter_websites(filter="gated == True").',
+    ]
+
+    # Clarification guidance (conditionally references request_clarification when available)
+    lines += ["", clarification_guidance(tools)]
+
+    # Time for deterministic caching in tests
+    lines += ["", f"Current UTC time is {now()}."]
 
     return "\n".join(lines)
 

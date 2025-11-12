@@ -272,3 +272,30 @@ class SimulatedWebSearcher(BaseWebSearcher):
             ),
             log_events=getattr(self, "_log_events", False),
         )
+
+    @functools.wraps(BaseWebSearcher.update, updated=())
+    async def update(
+        self,
+        text: str,
+        *,
+        response_format: Optional[Type[BaseModel]] = None,
+        _return_reasoning_steps: bool = False,
+        _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
+        _clarification_up_q: asyncio.Queue[str] | None = None,
+        _clarification_down_q: asyncio.Queue[str] | None = None,
+    ) -> SteerableToolHandle:
+        instruction = build_simulated_method_prompt(
+            "update",
+            text,
+            parent_chat_context=_parent_chat_context,
+        )
+
+        handle = _SimulatedWebSearcherHandle(
+            self._llm,
+            instruction,
+            _return_reasoning_steps=_return_reasoning_steps,
+            _requests_clarification=False,
+            clarification_up_q=_clarification_up_q,
+            clarification_down_q=_clarification_down_q,
+        )
+        return handle

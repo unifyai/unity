@@ -187,7 +187,29 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         overall_timeout: int = 300,
     ) -> SteerableToolHandle:
         """
-        Asks a question to the user and returns a handle to the running sub-conversation.
+        Ask the active conversation a targeted question and return a steerable handle.
+
+        Use this method to obtain information from the user within the current live conversation
+        without creating a new session. The returned handle supports mid‑flight steering via
+        pause(), resume(), interject(), and stop(), and yields the final answer through result().
+        The helper prefers inferring from the recent transcript first and will interject only
+        when necessary to resolve ambiguity.
+
+        Parameters
+        ----------
+        question : str
+            Natural‑language question for the user.
+        response_format : Optional[Type[T]]
+            Optional Pydantic model or Enum describing the expected structured answer.
+            When provided, the final result is validated and parsed into that type.
+        overall_timeout : int
+            Maximum seconds to wait for the tool loop to complete before raising a timeout.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Await result() to obtain the final (optionally structured) answer, or steer
+            mid‑flight using the standard handle controls.
         """
         if self._stopped:
             raise RuntimeError("Cannot ask a stopped handle.")

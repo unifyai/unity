@@ -27,8 +27,6 @@ from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conductor.conductor import Conductor
 from unity.conversation_manager_2.domains import managers_utils
-
-
 import redis.asyncio as redis
 
 
@@ -59,7 +57,7 @@ class ConversationManager:
         user_name: str,
         assistant_name: str,
         assistant_age: str,
-        assistant_region: str,
+        assistant_nationality: str,
         assistant_about: str,
         assistant_number: str,
         assistant_email: str,
@@ -81,11 +79,10 @@ class ConversationManager:
         self.assistant_id = assistant_id
         self.assistant_name = assistant_name
         self.assistant_age = assistant_age
-        self.assistant_region = assistant_region
+        self.assistant_nationality=assistant_nationality
         self.assistant_about = assistant_about
         self.voice_provider = voice_provider
         self.voice_id = voice_id
-
         # contact data
         self.assistant_number = assistant_number
         self.assistant_email = assistant_email
@@ -96,8 +93,6 @@ class ConversationManager:
 
         # initialization state
         self.initialized: bool = False
-
-
         # logging
         self.loop = asyncio.get_event_loop()
         self.project_name = project_name
@@ -118,7 +113,6 @@ class ConversationManager:
         
         # llm
         self.llm = LLM("gpt-4.1", event_broker)
-
         # debouncer (used to debounce llm runs)
         self.debouncer = Debouncer()
 
@@ -234,7 +228,6 @@ class ConversationManager:
         # if len(self.chat_history) >= int(0.7 * self.max_messages) and not self.is_summarizing:
         #    print("summarizing conversation...")
         #    Action.take_action(self, "summarize_conversation")
-
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
             await pubsub.psubscribe(

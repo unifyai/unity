@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+from abc import abstractmethod
+from typing import Any, Dict, Optional
+
+from ..singleton_registry import SingletonABCMeta
+from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
+from ..common.state_managers import BaseStateManager
+
+
+class BaseBlackListManager(BaseStateManager, metaclass=SingletonABCMeta):
+    """
+    Public contract for a blacklist catalogue that stores and retrieves
+    blocked contact details (per communication medium) with concise, primitive APIs.
+
+    Overview
+    --------
+    Implementations may talk to a real database, a remote service, or an
+    in-memory mock – but they all expose the same public methods documented below.
+
+    Data Model
+    ----------
+    All records conform to the Pydantic model
+    ``unity.blacklist_manager.types.blacklist.BlackList`` (referred to as
+    "BlackList" in the method docs). Implementations may return either instances
+    of this model or JSON‑serialisable dictionaries whose keys and value types
+    match the model schema. The schema serves as the single source of truth for
+    field names and types.
+    """
+
+    # ------------------------------------------------------------------ #
+    # Public interface                                                   #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    def filter_blacklist(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        Return a paginated list of blacklist entries matching an optional filter.
+
+        Parameters
+        ----------
+        filter : Optional[str]
+            A Unify‑style filter expression (e.g., "medium == 'email' and contact_detail == 'spam@example.com'").
+            When omitted, returns the first page of entries.
+        offset : int
+            Number of matching rows to skip (for pagination).
+        limit : int
+            Max number of rows to return.
+
+        Returns
+        -------
+        Dict[str, Any]
+            A dictionary containing:
+            - "entries": list[BlackList]
+            - "blacklist_keys_to_shorthand": dict[str, str]
+            - "shorthand_to_blacklist_keys": dict[str, str]
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_blacklist_entry(
+        self,
+        *,
+        medium: "Medium",  # Forward reference; actual type lives under transcript_manager.types.message
+        contact_detail: str,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """
+        Create a new blacklist entry.
+
+        Parameters
+        ----------
+        medium : Medium
+            Communication channel (e.g., email, sms_message, phone_call).
+        contact_detail : str
+            The concrete contact detail to be blocked (email address, phone number, etc.).
+        reason : str
+            Human‑readable reason/context for the block.
+
+        Returns
+        -------
+        Dict[str, Any]
+            {"outcome": "blacklist entry created", "details": {"blacklist_id": int}}
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_blacklist_entry(
+        self,
+        *,
+        blacklist_id: int,
+        medium: Optional["Medium"] = None,
+        contact_detail: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Update fields for an existing blacklist entry.
+
+        At least one of ``medium``, ``contact_detail`` or ``reason`` must be provided.
+
+        Returns
+        -------
+        Dict[str, Any]
+            {"outcome": "blacklist entry updated", "details": {"blacklist_id": int}}
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_blacklist_entry(
+        self,
+        *,
+        blacklist_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Delete a blacklist entry by its identifier.
+
+        Returns
+        -------
+        Dict[str, Any]
+            {"outcome": "blacklist entry deleted", "details": {"blacklist_id": int}}
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        {CLEAR_METHOD_DOCSTRING}
+        """.format(
+            CLEAR_METHOD_DOCSTRING=CLEAR_METHOD_DOCSTRING,
+        )
+        raise NotImplementedError

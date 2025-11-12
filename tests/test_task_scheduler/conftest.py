@@ -6,6 +6,7 @@ import pytest
 import unify
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from typing import List, Dict, Any
+from unity.task_scheduler.types.status import Status
 
 SCENARIO_COMMIT_HASHES: Dict[str, Any] = {}
 
@@ -49,9 +50,9 @@ class ScenarioBuilderTasks:
                 filter=f"name == '{task_data['name']}'",
             )
             if existing_tasks:
-                if existing_tasks[0]["status"] == "primed":
+                if existing_tasks[0].status == Status.primed:
                     self.ts._primed_task = existing_tasks[0]
-                return existing_tasks[0]["task_id"]
+                return existing_tasks[0].task_id
             return None
 
         # Wrap each task_data dict in a tuple to avoid unify.map treating dict keys as kwargs
@@ -84,7 +85,7 @@ class ScenarioBuilderTasks:
             )
             if existing_tasks:
                 # Update _TASK_IDS if we don't have this ID yet
-                task_id = existing_tasks[0]["task_id"]
+                task_id = existing_tasks[0].task_id
                 if len(_TASK_IDS) <= i:
                     _TASK_IDS.append(task_id)
                 elif i < len(_TASK_IDS) and _TASK_IDS[i] != task_id:

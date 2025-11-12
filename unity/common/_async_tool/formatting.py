@@ -22,16 +22,17 @@ def serialize_tool_content(
       - If there are no images, the content is a pretty-printed JSON string.
 
     - When is_final=False (progress/notification placeholder):
-      - Wrap the payload as {"tool": tool_name, ...} and serialize to a pretty-printed JSON string.
+      - Wrap the payload as {"_placeholder": "progress", "tool": tool_name, ...}
+        and serialize to a pretty-printed JSON string.
     """
 
     if not is_final:
         content_payload = (
             payload if isinstance(payload, dict) else {"message": str(payload)}
         )
-        # Keep the tool name visible for progress/notification placeholders
+        # Keep the tool name visible for progress/notification placeholders and mark explicitly
         return _dumps(
-            {"tool": tool_name, **content_payload},
+            {"_placeholder": "progress", "tool": tool_name, **content_payload},
             indent=4,
             context={"prune_empty": True, "shorthand": True},
         )
@@ -59,8 +60,9 @@ def serialize_tool_content(
             context={"prune_empty": True, "shorthand": True},
         )
     else:
-        # Fallback: preserve plain string results exactly as returned
-        text_repr = payload
+        # Fallback: always provide a string for non-structured payloads
+        # (e.g., numbers, booleans). Preserve plain strings as-is.
+        text_repr = payload if isinstance(payload, str) else str(payload)
 
     if images:
         content_blocks: list = []

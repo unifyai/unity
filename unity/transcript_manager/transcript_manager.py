@@ -8,12 +8,12 @@ import unify
 from ..contact_manager.base import BaseContactManager
 from ..contact_manager.contact_manager import ContactManager
 from .types.message import Message, UNASSIGNED
+from .types.exchange import Exchange
 
 # New: allow Contact objects to appear in messages
 from ..contact_manager.types.contact import Contact
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    inject_broader_context,
 )
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
@@ -23,6 +23,7 @@ from ..common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
+from ..common.filter_utils import normalize_filter_expr
 from ..events.manager_event_logging import (
     log_manager_call,
 )
@@ -52,6 +53,7 @@ from .images import (
     attach_image_to_context as _attach_image_to_context_impl,
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
+from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -82,38 +84,14 @@ class TranscriptManager(BaseTranscriptManager):
         else:
             self._contact_manager = ContactManager()
 
-        # Tools exposed to the LLM. We wrap message-search/filter so that the
-        # tool returns a compact string containing a single JSON table of all
-        # participant contacts followed by the list of messages, avoiding
-        # repeating long bios per message. Direct method calls (e.g., tests)
-        # retain their original return types for backward-compat.
-        @functools.wraps(self._filter_messages, updated=())
-        @read_only
-        def _filter_messages(
-            *,
-            filter: Optional[str] = None,
-            offset: int = 0,
-            limit: int = 100,
-        ) -> Dict[str, Any]:  # type: ignore[override]
-            return self._filter_messages(filter=filter, offset=offset, limit=limit)  # type: ignore[misc]
-
-        @functools.wraps(self._search_messages, updated=())
-        @read_only
-        def _search_messages(
-            *,
-            references: Optional[Dict[str, str]] = None,
-            k: int = 10,
-        ) -> Dict[str, Any]:  # type: ignore[override]
-            return self._search_messages(references=references, k=k)  # type: ignore[misc]
-
         ask_tools = {
             **methods_to_tool_dict(
                 self._contact_manager.ask,
                 include_class_name=True,
             ),
             **methods_to_tool_dict(
-                _filter_messages,
-                _search_messages,
+                self._filter_messages,
+                self._search_messages,
                 include_class_name=False,
             ),
         }
@@ -189,9 +167,7 @@ class TranscriptManager(BaseTranscriptManager):
             None,
         ] = "default",
         _call_id: Optional[str] = None,
-        images: Optional[
-            "ImageRefs" | list["RawImageRef" | "AnnotatedImageRef"]
-        ] = None,
+        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
         # ── 0.  Build the *live* tools-dict (may include clarification helper) ──
         tools = dict(self.get_tools("ask"))
@@ -250,7 +226,6 @@ class TranscriptManager(BaseTranscriptManager):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
-            preprocess_msgs=inject_broader_context,
             tool_policy=effective_tool_policy,
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.{self.ask.__name__}",
@@ -278,12 +253,6 @@ class TranscriptManager(BaseTranscriptManager):
         _storage_clear(self)
 
     # (Optional) Public programmatic helpers (non-LLM)
-    async def summarize(self, *args, **kwargs):
-        """Deprecated: summarize functionality removed."""
-        raise NotImplementedError(
-            "Summarize functionality has been removed from TranscriptManager.",
-        )
-
     def log_messages(
         self,
         messages: Union[
@@ -315,6 +284,12 @@ class TranscriptManager(BaseTranscriptManager):
         synchronous : bool, default=False
             If True, messages will be logged in order synchronously. If False,
             messages may be logged asynchronously in any order.
+
+        Notes
+        -----
+        This method requires an explicit ``exchange_id`` on every message. To create
+        a brand‑new exchange (i.e. when no id exists yet), call
+        :pyfunc:`log_first_message_in_new_exchange` instead.
 
         Returns
         -------
@@ -401,16 +376,28 @@ class TranscriptManager(BaseTranscriptManager):
 
         # ── 2. Normalise each input payload into Message objects ───────────
         normalised_messages: List[Message] = []
-        per_message_metadata: List[Optional[Dict[str, Any]]] = []
         for raw in messages:
             # Convert to dict early so we can mutate fields easily
             if isinstance(raw, Message):
                 payload: Dict[str, Any] = raw.model_dump(mode="python")
-                meta_val = None
             else:  # assume mapping
                 payload = dict(raw)
-                # Extract optional private metadata without letting it leak into the model
-                meta_val = payload.pop("_metadata", None)
+
+            # Enforce explicit exchange_id on all messages unless explicitly allowed (internal use only)
+            exid_val = payload.get("exchange_id", None)
+            try:
+                # Treat UNASSIGNED (-1) and None as missing
+                if exid_val is None or int(exid_val) < 0:
+                    raise ValueError(
+                        "exchange_id is required when calling TranscriptManager.log_messages. "
+                        "To start a brand-new exchange, use TranscriptManager.log_first_message_in_new_exchange(message, exchange_initial_metadata=...).",
+                    )
+            except (TypeError, ValueError):
+                # Non-int or unparsable also counts as missing/invalid
+                raise ValueError(
+                    "exchange_id must be an integer when calling TranscriptManager.log_messages. "
+                    "To start a brand-new exchange, use TranscriptManager.log_first_message_in_new_exchange(message, exchange_initial_metadata=...).",
+                )
 
             # Ensure required keys exist
             if "receiver_ids" not in payload:
@@ -424,19 +411,9 @@ class TranscriptManager(BaseTranscriptManager):
 
             # Re-instantiate Message model for validation
             normalised_messages.append(Message(**payload))
-            per_message_metadata.append(meta_val)
 
         # ── 3. Dump POST-ready JSON for each message ──────────────────────
         msg_entries = [m.to_post_json() for m in normalised_messages]
-
-        # Attach metadata payloads to corresponding entries (column ensured in __init__)
-        if any(pm is not None for pm in per_message_metadata):
-            for idx, meta_val in enumerate(per_message_metadata):
-                if meta_val is not None:
-                    try:
-                        msg_entries[idx]["_metadata"] = meta_val
-                    except Exception:
-                        pass
 
         # ── 4. Persist messages and publish EventBus notifications ───────
         from ..events.event_bus import EVENT_BUS, Event  # local import to avoid cycles
@@ -468,61 +445,18 @@ class TranscriptManager(BaseTranscriptManager):
                 params={},
             )
 
-            # Build a Message from the POST response; if ids look unassigned,
-            # perform a one-off read to retrieve the assigned values.
-            # TODO: Remove this GET fallback once the backend echoes auto-assigned
-            # exchange_id on POST responses consistently. message_id already echoes reliably.
-            try:
-                persisted_payload = {
-                    k: log.entries.get(k) for k in Message.model_fields.keys()
-                }
-                # Only refetch when exchange_id is missing/unassigned, since message_id
-                # is already returned by the POST in current backends.
-                need_refetch = False
-                try:
-                    xid_val = persisted_payload.get("exchange_id")
-                    if xid_val is None or int(xid_val) <= -1:
-                        need_refetch = True
-                except Exception:
-                    need_refetch = True
+            # Build a Message directly from the POST response
+            persisted_payload = {
+                k: log.entries.get(k) for k in Message.model_fields.keys()
+            }
+            # Remove any None values for id fields so the validator can apply sentinel if needed
+            if persisted_payload.get("message_id") is None:
+                persisted_payload.pop("message_id", None)
+            if persisted_payload.get("exchange_id") is None:
+                persisted_payload.pop("exchange_id", None)
 
-                if need_refetch:
-                    try:
-                        ts = entries.get("timestamp")
-                        snd = entries.get("sender_id")
-                        med = entries.get("medium")
-                        flt = f"timestamp == '{ts}' and sender_id == {snd} and medium == '{med}'"
-                        rows = unify.get_logs(
-                            context=self._transcripts_ctx,
-                            filter=flt,
-                            limit=1,
-                            from_fields=list(Message.model_fields.keys()),
-                            sorting={"timestamp": "descending"},
-                        )
-                        if rows:
-                            persisted_payload = dict(rows[0].entries)
-                    except Exception:
-                        pass
-
-                # Remove any None values for id fields so the validator can apply sentinel if needed
-                if persisted_payload.get("message_id") is None:
-                    persisted_payload.pop("message_id", None)
-                if persisted_payload.get("exchange_id") is None:
-                    persisted_payload.pop("exchange_id", None)
-
-                created_msg = Message(**persisted_payload)
-                created_messages.append(created_msg)
-            except Exception:
-                # Fallback to constructing from the original request shape, omitting id keys
-                fallback_payload = {
-                    k: entries.get(k) for k in Message.model_fields.keys()
-                }
-                if fallback_payload.get("message_id") is None:
-                    fallback_payload.pop("message_id", None)
-                if fallback_payload.get("exchange_id") is None:
-                    fallback_payload.pop("exchange_id", None)
-                created_msg = Message(**fallback_payload)
-                created_messages.append(created_msg)
+            created_msg = Message(**persisted_payload)
+            created_messages.append(created_msg)
 
             try:
                 # If we're inside an event-loop schedule the coroutine there …
@@ -650,14 +584,31 @@ class TranscriptManager(BaseTranscriptManager):
     #  Private tools (LLM-exposed to tool loops)
     #    – these are the underscore-prefixed methods you pass into add_tools
     # ──────────────────────────────────────────────────────────────────────
+    @read_only
     def _search_messages(
         self,
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
     ) -> Dict[str, Any]:
+        """
+        Semantic search across transcript messages (two-table aware).
+
+        Parameters
+        ----------
+        references : Dict[str, str] | None, default None
+            Mapping of source expressions to reference text for semantic search.
+        k : int, default 10
+            Maximum number of results to return. Must be <= 1000.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Search results with contact information.
+        """
         return _search_messages_impl(self, references=references, k=k)
 
+    @read_only
     def _filter_messages(
         self,
         *,
@@ -665,6 +616,25 @@ class TranscriptManager(BaseTranscriptManager):
         offset: int = 0,
         limit: int | None = 100,
     ) -> Dict[str, Any]:
+        """
+        Filter transcript messages using an exact column-wise boolean expression.
+        The expression must be expressed in valid python syntax.
+
+        Parameters
+        ----------
+        filter : str | None, default None
+            A Python boolean expression evaluated with column names in scope.
+            When None, returns all messages.
+        offset : int, default 0
+            Zero-based index of the first result to include.
+        limit : int | None, default 100
+            Maximum number of records to return. Must be <= 1000.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Filtered messages with contact information.
+        """
         return _filter_messages_impl(self, filter=filter, offset=offset, limit=limit)
 
     def update_contact_id(
@@ -923,6 +893,230 @@ class TranscriptManager(BaseTranscriptManager):
         eid_to_medium: Optional[Dict[int, str]] = None,
     ) -> None:
         _storage_ensure_exchanges(self, exchange_ids, eid_to_medium=eid_to_medium)
+
+    def get_exchange_metadata(self, exchange_id: int) -> Exchange:
+        """Fetch the Exchanges row for ``exchange_id`` as an Exchange model."""
+        rows = unify.get_logs(
+            context=self._exchanges_ctx,
+            filter=f"exchange_id == {int(exchange_id)}",
+            limit=1,
+        )
+        if not rows:
+            raise ValueError(f"No exchange found for exchange_id={exchange_id}.")
+
+        rec = rows[0].entries
+        try:
+            return Exchange(
+                exchange_id=int(rec.get("exchange_id")),
+                metadata=dict(rec.get("metadata") or {}),
+                medium=str(rec.get("medium") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"Failed to reconstruct Exchange for exchange_id={exchange_id}.",
+            ) from exc
+
+    def update_exchange_metadata(
+        self,
+        exchange_id: int,
+        metadata: Dict[str, Any],
+    ) -> Exchange:
+        """Update (or create) the Exchanges row's metadata and return the updated Exchange."""
+        # Try update first
+        row_ids = unify.get_logs(
+            context=self._exchanges_ctx,
+            filter=f"exchange_id == {int(exchange_id)}",
+            return_ids_only=True,
+        )
+        if row_ids:
+            unify.update_logs(
+                logs=row_ids,
+                context=self._exchanges_ctx,
+                entries={"metadata": dict(metadata or {})},
+                overwrite=True,
+            )
+        else:
+            # Upsert behaviour – create a new row with empty medium if missing
+            unify.log(
+                context=self._exchanges_ctx,
+                exchange_id=int(exchange_id),
+                metadata=dict(metadata or {}),
+                medium="",
+                new=True,
+                mutable=True,
+                params={},
+            )
+
+        # Read back and return canonical shape
+        return self.get_exchange_metadata(exchange_id)
+
+    @functools.wraps(BaseTranscriptManager.filter_exchanges, updated=())
+    def filter_exchanges(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int | None = 100,
+    ) -> Dict[str, Any]:
+        normalized = normalize_filter_expr(filter)
+        logs = unify.get_logs(
+            context=self._exchanges_ctx,
+            filter=normalized,
+            offset=offset,
+            limit=limit,
+            from_fields=list(Exchange.model_fields.keys()),
+        )
+        exchanges: list[Exchange] = []
+        for lg in logs:
+            try:
+                exchanges.append(Exchange(**lg.entries))
+            except Exception:
+                continue
+        return {"exchanges": exchanges}
+
+    def log_first_message_in_new_exchange(
+        self,
+        message: Union[Dict[str, Any], Message],
+        *,
+        exchange_initial_metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Log the first message of a brand‑new exchange and set initial metadata.
+
+        Behaviour
+        ---------
+        - Requires that the provided message does NOT specify ``exchange_id``.
+          This method will auto‑assign a new exchange id by delegating to
+          :pyfunc:`log_messages` in synchronous mode.
+        - After successful creation, the corresponding ``Exchanges`` row is
+          updated with the given ``exchange_initial_metadata`` (if provided).
+
+        Parameters
+        ----------
+        message : dict | Message
+            The first message to log for the new exchange. Must not include
+            ``exchange_id``.
+        exchange_initial_metadata : dict | None
+            Optional initial metadata to persist on the created ``Exchanges`` row.
+
+        Returns
+        -------
+        int
+            The newly assigned ``exchange_id`` for this exchange.
+        """
+
+        # 1) Validate no exchange_id is provided by the caller
+        if isinstance(message, dict):
+            if "exchange_id" in message:
+                raise ValueError(
+                    "exchange_id must NOT be provided when starting a new exchange; use TranscriptManager.log_messages(...) if you already have an existing exchange id.",
+                )
+        else:  # Message instance
+            try:
+                if getattr(message, "exchange_id", UNASSIGNED) not in (
+                    None,
+                    UNASSIGNED,
+                ):
+                    raise ValueError(
+                        "Message.exchange_id must NOT be set when starting a new exchange; use TranscriptManager.log_messages(...) if you already have an existing exchange id.",
+                    )
+            except Exception:
+                # If attribute missing, treat as acceptable (will be injected downstream)
+                pass
+
+        # 2) Normalise payload and persist directly to obtain an assigned exchange_id
+        def _ensure_contact_id_local(c: Union[int, Contact]) -> int:
+            if not isinstance(c, Contact):
+                if c is None:
+                    raise ValueError(
+                        "sender_id / receiver_ids cannot be None – either provide an int or a Contact instance.",
+                    )
+                return int(c)
+            if c.contact_id is not None and c.contact_id != -1:
+                return int(c.contact_id)
+            # Create via ContactManager and return id
+            full_data = c.model_dump(exclude_none=True)
+            create_kwargs = {k: v for k, v in full_data.items() if k != "contact_id"}
+            outcome = self._contact_manager._create_contact(**create_kwargs)
+            return int(outcome["details"]["contact_id"])  # type: ignore[index]
+
+        if isinstance(message, Message):
+            payload: Dict[str, Any] = message.model_dump(mode="python")
+        else:
+            payload = dict(message)
+
+        if "receiver_ids" not in payload:
+            raise ValueError("Each message must include 'receiver_ids'.")
+
+        payload["sender_id"] = _ensure_contact_id_local(payload.get("sender_id"))
+        payload["receiver_ids"] = [
+            _ensure_contact_id_local(r) for r in payload.get("receiver_ids", [])
+        ]
+
+        # Ensure no explicit exchange id provided
+        if payload.get("exchange_id") is not None:
+            raise ValueError(
+                "exchange_id must NOT be provided when starting a new exchange; use TranscriptManager.log_messages(...) if you already have an existing exchange id.",
+            )
+
+        created_model = Message(**payload)
+        entries = created_model.to_post_json()
+
+        log = unify.log(
+            context=self._transcripts_ctx,
+            **entries,
+            new=True,
+            mutable=True,
+            params={},
+        )
+
+        persisted_payload = {k: log.entries.get(k) for k in Message.model_fields.keys()}
+        if persisted_payload.get("message_id") is None:
+            persisted_payload.pop("message_id", None)
+        if persisted_payload.get("exchange_id") is None:
+            persisted_payload.pop("exchange_id", None)
+
+        created = Message(**persisted_payload)
+
+        # 3) Ensure the new exchange_id is present
+        try:
+            exid = int(getattr(created, "exchange_id"))
+        except Exception as exc:  # noqa: BLE001 – precise error context
+            raise RuntimeError(
+                "Created message lacks an assigned exchange_id.",
+            ) from exc
+        if exid < 0:
+            raise RuntimeError("Created message has an unassigned exchange_id.")
+
+        # 4) Ensure the Exchanges row exists and optionally set initial metadata
+        try:
+            row_ids = unify.get_logs(
+                context=self._exchanges_ctx,
+                filter=f"exchange_id == {exid}",
+                return_ids_only=True,
+            )
+            if row_ids:
+                if exchange_initial_metadata is not None:
+                    unify.update_logs(
+                        logs=row_ids,
+                        context=self._exchanges_ctx,
+                        entries={"metadata": dict(exchange_initial_metadata)},
+                        overwrite=True,
+                    )
+            else:
+                unify.log(
+                    context=self._exchanges_ctx,
+                    exchange_id=exid,
+                    metadata=dict(exchange_initial_metadata or {}),
+                    medium=str(getattr(created, "medium", "")),
+                    new=True,
+                    mutable=True,
+                    params={},
+                )
+        except Exception:
+            # Non-fatal: do not fail the message creation due to metadata upsert
+            pass
+
+        return exid
 
     # Formatting helper: single contacts table + messages
     def _format_contacts_and_messages(self, messages: List[Message]) -> Dict[str, Any]:

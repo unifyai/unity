@@ -3,6 +3,7 @@ from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.schedule import Schedule
 from datetime import datetime, timezone
+from unity.task_scheduler.types.status import Status
 
 
 @_handle_project
@@ -98,7 +99,7 @@ def test_insert_primed_task_downgrades_to_queued():
     # 5) The scheduler must automatically downgrade the status to 'queued'
     row = ts._filter_tasks(filter=f"task_id == {t_email}", limit=1)[0]
     assert (
-        row["status"] == "queued"
+        row.status == Status.queued
     ), "Non-head tasks may not remain 'primed'; status should be 'queued'."
 
 

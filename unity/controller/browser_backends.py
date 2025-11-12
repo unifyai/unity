@@ -196,16 +196,34 @@ class MagnitudeBrowserBackend(BrowserBackend):
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
         self.agent_base_url = agent_server_url
 
+        # Session ID for this backend instance
+        self._session_id: Optional[str] = None
+
         logger.info(
             f"🔗 Connecting to Magnitude service at {self.agent_base_url} (Mode: {self.agent_mode})",
         )
 
         try:
-            self._sync_request(
+            response = self._sync_request(
                 "POST",
                 "/start",
                 {"headless": headless, "mode": self.agent_mode},
             )
+            # Extract sessionId from response
+            if isinstance(response, dict):
+                self._session_id = response.get("sessionId")
+            else:
+                # Fallback: try to parse as JSON if it's a response object
+                try:
+                    json_data = response.json() if hasattr(response, "json") else {}
+                    self._session_id = json_data.get("sessionId")
+                except Exception:
+                    pass
+
+            if not self._session_id:
+                raise RuntimeError("Failed to get sessionId from /start endpoint")
+
+            logger.info(f"✅ Session created: {self._session_id}")
             self._check_service_ready()
 
             # Initialize the network log queue - defer creation until event loop is available
@@ -223,8 +241,8 @@ class MagnitudeBrowserBackend(BrowserBackend):
         deadline = time.time() + 30
         while time.time() < deadline:
             try:
-                r = self._sync_request("GET", "/screenshot")
-                if r.status_code < 500:
+                r = self._sync_request("POST", "/screenshot")
+                if hasattr(r, "status_code") and r.status_code < 500:
                     logger.info(
                         f"✅ Magnitude service is ready on {self.agent_base_url}",
                     )
@@ -424,6 +442,11 @@ class MagnitudeBrowserBackend(BrowserBackend):
     ) -> Any:
         url = f"{MagnitudeBrowserBackend._agent_base_url}{endpoint}"
 
+        if payload is None:
+            payload = {}
+        if self._session_id and endpoint != "/start":  # /start doesn't need sessionId
+            payload["sessionId"] = self._session_id
+
         retries = 3
         for attempt in range(retries):
             try:
@@ -482,6 +505,15 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 "authorization": f"Bearer {auth_key} {assistant_email}".strip(),
             }
 
+            if payload is None:
+                payload = {}
+            if (
+                hasattr(self, "_session_id")
+                and self._session_id
+                and endpoint != "/start"
+            ):
+                payload["sessionId"] = self._session_id
+
             result = http.request(
                 method,
                 url,
@@ -494,6 +526,12 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 raise RuntimeError(
                     f"Failed to reach agent-service {endpoint}: {result.status_code} {result.text[:200]}",
                 )
+            # Return JSON for /start to extract sessionId, otherwise return result object
+            if endpoint == "/start":
+                try:
+                    return result.json()
+                except Exception:
+                    return {}
             return result
         except Exception as e:
             raise RuntimeError(f"Could not reach agent-service {endpoint}: {e}")
@@ -726,6 +764,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
         instruction: str,
         wait: bool = True,
         context: dict = None,
+        override_cache: bool = False,
     ) -> Any:
         """
         Executes a high-level browser task using the Magnitude BrowserAgent.
@@ -739,6 +778,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
                         the command is added to a queue for background execution, and
                         the function returns immediately.
             context (dict): Internal metadata for command tracking.
+            override_cache (bool): If True, deletes any matching cache entries before execution,
+                                  allowing the action to populate a fresh cache entry. Useful
+                                  when cache entries are corrupted or inefficient.
 
         ### Non-Blocking Example (`wait=False`)
         This is ideal for sequences of actions where the plan doesn't need immediate feedback.
@@ -785,7 +827,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._request,
             "POST",
             "/act",
-            {"task": instruction},
+            {"task": instruction, "override_cache": override_cache},
         )
 
         future = asyncio.get_event_loop().create_future() if wait else None
@@ -995,13 +1037,12 @@ class MagnitudeBrowserBackend(BrowserBackend):
 
     async def get_screenshot(self) -> str:
         await self._ensure_async_initialized()
-        response = await self._request("GET", "/screenshot")
+        response = await self._request("POST", "/screenshot")
         return response.get("screenshot")
 
     async def get_current_url(self) -> str:
         try:
-            # Get the current URL through the browser state
-            response = await self._request("GET", "/state")
+            response = await self._request("POST", "/state")
             return response.get("url", "")
         except Exception as e:
             return ""
@@ -1048,7 +1089,9 @@ class MagnitudeBrowserBackend(BrowserBackend):
             self._command_processor_task.cancel()
 
         try:
-            self._sync_request("POST", "/stop")
+            if self._session_id:
+                self._sync_request("POST", "/stop", {"sessionId": self._session_id})
+                logger.info(f"✅ Stopped session {self._session_id}")
         except Exception as e:
             # Don't fail stop() if the request fails
             logger.info(f"Warning: Failed to send stop request: {e}")

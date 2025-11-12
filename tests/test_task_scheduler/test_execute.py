@@ -16,10 +16,13 @@ from datetime import datetime, timezone
 
 import pytest
 
+import os
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
 from unity.task_scheduler.types.schedule import Schedule
+from unity.task_scheduler.types.activated_by import ActivatedBy
+from unity.task_scheduler.types.status import Status
 
 #  The helper used in the existing test‑suite – applies project‑level monkey‐
 #  patches (e.g. env vars, tracers) so we keep behaviour consistent.
@@ -281,6 +284,62 @@ async def test_execute_invokes_ask_when_id_missing(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+#  6.1. Logged wrapper exposes append_to_queue with correct metadata           #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_returns_logged_handle_with_append_to_queue_introspection():
+    """
+    The handle returned by TaskScheduler.execute is wrapped by a logging proxy
+    but must present itself as `ActiveQueue` and expose `append_to_queue` with
+    the correct signature and docstring via standard inspection.
+    """
+
+    import inspect as _inspect  # local import for test isolation
+
+    # Immediate completion per task to avoid timing races; we don't need to
+    # exercise the loop, only to obtain the handle for introspection.
+    actor = SimulatedActor(steps=0)
+    ts = TaskScheduler(actor=actor)
+
+    # Create a single runnable task and start it by id
+    desc = "Introspection target"
+    task_id = ts._create_task(name=desc, description=desc)["details"]["task_id"]  # type: ignore[index]
+    handle = await ts.execute(text=str(task_id))
+
+    # From the caller's perspective, the proxy should present the same class
+    # as the inner handle: ActiveQueue. Avoid relying on implementation
+    # details like `_inner`.
+    from unity.task_scheduler.active_queue import ActiveQueue  # local import
+
+    assert handle.__class__ is ActiveQueue
+    assert handle.__class__.__name__ == "ActiveQueue"
+
+    # The custom queue method must be directly accessible on the proxy
+    assert hasattr(handle, "append_to_queue"), "append_to_queue not exposed on handle"
+    proxied_method = getattr(handle, "append_to_queue")
+    assert callable(proxied_method)
+
+    # Compare signature and docstring against the inner BOUND method to avoid
+    # bound vs unbound discrepancies (omit self in bound signatures).
+    inner_bound = getattr(getattr(handle, "__wrapped__", handle), "append_to_queue")
+    assert str(_inspect.signature(proxied_method)) == str(
+        _inspect.signature(inner_bound),
+    )
+
+    # Docstrings should also match exactly (functools.wraps should preserve).
+    assert _inspect.getdoc(proxied_method) == _inspect.getdoc(inner_bound)
+
+    # Cleanup: ensure any background work is finalised quickly
+    try:
+        await handle.result()
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------- #
 #  6. New task creation & execution                                           #
 # --------------------------------------------------------------------------- #
 
@@ -329,10 +388,101 @@ async def test_execute_creates_new_task_and_executes(monkeypatch):
     created_tasks = ts._filter_tasks()
     phrase = description.rstrip(".").casefold()
     assert any(
-        phrase in (t.get("name", "") or "").casefold()
-        or phrase in (t.get("description", "") or "").casefold()
+        phrase in t.name.casefold() or phrase in t.description.casefold()
         for t in created_tasks
     ), "A new task with the provided description should have been created"
+
+
+# --------------------------------------------------------------------------- #
+#  6.2. Dynamic helper append_to_queue – end-to-end via async tool loop       #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_dynamic_helper_append_to_queue_end_to_end():
+    """
+    End-to-end: start a tool loop that returns an ActiveQueue handle created
+    by TaskScheduler.execute, then instruct the LLM to call the dynamic
+    `append_to_queue` helper with an explicit task_id. Verify the helper is
+    called and the queue membership reflects the append.
+    """
+    import unify
+    from unity.common.async_tool_loop import start_async_tool_loop
+    from tests.test_async_tool_loop.async_helpers import (
+        _wait_for_tool_request,
+        _wait_for_assistant_call_prefix,
+        _wait_for_tool_message_prefix,
+    )
+    from tests.helpers import SETTINGS
+
+    # Build a scheduler with a singleton queue (A) and a standalone task (B).
+    # Use a short, step-based simulated actor so the inner handle stays alive.
+    actor = SimulatedActor(steps=3, duration=None)
+    ts = TaskScheduler(actor=actor)
+
+    # Create a singleton queue head A
+    qid = ts._allocate_new_queue_id()
+    a_id = ts._create_task(name="E2E_A", description="E2E_A", queue_id=qid)["details"][
+        "task_id"
+    ]  # type: ignore[index]
+    ts._set_queue(queue_id=qid, order=[a_id])
+
+    # Create a standalone follower candidate B (not queued yet)
+    b_id = ts._create_task(name="E2E_B", description="E2E_B")["details"]["task_id"]  # type: ignore[index]
+
+    # Tool that returns an ActiveQueue handle by executing A via numeric fast-path.
+    @unify.traced
+    async def start_queue_handle():
+        return await ts.execute(text=str(a_id))
+
+    # Start the async tool loop with a simple instruction to call our start tool.
+    client = unify.AsyncUnify(
+        os.getenv("UNIFY_MODEL", "gpt-5@openai"),
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+        reasoning_effort="high",
+        service_tier="priority",
+    )
+    client.set_system_message(
+        "Call `start_queue_handle` to start a task, then wait for further instructions.",
+    )
+
+    outer = start_async_tool_loop(
+        client,
+        message="start",
+        tools={"start_queue_handle": start_queue_handle},
+        timeout=120,
+        max_steps=30,
+    )
+
+    # Ensure the start tool has been requested so the dynamic helpers are exposed.
+    await _wait_for_tool_request(client, "start_queue_handle")
+
+    # Now ask the model to call the dynamic append_to_queue helper explicitly.
+    await outer.interject(f"Now call append_to_queue(task_id={int(b_id)}).")
+
+    # Wait until the assistant requests a helper whose name starts with 'append_to_queue_'.
+    await _wait_for_assistant_call_prefix(client, "append_to_queue_")
+    # And wait for the corresponding tool message to appear.
+    await _wait_for_tool_message_prefix(client, "append_to_queue_")
+
+    # Immediately verify the live queue now contains A followed by the newly appended B.
+    # We assert right after the tool completed to avoid later lifecycle operations (e.g., defer)
+    # altering the queue snapshot.
+    live = ts._get_queue_for_task(task_id=a_id)
+    ids = [getattr(r, "task_id", None) for r in (live or [])]
+    assert ids and ids[0] == a_id and b_id in ids and ids.index(b_id) == len(ids) - 1
+
+    # Instruct the model to stop the running queue so no background tasks linger,
+    # then reply only with "done" for determinism.
+    await outer.interject("Now call stop(cancel=false). Then reply only with: done")
+    await _wait_for_assistant_call_prefix(client, "stop_")
+
+    # Final assistant answer should be 'done' (case-insensitive) after stop; queue
+    # membership was already asserted immediately after append.
+    final = await outer.result()
+    assert isinstance(final, str) and "done" in final.strip().lower()
 
 
 # --------------------------------------------------------------------------- #
@@ -399,7 +549,7 @@ async def test_execute_sets_activated_by_explicit():
 
     # Verify activated_by on the activated instance (may already be completed)
     rows = ts._filter_tasks(filter=f"task_id == {task_id}")
-    assert any(r.get("activated_by") == "explicit" for r in rows)
+    assert any(r.activated_by == ActivatedBy.explicit for r in rows)
 
 
 @pytest.mark.asyncio
@@ -421,13 +571,13 @@ async def test_update_status_cannot_force_active_and_does_not_set_activation_met
     # Ensure no activation metadata exists prior to activation
     rows = ts._filter_tasks(filter=f"task_id == {task_id}")
     assert len(rows) == 1
-    assert rows[0].get("activated_by") in (None, "")
+    assert rows[0].activated_by is None
 
     # Change a non-active status and ensure activated_by remains unset
     ts._update_task(task_id=task_id, status="paused")
     rows2 = ts._filter_tasks(filter=f"task_id == {task_id}")
-    assert rows2[0].get("status") == "paused"
-    assert rows2[0].get("activated_by") in (None, "")
+    assert rows2[0].status == Status.paused
+    assert rows2[0].activated_by is None
 
 
 @pytest.mark.asyncio
@@ -485,19 +635,20 @@ async def test_isolated_execute_detaches_entirely(monkeypatch):
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
 
     # B should be isolated as a single-task head (no prev/next followers)
-    sched_b = rows_b[0].get("schedule") or {}
-    assert sched_b.get("prev_task") is None
-    assert sched_b.get("next_task") is None
+    sched_b = rows_b[0].schedule
+    assert sched_b is None
 
     # A should now link directly to C; C.prev_task should be A
-    sched_a = rows_a[0].get("schedule") or {}
-    sched_c = rows_c[0].get("schedule") or {}
-    assert sched_a.get("next_task") == c
-    assert sched_c.get("prev_task") == a
+    sched_a = rows_a[0].schedule
+    sched_c = rows_c[0].schedule
+    assert sched_c is not None
+    assert sched_a is not None
+    assert sched_a.next_task == c
+    assert sched_c.prev_task == a
 
     # Only the head owns start_at → ensure C (non-head) does not inherit it unless it became head
     # Here A remains head, so C must not have start_at
-    assert "start_at" not in sched_c or sched_c.get("start_at") in (None, "")
+    assert sched_c.start_at is None
 
 
 @pytest.mark.asyncio
@@ -523,12 +674,13 @@ async def test_isolated_execute_start_at_to_second_when_head_moves(monkeypatch):
     rows_y = ts._filter_tasks(filter=f"task_id == {y}")
 
     # X detached
-    assert rows_x[0].get("schedule") in (None, {})
+    assert rows_x[0].schedule is None
 
     # Y becomes new head: prev_task=None and has start_at
-    sched_y = rows_y[0].get("schedule") or {}
-    assert sched_y.get("prev_task") is None
-    assert "start_at" in sched_y and sched_y.get("start_at")
+    sched_y = rows_y[0].schedule
+    assert sched_y is not None
+    assert sched_y.prev_task is None
+    assert sched_y.start_at is not None
 
 
 @pytest.mark.asyncio
@@ -555,16 +707,18 @@ async def test_execute_default_keeps_followers():
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
 
-    sched_b = rows_b[0].get("schedule") or {}
-    sched_c = rows_c[0].get("schedule") or {}
+    sched_b = rows_b[0].schedule
+    sched_c = rows_c[0].schedule
+    assert sched_b is not None
+    assert sched_c is not None
 
     # B becomes sub-head of its chain
-    assert sched_b.get("prev_task") is None
-    assert sched_b.get("next_task") == c
+    assert sched_b.prev_task is None
+    assert sched_b.next_task == c
     # C follows B
-    assert sched_c.get("prev_task") == b
+    assert sched_c.prev_task == b
     # C must not carry start_at (non-head)
-    assert "start_at" not in sched_c or sched_c.get("start_at") in (None, "")
+    assert sched_c.start_at is None
 
     # Stop to avoid leaking the background task and wait for shutdown
     try:

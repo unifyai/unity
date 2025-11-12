@@ -259,6 +259,52 @@ def test_annotation_to_schema_builtin_dict_maps_to_object() -> None:
 
 
 # --------------------------------------------------------------------------- #
+#  method_to_schema – docstring MRO fallback                                  #
+# --------------------------------------------------------------------------- #
+def test_method_to_schema_mro_fallback_uses_base_docstring() -> None:
+    class _Base:
+        def action(self, x: int) -> None:
+            """Base doc: perform action."""
+            return None
+
+    class _Child(_Base):
+        def action(self, x: int) -> None:
+            # no docstring → should inherit from base via MRO
+            return None
+
+    schema = llmh.method_to_schema(_Child().action)
+    desc = schema["function"]["description"]
+    assert "Base doc: perform action." in desc
+
+
+def test_method_to_schema_prefers_child_docstring_over_base() -> None:
+    class _Base:
+        def go(self) -> None:
+            """Base doc: go."""
+            return None
+
+    class _Child(_Base):
+        def go(self) -> None:
+            """Child doc: go fast."""
+            return None
+
+    schema = llmh.method_to_schema(_Child().go)
+    desc = schema["function"]["description"]
+    assert "Child doc: go fast." in desc
+    assert "Base doc" not in desc
+
+
+def test_method_to_schema_plain_function_unchanged() -> None:
+    def _plain(a: int) -> None:
+        """Plain function doc."""
+        return None
+
+    schema = llmh.method_to_schema(_plain)
+    desc = schema["function"]["description"]
+    assert desc == "Plain function doc."
+
+
+# --------------------------------------------------------------------------- #
 #  NESTED Pydantic field typing for Message.images (Transcripts shape)        #
 # --------------------------------------------------------------------------- #
 

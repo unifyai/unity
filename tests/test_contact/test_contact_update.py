@@ -6,6 +6,8 @@ from typing import Dict, Any
 
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
+from unity.blacklist_manager.blacklist_manager import BlackListManager
+from unity.transcript_manager.types.message import Medium
 from tests.helpers import _handle_project
 
 
@@ -38,6 +40,65 @@ def _programmatic_contact_check(
             actual_contact_dict[key] == expected_val
         ), f"For key '{key}', expected '{expected_val}', got '{actual_contact_dict[key]}'"
     return actual_contact
+
+
+@_handle_project
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identify_by", ["name", "email", "id"])
+async def test_update_selects_move_to_blacklist_tool(identify_by: str):
+    """
+    Verify that ContactManager.update routes to the _move_to_blacklist tool when asked in English,
+    identifying the target contact by name, by contact detail, or by id.
+    """
+    cm = ContactManager()
+    blm = BlackListManager()
+    blm.clear()
+
+    # Create a single unambiguous contact with multiple details
+    cm._create_contact(
+        first_name="Zed",
+        surname="Quill",
+        bio="Temporary test contact",
+        email_address="zed.quill@example.org",
+        phone_number="+15550100200",
+        whatsapp_number="+15550100201",
+    )
+    # Get the created contact (exclude system contacts 0 and 1)
+    created = [
+        c for c in cm.filter_contacts()["contacts"] if c.contact_id not in (0, 1)
+    ][0]
+
+    reason = "policy violation"
+    if identify_by == "name":
+        directive = f"Please move {created.first_name} {created.surname} to the blacklist due to {reason}."
+    elif identify_by == "email":
+        directive = f"Blacklist the contact with email {created.email_address} because of {reason}."
+    else:  # "id"
+        directive = f"Blacklist contact ID {created.contact_id} due to {reason}."
+
+    handle = await cm.update(directive)
+    await handle.result()
+
+    # Validate that blacklist entries exist for all present details and correct mediums
+    entries = blm.filter_blacklist()["entries"]
+    # Expect: EMAIL + (SMS_MESSAGE, PHONE_CALL) + (WHATSAPP_MSG, WHATSAPP_CALL) = 5 entries
+    assert len(entries) == 5
+    mediums = {e.medium for e in entries}
+    details = {e.contact_detail for e in entries}
+    assert Medium.EMAIL in mediums
+    assert Medium.SMS_MESSAGE in mediums
+    assert Medium.PHONE_CALL in mediums
+    assert Medium.WHATSAPP_MSG in mediums
+    assert Medium.WHATSAPP_CALL in mediums
+    assert "zed.quill@example.org" in details
+    assert "+15550100200" in details
+    assert "+15550100201" in details
+    # Contact should no longer exist in Contacts
+    remaining = cm.filter_contacts(filter=f"contact_id == {created.contact_id}")[
+        "contacts"
+    ]
+    assert len(remaining) == 0
 
 
 @_handle_project
@@ -314,3 +375,36 @@ async def test_update_add_bio(
         bob_id,
         {"bio": "Long-time customer"},
     )
+
+
+@_handle_project
+@pytest.mark.slow
+@pytest.mark.eval
+@pytest.mark.asyncio
+async def test_update_set_timezone_from_location_hint(
+    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+):
+    """Ensure the assistant can set utc_offset_hours based on a location hint.
+
+    We use a stable, non-DST example (Mumbai, India → UTC+5:30) to avoid ambiguity.
+    """
+    cm, _ = contact_manager_scenario
+
+    # Find Diana Prince
+    rows = cm.filter_contacts(filter="email_address == 'diana@themyscira.com'")[
+        "contacts"
+    ]
+    assert rows, "Diana Prince must exist for this test"
+    diana_id = rows[0].contact_id
+
+    # Ask the assistant to ensure the timezone is logged correctly
+    request_text = (
+        "Diana Prince lives in Mumbai (UTC+5:30). Can you make sure we've logged "
+        "her timezone correctly?"
+    )
+    handle = await cm.update(request_text)
+    await handle.result()
+
+    # Verify utc_offset_hours has been set to +5.5
+    updated = cm.filter_contacts(filter=f"contact_id == {diana_id}")["contacts"][0]
+    assert updated.utc_offset_hours == 5.5

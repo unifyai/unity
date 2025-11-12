@@ -1,4 +1,5 @@
 import pytest
+from tests.helpers import _handle_project
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
 
@@ -9,6 +10,7 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 
 
 @pytest.mark.unit
+@_handle_project
 def test_ts_tools_expose_contact_manager_ask():
     """TaskScheduler should surface ContactManager.ask inside its tool dictionaries."""
 
@@ -31,7 +33,6 @@ def test_ts_tools_expose_contact_manager_ask():
 import asyncio
 import functools
 
-from tests.helpers import _handle_project
 from unity.contact_manager.contact_manager import ContactManager
 
 
@@ -55,10 +56,13 @@ async def test_ts_ask_calls_contact_manager_ask(monkeypatch):
 
     cm = ContactManager()
 
-    create_handle = await cm.update(
-        "Add a new contact: Sara Smith, email sara.smith@example.com, bio 'Company accountant'. She prefers an *informal* tone",
+    cm._create_contact(
+        first_name="Sara",
+        surname="Smith",
+        email_address="sara.smith@example.com",
+        bio="Company accountant",
+        response_policy="Use an informal tone in all communications: friendly, concise, and casual. Address her by first name.",
     )
-    await create_handle.result()
 
     # --------------------------------------------------------------------
     # 2. Spy on ContactManager.ask *after* the contact exists
@@ -117,11 +121,13 @@ async def test_ts_update_calls_contact_manager_ask(monkeypatch):
     # --------------------------------------------------------------------
 
     cm = ContactManager()
-
-    create_handle = await cm.update(
-        "Add a new contact: Sara Smith, email sara.smith@example.com, bio 'Company accountant'. She prefers an *informal* tone",
+    cm._create_contact(
+        first_name="Sara",
+        surname="Smith",
+        email_address="sara.smith@example.com",
+        bio="Company accountant",
+        response_policy="Use an informal tone in all communications: friendly, concise, and casual. Address her by first name.",
     )
-    await create_handle.result()
 
     # --------------------------------------------------------------------
     # 2. Spy on ContactManager.ask *after* the contact exists

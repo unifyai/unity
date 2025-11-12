@@ -16,7 +16,6 @@ import unify
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    inject_broader_context,
     make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
@@ -175,7 +174,33 @@ class FileManager(BaseFileManager):
         return unique
 
     def import_directory(self, directory: str | os.PathLike[str]) -> List[str]:
-        """Import all files in a directory (non-recursive). Returns display names."""
+        """Import all files in a directory (non-recursive) by value.
+
+        Copies each regular file found directly under the given directory into
+        the FileManager's private session directory, assigning a unique,
+        human-friendly display name for each. Subdirectories are ignored. This
+        is useful when a user points the assistant at a folder and wants the
+        contents made available for subsequent `list`, `exists`, and `parse`
+        operations.
+
+        Parameters
+        ----------
+        directory : str | os.PathLike[str]
+            Path to a directory on the local filesystem. The path is expanded
+            and resolved before use.
+
+        Returns
+        -------
+        List[str]
+            The display names registered for the imported files, in sorted
+            filename order. Each name is suitable for subsequent calls to
+            `exists` and `parse`.
+
+        Raises
+        ------
+        NotADirectoryError
+            If the provided path does not exist or is not a directory.
+        """
         p = Path(directory).expanduser().resolve()
         if not p.exists() or not p.is_dir():
             raise NotADirectoryError(str(directory))
@@ -189,7 +214,31 @@ class FileManager(BaseFileManager):
         return added
 
     def import_file(self, file_path: str | os.PathLike[str]) -> str:
-        """Import a single file from the filesystem. Returns display name."""
+        """Import a single file from the filesystem by value.
+
+        Copies the referenced file into the FileManager's private session
+        directory and registers a unique, human-friendly display name. This
+        operation is non-destructive to the source file and is intended to make
+        files available for `parse` and other read-only inspection tools during
+        the session.
+
+        Parameters
+        ----------
+        file_path : str | os.PathLike[str]
+            Path to a regular file on the local filesystem. The path is
+            expanded and resolved before use.
+
+        Returns
+        -------
+        str
+            The registered display name to use with `exists`, `list`, and
+            `parse`.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the path does not exist or is not a file.
+        """
         return self._add_file(Path(file_path))
 
     def save_file_to_downloads(self, filename: str, contents: bytes) -> str:
@@ -651,9 +700,43 @@ class FileManager(BaseFileManager):
 
     # Public API ---------------------------------------------------------- #
     def exists(self, filename: str) -> bool:  # type: ignore[override]
+        """Return True if a file with the given display name is registered.
+
+        This checks whether the FileManager currently has an entry for the
+        provided display name in its in-session registry. Display names are
+        stable, human-friendly identifiers (e.g., "report.pdf" or
+        "downloads/notes.txt"). Files can be registered via `import_file`,
+        `import_directory`, or `register_existing_file`. This method never
+        touches the filesystem; it only consults the in-memory registry.
+
+        Parameters
+        ----------
+        filename : str
+            The display name previously returned by a FileManager import or
+            registration method.
+
+        Returns
+        -------
+        bool
+            True if the display name is known to the FileManager, otherwise
+            False.
+        """
         return filename in self._display_to_path
 
     def list(self) -> List[str]:  # type: ignore[override]
+        """Return all registered display names in a stable, insertion order.
+
+        The returned names are the same human-friendly identifiers that tools
+        like `exists`, `parse`, and `import_*` use. This method reflects the
+        FileManager's current in-session registry and does not scan the
+        filesystem. Use this to discover which files are available to answer a
+        question (e.g., before calling `parse`).
+
+        Returns
+        -------
+        List[str]
+            A list of display names for all files currently registered.
+        """
         return list(self._display_to_path.keys())
 
     def parse(self, filenames: Union[str, List[str]], **options: Any) -> Dict[str, Dict[str, Any]]:  # type: ignore[override]
@@ -906,7 +989,6 @@ class FileManager(BaseFileManager):
             parent_lineage=TOOL_LOOP_LINEAGE.get([]),
             parent_chat_context=_parent_chat_context,
             tool_policy=lambda i, t: ("required", t) if i < 1 else ("auto", t),
-            preprocess_msgs=inject_broader_context,
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),

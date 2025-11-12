@@ -6,7 +6,7 @@ from typing import Dict, Callable
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
-    now_utc_str,
+    now,
     tool_name as _shared_tool_name,
     require_tools as _shared_require_tools,
 )
@@ -18,11 +18,6 @@ from ..common.read_only_ask_guard import read_only_ask_mutation_exit_block
 def _sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     """Return {tool_name: '(<argspec>)', …} using shared helper."""
     return sig_dict(tools)
-
-
-def _now() -> str:
-    """Current UTC timestamp in a friendly format."""
-    return now_utc_str()
 
 
 def _tool_name(tools: Dict[str, Callable], needle: str) -> str | None:
@@ -91,7 +86,6 @@ def build_ask_prompt(
         else ""
     )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     # High-level orchestration guidance (do not describe HOW, only orchestrate)
@@ -163,7 +157,6 @@ def build_ask_prompt(
 
     return "\n".join(
         [
-            activity_block,
             *guidance,
             *decomposition_concurrency_ask_lines,
             "",
@@ -175,7 +168,7 @@ def build_ask_prompt(
             "",
             read_only_ask_mutation_exit_block(),
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now()}.",
             clar_section,
             "",
             clarification_block,
@@ -237,7 +230,6 @@ def build_request_prompt(
         tools,
     )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     clarification_block = (
@@ -361,7 +353,6 @@ def build_request_prompt(
 
     return "\n".join(
         [
-            activity_block,
             *guidance_lines,
             *decomposition_concurrency_request_lines,
             *update_philosophy_lines,
@@ -371,7 +362,7 @@ def build_request_prompt(
             "",
             usage_examples,
             "",
-            f"Current UTC time is {_now()}.",
+            f"Current UTC time is {now()}.",
             clar_section,
             "",
             clarification_block,

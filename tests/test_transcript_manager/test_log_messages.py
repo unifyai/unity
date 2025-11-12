@@ -29,52 +29,44 @@ def _base_message(seed: int) -> dict:
 
 @pytest.mark.unit
 @_handle_project
-def test_log_messages_sync_returns_ids_and_auto_increment():
+def test_log_messages_basic_logging_with_explicit_exchange_id():
     tm = TranscriptManager()
 
-    # First message (no explicit ids provided)
-    created1 = tm.log_messages(_base_message(0), synchronous=True)
-    assert isinstance(created1, list) and len(created1) == 1
-    m1 = created1[0]
+    ex_id = 135790
+    created = tm.log_messages(
+        {
+            "medium": VALID_MEDIA[0],
+            "sender_id": 0,
+            "receiver_ids": [1],
+            "timestamp": datetime.now(UTC),
+            "content": "basic logging",
+            "exchange_id": ex_id,
+        },
+        synchronous=True,
+    )
 
-    # IDs should be non-negative and increment upwards
-    assert isinstance(m1.message_id, int) and m1.message_id >= 0
-    assert isinstance(m1.exchange_id, int) and m1.exchange_id >= 0
+    assert isinstance(created, list) and len(created) == 1
+    m = created[0]
+    assert isinstance(m.message_id, int) and m.message_id >= 0
+    assert m.exchange_id == ex_id
 
-    # Second message → ids should auto-increment independently
-    created2 = tm.log_messages(_base_message(1), synchronous=True)
-    assert isinstance(created2, list) and len(created2) == 1
-    m2 = created2[0]
+    # Ensure the message is persisted and retrievable by exchange id
+    msgs = tm._filter_messages(filter=f"exchange_id == {ex_id}", limit=1)["messages"]
+    assert msgs and msgs[0].exchange_id == ex_id
 
-    assert m2.message_id == m1.message_id + 1
-    assert m2.exchange_id == m1.exchange_id + 1
+    # Also verify events are published and flushable without error
+    tm.join_published()
 
 
 @pytest.mark.unit
 @_handle_project
-def test_log_messages_async_auto_increment_visible_via_filter_messages():
+def test_log_messages_missing_exchange_id_raises_helpful_error():
     tm = TranscriptManager()
 
-    # Create multiple messages in async mode (we'll assert via _filter_messages)
-    for i in range(3):
-        tm.log_messages(_base_message(i), synchronous=False)
+    # Intentionally omit exchange_id → should raise with guidance to use the new API
+    with pytest.raises(ValueError) as exc:
+        tm.log_messages(_base_message(0), synchronous=True)
 
-    tm.join_published()
-
-    # Fetch messages and verify id sequences start at 0 and increment by 1
-    msgs = tm._filter_messages(limit=None)["messages"]
-    assert len(msgs) == 3
-
-    # Sort by timestamp to preserve insertion order
-    msgs_sorted = sorted(msgs, key=lambda m: m.timestamp)
-    message_ids = [m.message_id for m in msgs_sorted]
-    exchange_ids = [m.exchange_id for m in msgs_sorted]
-
-    expected = list(range(0, len(msgs_sorted)))
-    assert message_ids == expected
-    assert exchange_ids == expected
-
-    # Additionally, ensure both counters advance independently (not tied together)
-    assert (message_ids[-1] - message_ids[0]) == 2
-    assert (exchange_ids[-1] - exchange_ids[0]) == 2
-    assert message_ids == exchange_ids
+    msg = str(exc.value)
+    assert "exchange_id" in msg
+    assert "log_first_message_in_new_exchange" in msg

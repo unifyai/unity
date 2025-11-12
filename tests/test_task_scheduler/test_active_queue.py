@@ -9,7 +9,14 @@ import pytest
 
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
+from unity.task_scheduler.types.task import Task
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
+from unity.task_scheduler.types.status import Status
+from unity.image_manager.image_manager import ImageManager
+from unity.image_manager.types import RawImageRef, AnnotatedImageRef
+from pathlib import Path
+import base64
+import inspect
 
 
 async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
@@ -133,9 +140,15 @@ async def test_execute_queue_by_numeric_id_forwards_and_runs_followers(monkeypat
     rows_b = ts._filter_tasks(filter=f"task_id == {b}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c}")
     # After full queue, we expect all instances to be completed or terminal
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_a)
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_b)
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_c)
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_a
+    )
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_b
+    )
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_c
+    )
 
 
 @pytest.mark.asyncio
@@ -170,19 +183,19 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
     a, b, c = await _make_ordered_queue(ts, ["S_A", "S_B", "S_C"])  # type: ignore[misc]
 
     # Snapshot original schedules and queue_ids
-    def _row(tid: int) -> Dict:
+    def _row(tid: int) -> Task:
         return ts._filter_tasks(filter=f"task_id == {tid}")[0]
 
     ra0 = _row(a)
     rb0 = _row(b)
     rc0 = _row(c)
 
-    sched_a0 = dict(ra0.get("schedule") or {})
-    sched_b0 = dict(rb0.get("schedule") or {})
-    sched_c0 = dict(rc0.get("schedule") or {})
-    qid_a0 = ra0.get("queue_id")
-    qid_b0 = rb0.get("queue_id")
-    qid_c0 = rc0.get("queue_id")
+    sched_a0 = ra0.schedule
+    sched_b0 = rb0.schedule
+    sched_c0 = rc0.schedule
+    qid_a0 = ra0.queue_id
+    qid_b0 = rb0.queue_id
+    qid_c0 = rc0.queue_id
 
     # Execute starting at head (queue/chained semantics)
     h = await ts.execute(text=str(a))
@@ -193,13 +206,13 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
     rb1 = _row(b)
     rc1 = _row(c)
 
-    assert dict(ra1.get("schedule") or {}) == sched_a0
-    assert dict(rb1.get("schedule") or {}) == sched_b0
-    assert dict(rc1.get("schedule") or {}) == sched_c0
+    assert ra1.schedule == sched_a0
+    assert rb1.schedule == sched_b0
+    assert rc1.schedule == sched_c0
 
-    assert ra1.get("queue_id") == qid_a0
-    assert rb1.get("queue_id") == qid_b0
-    assert rc1.get("queue_id") == qid_c0
+    assert ra1.queue_id == qid_a0
+    assert rb1.queue_id == qid_b0
+    assert rc1.queue_id == qid_c0
 
 
 @pytest.mark.asyncio
@@ -276,12 +289,14 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
 
     # B should be reinstated as head with original start_at; C queued after
     row_b = ts._filter_tasks(filter=f"task_id == {b}")[0]
-    sched_b = row_b.get("schedule") or {}
-    assert sched_b.get("prev_task") is None
-    assert row_b["status"] in ("scheduled", "queued", "primed")
+    sched_b = row_b.schedule
+    assert sched_b is not None
+    assert sched_b.prev_task is None
+    assert row_b.status in (Status.scheduled, Status.queued, Status.primed)
     row_c = ts._filter_tasks(filter=f"task_id == {c}")[0]
-    sched_c = row_c.get("schedule") or {}
-    assert sched_c.get("prev_task") == b
+    sched_c = row_c.schedule
+    assert sched_c is not None
+    assert sched_c.prev_task == b
 
 
 @pytest.mark.asyncio
@@ -312,8 +327,12 @@ async def test_execute_queue_by_numeric_id_completes_all(monkeypatch):
 
     rows_x = ts._filter_tasks(filter=f"task_id == {x}")
     rows_y = ts._filter_tasks(filter=f"task_id == {y}")
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_x)
-    assert any(r.get("status") in ("completed", "cancelled", "failed") for r in rows_y)
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_x
+    )
+    assert any(
+        r.status in (Status.completed, Status.cancelled, Status.failed) for r in rows_y
+    )
 
 
 @pytest.mark.asyncio
@@ -527,9 +546,9 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
     rows_a = ts._filter_tasks(filter=f"task_id == {a_id}")
     rows_b = ts._filter_tasks(filter=f"task_id == {b_id}")
     rows_c = ts._filter_tasks(filter=f"task_id == {c_id}")
-    a_desc = rows_a[0]["description"]
-    b_desc = rows_b[0]["description"]
-    c_desc = rows_c[0]["description"]
+    a_desc = rows_a[0].description
+    b_desc = rows_b[0].description
+    c_desc = rows_c[0].description
 
     expected = [
         (a_desc, "GLOBAL_OK"),
@@ -788,17 +807,158 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     rows_c = ts._filter_tasks(filter=f"task_id == {c_id}")
     rows_d = ts._filter_tasks(filter=f"task_id == {d_id}")
 
-    def _is_terminal(row):
-        return row.get("status") in ("completed", "cancelled", "failed")
+    def _is_terminal(row: Task):
+        return row.status in (Status.completed, Status.cancelled, Status.failed)
 
     assert any(_is_terminal(r) for r in rows_a)
     assert any(_is_terminal(r) for r in rows_b)
     assert any(_is_terminal(r) for r in rows_d)
     # C was removed from the queue before activation; ensure it is not terminal/active
     assert all(
-        r.get("status") not in ("completed", "cancelled", "failed", "active")
+        r.status
+        not in (Status.completed, Status.cancelled, Status.failed, Status.active)
         for r in rows_c
     )
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_append_to_queue_singleton_adds_follower_and_runs(monkeypatch):
+    """
+    Append a new task to a singleton queue during execution, then complete both
+    tasks and verify the final summary includes the appended follower.
+    """
+
+    # Step-based actor so pause/resume pairs deterministically complete a task
+    class _StepOnly(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _StepOnly, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _StepOnly,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+
+    # Create a singleton queue with one task A
+    (a_id,) = tuple(await _make_ordered_queue(ts, ["App_A"]))  # type: ignore[misc]
+    # Create a standalone task B (not queued)
+    b_id = ts._create_task(name="App_B", description="App_B")["details"]["task_id"]  # type: ignore[index]
+
+    h = await ts.execute(text=str(a_id))
+
+    # Spy activation to detect when B becomes active later
+    b_active_evt: asyncio.Event = asyncio.Event()
+    orig_update_status = ts._update_task_status_instance
+
+    def spy_update_status(*, task_id: int, instance_id: int, new_status: str, activated_by=None):  # type: ignore[override]
+        res = orig_update_status(
+            task_id=task_id,
+            instance_id=instance_id,
+            new_status=new_status,
+            activated_by=activated_by,
+        )
+        try:
+            if task_id == b_id and str(new_status) == "active":
+                b_active_evt.set()
+        except Exception:
+            pass
+        return res
+
+    monkeypatch.setattr(
+        ts,
+        "_update_task_status_instance",
+        spy_update_status,
+        raising=True,
+    )
+
+    # Wait deterministically until a task is active
+    async def _wait_until_active(max_iters: int = 500):
+        for _ in range(max_iters):
+            try:
+                rows = ts._filter_tasks(filter="status == 'active'", limit=1)
+            except Exception:
+                rows = []
+            if rows:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("No active task detected in time")
+
+    await _wait_until_active()
+
+    # Append B to the queue while A is running
+    inner = getattr(h, "_inner", h)
+    msg = inner.append_to_queue(task_id=b_id)
+    assert isinstance(msg, str)
+
+    # Complete A deterministically (two steps)
+    h.pause()
+    h.resume()
+
+    # Wait until B becomes active, then complete B
+    await asyncio.wait_for(b_active_evt.wait(), timeout=20)
+    h.pause()
+    h.resume()
+
+    res = await asyncio.wait_for(h.result(), timeout=30)
+    assert isinstance(res, str)
+    assert "Completed the following tasks:" in res
+    assert f"Task {a_id}: App_A" in res
+    assert f"Task {b_id}: App_B" in res
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_append_to_queue_emits_notification(monkeypatch):
+    """Appending should emit a queue.appended notification event."""
+
+    class _StepOnly(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw["steps"] = 2
+            kw["duration"] = None
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _StepOnly, raising=True)
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _StepOnly,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    (a_id,) = tuple(await _make_ordered_queue(ts, ["N_app_A"]))  # type: ignore[misc]
+    b_id = ts._create_task(name="N_app_B", description="N_app_B")["details"]["task_id"]  # type: ignore[index]
+
+    h = await ts.execute(text=str(a_id))
+
+    # Wait until active before appending
+    async def _wait_until_active(max_iters: int = 500):
+        for _ in range(max_iters):
+            rows = ts._filter_tasks(filter="status == 'active'", limit=1)
+            if rows:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("No active task detected in time")
+
+    await _wait_until_active()
+
+    inner = getattr(h, "_inner", h)
+    inner.append_to_queue(task_id=b_id)
+
+    # Collect notifications until we observe queue.appended (skip unrelated events)
+    seen_appended = False
+    for _ in range(20):
+        evt = await asyncio.wait_for(h.next_notification(), timeout=30)
+        if isinstance(evt, dict) and evt.get("type") == "queue.appended":
+            assert int(evt.get("task_id")) == int(b_id)
+            seen_appended = True
+            break
+    assert seen_appended, "queue.appended notification not observed"
 
 
 @pytest.mark.asyncio
@@ -930,6 +1090,73 @@ async def test_active_task_done_incremental(monkeypatch):
 
     # Ensure the queue handle fully resolves to avoid lingering background tasks
     await asyncio.wait_for(h.result(), timeout=10)
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_queue_interject_image_seen_by_simulation(monkeypatch):
+    """
+    Singleton queue passthrough: interject with an image via ActiveQueue handle,
+    then ask about the file; reply should reference a sheet/spreadsheet, proving
+    the image propagated to the underlying SimulatedActor.
+    """
+
+    # Prepare an image id from the existing rota screenshot
+    img_path = Path(__file__).parent / "organize_weekly_rotar.png"
+    raw_bytes = img_path.read_bytes()
+    img_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+
+    im = ImageManager()
+    [img_id] = im.add_images(
+        [
+            {"caption": "weekly rota", "data": img_b64},
+        ],
+    )
+
+    # Use a step-based actor so interject + ask + result completes deterministically
+    actor = SimulatedActor(steps=3, duration=None)
+    ts = TaskScheduler(actor=actor)
+
+    # Build a singleton queue
+    (solo_id,) = tuple(await _make_ordered_queue(ts, ["Rota"]))
+
+    # Start execution by numeric id → ActiveQueue passthrough (singleton)
+    h = await ts.execute(text=str(solo_id))
+
+    # Wait deterministically until a task is active
+    async def _wait_until_active(max_iters: int = 500):
+        for _ in range(max_iters):
+            try:
+                rows = ts._filter_tasks(filter="status == 'active'", limit=1)
+            except Exception:
+                rows = []
+            if rows:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError("No active task detected in time")
+
+    await _wait_until_active()
+
+    # Interject with the image attached; annotation intentionally does not say "spreadsheet"
+    await h.interject(
+        "Please start working on this file.",
+        images=[
+            AnnotatedImageRef(
+                raw_image_ref=RawImageRef(image_id=int(img_id)),
+                annotation="rota file",
+            ),
+        ],
+    )
+
+    # Ask about status and infer file type from the visual context
+    ask_handle = await h.ask(
+        "How is it going? What file are you working on? What file type is it?",
+    )
+    reply = await ask_handle.result()
+    assert isinstance(reply, str) and reply.strip()
+    assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
+
+    await h.result()
 
 
 @pytest.mark.asyncio
@@ -1066,6 +1293,240 @@ async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
     assert isinstance(final_res, str)
     assert "Completed the following tasks:" not in final_res
     assert "Solo" in final_res
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_active_queue_emits_notifications(monkeypatch):
+    """
+    Verify that ActiveQueue emits queue-level notifications for task lifecycle:
+    - queue.task.completed for each task
+    - queue.task.started for followers
+    - queue.completed at the end
+    """
+
+    # Immediate completion per task to make notification collection deterministic
+    class _Immediate(SimulatedActor):  # type: ignore[misc]
+        def __init__(self, *a, **kw):
+            kw.pop("duration", None)
+            super().__init__(steps=0, duration=None, *a, **kw)
+
+    monkeypatch.setattr(
+        "unity.actor.simulated.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+    monkeypatch.setattr(
+        "unity.task_scheduler.task_scheduler.SimulatedActor",
+        _Immediate,
+        raising=True,
+    )
+
+    ts = TaskScheduler()
+    # Create a simple 2-task queue so we see a follower 'started' event
+    a_name, b_name = "N_notif_A", "N_notif_B"
+    a_id, b_id = await _make_ordered_queue(ts, [a_name, b_name])  # type: ignore[misc]
+
+    h = await ts.execute(text=str(a_id))
+
+    # Collect notifications until we observe queue.completed.
+    # Tolerate inert/empty dicts from inner handles and skip them.
+    events: list[dict] = []
+    completed_seen = False
+    for _ in range(30):
+        evt = await asyncio.wait_for(h.next_notification(), timeout=30)
+        if not (isinstance(evt, dict) and evt.get("type")):
+            # Skip inert notifications (e.g., inner stub returning {}). Keep waiting.
+            continue
+        events.append(evt)
+        if evt.get("type") == "queue.completed":
+            completed_seen = True
+            break
+
+    assert (
+        completed_seen
+    ), f"queue.completed not observed; got types: {[e.get('type') for e in events]}"
+
+    types = [e.get("type") for e in events]
+    # At least: completed for A and B, started for B, and final queue.completed
+    assert "queue.completed" in types
+    assert types.count("queue.task.completed") >= 2
+    assert types.count("queue.task.started") >= 1
+
+    # Validate names on completed events match our tasks
+    completed_names = [
+        e.get("name") for e in events if e.get("type") == "queue.task.completed"
+    ]
+    assert any(a_name in str(n) for n in completed_names)
+    assert any(b_name in str(n) for n in completed_names)
+
+    # Ensure handle finalizes cleanly
+    await h.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_helper_append_to_queue_is_exposed_and_callable():
+    """
+    Verify that the custom steering utility `append_to_queue` is surfaced by the
+    async tool loop's dynamic helper generation with an expressive docstring and
+    informative argspec, and that invoking the generated helper appends to the queue.
+    """
+    # Local imports for test isolation
+    from unity.task_scheduler.active_queue import ActiveQueue
+    from unity.common.async_tool_loop import SteerableToolHandle
+    from unity.common._async_tool.tools_data import ToolsData
+    from unity.common._async_tool.tools_utils import ToolCallMetadata
+    from unity.common.llm_helpers import method_to_schema
+
+    # Build scheduler with a singleton queue (A) and a standalone task (B) to append later
+    ts = TaskScheduler()
+    (a_id,) = tuple(await _make_ordered_queue(ts, ["Doc_A"]))  # type: ignore[misc]
+    b_id = ts._create_task(name="Doc_B", description="Doc_B")["details"]["task_id"]  # type: ignore[index]
+
+    # Minimal inner handle to satisfy ActiveQueue; completes immediately
+    class _StubInner(SteerableToolHandle):  # type: ignore[name-defined]
+        def __init__(self):
+            self._done = True
+
+        async def ask(self, question: str, *a, **kw):  # type: ignore[override]
+            return self
+
+        async def interject(self, message: str, *a, **kw):  # type: ignore[override]
+            return None
+
+        def stop(self, *, cancel: bool = False, reason: str | None = None):  # type: ignore[override]
+            return "stopped"
+
+        def pause(self):  # type: ignore[override]
+            return "paused"
+
+        def resume(self):  # type: ignore[override]
+            return "resumed"
+
+        def done(self) -> bool:  # type: ignore[override]
+            return self._done
+
+        async def result(self) -> str:  # type: ignore[override]
+            return "ok"
+
+        async def next_clarification(self) -> dict:  # type: ignore[override]
+            return {}
+
+        async def next_notification(self) -> dict:  # type: ignore[override]
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:  # type: ignore[override]
+            return None
+
+    # Construct ActiveQueue around A
+    aq = ActiveQueue(
+        ts,
+        first_task_id=a_id,
+        first_handle=_StubInner(),
+        parent_chat_context=None,
+        clarification_up_q=None,
+        clarification_down_q=None,
+    )
+
+    # Prepare ToolsData context with a pending task bound to our ActiveQueue handle
+    class _DummyLogger:
+        log_steps = False
+
+        def info(self, *a, **kw): ...
+
+        def error(self, *a, **kw): ...
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = []
+
+    tools_data = ToolsData({}, client=_DummyClient(), logger=_DummyLogger())
+
+    pending_task = asyncio.create_task(asyncio.sleep(10))
+    call_id = "dq-append-001"
+    asst_msg = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": "dummy_base", "arguments": "{}"},
+            },
+        ],
+        "content": "",
+    }
+    meta = ToolCallMetadata(
+        name="dummy_base",
+        call_id=call_id,
+        call_dict=asst_msg["tool_calls"][0],
+        call_idx=0,
+        chat_context=None,
+        assistant_msg=asst_msg,
+        is_interjectable=False,
+        tool_schema={},
+        llm_arguments={},
+        raw_arguments_json=asst_msg["tool_calls"][0]["function"]["arguments"],
+        handle=aq,
+        interject_queue=None,
+        clar_up_queue=None,
+        clar_down_queue=None,
+        notification_queue=None,
+        pause_event=None,
+    )
+    tools_data.save_task(pending_task, meta)
+
+    # Generate dynamic helpers
+    from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
+
+    factory = DynamicToolFactory(tools_data)
+    factory.generate()
+
+    # Locate the generated helper for append_to_queue
+    keys = [k for k in factory.dynamic_tools.keys() if k.startswith("append_to_queue_")]
+    assert keys, "expected append_to_queue helper to be generated"
+    helper = factory.dynamic_tools[keys[0]]
+
+    # 1) Docstring should be expressive (sourced from ActiveQueue.append_to_queue)
+    doc = inspect.getdoc(helper) or ""
+    assert "Append an existing runnable task" in doc
+    assert "Returns a short human-readable summary" in doc
+
+    # 2) Argspec/schema should expose integer task_id and require it
+    schema = method_to_schema(helper, include_class_name=False)
+    params = schema["function"]["parameters"]
+    assert "task_id" in params["properties"]
+    prop = params["properties"]["task_id"]
+    is_integer = (prop.get("type") == "integer") or any(
+        (d.get("type") == "integer")
+        for d in (prop.get("anyOf") or [])
+        if isinstance(prop, dict)
+    )
+    assert is_integer, f"expected integer type for task_id, got: {prop}"
+    assert "task_id" in params.get("required", [])
+
+    # 3) Invoking the helper should append B to the live queue behind A
+    result_text = helper(task_id=int(b_id))
+    if inspect.isawaitable(result_text):
+        result_text = await result_text
+    # Helper may return a dict payload with {'call_id': ..., 'result': <str>} or a plain string.
+    if isinstance(result_text, dict):
+        res_str = str(result_text.get("result", ""))
+    else:
+        res_str = str(result_text)
+    assert isinstance(res_str, str) and str(b_id) in res_str
+
+    # Verify queue now contains A then B
+    live = ts._get_queue_for_task(task_id=a_id)
+    ids = [getattr(r, "task_id", None) for r in (live or [])]
+    assert ids and ids[0] == a_id and b_id in ids and ids.index(b_id) == len(ids) - 1
+
+    # Cleanup pending task to avoid leakage
+    from contextlib import suppress as _suppress  # local import for cleanup
+
+    with _suppress(BaseException):
+        pending_task.cancel()
+        await pending_task
 
 
 @pytest.mark.asyncio

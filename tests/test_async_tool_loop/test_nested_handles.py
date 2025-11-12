@@ -140,7 +140,7 @@ async def test_nested_async_tool_loop():
     assert first_tool_resp["role"] == "tool"
     assert first_tool_resp["name"] == "outer_tool"
     assert (
-        first_tool_resp["content"] == '"done"'
+        first_tool_resp["content"] == "done"
     ), "The placeholder for outer_tool should be updated with the inner loop's final result."
 
     # 4. Assistant: final response "all done"
@@ -346,7 +346,20 @@ async def test_interject_nested_handle(monkeypatch):
     # b) The tool should then return a message indicating the loop started
     assert msgs[3]["role"] == "tool"
     assert msgs[3]["name"] == "outer_tool"
-    assert msgs[3]["content"].startswith("Nested async tool loop started")
+    _content = msgs[3].get("content") or ""
+    _started_ok = False
+    try:
+        _parsed = json.loads(_content)
+        _started_ok = isinstance(_parsed, dict) and _parsed.get("_placeholder") in (
+            "nested_start",
+            "pending",
+        )
+    except Exception:
+        # Legacy acceptance: human-readable string used before placeholder refactor
+        _started_ok = _content.startswith("Nested async tool loop started")
+    assert (
+        _started_ok
+    ), f"Expected nested-start placeholder or legacy string, got: {_content!r}"
 
     # c) Find the user message "switch to dogs"
     interjection_msg = next(
@@ -388,20 +401,18 @@ async def test_interject_nested_handle(monkeypatch):
     interj_args = json.loads(interj_call["function"]["arguments"]) or {}
     assert interj_args.get("message") == "dogs" or interj_args.get("content") == "dogs"
 
-    # e) Find the tool response from the interject helper
-    interject_response_msg = next(
+    # e) Find the acknowledgement tool message linked to that helper call via tool_call_id
+    interject_ack = next(
         (
             m
             for m in msgs
-            if m["role"] == "tool"
-            and m["name"].startswith("interject outer_tool")
-            and 'Guidance "dogs" forwarded to the running tool.' in m["content"]
+            if m.get("role") == "tool" and m.get("tool_call_id") == interj_call["id"]
         ),
         None,
     )
     assert (
-        interject_response_msg is not None
-    ), "Tool response from interject helper not found"
+        interject_ack is not None
+    ), "Acknowledgement tool message for interject_* helper not found"
 
     # f) Assistant may either perform a status check, or the loop may update
     #    the existing placeholder tool message directly upon completion. Accept
@@ -420,14 +431,14 @@ async def test_interject_nested_handle(monkeypatch):
     )
 
     if status_check_msg is not None:
-        # Tool response to status check should be '"done"'
+        # Tool response to status check should be "done"
         status_response_msg = next(
             (
                 m
                 for m in msgs
                 if m["role"] == "tool"
                 and m["name"].startswith("check_status_call_")
-                and m["content"] == '"done"'
+                and m["content"] == "done"
             ),
             None,
         )
@@ -435,14 +446,10 @@ async def test_interject_nested_handle(monkeypatch):
             status_response_msg is not None
         ), "Tool response with '\"done\"' not found"
     else:
-        # Fallback: ensure there is some tool message that delivered '"done"'
+        # Fallback: ensure there is some tool message that delivered "done"
         # as the completion result even without an explicit status check.
         fallback_done = next(
-            (
-                m
-                for m in msgs
-                if m.get("role") == "tool" and m.get("content") == '"done"'
-            ),
+            (m for m in msgs if m.get("role") == "tool" and m.get("content") == "done"),
             None,
         )
         assert (
@@ -1042,11 +1049,29 @@ async def test_dynamic_handle_public_method():
     assert "all done" in final_reply.strip().lower()
     assert progress_calls["count"] == 1, ".ask should be invoked exactly once"
 
-    # Optional: sanity-check that a tool-message from `_ask_…` is present
-    assert any(
-        m.get("role") == "tool" and "ask_" in (m.get("name") or "")
-        for m in client.messages
-    ), "No tool-message from the `ask_…` helper found"
+    # Structural: find the ask_* helper tool_call id and its acknowledgement tool message
+    ask_call_id = next(
+        (
+            tc["id"]
+            for m in client.messages
+            if m.get("role") == "assistant"
+            for tc in (m.get("tool_calls") or [])
+            if isinstance(tc, dict)
+            and isinstance(tc.get("function"), dict)
+            and str(tc["function"].get("name", "")).startswith("ask_")
+        ),
+        None,
+    )
+    assert ask_call_id is not None, "Assistant did not call an ask_* helper"
+    ask_ack = next(
+        (
+            m
+            for m in client.messages
+            if m.get("role") == "tool" and m.get("tool_call_id") == ask_call_id
+        ),
+        None,
+    )
+    assert ask_ack is not None, "No acknowledgement found for ask_* helper call"
 
 
 @pytest.mark.asyncio

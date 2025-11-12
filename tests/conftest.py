@@ -26,6 +26,14 @@ import random
 import string
 import unify
 
+# --------------------------------------------------------------------------- #
+# Early logging guard: ensure a harmless handler exists before any imports    #
+# that might call logging.basicConfig(), so they skip adding stream handlers. #
+# --------------------------------------------------------------------------- #
+_root_logger_early = logging.getLogger()
+if not _root_logger_early.handlers:
+    _root_logger_early.addHandler(logging.NullHandler())
+
 from tests.helpers import (
     SETTINGS,
     PRECREATED_CONTEXTS,
@@ -121,50 +129,25 @@ def stub_controller_deps(monkeypatch):
         _DummyWorker,
     )
 
-    # --- DateTime stub for prompt builders for all managers -----------------------------------
-    def _static_now():
-        """Return a fixed timestamp for consistent test caching."""
-        return "2025-06-13 12:00:00 UTC"  # Friday, June 13, 2025 at noon UTC
+    # --- DateTime stub for prompts (centralized) -----------------------------------
+    def _static_now(time_only: bool = False):
+        """Return a fixed timestamp for consistent test caching in assistant TZ.
 
-    # Patch all _now functions in prompt builders
-    monkeypatch.setattr("unity.contact_manager.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.knowledge_manager.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.conductor.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.task_scheduler.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.transcript_manager.prompt_builders._now", _static_now)
-    # Additional managers to ensure deterministic prompts across the suite
-    monkeypatch.setattr("unity.memory_manager.prompt_builders._now", _static_now)
-    monkeypatch.setattr("unity.file_manager.prompt_builders._now", _static_now)
-    monkeypatch.setattr(
-        "unity.web_searcher.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.guidance_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.secret_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.skill_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.image_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "unity.conversation_manager.prompt_builders._now",
-        _static_now,
-        raising=False,
-    )
+        The fixed base is Friday, June 13, 2025 at 12:00:00 UTC; for tests we
+        treat the assistant timezone as UTC so the rendered label is "UTC".
+        """
+        from datetime import datetime, timezone
+
+        dt = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+        label = "UTC"
+        return (
+            dt.strftime("%H:%M:%S ") + label
+            if time_only
+            else dt.strftime("%Y-%m-%d %H:%M:%S ") + label
+        )
+
+    # Patch the central helper once so all prompts inherit a stable timestamp
+    monkeypatch.setattr("unity.common.prompt_helpers.now", _static_now)
 
 
 # --------------------------------------------------------------------------- #
@@ -351,6 +334,26 @@ def pytest_configure(config):
         config.option.capture = "no"
 
     config.stash[metadata_key]["Settings"] = SETTINGS.model_dump()
+
+    # ------------------------------------------------------------------ #
+    # Prune non-pytest console handlers so only pytest live logs appear. #
+    # Keeps any file handlers (e.g., when --test-log-enable is used).    #
+    # ------------------------------------------------------------------ #
+    try:
+        root = logging.getLogger()
+        kept_handlers: list[logging.Handler] = []
+        for h in list(root.handlers):
+            mod = getattr(h.__class__, "__module__", "")
+            is_stream = isinstance(h, logging.StreamHandler)
+            is_pytest = mod.startswith("_pytest.logging")
+            # Retain pytest's handlers and any non-stream handlers (file, etc.)
+            if is_stream and not is_pytest:
+                continue
+            kept_handlers.append(h)
+        root.handlers = kept_handlers
+    except Exception:
+        # Never fail configuration due to logging hygiene adjustments.
+        pass
 
 
 # Skip tests marked with requires_real_unify when using the unify stub
