@@ -26,6 +26,14 @@ class FileReference(BaseModel):
         description="Canonical path within the backend (leading '/' when applicable)",
     )
     name: str
+    provider: Optional[str] = Field(
+        default=None,
+        description="Stable provider/adapter name (e.g., 'Local', 'GoogleDrive').",
+    )
+    uri: Optional[str] = Field(
+        default=None,
+        description="Canonical provider URI (e.g., local:///abs/path, gdrive://fileId)",
+    )
     mime_type: Optional[str] = None
     size_bytes: Optional[int] = None
     modified_at: Optional[str] = None

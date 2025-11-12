@@ -250,6 +250,10 @@ class InteractFileSystemAdapter(BaseFileSystemAdapter):
         return f"Interact"
 
     @property
+    def uri_name(self) -> str:
+        return "interact"
+
+    @property
     def capabilities(self) -> FileSystemCapabilities:
         return self._caps
 
@@ -423,6 +427,8 @@ class InteractFileSystemAdapter(BaseFileSystemAdapter):
             yield FileReference(
                 path=path,
                 name=str(title),
+                provider=self.name,
+                uri=f"{self.uri_name}://{sid}",
                 size_bytes=None,
                 modified_at=None,
                 mime_type=None,
@@ -450,6 +456,8 @@ class InteractFileSystemAdapter(BaseFileSystemAdapter):
         return FileReference(
             path=f"/{sid}",
             name=str((meta or {}).get("Title") or (meta or {}).get("title") or sid),
+            provider=self.name,
+            uri=f"{self.uri_name}://{sid}",
             extra={"raw": meta} if meta else {},
         )
 
