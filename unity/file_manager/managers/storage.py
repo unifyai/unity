@@ -6,7 +6,7 @@ import unify
 
 from ...common.context_store import TableStore
 from ...common.model_to_fields import model_to_fields
-from ..types.file import FileRecord as FileRow
+from ..types.file import FileRecord as FileRow, FileContent as _PerFileContent
 
 
 def provision_storage(self) -> None:
@@ -18,7 +18,7 @@ def provision_storage(self) -> None:
             unique_keys={"file_id": "int"},
             auto_counting={"file_id": None},
             description=(
-                "FileRecords index for a single filesystem; per-file content lives under File/<alias>/<filename>/Tables/<table>."
+                "FileRecords index for a single filesystem; per-file content lives under Files/<alias>/<filename>/Tables/<table>."
             ),
             fields=model_to_fields(FileRow),
         )
@@ -29,9 +29,240 @@ def provision_storage(self) -> None:
         pass
 
 
-def get_columns(self) -> Dict[str, str]:
-    """Return {column_name: column_type} for the file table."""
-    return self._store.get_columns()  # type: ignore[attr-defined]
+def get_columns(self, table: Optional[str] = None) -> Dict[str, str]:
+    """Return {column_name: column_type} for index or any resolved context.
+
+    Resolution rules when ``table`` is provided:
+    - "FileRecords" → return index columns
+    - Logical names from tables_overview (preferred):
+      "<root>" (Content), "<root>.Tables.<label>" (per-file table)
+    - Legacy refs: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+    - Fully-qualified context: use as-is
+    """
+    if not table:
+        return self._store.get_columns()  # type: ignore[attr-defined]
+    t = str(table).strip()
+    if not t:
+        return {}
+    if t.lower() == "filerecords":
+        return self._store.get_columns()  # type: ignore[attr-defined]
+    resolved_ctx: Optional[str] = None
+    # If the input already targets a context under this manager, use it directly.
+    try:
+        _index_ctx = getattr(self, "_ctx")
+    except Exception:
+        _index_ctx = None
+    try:
+        _files_root = getattr(self, "_per_file_root")
+    except Exception:
+        _files_root = None
+    if (_index_ctx and t == _index_ctx) or (
+        _files_root and t.startswith(f"{_files_root}/")
+    ):
+        resolved_ctx = t
+    else:
+        try:
+            # Prefer full resolver (supports legacy forms)
+            from .search import (
+                resolve_table_ref as _res_ref,
+            )  # local import to avoid cycles
+
+            resolved_ctx = _res_ref(self, t)
+        except Exception:
+            try:
+                # Fallback to logical name resolver
+                from .search import ctx_for_table as _ctx_for_table  # type: ignore
+
+                resolved_ctx = _ctx_for_table(self, t)
+            except Exception:
+                resolved_ctx = t
+    try:
+        fields = unify.get_fields(context=str(resolved_ctx))
+        return {k: v.get("data_type") for k, v in fields.items()}
+    except Exception as e:
+        # Best-effort: return empty mapping on failure
+        return {}
+
+
+# ----------------------- Context getters (strings only) ----------------------- #
+
+
+def ctx_for_file_index(self) -> str:
+    """Return the fully-qualified context for FileRecords/<alias>."""
+    return getattr(self, "_ctx")
+
+
+def ctx_for_file(self, *, file_path: str) -> str:
+    """Return the fully-qualified per-file Content context.
+
+    Shape: <base>/Files/<alias>/<safe(file_path)>/Content
+    """
+    _safe = getattr(self, "_safe") if hasattr(self, "_safe") else (lambda x: x)
+    base = getattr(self, "_per_file_root")
+    return f"{base}/{_safe(file_path)}/Content"
+
+
+def ctx_for_file_table(self, *, file_path: str, table: str) -> str:
+    """Return the fully-qualified per-file table context.
+
+    Shape: <base>/Files/<alias>/<safe(file_path)>/Tables/<safe(table)>
+    """
+    _safe = getattr(self, "_safe") if hasattr(self, "_safe") else (lambda x: x)
+    base = getattr(self, "_per_file_root")
+    return f"{base}/{_safe(file_path)}/Tables/{_safe(table)}"
+
+
+# ------------------------ Context provisioners (ensure) ---------------------- #
+
+
+def ensure_file_context(
+    self,
+    *,
+    file_path: str,
+    auto_counting_per_file: Optional[Dict[str, Optional[str]]] = None,
+) -> None:
+    """Ensure a per-file Content context exists (idempotent)."""
+    ctx = ctx_for_file(self, file_path=file_path)
+    fields = model_to_fields(_PerFileContent)
+    store = TableStore(
+        ctx,
+        unique_keys={
+            "row_id": "int",
+            **(
+                {
+                    k: "int"
+                    for k in (auto_counting_per_file or {}).keys()
+                    if (auto_counting_per_file or {}).get(k) is not None
+                }
+            ),
+        },
+        auto_counting={
+            "row_id": None,
+            **(auto_counting_per_file or {}),
+        },
+        fields=fields,
+        description=f"Per-file context for '{file_path}' using the File schema",
+    )
+    try:
+        store.ensure_context()
+    except Exception:
+        # Best-effort provisioning
+        pass
+
+
+def ensure_file_table_context(
+    self,
+    *,
+    file_path: str,
+    table: str,
+    unique_key: str = "row_id",
+    auto_counting: Optional[Dict[str, Optional[str]]] = None,
+    columns: Optional[Union[List[str], Dict[str, Any]]] = None,
+    example_row: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Ensure a per-file Tables/<label> context exists with initial fields.
+
+    - Unique key defaults to ``row_id`` with auto-counting enabled.
+    - When ``columns`` is provided:
+      * If a list, create fields with ``{"mutable": True}`` (no strict type).
+      * If a dict mapping names→types, pass through as-is.
+    - Else, when ``example_row`` is provided, infer field names from its keys and
+      create fields with ``{"mutable": True}`` (no strict type).
+    """
+    ctx = ctx_for_file_table(self, file_path=file_path, table=table)
+    # Build fields from columns or example_row keys when provided
+    fields_map: Dict[str, Any] = {}
+    if columns is not None:
+        if isinstance(columns, dict):
+            # Pass through mapping of column names to types as-is
+            fields_map = dict(columns)
+        else:
+            # Treat as an iterable of column names
+            names = list(columns)
+            fields_map = {str(name): {"mutable": True} for name in names}
+    elif example_row:
+        names = [str(k) for k in example_row.keys()]
+        fields_map = {name: {"mutable": True} for name in names}
+    store = TableStore(
+        ctx,
+        unique_keys={unique_key: "int"},
+        auto_counting={unique_key: None, **(auto_counting or {})},
+        fields=fields_map,
+    )
+    try:
+        store.ensure_context()
+    except Exception:
+        # Best-effort
+        pass
+
+
+def _resolve_file_target(self, file: str) -> Dict[str, Any]:
+    """
+    Resolve the ingest target for a file path or unified label.
+
+    Returns keys:
+    - ingest_mode: "per_file" | "unified"
+    - unified_label: str | None
+    - table_ingest: bool
+    - content_ctx: str (fully-qualified Content context)
+    - tables_prefix: str (prefix for per-file Tables contexts)
+    - target_name: str (safe root used in per-file context building)
+    """
+    try:
+        rows = unify.get_logs(
+            context=self._ctx,  # type: ignore[attr-defined]
+            filter=f"file_path == {file!r}",
+            limit=1,
+            from_fields=["ingest_mode", "unified_label", "table_ingest"],
+        )
+    except Exception:
+        rows = []
+
+    ingest_mode = "per_file"
+    unified_label = None
+    table_ingest = True
+    _safe = getattr(self, "_safe") if hasattr(self, "_safe") else (lambda x: x)
+
+    if rows:
+        e = rows[0].entries
+        ingest_mode = (e.get("ingest_mode") or "per_file").strip() or "per_file"
+        unified_label = e.get("unified_label")
+        table_ingest = bool(e.get("table_ingest", True))
+        root = (
+            _safe(file)
+            if ingest_mode == "per_file"
+            else _safe(str(unified_label or "Unified"))
+        )
+    else:
+        # Treat as a unified label candidate
+        try:
+            rows2 = unify.get_logs(
+                context=self._ctx,  # type: ignore[attr-defined]
+                filter=f"unified_label == {file!r}",
+                limit=1,
+                from_fields=["unified_label"],
+            )
+        except Exception:
+            rows2 = []
+        if rows2:
+            ingest_mode = "unified"
+            unified_label = file
+            root = _safe(str(unified_label))
+        else:
+            root = _safe(file)
+
+    base = getattr(self, "_per_file_root")
+    content_ctx = f"{base}/{root}/Content"
+    tables_prefix = f"{base}/{root}/Tables/"
+
+    return {
+        "ingest_mode": ingest_mode,
+        "unified_label": unified_label,
+        "table_ingest": table_ingest,
+        "content_ctx": content_ctx,
+        "tables_prefix": tables_prefix,
+        "target_name": root,
+    }
 
 
 def tables_overview(
@@ -41,155 +272,129 @@ def tables_overview(
     file: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Return an overview of tables/contexts managed by the FileManager.
+    Return an ingest-aware overview of contexts managed by the FileManager.
 
-    Behaviour
-    ---------
-    - When file is None: return overview for the global index only; include
-      column schema for the index when requested.
-    - When file is provided: return overview for that file: one entry for the
-      per-file context ("File") and one entry per extracted per-table context
-      under its Tables/ directory. Do not include columns for per-file/per-table.
+    Parameters
+    ----------
+    include_column_info : bool, default True
+        When True, include the FileRecords column schema in the global view.
+    file : str | None
+        When provided, return a file-scoped view that respects the file's
+        ingest layout (per_file vs unified).
+
+    Returns
+    -------
+    dict
+        - Global view (file=None):
+          { "FileRecords": { context, description, columns? } }
+        - File-scoped view (per_file mode):
+          {
+            "FileRecords": {...},
+            "<safe(file_path)>": {
+              "Content": { context, description },
+              "Tables": { "<safe(label)>": { context, description }, ... }
+            }
+          }
+        - File-scoped view (unified mode):
+          {
+            "FileRecords": {...},
+            "<unified_label>": { "Content": { context, description } },
+            "<safe(file_path)>": { "Tables": { "<safe(label)>": { context, description }, ... } }
+          }
+
+    Notes
+    -----
+    - Keys under "Tables" are always passed through the manager's safe() helper.
+    - All resolved contexts are prefixed with the base + "/Files/<alias>/…" path.
     """
-
-    # Global index overview
+    # Global index overview (KM-style)
     if file is None:
         try:
             ctx_info = unify.get_context(self._ctx)  # type: ignore[attr-defined]
         except Exception:
             ctx_info = {}
-        try:
-            cols = get_columns(self) if include_column_info else None
-        except Exception:
-            cols = None
-        label = "Index"
+
         out: Dict[str, Dict[str, Any]] = {
-            label: {
+            "FileRecords": {
+                "context": self._ctx,
                 "description": (
                     ctx_info.get("description") if isinstance(ctx_info, dict) else ""
                 ),
-                **(
-                    {"columns": cols}
-                    if include_column_info and isinstance(cols, dict)
-                    else {}
-                ),
             },
         }
+        if include_column_info:
+            try:
+                out["FileRecords"]["columns"] = get_columns(self)
+            except Exception:
+                out["FileRecords"]["columns"] = {}
         return out
 
-    # Per-file overview
-    # Derive the per-file root context using manager-provided helpers
+    # Ingest-aware nested overview
+    info = _resolve_file_target(self, file)
+    ingest_mode = info.get("ingest_mode")
+    unified_label = info.get("unified_label")
+    content_ctx = info.get("content_ctx")
+    tables_prefix = info.get("tables_prefix")
+    table_ingest = bool(info.get("table_ingest", True))
+    _safe = getattr(self, "_safe") if hasattr(self, "_safe") else (lambda x: x)
+
+    # Always include FileRecords
+    out: Dict[str, Dict[str, Any]] = {"FileRecords": {"context": self._ctx}}
     try:
-        base = getattr(self, "_per_file_root")
-        safe_fn = getattr(self, "_safe")
-        per_file_ctx = f"{base}/{safe_fn(file)}"
+        ci = unify.get_context(self._ctx)
+        out["FileRecords"]["description"] = (
+            ci.get("description") if isinstance(ci, dict) else ""
+        )
+        if include_column_info:
+            out["FileRecords"]["columns"] = get_columns(self)
     except Exception:
-        per_file_ctx = None
+        pass
 
-    out: Dict[str, Dict[str, Any]] = {}
-    if isinstance(per_file_ctx, str):
-        # File root entry
-        try:
-            info = unify.get_context(per_file_ctx)
-            out["File"] = {
-                "description": (
-                    info.get("description") if isinstance(info, dict) else ""
-                ),
-            }
-        except Exception:
-            out["File"] = {"description": ""}
+    # Use local ctx builder for canonical table context paths
 
-        # Extract per-table contexts under /Tables/
+    def _tables_map(prefix: str, root_name: str) -> Dict[str, Dict[str, Any]]:
         try:
-            ctxs = unify.get_contexts(prefix=f"{per_file_ctx}/Tables/")
+            ctxs = unify.get_contexts(prefix=prefix)
         except Exception:
             ctxs = {}
+        m: Dict[str, Dict[str, Any]] = {}
         for full, desc in (ctxs or {}).items():
             try:
-                # table label is the tail after /Tables/
-                label = full.split("/Tables/")[-1]
-                out[label] = {"description": desc}
+                raw = full.split("/Tables/", 1)[-1]
+                key = _safe(raw)
+                m[key] = {
+                    "context": ctx_for_file_table(self, file_path=root_name, table=raw),  # type: ignore[arg-type]
+                    "description": desc,
+                }
             except Exception:
                 continue
+        return m
 
-    return out
+    if ingest_mode == "per_file":
+        root = _safe(file)
+        out[root] = {"Content": {"context": content_ctx}}
+        try:
+            cinfo = unify.get_context(content_ctx)
+            out[root]["Content"]["description"] = (
+                cinfo.get("description") if isinstance(cinfo, dict) else ""
+            )
+        except Exception:
+            out[root]["Content"]["description"] = ""
+        if table_ingest:
+            out[root]["Tables"] = _tables_map(tables_prefix, info.get("target_name"))
+        return out
 
-
-def get_file_info(
-    self,
-    file_id: Union[int, List[int]],
-    *,
-    fields: Optional[Union[str, List[str]]] = None,
-    search_local_storage: bool = True,
-) -> Dict[int, Dict[str, Any]]:
-    """Return a mapping of requested fields for one or many files."""
-    allowed = set(self._allowed_fields())  # type: ignore[attr-defined]
-
-    # Normalise requested fields
-    if fields is None or (isinstance(fields, str) and fields.lower() == "all"):
-        requested: List[str] = list(allowed)
-    elif isinstance(fields, str):
-        requested = [fields]
-    else:
-        requested = list(fields or [])
-
-    # Intersect with allowed set to avoid accidental vector/private columns
-    requested = [f for f in requested if f in allowed]
-    if not requested:
-        requested = list(allowed)
-
-    # Normalise ids list
-    if isinstance(file_id, list):
-        ids: List[int] = [int(x) for x in file_id]
-    else:
-        ids = [int(file_id)]
-
-    results: Dict[int, Dict[str, Any]] = {}
-    misses: List[int] = []
-
-    # 1) Try local cache first
-    if search_local_storage:
-        for fid in ids:
-            try:
-                row = self._data_store[fid]  # type: ignore[attr-defined]
-                results[fid] = {k: v for k, v in row.items() if k in requested}
-            except KeyError:
-                misses.append(fid)
-    else:
-        misses = list(ids)
-
-    # 2) Backend read for misses; write-through cache
-    if misses:
-        filt = (
-            f"file_id == {misses[0]}"
-            if len(misses) == 1
-            else f"file_id in [{', '.join(str(x) for x in misses)}]"
-        )
-        rows = unify.get_logs(
-            context=self._ctx,  # type: ignore[attr-defined]
-            filter=filt,
-            limit=len(misses),
-            from_fields=list(allowed),
-        )
-        for lg in rows:
-            try:
-                backend_row = lg.entries
-                fid_val = int(backend_row.get("file_id"))
-            except Exception:
-                continue
-            try:
-                self._data_store.put(backend_row)  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            results[fid_val] = {k: backend_row.get(k) for k in requested}
-
-    return results
-
-
-def num_files(self) -> int:
-    """Return total number of files in the context."""
+    # unified
+    ulabel = _safe(str(unified_label or "Unified"))
+    out[ulabel] = {"Content": {"context": content_ctx}}
     try:
-        ret = unify.get_logs_metric(metric="count", key="file_id", context=self._ctx)  # type: ignore[attr-defined]
-        return 0 if ret is None else int(ret)
+        cinfo = unify.get_context(content_ctx)
+        out[ulabel]["Content"]["description"] = (
+            cinfo.get("description") if isinstance(cinfo, dict) else ""
+        )
     except Exception:
-        return 0
+        out[ulabel]["Content"]["description"] = ""
+    if table_ingest:
+        leaf = _safe(file)
+        out[leaf] = {"Tables": _tables_map(tables_prefix, info.get("target_name"))}
+    return out
