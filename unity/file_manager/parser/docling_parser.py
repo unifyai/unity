@@ -31,7 +31,12 @@ from .types.document import (
     DocumentImage,
     DocumentTable,
 )
+from .types.enums import FileFormat, MimeType, extension_to_format, extension_to_mime
 from .summary_utils import generate_summary_with_compression
+from .parser_utils import (
+    extract_bbox_with_origin,
+    merge_consecutive_table_items,
+)
 from unity.common.token_utils import (
     has_meaningful_text,
     count_tokens_per_utf_byte,
@@ -45,7 +50,7 @@ from unity.common.token_utils import (
     clip_text_to_token_limit_conservative,
 )
 from .prompt_builders import build_picture_description_prompt
-from ...common.llm_helpers import short_id
+import uuid
 
 # Check for optional dependencies
 try:
@@ -395,23 +400,13 @@ class DoclingParser(GenericParser[Document]):
         key = str(path) if path is not None else "unknown"
         return hashlib.sha256(key.encode("utf-8", errors="ignore")).hexdigest()
 
-    def _get_mime_type(self, file_extension: str) -> str:
-        """Convert file extension to MIME type."""
-        mime_map = {
-            ".txt": "text/plain",
-            ".md": "text/markdown",
-            ".csv": "text/csv",
-            ".html": "text/html",
-            ".htm": "text/html",
-            ".json": "application/json",
-            ".pdf": "application/pdf",
-            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ".doc": "application/msword",
-            ".xml": "application/xml",
-            ".xls": "application/vnd.ms-excel",
-            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }
-        return mime_map.get(file_extension.lower(), "application/octet-stream")
+    def _get_mime_type(self, file_extension: str) -> MimeType:
+        """Convert file extension to MIME type (enum)."""
+        return extension_to_mime(file_extension)
+
+    def _get_file_format(self, file_extension: str) -> FileFormat:
+        """Convert file extension to canonical FileFormat (enum)."""
+        return extension_to_format(file_extension)
 
     def _index_docling_structure(self, docling_doc) -> dict:
         """Build an index of headings and item → section-path mapping from Docling's tree.
@@ -676,9 +671,9 @@ class DoclingParser(GenericParser[Document]):
                     # Create minimal failed document with metadata (use original path)
                     original_path = path_mapping.get(parsing_path, parsing_path)
                     try:
-                        doc_id = short_id(4)
+                        doc_id = str(uuid.uuid4())
                     except Exception:
-                        doc_id = self._compute_document_id(original_path)[:8]
+                        doc_id = self._compute_document_id(original_path)
                     meta = self._create_base_metadata(original_path)
                     documents.append(
                         Document(
@@ -758,10 +753,15 @@ class DoclingParser(GenericParser[Document]):
                         file_path=str(original_path) if original_path else "",
                         file_name=str(original_path.name) if original_path else "",
                         file_size=0,
-                        file_type=(
-                            self._get_mime_type(original_path.suffix)
+                        file_format=(
+                            self._get_file_format(original_path.suffix.lower())
                             if original_path
-                            else "application/octet-stream"
+                            else None
+                        ),
+                        mime_type=(
+                            self._get_mime_type(original_path.suffix.lower())
+                            if original_path
+                            else None
                         ),
                         created_at="",
                         modified_at="",
@@ -810,9 +810,9 @@ class DoclingParser(GenericParser[Document]):
             except Exception:
                 # minimal failed doc (use original path for metadata)
                 try:
-                    doc_id = short_id(4)
+                    doc_id = str(uuid.uuid4())
                 except Exception:
-                    doc_id = self._compute_document_id(original_path)[:8]
+                    doc_id = self._compute_document_id(original_path)
                 meta = self._create_base_metadata(original_path)
                 built_unsupported[idx] = Document(
                     document_id=doc_id,
@@ -989,7 +989,7 @@ class DoclingParser(GenericParser[Document]):
 
         # Create document id as exactly 5 characters (no hash suffix)
         try:
-            document_id = short_id(4)
+            document_id = str(uuid.uuid4())
         except Exception:
             document_id = "docid"
         document = Document(
@@ -1097,7 +1097,7 @@ class DoclingParser(GenericParser[Document]):
 
         # Create document id as exactly 5 characters (no hash suffix)
         try:
-            document_id = short_id(4)
+            document_id = str(uuid.uuid4())
         except Exception:
             document_id = "docid"
         document = Document(
@@ -1109,6 +1109,21 @@ class DoclingParser(GenericParser[Document]):
 
         # Extract basic structure
         self._extract_basic_structure(content, document)
+
+        # Generate hierarchical summaries and extract enriched metadata (mirror core path)
+        if self.use_llm_enrichment:
+            try:
+                print("Generating summaries...")
+                self._generate_summaries(document)
+            except Exception as e:
+                # Fall back silently; summaries are optional
+                print(f"Summary generation failed: {e}")
+
+            try:
+                self._extract_enhanced_metadata(document)
+            except Exception as e:
+                # Non-fatal; keep baseline metadata
+                print(f"Metadata extraction failed: {e}")
 
         # Update statistics
         self._update_statistics(document)
@@ -1148,7 +1163,8 @@ class DoclingParser(GenericParser[Document]):
             file_path=path_str,
             file_name=file_path.name,
             file_size=stat_info.st_size,
-            file_type=self._get_mime_type(file_path.suffix.lower()),
+            file_format=self._get_file_format(file_path.suffix.lower()),
+            mime_type=self._get_mime_type(file_path.suffix.lower()),
             created_at=datetime.fromtimestamp(stat_info.st_ctime).isoformat(),
             modified_at=datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
             processed_at=datetime.now().isoformat(),
@@ -1239,7 +1255,7 @@ class DoclingParser(GenericParser[Document]):
 
                 # Create paragraph
                 try:
-                    _para_id = short_id(4)
+                    _para_id = str(uuid.uuid4())
                 except Exception:
                     _para_id = str(paragraph_id)
 
@@ -1326,7 +1342,7 @@ class DoclingParser(GenericParser[Document]):
                     base_path = [s.title for (_lvl, s) in section_stack] + [title_text]
                     current_section = DocumentSection(
                         title=title_text,
-                        section_id=short_id(5),
+                        section_id=str(uuid.uuid4()),
                         document_id=document.document_id,
                         section_index=section_id - 1,
                         metadata={
@@ -1348,7 +1364,7 @@ class DoclingParser(GenericParser[Document]):
                     if current_section is None:
                         current_section = DocumentSection(
                             title="Document Content",
-                            section_id=short_id(5),
+                            section_id=str(uuid.uuid4()),
                             document_id=document.document_id,
                             section_index=0,
                         )
@@ -1444,7 +1460,7 @@ class DoclingParser(GenericParser[Document]):
                     if current_section is None:
                         current_section = DocumentSection(
                             title="Document Content",
-                            section_id=short_id(5),
+                            section_id=str(uuid.uuid4()),
                             document_id=document.document_id,
                             section_index=0,
                         )
@@ -1454,7 +1470,7 @@ class DoclingParser(GenericParser[Document]):
 
                     # Create paragraph with list metadata
                     try:
-                        _para_id = short_id(4)
+                        _para_id = str(uuid.uuid4())
                     except Exception:
                         _para_id = str(paragraph_id)
 
@@ -1484,7 +1500,7 @@ class DoclingParser(GenericParser[Document]):
 
                     # Simple sentence for list items
                     try:
-                        _sent_id = short_id(4)
+                        _sent_id = str(uuid.uuid4())
                     except Exception:
                         _sent_id = str(sentence_id)
                     paragraph.sentences = [
@@ -1507,7 +1523,7 @@ class DoclingParser(GenericParser[Document]):
                     if current_section is None:
                         current_section = DocumentSection(
                             title="Document Content",
-                            section_id=short_id(5),
+                            section_id=str(uuid.uuid4()),
                             document_id=document.document_id,
                             section_index=0,
                         )
@@ -1517,7 +1533,7 @@ class DoclingParser(GenericParser[Document]):
 
                     # Create specialized paragraph
                     try:
-                        _para_id2 = short_id(4)
+                        _para_id2 = str(uuid.uuid4())
                     except Exception:
                         _para_id2 = str(paragraph_id)
 
@@ -1543,7 +1559,7 @@ class DoclingParser(GenericParser[Document]):
 
                     # Don't split code/formula into sentences
                     try:
-                        _sent_id2 = short_id(4)
+                        _sent_id2 = str(uuid.uuid4())
                     except Exception:
                         _sent_id2 = str(sentence_id)
                     paragraph.sentences = [
@@ -1589,7 +1605,7 @@ class DoclingParser(GenericParser[Document]):
                     # Create new section
                     current_section = DocumentSection(
                         title=text_item.text.strip(),
-                        section_id=short_id(5),
+                        section_id=str(uuid.uuid4()),
                         document_id=document.document_id,
                         section_index=section_id - 1,
                         metadata={
@@ -1608,7 +1624,7 @@ class DoclingParser(GenericParser[Document]):
                     if current_section is None:
                         current_section = DocumentSection(
                             title="Document Content",
-                            section_id=short_id(5),
+                            section_id=str(uuid.uuid4()),
                             document_id=document.document_id,
                             section_index=0,
                         )
@@ -1617,7 +1633,7 @@ class DoclingParser(GenericParser[Document]):
 
                     # Create paragraph
                     try:
-                        _para_id = short_id(4)
+                        _para_id = str(uuid.uuid4())
                     except Exception:
                         _para_id = str(paragraph_id)
 
@@ -1709,7 +1725,7 @@ class DoclingParser(GenericParser[Document]):
                     if key not in created_sections:
                         new_section = DocumentSection(
                             title=headings[depth - 1],
-                            section_id=short_id(5),
+                            section_id=str(uuid.uuid4()),
                             document_id=document.document_id,
                             section_index=section_id - 1,
                             level=depth,
@@ -1742,7 +1758,7 @@ class DoclingParser(GenericParser[Document]):
                     if key not in created_sections:
                         new_section = DocumentSection(
                             title=path[depth - 1],
-                            section_id=short_id(5),
+                            section_id=str(uuid.uuid4()),
                             document_id=document.document_id,
                             section_index=section_id - 1,
                             level=depth,
@@ -1765,7 +1781,7 @@ class DoclingParser(GenericParser[Document]):
                 if key not in created_sections:
                     default_section = DocumentSection(
                         title="Document Content",
-                        section_id=short_id(5),
+                        section_id=str(uuid.uuid4()),
                         document_id=document.document_id,
                         section_index=0,
                         level=1,
@@ -1800,7 +1816,7 @@ class DoclingParser(GenericParser[Document]):
                 # Create paragraph
                 paragraph = DocumentParagraph(
                     text=raw_text,
-                    paragraph_id=str(paragraph_id),
+                    paragraph_id=str(uuid.uuid4()),
                     section_id=current_section.section_id,
                     document_id=document.document_id,
                     paragraph_index=len(current_section.paragraphs),
@@ -1862,7 +1878,7 @@ class DoclingParser(GenericParser[Document]):
             # Split into sentences with contextual awareness
             sentences = self._split_into_sentences_contextual(
                 raw_text,
-                paragraph_id,
+                str(paragraph_id),
                 current_section.section_id,
                 document.document_id,
                 sentence_id,
@@ -2272,7 +2288,7 @@ class DoclingParser(GenericParser[Document]):
         for section_title, section_content in sections:
             section = DocumentSection(
                 title=section_title or f"Section {section_id}",
-                section_id=short_id(4),
+                section_id=str(uuid.uuid4()),
                 document_id=document.document_id,
                 section_index=section_id - 1,
             )
@@ -2289,7 +2305,7 @@ class DoclingParser(GenericParser[Document]):
                     continue
 
                 try:
-                    _para_id = short_id(4)
+                    _para_id = str(uuid.uuid4())
                 except Exception:
                     _para_id = str(paragraph_id)
 
@@ -2411,7 +2427,7 @@ class DoclingParser(GenericParser[Document]):
 
                 paragraph = DocumentParagraph(
                     text=chunk_text.strip(),
-                    paragraph_id=str(paragraph_id),
+                    paragraph_id=str(uuid.uuid4()),
                     section_id=section.section_id,
                     document_id=document.document_id,
                     paragraph_index=len(section.paragraphs),
@@ -2420,7 +2436,7 @@ class DoclingParser(GenericParser[Document]):
                 # Split paragraph into sentences
                 sentences = self._split_into_sentences(
                     chunk_text.strip(),
-                    paragraph_id,
+                    str(paragraph_id),
                     section.section_id,
                     document.document_id,
                     sentence_id,
@@ -2516,7 +2532,7 @@ class DoclingParser(GenericParser[Document]):
         sentences: List[DocumentSentence] = []
         for i, s in enumerate(cleaned_chunks):
             try:
-                _sent_id = short_id(5)
+                _sent_id = str(uuid.uuid4())
             except Exception:
                 _sent_id = str(start_sentence_id + i)
             sentences.append(
@@ -2645,7 +2661,14 @@ class DoclingParser(GenericParser[Document]):
                 pass
 
             if hasattr(docling_doc, "tables"):
-                for table in docling_doc.tables:
+
+                # Merge consecutive Docling TableItems so HTML reflects combined tables directly
+                try:
+                    items = merge_consecutive_table_items(docling_doc, doc_index)
+                except Exception:
+                    items = list(getattr(docling_doc, "tables", []) or [])
+
+                for table in items:
                     if hasattr(table, "label") and "table" in str(table.label).lower():
                         try:
                             # Get the provenance items from the table
@@ -2749,9 +2772,7 @@ class DoclingParser(GenericParser[Document]):
                                     element_type=str(table.label),
                                     html=table.export_to_html(doc=docling_doc),
                                     bbox=(
-                                        bbox.model_dump(exclude=["coord_origin"])
-                                        if bbox
-                                        else {}
+                                        extract_bbox_with_origin(bbox) if bbox else {}
                                     ),
                                     section_path=section_path,
                                     sheet_name=sheet_name,
@@ -2764,6 +2785,7 @@ class DoclingParser(GenericParser[Document]):
                         except Exception:
                             pass
 
+            # Tables are already merged at the Docling level; store as-is
             document.metadata.tables = tables
 
         except Exception:
@@ -2851,44 +2873,6 @@ class DoclingParser(GenericParser[Document]):
             def _budget_for_text(current_total_budget: int) -> int:
                 """Return usable token budget for the **text** after accounting for prompt."""
                 return max(current_total_budget - prompt_tokens, 256)
-
-            # ---------- token helpers (token-accurate slicing; char fallback) ----------
-            def _first_tokens(text: str, n: int, enc: str) -> str:
-                try:
-                    import tiktoken
-
-                    e = tiktoken.get_encoding(enc)
-                    toks = e.encode(text)
-                    return e.decode(toks[: max(n, 0)])
-                except Exception:
-                    return text[: n * 4]
-
-            def _last_tokens(text: str, n: int, enc: str) -> str:
-                try:
-                    import tiktoken
-
-                    e = tiktoken.get_encoding(enc)
-                    toks = e.encode(text)
-                    return e.decode(toks[-max(n, 0) :]) if n > 0 else ""
-                except Exception:
-                    return text[-(n * 4) :] if n > 0 else ""
-
-            def _middle_tokens(text: str, n: int, enc: str) -> str:
-                try:
-                    import tiktoken
-
-                    e = tiktoken.get_encoding(enc)
-                    toks = e.encode(text)
-                    L = len(toks)
-                    if L == 0 or n <= 0:
-                        return ""
-                    start = max((L // 2) - (n // 2), 0)
-                    end = min(start + n, L)
-                    return e.decode(toks[start:end])
-                except Exception:
-                    approx = n * 4
-                    s = max((len(text) // 2) - (approx // 2), 0)
-                    return text[s : s + approx]
 
             # ---------- composition helpers (no fixed counts) --------------------------
             def _append_token_safe(
@@ -3672,7 +3656,16 @@ class DoclingParser(GenericParser[Document]):
 
                     # Add document metadata for context
                     doc_context = f"Document: {document.metadata.title or 'Untitled'}\n"
-                    doc_context += f"Type: {document.metadata.file_type}\n"
+                    # Prefer file_format; include mime type for clarity
+                    try:
+                        ffmt = getattr(document.metadata, "file_format", None)
+                        mt = getattr(document.metadata, "mime_type", None)
+                        if ffmt:
+                            doc_context += f"Format: {ffmt}\n"
+                        if mt:
+                            doc_context += f"MIME: {mt}\n"
+                    except Exception:
+                        pass
                     doc_context += f"Total Sections: {len(document.sections)}\n\n"
 
                     # Include image annotations and table HTML

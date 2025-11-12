@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict, List, Literal, Optional
+from enum import Enum
 
 from pydantic import BaseModel, Field as PydanticField
+from unity.file_manager.parser.types.enums import FileFormat, MimeType
 
 from unity.common.token_utils import has_meaningful_text
 
@@ -77,13 +79,20 @@ class DocumentImage(BaseModel):
     section_path: Optional[List[str]] = None
 
 
+class CoordOrigin(str, Enum):
+    """CoordOrigin."""
+
+    TOPLEFT = "TOPLEFT"
+    BOTTOMLEFT = "BOTTOMLEFT"
+
+
 class DocumentTable(BaseModel):
     """Individual table with metadata."""
 
     page: Optional[int] = None
     element_type: Optional[str] = None
     html: Optional[str] = None
-    bbox: Optional[Dict[str, float]] = None
+    bbox: Optional[Dict[str, Any]] = None
     # Optional hierarchical hint set by parser from Docling refs
     section_path: Optional[List[str]] = None
     # Optional sheet/tab name for spreadsheet files (CSV/XLSX)
@@ -170,7 +179,9 @@ class DocumentMetadata(BaseModel):
     file_path: Optional[str] = None
     file_name: Optional[str] = None
     file_size: Optional[int] = None
-    file_type: Optional[str] = None
+    # Unified fields
+    file_format: Optional[FileFormat] = None
+    mime_type: Optional[MimeType] = None
 
     # Timestamps
     created_at: Optional[str] = None
@@ -345,6 +356,8 @@ class Document(BaseModel):
         *,
         auto_counting: Dict[str, Optional[str]] | None = None,
         document_index: int | None = None,
+        id_layout: str = "map",
+        id_string_format: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Convert hierarchical document to schema-aligned flat rows with hierarchical IDs
@@ -364,6 +377,7 @@ class Document(BaseModel):
             List[dict]: rows ready for insertion.
         """
         records: List[Dict[str, Any]] = []
+        doc_idx = int(document_index or 0)
 
         # Helper to create base record with common fields (schema-aligned only)
         def create_base_record(
@@ -381,39 +395,7 @@ class Document(BaseModel):
                 "content_text": content_text or title,
             }
 
-        # Helper: determine the parent chain (excluding the id itself) for an id key
-        # e.g. 'sentence_id' -> ['paragraph_id', 'section_id', 'document_id']
-        def parent_chain(id_key: str) -> List[str]:
-            chain: List[str] = []
-            if not auto_counting:
-                return chain
-            current = id_key
-            while True:
-                parent = auto_counting.get(current)
-                if parent is None:
-                    break
-                chain.append(parent)
-                current = parent
-            return chain
-
-        # Helper: set hierarchy IDs on a row based on the id key for this row
-        def set_ids(
-            row: Dict[str, Any],
-            id_key_for_row: Optional[str],
-            *,
-            sec_index: Optional[int] = None,
-            para_index: Optional[int] = None,
-        ) -> None:
-            if not id_key_for_row:
-                return
-            for key in parent_chain(id_key_for_row):
-                if key == "document_id" and document_index is not None:
-                    row[key] = int(document_index)
-                elif key == "section_id" and sec_index is not None:
-                    row[key] = int(sec_index)
-                elif key == "paragraph_id" and para_index is not None:
-                    row[key] = int(para_index)
-                # All other keys (e.g. deeper ancestors) will be populated via the loop
+        from ..schema_utils import set_row_ids
 
         # 1. Document-level row (root of the hierarchy)
         doc_title = (self.metadata.title or "").strip()
@@ -423,7 +405,24 @@ class Document(BaseModel):
             summary=self.summary,
             content_text=self.full_text,
         )
-        # No IDs for document-level row
+        # IDs
+        if id_layout in ("map", "columns", "string"):
+            # Map always present; columns optionally added below
+            content_id_map: Dict[str, int] = {"document": doc_idx}
+            if id_layout == "map":
+                doc_row["content_id"] = content_id_map
+            elif id_layout == "columns":
+                # keep map as well by default
+                doc_row["content_id"] = content_id_map
+                set_row_ids(
+                    doc_row,
+                    "document_id",
+                    auto_counting=auto_counting,
+                    document_index=doc_idx,
+                )
+            elif id_layout == "string" and id_string_format:
+                # reserve for future use; still include map for now
+                doc_row["content_id"] = content_id_map
         records.append(doc_row)
 
         # 2. Section-level rows
@@ -434,15 +433,27 @@ class Document(BaseModel):
         for section in self.sections:
             section_row = create_base_record(
                 content_type="section",
-                title=(
-                    f"{doc_title} > {section.title}" if doc_title else section.title
-                ),
+                title=section.title,
                 summary=section.summary,
                 content_text=section.content_text
                 or "\n\n".join(p.text for p in section.paragraphs),
             )
-            # Include only document_id for section rows
-            set_ids(section_row, "section_id", sec_index=section.section_index)
+            # IDs
+            content_id_map = {
+                "document": doc_idx,
+                "section": int(section.section_index),
+            }
+            if id_layout == "map":
+                section_row["content_id"] = content_id_map
+            elif id_layout == "columns":
+                section_row["content_id"] = content_id_map
+                set_row_ids(
+                    section_row,
+                    "section_id",
+                    auto_counting=auto_counting,
+                    document_index=doc_idx,
+                    section_index=section.section_index,
+                )
             records.append(section_row)
             section_id_to_index[section.section_id] = section.section_index
 
@@ -482,21 +493,28 @@ class Document(BaseModel):
                 para_title = f"Paragraph {paragraph.paragraph_index + 1}"
                 para_row = create_base_record(
                     content_type="paragraph",
-                    title=(
-                        f"{doc_title} > {section.title} > {para_title}"
-                        if doc_title
-                        else f"{section.title} > {para_title}"
-                    ),
+                    title=para_title,
                     summary=paragraph.summary,
                     content_text=paragraph.text,
                 )
-                # Include document_id and section_id for paragraphs
-                set_ids(
-                    para_row,
-                    "paragraph_id",
-                    sec_index=section.section_index,
-                    para_index=paragraph.paragraph_index,
-                )
+                # IDs
+                content_id_map = {
+                    "document": doc_idx,
+                    "section": int(section.section_index),
+                    "paragraph": int(paragraph.paragraph_index),
+                }
+                if id_layout == "map":
+                    para_row["content_id"] = content_id_map
+                elif id_layout == "columns":
+                    para_row["content_id"] = content_id_map
+                    set_row_ids(
+                        para_row,
+                        "paragraph_id",
+                        auto_counting=auto_counting,
+                        document_index=doc_idx,
+                        section_index=section.section_index,
+                        paragraph_index=paragraph.paragraph_index,
+                    )
                 records.append(para_row)
 
                 # 4. Sentence-level records
@@ -504,23 +522,31 @@ class Document(BaseModel):
                     sent_title = f"Sentence {sentence.sentence_index + 1}"
                     sent_row = create_base_record(
                         content_type="sentence",
-                        title=(
-                            f"{doc_title} > {section.title} > {para_title} > {sent_title}"
-                            if doc_title
-                            else f"{section.title} > {para_title} > {sent_title}"
-                        ),
+                        title=sent_title,
                         summary=(
                             sentence.text if has_meaningful_text(sentence.text) else ""
                         ),  # For sentences, summary == content_text
                         content_text=sentence.text,
                     )
-                    # Include document_id, section_id, paragraph_id for sentences
-                    set_ids(
-                        sent_row,
-                        "sentence_id",
-                        sec_index=section.section_index,
-                        para_index=paragraph.paragraph_index,
-                    )
+                    # IDs
+                    content_id_map = {
+                        "document": doc_idx,
+                        "section": int(section.section_index),
+                        "paragraph": int(paragraph.paragraph_index),
+                        "sentence": int(sentence.sentence_index),
+                    }
+                    if id_layout == "map":
+                        sent_row["content_id"] = content_id_map
+                    elif id_layout == "columns":
+                        sent_row["content_id"] = content_id_map
+                        set_row_ids(
+                            sent_row,
+                            "sentence_id",
+                            auto_counting=auto_counting,
+                            document_index=doc_idx,
+                            section_index=section.section_index,
+                            paragraph_index=paragraph.paragraph_index,
+                        )
                     records.append(sent_row)
 
         # 5. Image-level records (children of sections)
@@ -592,20 +618,30 @@ class Document(BaseModel):
 
                 img_row = create_base_record(
                     content_type="image",
-                    title=(
-                        f"{doc_title} > {sec_title_for_img} > {title}"
-                        if doc_title and sec_title_for_img
-                        else (
-                            f"{sec_title_for_img} > {title}"
-                            if sec_title_for_img
-                            else title
-                        )
-                    ),
+                    title=title,
                     summary=content_text,
                     content_text=content_text,
                 )
-                # Include document_id and section_id
-                set_ids(img_row, "image_id", sec_index=sec_index_for_img)
+                # IDs
+                img_index = int(idx)  # zero-based
+                content_id_map = {
+                    "document": doc_idx,
+                    "section": int(
+                        sec_index_for_img if sec_index_for_img is not None else 0,
+                    ),
+                    "image": img_index,
+                }
+                if id_layout == "map":
+                    img_row["content_id"] = content_id_map
+                elif id_layout == "columns":
+                    img_row["content_id"] = content_id_map
+                    set_row_ids(
+                        img_row,
+                        "image_id",
+                        auto_counting=auto_counting,
+                        document_index=doc_idx,
+                        section_index=sec_index_for_img,
+                    )
                 # # include a few metadata points
                 # img_record["page"] = page
                 # img_record["bbox"] = (
@@ -685,20 +721,30 @@ class Document(BaseModel):
 
                 tbl_row = create_base_record(
                     content_type="table",
-                    title=(
-                        f"{doc_title} > {sec_title_for_tbl} > {title}"
-                        if doc_title and sec_title_for_tbl
-                        else (
-                            f"{sec_title_for_tbl} > {title}"
-                            if sec_title_for_tbl
-                            else title
-                        )
-                    ),
+                    title=title,
                     summary=content_text,
                     content_text=content_text,
                 )
-                # Include document_id and section_id
-                set_ids(tbl_row, "table_id", sec_index=sec_index_for_tbl)
+                # IDs
+                tbl_index = int(idx)
+                content_id_map = {
+                    "document": doc_idx,
+                    "section": int(
+                        sec_index_for_tbl if sec_index_for_tbl is not None else 0,
+                    ),
+                    "table": tbl_index,
+                }
+                if id_layout == "map":
+                    tbl_row["content_id"] = content_id_map
+                elif id_layout == "columns":
+                    tbl_row["content_id"] = content_id_map
+                    set_row_ids(
+                        tbl_row,
+                        "table_id",
+                        auto_counting=auto_counting,
+                        document_index=doc_idx,
+                        section_index=sec_index_for_tbl,
+                    )
                 # tbl_record["page"] = page
                 # tbl_record["bbox"] = (
                 #     getattr(tbl, "bbox", None) if hasattr(tbl, "bbox") else None
@@ -719,10 +765,12 @@ class Document(BaseModel):
     # ---------------------- FileManager result helpers ---------------------- #
     def to_parse_result(
         self,
-        filename: str,
+        file_path: str,
         *,
         auto_counting: Dict[str, Optional[str]] | None = None,
         document_index: int | None = None,
+        id_layout: str = "map",
+        id_string_format: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Build a normalized parse result payload for FileManager consumption.
@@ -734,7 +782,7 @@ class Document(BaseModel):
         Returns a dict with keys:
           - file_path, status, error
           - records, full_text, summary
-          - file_type, file_size, total_records, processing_time
+          - file_format, mime_type, file_size, total_records, processing_time
           - created_at, modified_at
           - confidence_score, key_topics, named_entities, content_tags
         """
@@ -742,6 +790,8 @@ class Document(BaseModel):
             records: List[Dict[str, Any]] = self.to_schema_rows(
                 auto_counting=auto_counting,
                 document_index=document_index,
+                id_layout=id_layout,
+                id_string_format=id_string_format,
             )
         except Exception:
             # Fallback to best-effort rows to avoid failing the whole call
@@ -757,13 +807,13 @@ class Document(BaseModel):
 
         meta = getattr(self, "metadata", None)
         return {
-            "file_path": filename,
+            "file_path": file_path,
             "status": "success",
             "error": None,
             "records": records,
             "full_text": full_text,
             "summary": getattr(self, "summary", None) or "",
-            "file_type": getattr(meta, "file_type", None) if meta else None,
+            "file_format": getattr(meta, "file_format", None) if meta else None,
             "file_size": getattr(meta, "file_size", None) if meta else None,
             "total_records": len(records),
             "processing_time": getattr(meta, "processing_time", None) if meta else None,
@@ -778,19 +828,20 @@ class Document(BaseModel):
         }
 
     @staticmethod
-    def error_result(filename: str, error: str) -> Dict[str, Any]:
+    def error_result(file_path: str, error: str) -> Dict[str, Any]:
         """
         Build a normalized error payload when parsing/exporting fails before a
         Document exists. Kept alongside to_parse_result for a single API surface.
         """
         return {
-            "file_path": filename,
+            "file_path": file_path,
             "status": "error",
             "error": error or "Unknown error",
             "records": [],
             "full_text": "",
             "summary": "",
-            "file_type": None,
+            "file_format": None,
+            "mime_type": None,
             "file_size": None,
             "total_records": 0,
             "processing_time": None,
