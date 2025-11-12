@@ -40,6 +40,10 @@ _CASES = [
         "Erase all stored secrets and credentials.",
         "secret_manager",
     ),
+    (
+        "Clear all filesystems and any indexed file data.",
+        "file_manager",
+    ),
 ]
 
 
@@ -139,6 +143,7 @@ async def test_conductor_clear_requires_confirmation_then_calls_clear_with_targe
                     "guidance_manager": "CONFIRM ERASE GUIDANCE ONLY",
                     "image_manager": "CONFIRM ERASE IMAGES ONLY",
                     "secret_manager": "CONFIRM ERASE SECRETS ONLY",
+                    "file_manager": "CONFIRM ERASE FILES ONLY",
                 }
                 reply = scope_defaults.get(
                     expected_target,
