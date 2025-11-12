@@ -11,8 +11,10 @@ from unity.file_manager.types.filesystem import FileSystemCapabilities, FileRefe
 class LocalFileSystemAdapter(BaseFileSystemAdapter):
     """Adapter for a local directory tree (read + rename/move)."""
 
-    def __init__(self, root: str):
-        self._root = Path(root).expanduser().resolve()
+    def __init__(self, root: str | None = None):
+        # Optional root: when None, operate with system root for relative paths;
+        # absolute paths are always accepted and bypass _root.
+        self._root = Path(root).expanduser().resolve() if root else Path("/").resolve()
         self._caps = FileSystemCapabilities(
             can_read=True,
             can_rename=True,
@@ -25,20 +27,21 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         return f"Local"
 
     @property
+    def uri_name(self) -> str:
+        return "local"
+
+    @property
     def capabilities(self) -> FileSystemCapabilities:
         return self._caps
 
     def _abspath(self, p: str) -> Path:
-        # Support both absolute and root-relative inputs
+        # Support both absolute and root-relative inputs.
+        # Absolute paths are allowed anywhere on the local filesystem.
         q = Path(p)
         if not q.is_absolute():
             q = (self._root / p.lstrip("/")).resolve()
-        else:
-            q = q.resolve()
-        # Prevent path escape
-        if self._root not in q.parents and q != self._root:
-            raise PermissionError("Path escapes configured root")
-        return q
+            return q
+        return q.resolve()
 
     def iter_files(self, root: Optional[str] = None) -> Iterable[FileReference]:
         base = self._abspath(root or ".")
@@ -50,19 +53,23 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
                 yield FileReference(
                     path=("/" + rel if not rel.startswith("/") else rel),
                     name=p.name,
+                    provider=self.name,
+                    uri=f"{self.uri_name}://{p.resolve().as_posix().lstrip('/')}",
                     size_bytes=p.stat().st_size,
                     modified_at=None,
                     mime_type=None,
                 )
 
     def get_file(self, path: str) -> FileReference:
-        p = self._abspath(path.lstrip("/"))
+        p = self._abspath(path)
         if not p.exists() or not p.is_file():
             raise FileNotFoundError(path)
         rel = str(p.relative_to(self._root)).replace("\\", "/")
         return FileReference(
             path=("/" + rel if not rel.startswith("/") else rel),
             name=p.name,
+            provider=self.name,
+            uri=f"{self.uri_name}://{p.resolve().as_posix().lstrip('/')}",
             size_bytes=p.stat().st_size,
             modified_at=None,
             mime_type=None,
@@ -71,7 +78,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
     def exists(self, path: str) -> bool:
         """Check if a file exists (optimized for local filesystem)."""
         try:
-            p = self._abspath(path.lstrip("/"))
+            p = self._abspath(path)
             return p.exists() and p.is_file()
         except (PermissionError, FileNotFoundError):
             return False
@@ -86,12 +93,12 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
             return []
 
     def open_bytes(self, path: str) -> bytes:
-        p = self._abspath(path.lstrip("/"))
+        p = self._abspath(path)
         return p.read_bytes()
 
     def export_file(self, path: str, destination_dir: str) -> str:
         """Export (copy) a file from local filesystem to destination directory."""
-        source_path = self._abspath(path.lstrip("/"))
+        source_path = self._abspath(path)
         if not source_path.exists() or not source_path.is_file():
             raise FileNotFoundError(f"File not found: {path}")
 
@@ -126,20 +133,22 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
     def rename(self, path: str, new_name: str) -> FileReference:
         if not self._caps.can_rename:
             raise PermissionError("Rename not permitted by backend policy")
-        p = self._abspath(path.lstrip("/"))
+        p = self._abspath(path)
         dest = p.with_name(new_name)
         p.rename(dest)
         rel = str(dest.relative_to(self._root)).replace("\\", "/")
         return FileReference(
             path=("/" + rel if not rel.startswith("/") else rel),
             name=dest.name,
+            provider=self.name,
+            uri=f"{self.uri_name}://{dest.resolve().as_posix().lstrip('/')}",
         )
 
     def move(self, path: str, new_parent_path: str) -> FileReference:
         if not self._caps.can_move:
             raise PermissionError("Move not permitted by backend policy")
-        p = self._abspath(path.lstrip("/"))
-        new_parent = self._abspath(new_parent_path.lstrip("/"))
+        p = self._abspath(path)
+        new_parent = self._abspath(new_parent_path)
         new_parent.mkdir(parents=True, exist_ok=True)
         dest = new_parent / p.name
         p.rename(dest)
@@ -147,12 +156,14 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         return FileReference(
             path=("/" + rel if not rel.startswith("/") else rel),
             name=dest.name,
+            provider=self.name,
+            uri=f"{self.uri_name}://{dest.resolve().as_posix().lstrip('/')}",
         )
 
     def delete(self, path: str) -> None:
         if not self._caps.can_delete:
             raise PermissionError("Delete not permitted by backend policy")
-        p = self._abspath(path.lstrip("/"))
+        p = self._abspath(path)
         if not p.exists():
             raise FileNotFoundError(path)
         if not p.is_file():
