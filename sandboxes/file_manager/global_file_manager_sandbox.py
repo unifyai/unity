@@ -42,6 +42,7 @@ from unity.file_manager.global_file_manager import GlobalFileManager
 from unity.file_manager.managers.file_manager import FileManager
 from unity.file_manager.managers.local import LocalFileManager
 from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
+from unity.file_manager.types.config import FilePipelineConfig
 from unity.common.async_tool_loop import SteerableToolHandle
 from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
@@ -138,7 +139,41 @@ async def _build_scenario(
     return None
 
 
-# ═════════════════════════════ intent dispatcher ════════════════════════════
+# ═════════════════════════════ helpers & dispatcher ═════════════════════════
+
+
+async def _seed_sample_all(
+    gfm: GlobalFileManager,
+    *,
+    return_mode: str = "compact",
+) -> None:
+    sample_dir = (
+        Path(__file__).resolve().parents[2] / "tests" / "test_file_manager" / "sample"
+    )
+    if not sample_dir.exists():
+        print(f"⚠️  Sample directory not found: {sample_dir}")
+        return
+    total = 0
+    for alias, mgr in getattr(gfm, "_managers", {}).items():
+        try:
+            try:
+                added = mgr.import_directory(str(sample_dir))
+            except Exception:
+                added = []
+                for p in sample_dir.iterdir():
+                    if p.is_file():
+                        try:
+                            added.append(mgr.import_file(str(p)))
+                        except Exception:
+                            continue
+            print(f"📁 Imported {len(added)} sample files into '{alias}'.")
+            cfg = FilePipelineConfig(output={"return_mode": return_mode})
+            mgr.parse([str(p) for p in sample_dir.iterdir() if p.is_file()], config=cfg)
+            total += len(added)
+        except Exception as exc:
+            print(f"⚠️  Seeding failed for '{alias}': {exc}")
+    if total == 0:
+        print("⚠️  No files imported across managers")
 
 
 class _Intent(BaseModel):
@@ -181,11 +216,110 @@ async def _dispatch_with_context(
     *parent_chat_context* to the GlobalFileManager methods.
     """
 
+    # REPL explicit commands
+    parts = raw.split(maxsplit=1)
+    cmd = parts[0].lower()
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if cmd == "list_fms":
+        try:
+            print(
+                ", ".join(getattr(gfm, "_managers", {}).keys()) or "(no managers)",
+            )
+        except Exception as exc:
+            print(f"⚠️  list_fms failed: {exc}")
+
+        class _Noop(SteerableToolHandle):
+            async def result(self):
+                return "ok"
+
+        return "noop", _Noop(), None, None
+
+    if cmd == "add_local":
+        try:
+            args = rest.split()
+            root = None
+            rootless = False
+            for a in args:
+                if a.startswith("--root="):
+                    root = a[len("--root=") :]
+                if a == "--rootless":
+                    rootless = True
+            if rootless:
+                mgr = FileManager(adapter=LocalFileSystemAdapter(root_dir=None))
+            elif root:
+                mgr = FileManager(
+                    adapter=LocalFileSystemAdapter(
+                        root_dir=Path(root).expanduser().resolve(),
+                    ),
+                )
+            else:
+                mgr = LocalFileManager()
+            alias = f"local_{len(getattr(gfm, '_managers', {})) + 1}"
+            getattr(gfm, "_managers", {})[alias] = mgr
+            print(f"➕ Added manager '{alias}'")
+        except Exception as exc:
+            print(f"⚠️  add_local failed: {exc}")
+
+        class _Noop(SteerableToolHandle):
+            async def result(self):
+                return "ok"
+
+        return "noop", _Noop(), None, None
+
+    if cmd == "use_fm":
+        # Stash selection in a side-channel attribute for this process
+        try:
+            sel = rest.strip()
+            if not sel:
+                print("Usage: use_fm <alias>")
+            elif sel in getattr(gfm, "_managers", {}):
+                setattr(gfm, "_current_alias", sel)
+                print(f"✅ Current FM set to '{sel}'")
+            else:
+                print(f"⚠️  Unknown alias '{sel}'")
+        except Exception as exc:
+            print(f"⚠️  use_fm failed: {exc}")
+
+        class _Noop(SteerableToolHandle):
+            async def result(self):
+                return "ok"
+
+        return "noop", _Noop(), None, None
+
+    if cmd == "seed-sample":
+        try:
+            await _seed_sample_all(gfm)
+        except Exception as exc:
+            print(f"⚠️  seed-sample failed: {exc}")
+
+        class _Noop(SteerableToolHandle):
+            async def result(self):
+                return "ok"
+
+        return "noop", _Noop(), None, None
+
+    if cmd in {"gask", "gorganize"}:
+        fn = gfm.organize if cmd == "gorganize" else gfm.ask
+        handle, cu, cd = await call_manager_with_optional_clarifications(
+            fn,
+            rest,
+            parent_chat_context=parent_chat_context,
+            return_reasoning_steps=show_steps,
+            clarifications_enabled=clarifications_enabled,
+        )
+        if enable_voice:
+            try:
+                _speak("Working on it.")
+            except Exception:
+                pass
+        return ("organize" if cmd == "gorganize" else "ask"), handle, cu, cd
+
+    # Fallback to natural-language intent for global ask/organize
     judge = unify.Unify("gpt-5@openai", response_format=_Intent)
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
-
     fn = gfm.organize if intent.action == "organize" else gfm.ask
     handle, clar_up_q, clar_down_q = await call_manager_with_optional_clarifications(
         fn,
