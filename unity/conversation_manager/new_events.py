@@ -1,18 +1,20 @@
 import json
 import uuid
-from typing import Optional, Any
+from typing import Optional, Any, ClassVar
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
 
+from pydantic import BaseModel
 
-from typing import ClassVar
 
 
-def datetime_aware_dict_factory(kv):
+def custom_dict_factory(kv):
     d = {}
     for k, v in kv:
         if isinstance(v, datetime):
             d[k] = v.isoformat()
+        elif isinstance(v, BaseModel):
+            d[k] = v.model_dump()
         else:
             d[k] = v
     return d
@@ -31,7 +33,7 @@ class Event:
     def to_dict(self):
         return {
             "event_name": self.__class__.__name__,
-            "payload": asdict(self, dict_factory=datetime_aware_dict_factory),
+            "payload": asdict(self, dict_factory=custom_dict_factory),
         }
 
     def to_bus_event(self):
@@ -81,8 +83,8 @@ class Event:
 
 
 @dataclass
-class PhoneCallRecieved(Event):
-    contact: str
+class PhoneCallReceived(Event):
+    contact: dict
     conference_name: str = ""
 
 
@@ -90,14 +92,14 @@ class PhoneCallRecieved(Event):
 class UnifyCallReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
-    contact: int
+    contact: dict
     agent_name: str | None = None
     room_name: str | None = None
 
 
 @dataclass
 class PhoneCallStarted(Event):
-    contact: str
+    contact: dict
 
 
 @dataclass
@@ -107,12 +109,12 @@ class UnifyCallStarted(Event):
     "contact" should reference the boss/user contact id (typically 1).
     """
 
-    contact: int
+    contact: dict
 
 
 @dataclass
 class PhoneUtterance(Event):
-    contact: str
+    contact: dict
     content: str
 
 
@@ -120,47 +122,47 @@ class PhoneUtterance(Event):
 class UnifyCallUtterance(Event):
     """User utterance during a browser-based voice call session."""
 
-    contact: int
+    contact: dict
     content: str
 
 
 @dataclass
 class Interrupt(Event):
-    contact: str
+    contact: dict
 
 
 @dataclass
 class PhoneCallEnded(Event):
-    contact: str
+    contact: dict
 
 
 @dataclass
 class UnifyCallEnded(Event):
     """The browser-based voice call session has ended."""
 
-    contact: int
+    contact: dict
 
 
 @dataclass
-class SMSRecieved(Event):
-    contact: str
+class SMSReceived(Event):
+    contact: dict
     content: str
 
 
 @dataclass
-class UnifyMessageRecieved(Event):
-    contact: int
+class UnifyMessageReceived(Event):
+    contact: dict
     content: str
 
 
 @dataclass
 class PhoneCallSent(Event):
-    contact: str
+    contact: dict
 
 
 @dataclass
 class AssistantPhoneUtterance(Event):
-    contact: str
+    contact: dict
     content: str
 
 
@@ -168,13 +170,13 @@ class AssistantPhoneUtterance(Event):
 class AssistantUnifyCallUtterance(Event):
     """Assistant utterance during a browser-based voice call session."""
 
-    contact: int
+    contact: dict
     content: str
 
 
 @dataclass
-class EmailRecieved(Event):
-    contact: str
+class EmailReceived(Event):
+    contact: dict
     subject: str
     body: str
     message_id: Optional[str] = None
@@ -183,19 +185,19 @@ class EmailRecieved(Event):
 # assistant events
 @dataclass
 class SMSSent(Event):
-    contact: str
+    contact: dict
     content: str
 
 
 @dataclass
 class UnifyMessageSent(Event):
-    contact: int
+    contact: dict
     content: str
 
 
 @dataclass
 class EmailSent(Event):
-    contact: str
+    contact: dict
     subject: str
     body: str
     message_id: str | None = None
@@ -253,87 +255,18 @@ class Ping(Event):
 class Error(Event):
     message: str
 
-
-# managers worker events
-@dataclass
-class ManagersStartupRequest(Event):
-    agent_id: str
-    first_name: str
-    age: str
-    nationality: str
-    about: str
-    phone: str
-    email: str
-    user_phone: str
-    user_whatsapp_number: str
-    assistant_whatsapp_number: str
-
-
-@dataclass
-class ManagersStartupResponse(Event):
-    loggable: ClassVar[bool] = False
-    initialized: bool
-
-
-@dataclass
-class LogMessageRequest(Event):
-    medium: str
-    sender_id: int
-    receiver_ids: list[int]
-    content: str
-    exchange_id: int
-    call_utterance_timestamp: str
-    call_url: str
-    metadata: dict[str, Any]
-
-
 @dataclass
 class LogMessageResponse(Event):
     medium: str
     exchange_id: int
 
-
-@dataclass
-class GetContactsRequest(Event):
-    pass
-
-
 @dataclass
 class GetContactsResponse(Event):
     contacts: list[dict[str, Any]]
 
-
-@dataclass
-class ContactInfoRequest(Event):
-    contact_id: int
-
-
 @dataclass
 class ContactInfoResponse(Event):
     contact_details: dict[str, Any]
-
-
-@dataclass
-class CreateContactRequest(Event):
-    first_name: str
-    surname: str
-    email_address: str
-    phone_number: str
-
-
-@dataclass
-class UpdateContactRequest(Event):
-    contact_id: int
-    first_name: str
-    surname: str
-    email_address: str
-    phone_number: str
-
-
-@dataclass
-class GetBusEventsRequest(Event):
-    pass
-
 
 @dataclass
 class GetBusEventsResponse(Event):
@@ -349,25 +282,12 @@ class GetBusEventsResponse(Event):
     def _repr_truncated(self) -> str:
         return f"{self.__class__.__name__}(events_len={len(self.events)})"
 
-
-@dataclass
-class PublishBusEventRequest(Event):
-    event: dict[str, Any]
-
-
 # --------------------------------------------------------------------------- #
 # LLM inference events
 # --------------------------------------------------------------------------- #
 @dataclass
 class LLMInput(Event):
     chat_history: list[dict]
-
-
-@dataclass
-class UpdateContactRollingSummaryRequest(Event):
-    contacts_ids: list[int]
-    transcripts: list[str]
-
 
 @dataclass
 class UpdateContactRollingSummaryResponse(Event):
@@ -491,7 +411,6 @@ class ConductorClarificationRequest(Event):
 @dataclass
 class ConductorClarificationResponse(Event):
     """Event to respond to a Conductor clarification request."""
-
     handle_id: int
     response: str
     call_id: str
@@ -504,6 +423,11 @@ class ConductorNotification(Event):
     handle_id: int
     response: str
 
+@dataclass
+class ConductorHandleStarted(Event):
+    action_name: str
+    handle_id: id
+    query: str
 
 @dataclass
 class ConductorPauseActor(Event):

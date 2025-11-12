@@ -25,8 +25,8 @@ from ..skill_manager.simulated import SimulatedSkillManager
 from ..task_scheduler.simulated import SimulatedTaskScheduler
 from ..web_searcher.simulated import SimulatedWebSearcher
 from ..actor.simulated import SimulatedActor
-from ..conversation_manager_2.base import BaseConversationManagerHandle
-from ..conversation_manager_2.simulated import SimulatedConversationManagerHandle
+from ..conversation_manager.base import BaseConversationManagerHandle
+from ..conversation_manager.simulated import SimulatedConversationManagerHandle
 
 __all__ = [
     "SimulatedConductor",

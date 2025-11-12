@@ -27,13 +27,13 @@ from livekit.agents import ChatContext, ChatMessage
 from livekit.agents import ModelSettings, llm, FunctionTool, Agent
 from typing import AsyncIterable
 
-from unity.conversation_manager_2.event_broker import get_event_broker
+from unity.conversation_manager.event_broker import get_event_broker
 
 
 load_dotenv()
 
-from unity.conversation_manager_2.new_events import *
-from unity.conversation_manager_2.utils import dispatch_agent
+from unity.conversation_manager.new_events import *
+from unity.conversation_manager.utils import dispatch_agent
 
 event_broker = get_event_broker()
 chunk_queue = asyncio.Queue()

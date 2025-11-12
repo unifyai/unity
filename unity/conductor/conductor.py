@@ -14,9 +14,9 @@ import weakref
 import contextlib
 
 
-from ..conversation_manager_2.base import BaseConversationManagerHandle
-from ..conversation_manager_2.handle import ConversationManagerHandle
-from ..conversation_manager_2.event_broker import get_event_broker
+from ..conversation_manager.base import BaseConversationManagerHandle
+from ..conversation_manager.handle import ConversationManagerHandle
+from ..conversation_manager.event_broker import get_event_broker
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     ToolSpec,

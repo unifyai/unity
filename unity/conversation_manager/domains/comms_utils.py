@@ -1,136 +1,11 @@
 import os
-from typing import Literal, Optional, Union
 import asyncio
 import aiohttp
-from pydantic import BaseModel, Field, create_model
-
-
-# conductor
-class AskConductor(BaseModel):
-    action_name: Literal["ask_conductor"]
-    query: str
-
-
-# wait
-class WaitForNextEvent(BaseModel):
-    action_name: Literal["wait"]
-
-
-# comms actions (main user)
-# whatsapp has some issues, will deal with it later
-# class SendWhatsapp(BaseModel):
-#     ...
-
-
-class SendEmail(BaseModel):
-    """Comms method to send emails"""
-
-    action_name: Literal["send_email"]
-    contact_id: int = Field(
-        ...,
-        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
-    )
-    first_name: str
-    surname: Optional[str]
-    email_address: str
-    subject: str
-    body: str
-
-
-class SendSMS(BaseModel):
-    """Comms method to send sms"""
-
-    action_name: Literal["send_sms"]
-    contact_id: int = Field(
-        ...,
-        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
-    )
-    first_name: str
-    surname: Optional[str]
-    phone_number: str
-    message: str
-
-
-class MakeCall(BaseModel):
-    """Comms method to make outbound calls"""
-
-    action_name: Literal["make_call"]
-    contact_id: int = Field(
-        ...,
-        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
-    )
-    first_name: Optional[str]
-    surname: Optional[str]
-    phone_number: str
-
-
-class SendUnifyMessage(BaseModel):
-    """Send a message to the boss chat (no-phone medium)"""
-
-    action_name: Literal["send_unify_message"]
-    message: str
-    contact_id: Literal[1] = 1
-
-
-def build_dynamic_response_models(
-    include_email: bool = True,
-    include_sms: bool = True,
-    include_call: bool = True,
-):
-    """
-    Dynamically create response models with conditional actions based on available contact info.
-
-    Args:
-        include_email: Whether SendEmail action should be available
-        include_sms: Whether SendSMS action should be available
-        include_call: Whether MakeCall action should be available
-
-    Returns:
-        dict: Response models for different modes (call, gmeet, text)
-    """
-    # Build list of available action types
-    available_actions = [AskConductor, WaitForNextEvent]  # Always available
-
-    if include_email:
-        available_actions.append(SendEmail)
-    if include_sms:
-        available_actions.append(SendSMS)
-    if include_call:
-        available_actions.append(MakeCall)
-    # Unify message is always available for text mode
-    available_actions.append(SendUnifyMessage)
-
-    # Create dynamic Union of available actions
-    ActionsUnion = Union[tuple(available_actions)]
-
-    # Dynamically create Response model for text mode
-    DynamicResponse = create_model(
-        "DynamicResponse",
-        thoughts=(str, ...),
-        actions=(Optional[list[ActionsUnion]], ...),
-        __base__=BaseModel,
-    )
-
-    # Dynamically create ResponsePhone model for call/gmeet modes
-    DynamicResponsePhone = create_model(
-        "DynamicResponsePhone",
-        thoughts=(str, ...),
-        phone_guidance=(Optional[str], ...),
-        actions=(Optional[list[ActionsUnion]], ...),
-        __base__=BaseModel,
-    )
-
-    return {
-        "call": DynamicResponsePhone,
-        "gmeet": DynamicResponsePhone,
-        "text": DynamicResponse,
-    }
-
 
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
 
 
-async def _send_sms_message_via_number(to_number: str, message: str) -> str:
+async def send_sms_message_via_number(to_number: str, message: str) -> str:
     """
     Send an SMS message using the SMS provider API.
 
@@ -162,7 +37,7 @@ async def _send_sms_message_via_number(to_number: str, message: str) -> str:
             return await response.json()
 
 
-async def _send_email_via_address(
+async def send_email_via_address(
     to_email: str,
     subject: str,
     content: str,
@@ -204,7 +79,7 @@ async def _send_email_via_address(
             return await response.json()
 
 
-async def _start_call(
+async def start_call(
     from_number: str,
     to_number: str,
 ) -> str:
@@ -283,3 +158,4 @@ async def add_email_attachments(
                 )
             except Exception as e:
                 print(f"Failed to fetch/write attachment '{att}': {e}")
+
