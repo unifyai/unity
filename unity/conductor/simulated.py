@@ -27,6 +27,7 @@ from ..web_searcher.simulated import SimulatedWebSearcher
 from ..actor.simulated import SimulatedActor
 from ..conversation_manager.base import BaseConversationManagerHandle
 from ..conversation_manager.simulated import SimulatedConversationManagerHandle
+from ..file_manager.simulated import SimulatedGlobalFileManager, SimulatedFileManager
 
 __all__ = [
     "SimulatedConductor",
@@ -164,6 +165,11 @@ class SimulatedConductor(Conductor):
                 simulation_guidance=simulation_guidance,
             )
         )
+
+        _global_file_manager = SimulatedGlobalFileManager(
+            [SimulatedFileManager(), SimulatedFileManager()],
+        )
+
         # Delegate to the real Conductor with our simulated defaults
         super().__init__(
             description=description,
@@ -179,5 +185,6 @@ class SimulatedConductor(Conductor):
             task_scheduler=_task_scheduler,
             web_searcher=_web_searcher,
             actor=_actor,
+            global_file_manager=_global_file_manager,
             conversation_manager=_conversation_manager,
         )
