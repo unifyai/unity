@@ -4,7 +4,7 @@ from typing import Literal
 
 from unity.transcript_manager.types.message import UNASSIGNED
 from unity.helpers import run_script, terminate_process
-from unity.conversation_manager_2.new_events import *
+from unity.conversation_manager.new_events import *
 
 
 class LivekitCallManager:

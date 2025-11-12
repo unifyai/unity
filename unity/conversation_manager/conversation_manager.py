@@ -10,23 +10,23 @@ from pathlib import Path
 from typing import Callable, Optional, TypedDict
 
 from unity.common.async_tool_loop import SteerableToolHandle
-from unity.conversation_manager_2.debug_logger import log_job_startup, mark_job_done
-from unity.conversation_manager_2.domains.call_manager import LivekitCallManager
-from unity.conversation_manager_2.domains.contact_index import ContactIndex
-from unity.conversation_manager_2.domains.event_handlers import EventHandler
-from unity.conversation_manager_2.domains.renderer import Renderer
-from unity.conversation_manager_2.new_events import *
+from unity.conversation_manager.debug_logger import log_job_startup, mark_job_done
+from unity.conversation_manager.domains.call_manager import LivekitCallManager
+from unity.conversation_manager.domains.contact_index import ContactIndex
+from unity.conversation_manager.domains.event_handlers import EventHandler
+from unity.conversation_manager.domains.renderer import Renderer
+from unity.conversation_manager.new_events import *
 
-from unity.conversation_manager_2.domains.llm import LLM
-from unity.conversation_manager_2.domains.actions import Action, build_dynamic_response_models
-from unity.conversation_manager_2.domains.notifications import NotificationBar
-from unity.conversation_manager_2.domains.utils import Debouncer
+from unity.conversation_manager.domains.llm import LLM
+from unity.conversation_manager.domains.actions import Action, build_dynamic_response_models
+from unity.conversation_manager.domains.notifications import NotificationBar
+from unity.conversation_manager.domains.utils import Debouncer
 
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conductor.conductor import Conductor
-from unity.conversation_manager_2.domains import managers_utils
+from unity.conversation_manager.domains import managers_utils
 import redis.asyncio as redis
 
 

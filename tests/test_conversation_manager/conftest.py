@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import List, Type
 import redis.asyncio as redis
 
-from unity.conversation_manager_2.new_events import (
+from unity.conversation_manager.new_events import (
     Event,
     GetContactsResponse,
     StartupEvent,

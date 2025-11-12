@@ -147,7 +147,7 @@ def start(
         # Start main.py using subprocess
         print(f"Starting Unity service (main.py) for assistant {assistant_id}")
 
-        cmd = [sys.executable, "unity/conversation_manager_2/main.py"]
+        cmd = [sys.executable, "unity/conversation_manager/main.py"]
         if use_realtime:
             cmd.append("--realtime")
         cmd.append("--project-name")

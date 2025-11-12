@@ -6,13 +6,13 @@ load_dotenv()
 import os
 import asyncio
 
-from unity.conversation_manager_2.comms_manager import CommsManager
-from unity.conversation_manager_2.event_broker import (
+from unity.conversation_manager.comms_manager import CommsManager
+from unity.conversation_manager.event_broker import (
     get_event_broker,
     create_event_broker,
 )
-from unity.conversation_manager_2.domains.utils import log_task_exc
-from unity.conversation_manager_2.conversation_manager import ConversationManager
+from unity.conversation_manager.domains.utils import log_task_exc
+from unity.conversation_manager.conversation_manager import ConversationManager
 from unity.helpers import cleanup_dangling_call_processes
 
 

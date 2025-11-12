@@ -3,11 +3,11 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.conversation_manager_2.new_events import *
-from unity.conversation_manager_2.domains import managers_utils
+from unity.conversation_manager.new_events import *
+from unity.conversation_manager.domains import managers_utils
 
 if TYPE_CHECKING:
-    from unity.conversation_manager_2.conversation_manager import ConversationManager
+    from unity.conversation_manager.conversation_manager import ConversationManager
 class EventHandler:
     _registry = {}
 

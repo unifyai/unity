@@ -4,14 +4,14 @@ from typing import Literal, Optional, Union, TYPE_CHECKING
 import asyncio
 from pydantic import BaseModel, Field, create_model
 from unity.common.async_tool_loop import SteerableToolHandle
-from unity.conversation_manager_2.domains import comms_utils
-from unity.conversation_manager_2.domains import managers_utils
-from unity.conversation_manager_2.event_broker import get_event_broker
-from unity.conversation_manager_2.new_events import *
-from unity.conversation_manager_2.domains.utils import log_task_exc
+from unity.conversation_manager.domains import comms_utils
+from unity.conversation_manager.domains import managers_utils
+from unity.conversation_manager.event_broker import get_event_broker
+from unity.conversation_manager.new_events import *
+from unity.conversation_manager.domains.utils import log_task_exc
 
 if TYPE_CHECKING:
-    from unity.conversation_manager_2.conversation_manager import ConversationManager
+    from unity.conversation_manager.conversation_manager import ConversationManager
 
 event_broker = get_event_broker()
 

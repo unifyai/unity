@@ -7,10 +7,10 @@ import asyncio
 from google.cloud import pubsub_v1
 import json
 import os
-from unity.conversation_manager_2.new_events import *
+from unity.conversation_manager.new_events import *
 from unity.constants import ASYNCIO_DEBUG
 import redis.asyncio as redis
-from unity.conversation_manager_2.domains.comms_utils import add_email_attachments
+from unity.conversation_manager.domains.comms_utils import add_email_attachments
 
 
 # Subscription IDs

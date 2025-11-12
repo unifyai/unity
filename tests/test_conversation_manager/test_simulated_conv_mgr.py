@@ -6,7 +6,7 @@ import pytest
 import functools
 import re
 from pydantic import BaseModel, Field
-from unity.conversation_manager_2.simulated import SimulatedConversationManagerHandle
+from unity.conversation_manager.simulated import SimulatedConversationManagerHandle
 from tests.helpers import _handle_project
 
 

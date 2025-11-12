@@ -1,8 +1,8 @@
 from textwrap import dedent
 from datetime import datetime
 
-from unity.conversation_manager_2.domains.contact_index import Message, EmailMessage, Contact, ContactIndex
-from unity.conversation_manager_2.domains.notifications import NotificationBar
+from unity.conversation_manager.domains.contact_index import Message, EmailMessage, Contact, ContactIndex
+from unity.conversation_manager.domains.notifications import NotificationBar
 
 class Renderer:
 

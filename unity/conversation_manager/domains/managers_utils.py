@@ -8,18 +8,18 @@ import unity
 
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.conversation_manager_2.event_broker import get_event_broker
-from unity.conversation_manager_2.new_events import *
+from unity.conversation_manager.event_broker import get_event_broker
+from unity.conversation_manager.new_events import *
 from unity.contact_manager.contact_manager import ContactManager
-from unity.conversation_manager_2.handle import ConversationManagerHandle
-from unity.conversation_manager_2.new_events import *
+from unity.conversation_manager.handle import ConversationManagerHandle
+from unity.conversation_manager.new_events import *
 from unity.events.event_bus import EVENT_BUS
 from unity.memory_manager.memory_manager import MemoryManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.conductor.conductor import Conductor
 
 if TYPE_CHECKING:
-    from unity.conversation_manager_2.conversation_manager import ConversationManager
+    from unity.conversation_manager.conversation_manager import ConversationManager
 
 event_broker = get_event_broker()
 
