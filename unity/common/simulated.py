@@ -968,7 +968,7 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             # Delegate to file-scoped Q&A when needed
             FileManager.ask_about_file,
             # Existence probe
-            FileManager._exists,
+            FileManager.exists,
             include_class_name=False,
         )
     elif kind == "ask_about_file":
@@ -984,7 +984,7 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager._search_join,
             FileManager._filter_multi_join,
             FileManager._search_multi_join,
-            FileManager._exists,
+            FileManager.exists,
             include_class_name=False,
         )
     elif kind == "organize":
