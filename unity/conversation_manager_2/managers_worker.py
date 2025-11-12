@@ -112,7 +112,7 @@ class ManagersWorker:
                             "weekly_limit": None,
                             "max_parallel": None,
                             "profile_photo": None,
-                            "country": None,
+                            "phone_country": None,
                             "user_last_name": "",
                             "phone": payload["phone"] or None,
                             "email": payload["email"] or None,
