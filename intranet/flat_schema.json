@@ -17,7 +17,7 @@
   "unique_key_configuration": {
     "tables": {
       "Content": {
-        "content_id": "int"
+        "row_id": "int"
       }
     }
   },

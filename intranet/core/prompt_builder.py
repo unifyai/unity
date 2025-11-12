@@ -116,6 +116,64 @@ def build_intranet_ask_instructions(*, generate_follow_up: bool = False) -> str:
     return text
 
 
+def build_repairs_ask_instructions(business_payload: Dict[str, Any]) -> str:
+    """
+    Build business-context instructions for the Midland Heart Repairs data analyst agent.
+
+    The returned string is appended to the FileManager.ask system prompt as a cohesive
+    "Business context" section. It provides:
+    - Domain/role framing
+    - How to discover schema and fetch small samples
+    - Which columns are pre‑embedded and thus allowed targets for semantic search tools
+    - Business rules/definitions
+    - Compact JSON describing columns (name, data_type, optional description) and samples
+    """
+
+    def _dump(obj: Any) -> str:
+        try:
+            return json.dumps(obj, indent=4, ensure_ascii=False)
+        except Exception:
+            return str(obj)
+
+    schema = business_payload.get("schema", [])
+    searchable_columns = business_payload.get("searchable_columns", [])
+    samples = business_payload.get("samples", {})
+    business_rules = business_payload.get("business_rules", [])
+
+    return "\n".join(
+        [
+            "Role and dataset",
+            "-----------------",
+            "• You are an expert data analyst for Midland Heart (Housing Association) working with historical housing repairs jobs for the last quarter.",
+            "",
+            "Pre‑embedded semantic search targets",
+            "-------------------------------------",
+            "• Only use the following columns as semantic search targets (already embedded).",
+            _dump(list(searchable_columns)),
+            "",
+            "Business rules and definitions",
+            "------------------------------",
+            *([f"• {r}" for r in business_rules] if business_rules else []),
+            "",
+            "Columns (name, description)",
+            "---------------------------",
+            _dump(schema),
+            "",
+            "Sample values",
+            "-----------------------------------------------------",
+            _dump(samples),
+            "",
+            "Answering guidance",
+            "------------------",
+            "• Provide a concise, evidence‑grounded answer.",
+            "• List the reproducible steps in a very human-friendly way (no tool names or jargon - only the high level human readable actions you took).",
+            "• Include citations to the data used (columns/values used).",
+            "• If insufficient evidence exists, say so clearly; do not invent values.",
+            "• Include a confidence score in [0,1] reflecting the reliability of the retrieved evidence.",
+        ],
+    )
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # ask_llm: direct RAG system prompt
 # ────────────────────────────────────────────────────────────────────────────
