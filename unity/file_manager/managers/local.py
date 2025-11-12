@@ -6,5 +6,5 @@ from unity.singleton_registry import SingletonABCMeta
 
 
 class LocalFileManager(FileManager, metaclass=SingletonABCMeta):
-    def __init__(self, root: str):
+    def __init__(self, root: str | None = None):
         super().__init__(adapter=LocalFileSystemAdapter(root))
