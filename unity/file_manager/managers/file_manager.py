@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import functools
 from typing import Any, Callable, Dict, List, Optional, Union
 from typing import AsyncIterator
@@ -12,12 +11,13 @@ from unity.common.tool_spec import manager_tool, read_only
 from unity.file_manager.base import BaseFileManager
 from unity.file_manager.parser.base import BaseParser
 from unity.file_manager.parser.docling_parser import DoclingParser
-from unity.file_manager.types.file import FileRecord
+from unity.file_manager.types.file import FileRecord, FileContent
 from unity.file_manager.types.config import (
     FilePipelineConfig as _FilePipelineConfig,
     resolve_callables as _resolve_callables,
 )
 from unity.file_manager.parser.types.document import Document as _Doc
+from .file_ops import build_compact_parse_model as _build_compact_parse_model
 from unity.file_manager.fs_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.prompt_builders import (
     build_file_manager_ask_prompt,
@@ -40,7 +40,6 @@ from unity.events.manager_event_logging import log_manager_call
 from unity.common.context_store import TableStore
 from unity.common.model_to_fields import model_to_fields
 from unity.common.filter_utils import normalize_filter_expr
-from unity.common.data_store import DataStore
 from unity.common.llm_client import new_llm_client
 from unity.common.embed_utils import ensure_vector_column
 from .search import (
@@ -52,19 +51,19 @@ from .search import (
     search_multi_join as _srch_search_multi_join,
 )
 from .ops import (
-    per_file_table_ctx as _ops_per_file_table_ctx,
-    ensure_per_file_table_context as _ops_ensure_per_file_table_context,
-    per_file_ctx as _ops_per_file_ctx,
-    ensure_per_file_context as _ops_ensure_per_file_context,
     delete_per_file_rows_by_filter as _ops_delete_per_file_rows_by_filter,
     create_file_record as _ops_create_file_record,
-    create_file as _ops_create_file,
+    create_file_content as _ops_create_file_content,
     create_file_table as _ops_create_file_table,
+    apply_content_ingest_policy as _ops_apply_content_ingest_policy,
 )
 from .storage import (
     provision_storage as _storage_provision,
     get_columns as _storage_get_columns,
     tables_overview as _storage_tables_overview,
+    ctx_for_file as _storage_ctx_for_file,
+    ctx_for_file_table as _storage_ctx_for_file_table,
+    ensure_file_table_context as _storage_ensure_file_table_context,
 )
 
 
@@ -145,10 +144,7 @@ class FileManager(BaseFileManager):
         # - FileRecords: index of files (lightweight per file row)
         # - File:        per-file content roots (one subcontext per filename)
         self._ctx = f"{base_ctx}/FileRecords/{self._fs_alias}"
-        self._per_file_root = f"{base_ctx}/File/{self._fs_alias}"
-
-        # Local DataStore mirror (write-through only)
-        self._data_store = DataStore.for_context(self._ctx, key_fields=("file_id",))
+        self._per_file_root = f"{base_ctx}/Files/{self._fs_alias}"
 
         # Ensure context and fields exist
         self._store = TableStore(
@@ -156,7 +152,7 @@ class FileManager(BaseFileManager):
             unique_keys={"file_id": "int"},
             auto_counting={"file_id": None},
             description=(
-                "FileRecords index for a single filesystem; per-file content lives under File/<alias>/<filename>/Tables/<table>."
+                "FileRecords index for a single filesystem; per-file content lives under Files/<alias>/<filename>/Tables/<table>."
             ),
             fields=model_to_fields(FileRecord),
         )
@@ -184,13 +180,14 @@ class FileManager(BaseFileManager):
             self.list,
             # Parse when missing (policy enforced in prompts)
             self.parse,
+            # Unified stat helper (filesystem vs index)
+            self.stat,
             # Delegate to file-scoped Q&A when needed
             self.ask_about_file,
-            # Simple existence probe (JSON-safe)
-            self._exists,
+            # Simple existence probe
+            self.exists,
             include_class_name=False,
         )
-        self.add_tools("ask", ask_tools)
         # Multi-table tools (joins across per-file tables)
         ask_multi_table_tools: Dict[str, Callable] = methods_to_tool_dict(
             self._filter_join,
@@ -199,23 +196,21 @@ class FileManager(BaseFileManager):
             self._search_multi_join,
             include_class_name=False,
         )
+        self.add_tools("ask", ask_tools)
         self.add_tools("ask.multi_table", ask_multi_table_tools)
         ask_about_file_tools: Dict[str, Callable] = methods_to_tool_dict(
             # Read-only helpers
             self.parse,
+            self.stat,
             self._list_columns,
             self._tables_overview,
             self._filter_files,
             self._search_files,
-            # Join/multi-join tools for file-scoped analysis
-            self._filter_join,
-            self._search_join,
-            self._filter_multi_join,
-            self._search_multi_join,
-            self._exists,
+            self.exists,
             include_class_name=False,
         )
         self.add_tools("ask_about_file", ask_about_file_tools)
+        self.add_tools("ask_about_file.multi_table", ask_multi_table_tools)
         # Organize is mutation-focused. It may call ask() to gather context,
         # but should not receive direct read-only retrieval tools itself.
         organize_tools: Dict[str, Callable] = methods_to_tool_dict(
@@ -223,6 +218,7 @@ class FileManager(BaseFileManager):
             self._rename_file,
             self._move_file,
             self._delete_file,
+            self.sync,
             include_class_name=False,
         )
         self.add_tools("organize", organize_tools)
@@ -242,6 +238,221 @@ class FileManager(BaseFileManager):
         None
         """
         _storage_provision(self)
+
+    # ------------------------- Identity helpers ----------------------------- #
+    def _build_file_identity(self, file_path: str):
+        """
+        Build a FileIdentity for the given file_path.
+
+        - Uses adapter metadata when available to enrich source_provider and display_path.
+        - Resolves source_uri via `_resolve_to_uri` as the canonical identity.
+        - Resolves ingest settings (ingest_mode, unified_label, table_ingest) from FileRecords.
+        """
+        from unity.file_manager.types.file import FileIdentity as _FileIdentity
+        from os import path as _os_path
+
+        # Base provider/type and display path
+        try:
+            source_provider = (
+                getattr(self._adapter, "name", None)
+                or getattr(self, "_fs_type", None)
+                or "Unknown"
+            )
+        except Exception:
+            source_provider = getattr(self, "_fs_type", None) or "Unknown"
+        display_path = str(file_path)
+
+        # Canonical URI
+        source_uri = self._resolve_to_uri(file_path)
+
+        # Prefer adapter's provider when available
+        try:
+            ref = self._adapter_get(target_id_or_path=file_path)
+            source_provider = str(ref.get("provider") or source_provider)
+        except Exception:
+            pass
+
+        # Ingest layout via storage resolver
+        ingest_mode = "per_file"
+        unified_label = None
+        table_ingest = True
+        try:
+            from .storage import _resolve_file_target as _res_file_target  # type: ignore
+
+            res = _res_file_target(self, file_path)
+            ingest_mode = res.get("ingest_mode", "per_file")
+            unified_label = res.get("unified_label")
+            # Prefer table_ingest from index row when present
+            try:
+                rows = unify.get_logs(
+                    context=self._ctx,
+                    filter=f"file_path == {file_path!r}",
+                    limit=1,
+                    from_fields=["table_ingest"],
+                )
+                if rows:
+                    table_ingest = bool(rows[0].entries.get("table_ingest", True))
+            except Exception:
+                table_ingest = True
+        except Exception:
+            pass
+
+        # Compute file_name from path
+        base = _os_path.basename(str(file_path))
+        name, _ext = _os_path.splitext(base)
+
+        return _FileIdentity(
+            file_path=str(file_path),
+            source_provider=source_provider,
+            source_uri=source_uri,
+            ingest_mode=ingest_mode,  # type: ignore[arg-type]
+            unified_label=unified_label,
+            table_ingest=bool(table_ingest),
+        )
+
+    # ------------------------- Sync helper ---------------------------------- #
+    def _sync(self, *, file_path: str) -> Dict[str, Any]:
+        """
+        Synchronize a previously ingested file with the underlying filesystem.
+
+        This tool purges existing Unify rows for the file and re-parses the
+        source, re-ingesting content (and tables when configured). It avoids
+        duplications by deleting before re-inserting.
+
+        Parameters
+        ----------
+        file_path : str
+            The file identifier/path as used in FileRecords.file_path.
+
+        Returns
+        -------
+        dict
+            Outcome with details about purge counts and the new ingest status.
+        """
+        # Resolve identity and layout
+        ident = self._build_file_identity(file_path)
+        overview = self._tables_overview(file=file_path)
+        purged = {"content_rows": 0, "table_rows": 0}
+
+        # Purge content rows
+        try:
+            from .ops import delete_per_file_rows_by_filter as _ops_del_content
+
+            purged["content_rows"] = int(
+                _ops_del_content(self, file_path=(file_path if ident.ingest_mode == "per_file" else (ident.unified_label or "Unified")), filter_expr=None),  # type: ignore[arg-type]
+            )
+        except Exception:
+            pass
+
+        # Purge per-file tables (when present)
+        try:
+            if bool(getattr(ident, "table_ingest", True)):
+                from .ops import delete_per_file_table_rows_by_filter as _ops_del_tbl
+
+                # tables located under either the per-file root (per_file) or safe(file_path) branch (unified)
+                for key, val in overview.items():
+                    if key in ("FileRecords", str(getattr(ident, "unified_label", ""))):
+                        continue
+                    tables = val.get("Tables") if isinstance(val, dict) else None
+                    if not tables:
+                        # Flat variant: individual table entries at top-level (older shape)
+                        continue
+                    for tlabel in list(tables.keys()):
+                        try:
+                            purged["table_rows"] += int(
+                                _ops_del_tbl(
+                                    self,
+                                    file_path=key,
+                                    table=tlabel,
+                                    filter_expr=None,
+                                ),
+                            )
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+
+        # Re-parse (ingest + embed). Use compact/none to avoid token usage
+        try:
+            cfg = _FilePipelineConfig()
+            cfg.output.return_mode = "none"
+            self.parse(file_path, config=cfg)
+        except Exception as e:
+            return {"outcome": "sync failed", "error": str(e), "purged": purged}
+
+        return {"outcome": "sync complete", "purged": purged}
+
+    # Public wrapper (exposed under organize)
+    def sync(self, *, file_path: str) -> Dict[str, Any]:
+        """
+        Synchronize a previously ingested file with the underlying filesystem.
+
+        This public tool purges existing rows (respecting ingest layout) and
+        re-parses/re-ingests the file, keeping contexts consistent.
+
+        Parameters
+        ----------
+        file_path : str
+            The file identifier/path as used in FileRecords.file_path.
+
+        Returns
+        -------
+        dict
+            Outcome with purge counts and status.
+        """
+        return self._sync(file_path=file_path)
+
+    def _resolve_to_uri(self, identifier: str | int) -> str | None:
+        """Resolve user-provided identifier (uri | absolute path | file_id) to canonical source_uri.
+
+        Resolution order:
+        1) If already looks like a URI ("scheme://"), return as-is.
+        2) If numeric → treat as file_id and look up index row.
+        3) Try adapter.get_file to obtain uri.
+        4) If absolute local path, build local uri via adapter.uri_name.
+        """
+        try:
+            s = str(identifier)
+        except Exception:
+            return None
+        # URI fast-path
+        if "://" in s:
+            return s
+        # file_id lookup
+        try:
+            fid = int(s)
+            logs = unify.get_logs(
+                context=self._ctx,
+                filter=f"file_id == {fid}",
+                limit=1,
+                from_fields=["source_uri"],
+            )
+            if logs:
+                uri = logs[0].entries.get("source_uri")
+                if isinstance(uri, str) and uri:
+                    return uri
+        except Exception:
+            pass
+        # Adapter lookup
+        try:
+            ref = self._adapter_get(target_id_or_path=s)
+            uri = ref.get("uri")
+            if isinstance(uri, str) and uri:
+                return uri
+        except Exception:
+            pass
+        # Absolute local path fallback
+        try:
+            from pathlib import Path as _P
+
+            p = _P(s)
+            if p.is_absolute():
+                uri_name = getattr(self._adapter, "uri_name", None) or "local"
+                _pp = p.resolve().as_posix().lstrip("/")
+                return f"{uri_name}://{_pp}"
+        except Exception:
+            pass
+        return None
 
     @staticmethod
     def _safe(value: Any) -> str:
@@ -263,9 +474,40 @@ class FileManager(BaseFileManager):
         try:
             import re as _re
 
-            cleaned = _re.sub(r"[^a-zA-Z0-9_-]", "_", str(value))
-            cleaned = cleaned[:64]
-            return cleaned or "item"
+            s = str(value)
+
+            # Detect OS-invariant path separators; split into head and tail
+            last_slash = max(s.rfind("/"), s.rfind("\\"))
+            if last_slash >= 0:
+                head_raw, tail_raw = s[:last_slash], s[last_slash + 1 :]
+            else:
+                head_raw, tail_raw = "", s
+
+            def _sanitize(part: str) -> str:
+                # Replace non [a-zA-Z0-9_-] (including dots and path punctuation) with underscores
+                return _re.sub(r"[^a-zA-Z0-9_-]", "_", part)
+
+            tail = _sanitize(tail_raw) or "item"
+            head = _sanitize(head_raw)
+
+            if not head:
+                # No head: return sanitized tail as-is
+                return tail
+
+            def _compress_center(text: str, target_len: int) -> str:
+                if len(text) <= target_len:
+                    return text
+                # Use multiple underscores as an ellipsis in the middle
+                marker = "____"
+                if target_len <= len(marker):
+                    return marker[:target_len]
+                left = (target_len - len(marker)) // 2
+                right = target_len - len(marker) - left
+                return text[:left] + marker + text[-right:]
+
+            head_limit = 32
+            head_comp = _compress_center(head, head_limit)
+            return f"{head_comp}_{tail}"
         except Exception:
             return "item"
 
@@ -292,13 +534,13 @@ class FileManager(BaseFileManager):
     # Helpers #
     # --------#
 
-    def _ctx_for_file_table(self, filename: str, table: str) -> str:
+    def _ctx_for_file_table(self, file_path: str, table: str) -> str:
         """
         Return the fully‑qualified Unify context name for a per‑file table.
 
         Parameters
         ----------
-        filename : str
+        file_path : str
             The logical identifier/path of the file whose table context is requested.
         table : str
             Logical per‑file table name (e.g. "Products").
@@ -307,26 +549,41 @@ class FileManager(BaseFileManager):
         -------
         str
             Fully‑qualified context path in the form
-            ``<base>/File/<alias>/<safe_filename>/Tables/<safe_table>``.
+            ``<base>/Files/<alias>/<safe_file_path>/Tables/<safe_table>``.
         """
-        return _ops_per_file_table_ctx(self, filename=filename, table=table)
+        return _storage_ctx_for_file_table(self, file_path=file_path, table=table)
 
-    def _ctx_for_file(self, filename: str) -> str:
+    def _ctx_for_file(self, file_path: str) -> str:
         """
         Return the fully‑qualified Unify context name for the per‑file root (Content).
 
         Parameters
         ----------
-        filename : str
+        file_path : str
             The logical identifier/path of the file whose per‑file context is requested.
 
         Returns
         -------
         str
             Fully‑qualified context path in the form
-            ``<base>/File/<alias>/<safe_filename>/Content``.
+            ``<base>/Files/<alias>/<safe_file_path>/Content``.
         """
-        return _ops_per_file_ctx(self, filename=filename)
+        return _storage_ctx_for_file(self, file_path=file_path)
+
+    def _resolve_file_target(self, identifier: str) -> Dict[str, Any]:
+        """Compatibility wrapper that delegates to storage._resolve_file_target."""
+        try:
+            from .storage import _resolve_file_target as _res
+
+            return _res(self, identifier)
+        except Exception:
+            return {
+                "ingest_mode": "per_file",
+                "unified_label": None,
+                "content_ctx": _storage_ctx_for_file(self, file_path=identifier),
+                "tables_prefix": f"{_storage_ctx_for_file(self, file_path=identifier)}/Tables/",
+                "target_name": identifier,
+            }
 
     # ---------- Join helpers (delegations to search module) ------------------- #
     @read_only
@@ -337,14 +594,23 @@ class FileManager(BaseFileManager):
         Parameters
         ----------
         ref : str
-            A table reference understood by the manager's join tools. Typically
-            of the form "<file>:<table>" for per-file tables, or other
-            manager-supported aliases.
+            Accepted forms:
+            - Logical names from `tables_overview()` (preferred):
+              "FileRecords" → index; "<root>" → per-file Content;
+              "<root>.Tables.<label>" → per-file table.
+            - Legacy forms (backward compatible):
+              "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>".
 
         Returns
         -------
         str
             Fully-qualified Unify context path for the referenced table.
+
+        Examples
+        --------
+        - Logical name: _resolve_table_ref("Q1_Report") → ".../Files/<alias>/Q1_Report/Content"
+        - Per-table: _resolve_table_ref("Q1_Report.Tables.Products") → ".../Tables/Products"
+        - Legacy: _resolve_table_ref("/docs/q1.pdf:Products")
         """
         return _srch_resolve_table_ref(self, ref)
 
@@ -368,20 +634,28 @@ class FileManager(BaseFileManager):
         dest_table_ctx : str
             Fully-qualified destination context for the derived table.
         left_ref, right_ref : str
-            Manager-level table references to join (resolved by the search module).
+            Logical names (from `tables_overview`) or legacy refs. These are
+            resolved to fully-qualified contexts.
         join_expr : str
-            Boolean join predicate (uses the table identifiers present in refs).
+            Boolean join predicate using the same identifiers as provided in
+            ``left_ref`` and ``right_ref``. Identifiers will be rewritten to
+            the fully-qualified contexts automatically.
         select : dict[str, str]
-            Mapping of source expressions to output column names for the derived context.
+            Mapping of source expressions → output column names.
         mode : str, default "inner"
-            Join mode (e.g., "inner", "left", "right", "outer").
+            One of {"inner", "left", "right", "outer"}.
         left_where, right_where : str | None
-            Optional row-level predicates applied before the join on each side.
+            Optional predicates applied to inputs before joining.
 
         Returns
         -------
         str
             The fully-qualified destination context that was created or re-used.
+
+        Notes
+        -----
+        - Prefer logical names from `tables_overview()` rather than raw contexts.
+        - For multi-step joins use the multi-join tools with `$prev`.
         """
         return _srch_create_join(
             self,
@@ -486,173 +760,45 @@ class FileManager(BaseFileManager):
             return self._adapter.open_bytes(filename)
         raise FileNotFoundError(f"Unable to resolve file bytes for '{filename}'")
 
-    @read_only
-    def _exists(self, *, filename: str) -> Dict[str, Any]:
-        """
-        Check if a file exists in the filesystem and return a JSON-safe payload.
-
-        Parameters
-        ----------
-        filename : str
-            Logical identifier/path to check.
-
-        Returns
-        -------
-        dict
-            Shape: {"exists": bool}. This wrapper is used for tool calls to
-            avoid non-JSON scalar content in tool results.
-        """
-        return {"exists": bool(self.exists(filename))}
-
-    # ---------- Update/Delete helpers (private, follow manager patterns) ----- #
-    def _update_file(
-        self,
-        *,
-        file_id: int,
-        _log_id: Optional[int] = None,
-        **updates: Any,
-    ) -> Dict[str, Any]:
-        """
-        Update one or more fields of an existing file record in Unify.
-
-        This is a low-level helper that follows the same pattern as
-        _update_contact, _update_rows, _update_secret in other managers.
-
-        Parameters
-        ----------
-        file_id : int
-            The unique file ID to update
-        _log_id : int | None
-            Optional: The specific log ID if already known (avoids lookup)
-        **updates : Any
-            Field names and new values to update
-
-        Returns
-        -------
-        dict
-            Outcome with 'outcome' and 'details' keys
-
-        Raises
-        ------
-        ValueError
-            If no file found with the given file_id
-        """
-        if not updates:
-            raise ValueError("At least one field must be provided for update")
-
-        # Find the log ID if not provided
-        if _log_id is None:
-            try:
-                log_ids = unify.get_logs(
-                    context=self._ctx,
-                    filter=f"file_id == {file_id}",
-                    limit=2,
-                    return_ids_only=True,
-                )
-            except Exception:
-                log_ids = []
-
-            if not log_ids:
-                raise ValueError(f"No file found with file_id {file_id}")
-            if len(log_ids) > 1:
-                raise ValueError(
-                    f"Multiple files found with file_id {file_id}. Data integrity issue.",
-                )
-
-            _log_id = log_ids[0]
-
-        # Perform the update
-        unify.update_logs(
-            logs=[_log_id],
-            context=self._ctx,
-            entries=updates,
-            overwrite=True,
-        )
-
-        return {
-            "outcome": "file updated",
-            "details": {"file_id": file_id, "updated_fields": list(updates.keys())},
-        }
-
     # ---------- Adapter-backed mutators (capability-guarded) --------------- #
     def _rename_file(self, *, target_id_or_path: str, new_name: str) -> Dict[str, Any]:
         """
-        Rename a file in the underlying filesystem and update index metadata.
+        Rename a file in the underlying filesystem and update index/context metadata.
 
         Parameters
         ----------
         target_id_or_path : str
             Adapter-native identifier or path for the file.
         new_name : str
-            New filename (adapter-specific semantics apply for paths).
+            New file name; adapter determines path semantics.
 
         Returns
         -------
         dict
-            Adapter reference or a minimal dict describing the updated path/name.
+            Adapter reference or a minimal dict with the new path/name.
+
+        Behaviour
+        ---------
+        - Propagates the rename across per-file contexts (and per-file tables) for
+          per_file ingest-mode. Unified mode keeps the unified Content context
+          unchanged and only renames per-file Tables contexts keyed by the safe
+          file path.
+        - Updates the FileRecords row (file_path, file_name).
 
         Raises
         ------
         PermissionError
-            If the adapter indicates rename is not permitted.
+            If rename is not permitted by the adapter.
         ValueError
-            If the target cannot be located in the index or multiple matches exist.
+            If no or multiple FileRecords match the target.
         """
-        if not getattr(self._adapter.capabilities, "can_rename", False):
-            raise PermissionError("Rename not permitted by backend policy")
+        from .ops import rename_file as _ops_rename
 
-        # Ensure string type (LLM sometimes passes integers)
-        target_id_or_path = str(target_id_or_path).lstrip("/")
-        new_name = str(new_name)
-
-        # Fetch existing log entry with all fields for comprehensive update
-        try:
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter=f"file_path == {target_id_or_path!r}",
-                limit=2,
-                from_fields=["file_id", "file_path", "records", "metadata"],
-            )
-        except Exception:
-            logs = []
-
-        if not logs:
-            raise ValueError(f"File '{target_id_or_path}' not found in Unify logs.")
-        if len(logs) > 1:
-            raise ValueError(
-                f"Multiple files found with filename '{target_id_or_path}'. Data integrity issue.",
-            )
-
-        log_entry = logs[0].entries
-        log_id = logs[0].id
-        file_id = log_entry.get("file_id")
-        old_file_path = log_entry.get("file_path", target_id_or_path)
-
-        # The file_path field IS the filesystem path for all our adapters
-        filesystem_path = target_id_or_path
-
-        # Perform the rename via adapter FIRST
-        # Only update Unify if this succeeds (doesn't raise exception)
-        ref = self._adapter.rename(filesystem_path, new_name)
-        new_path = ref.path.lstrip("/")
-
-        # Filesystem operation succeeded, now update the index path in Unify
-        try:
-            self._update_file(
-                file_id=file_id,
-                _log_id=log_id,
-                file_path=new_path,
-            )
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                f"Filesystem rename succeeded but Unify update failed: {e}",
-            )
-
-        return getattr(
-            ref,
-            "model_dump",
-            lambda: {"path": ref.path, "name": new_name},
-        )()
+        return _ops_rename(
+            self,
+            target_id_or_path=str(target_id_or_path),
+            new_name=str(new_name),
+        )
 
     def _move_file(
         self,
@@ -661,7 +807,7 @@ class FileManager(BaseFileManager):
         new_parent_path: str,
     ) -> Dict[str, Any]:
         """
-        Move a file to a different directory and update index metadata.
+        Move a file to a different directory and update index/context metadata.
 
         Parameters
         ----------
@@ -675,67 +821,26 @@ class FileManager(BaseFileManager):
         dict
             Adapter reference or a minimal dict describing the updated path/parent.
 
+        Behaviour
+        ---------
+        - Propagates the new path across per-file contexts (and tables) for per_file
+          ingest-mode. Unified Content remains under the unified label.
+        - Updates the FileRecords row (file_path, file_name) to the new location.
+
         Raises
         ------
         PermissionError
-            If the adapter indicates move is not permitted.
+            If move is not permitted by the adapter.
         ValueError
-            If the target cannot be located in the index or multiple matches exist.
+            If no or multiple FileRecords match the target.
         """
-        if not getattr(self._adapter.capabilities, "can_move", False):
-            raise PermissionError("Move not permitted by backend policy")
+        from .ops import move_file as _ops_move
 
-        # Ensure string type and strip leading slashes (LLM sometimes passes integers or absolute paths)
-        target_id_or_path = str(target_id_or_path).lstrip("/")
-        new_parent_path = str(new_parent_path).lstrip("/")
-
-        # Fetch existing log entry with all fields for comprehensive update
-        try:
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter=f"file_path == {target_id_or_path!r}",
-                limit=2,
-                from_fields=["file_id", "file_path", "records", "metadata"],
-            )
-        except Exception:
-            logs = []
-
-        if not logs:
-            raise ValueError(f"File '{target_id_or_path}' not found in Unify logs.")
-        if len(logs) > 1:
-            raise ValueError(
-                f"Multiple files found with filename '{target_id_or_path}'. Data integrity issue.",
-            )
-        log_entry = logs[0].entries
-        log_id = logs[0].id
-        file_id = log_entry.get("file_id")
-        old_file_path = log_entry.get("file_path", target_id_or_path)
-
-        # The file_path field IS the filesystem path for all our adapters
-        filesystem_path = target_id_or_path
-
-        # Perform the move via adapter FIRST
-        # Only update Unify if this succeeds (doesn't raise exception)
-        ref = self._adapter.move(filesystem_path, new_parent_path)
-        new_path = ref.path.lstrip("/")
-
-        # Filesystem operation succeeded, now update the index path in Unify
-        try:
-            self._update_file(
-                file_id=file_id,
-                _log_id=log_id,
-                file_path=new_path,
-            )
-        except Exception as e:
-            logging.getLogger(__name__).warning(
-                f"Filesystem move succeeded but Unify update failed: {e}",
-            )
-
-        return getattr(
-            ref,
-            "model_dump",
-            lambda: {"path": ref.path, "parent": new_parent_path},
-        )()
+        return _ops_move(
+            self,
+            target_id_or_path=str(target_id_or_path),
+            new_parent_path=str(new_parent_path),
+        )
 
     def _delete_file(
         self,
@@ -744,113 +849,39 @@ class FileManager(BaseFileManager):
         _log_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Delete a file record from Unify table and optionally from the underlying filesystem.
-
-        This method follows the same pattern as _delete_contact, _delete_secret in other managers.
-
-        Steps:
-        1. Lookup file by file_id to get file_path and metadata
-        2. Check if the file is protected (raises PermissionError if protected)
-        3. If adapter supports deletion (can_delete=True), delete from filesystem
-        4. Remove the record from the Unify table using unify.delete_logs with log ID
+        Delete a file record and purge related contexts according to ingest layout.
 
         Parameters
         ----------
         file_id : int
-            Unique file ID from the Unify table
+            Unique file ID from the FileRecords index.
         _log_id : int | None
-            Optional: The specific log ID if already known (avoids lookup)
+            Optional existing log ID to delete (speeds up deletion).
 
         Returns
         -------
         dict
-            Result with 'outcome' and 'details' keys
+            {"outcome": "file deleted", "details": {"file_id": int, "file_path": str}}
+
+        Behaviour
+        ---------
+        - Per-file mode: drops the per-file Content context and all per-file Tables contexts.
+        - Unified mode: deletes only rows whose source_uri matches from the unified Content
+          context. Per-file Tables contexts for the file are removed when present.
+        - Adapter deletion is attempted when supported (capability-gated).
 
         Raises
         ------
         ValueError
-            If no file with the given file_id exists
+            If the file_id does not exist.
         PermissionError
-            If the file is protected
+            If the file is protected.
         RuntimeError
-            If multiple files found with the same file_id (data integrity issue)
+            If multiple rows exist for the same file_id (integrity issue).
         """
-        # 1. Lookup file by ID and get log ID if not provided
-        if _log_id is None:
-            try:
-                log_ids = unify.get_logs(
-                    context=self._ctx,
-                    filter=f"file_id == {file_id}",
-                    limit=2,
-                    return_ids_only=True,
-                )
-            except Exception:
-                log_ids = []
+        from .ops import delete_file as _ops_delete
 
-            if not log_ids:
-                raise ValueError(f"No file found with file_id {file_id}")
-            if len(log_ids) > 1:
-                raise RuntimeError(
-                    f"Multiple files found with file_id {file_id}. Data integrity issue.",
-                )
-
-            _log_id = log_ids[0]
-
-        # Get file_path for protected check and filesystem deletion
-        try:
-            logs = unify.get_logs(
-                context=self._ctx,
-                filter=f"file_id == {file_id}",
-                limit=1,
-                from_fields=["file_id", "file_path"],
-            )
-        except Exception:
-            logs = []
-
-        if not logs:
-            raise ValueError(f"No file found with file_id {file_id}")
-
-        entry = logs[0].entries
-        filename = entry.get("file_path", "")
-
-        # 2. Check if protected
-        if self.is_protected(filename):
-            raise PermissionError(
-                f"'{filename}' is protected and cannot be deleted by FileManager.",
-            )
-
-        # 3. Delete from filesystem if adapter supports it
-        if self._adapter is not None and getattr(
-            self._adapter.capabilities,
-            "can_delete",
-            False,
-        ):
-            try:
-                # The file_path field IS the filesystem path - use it directly
-                self._adapter.delete(filename)
-            except NotImplementedError:
-                # Adapter doesn't support deletion, just remove from table
-                pass
-            except FileNotFoundError:
-                # File already deleted from filesystem, just clean up table
-                pass
-
-        # 4. Delete from Unify table using log ID (not filter)
-        try:
-            unify.delete_logs(
-                context=self._ctx,
-                logs=_log_id,
-            )
-        except Exception as e:
-            raise ValueError(f"Failed to delete file record: {e}")
-
-        return {
-            "outcome": "file deleted",
-            "details": {
-                "file_id": file_id,
-                "file_path": filename,
-            },
-        }
+        return _ops_delete(self, file_id=file_id, _log_id=_log_id)
 
     # ---------- Unify-backed retrieval + BaseFileManager API --------------- #
     def exists(self, filename: str) -> bool:  # type: ignore[override]
@@ -902,7 +933,7 @@ class FileManager(BaseFileManager):
     def _ingest(
         self,
         *,
-        filename: str,
+        file_path: str,
         document: Any,
         result: Dict[str, Any],
         config: _FilePipelineConfig,
@@ -911,7 +942,7 @@ class FileManager(BaseFileManager):
 
         Parameters
         ----------
-        filename : str
+        file_path : str
             Logical identifier/path of the file parsed.
         document : Any
             Parsed document object (used for table ingestion).
@@ -926,58 +957,103 @@ class FileManager(BaseFileManager):
             Inserted log event ids for the content context (when available).
         """
         # 1) Index the file record (best-effort)
-        try:
-            _ops_create_file_record(
-                self,
-                entry={
-                    "file_path": filename,
-                    "status": result.get("status"),
-                    "error": result.get("error"),
-                    "summary": result.get("summary"),
-                    "file_type": result.get("file_type"),
-                    "file_size": result.get("file_size"),
-                    "total_records": result.get("total_records"),
-                    "processing_time": result.get("processing_time"),
-                    "created_at": result.get("created_at"),
-                    "modified_at": result.get("modified_at"),
-                    "confidence_score": result.get("confidence_score"),
-                    "key_topics": result.get("key_topics"),
-                    "named_entities": result.get("named_entities"),
-                    "content_tags": result.get("content_tags"),
-                },
-            )
-        except Exception:
-            pass
+        if bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+        ):
+            print(f"[Ingest] Indexing file record for: {file_path}")
+
+        ident = self._build_file_identity(file_path)
+        _ops_create_file_record(
+            self,
+            entry=FileRecord.to_file_record_entry(
+                file_path=file_path,
+                source_uri=getattr(ident, "source_uri", None),
+                source_provider=getattr(ident, "source_provider", None),
+                result=result,
+                ingest_mode=(
+                    getattr(getattr(config, "ingest", None), "mode", "per_file")
+                    or "per_file"
+                ),
+                unified_label=(
+                    getattr(getattr(config, "ingest", None), "unified_label", None)
+                    if getattr(getattr(config, "ingest", None), "mode", "per_file")
+                    == "unified"
+                    else None
+                ),
+                table_ingest=bool(
+                    getattr(getattr(config, "ingest", None), "table_ingest", True),
+                ),
+            ),
+        )
 
         # 2) Ingest content rows
+        if bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+        ):
+            total_records = int(
+                (result or {}).get("total_records")
+                or len(list(result.get("records", []) or [])),
+            )
+            print(
+                f"[Ingest] Content rows → preparing {total_records} parsed rows for insertion",
+            )
+
+        _fmt = result.get("file_format")
+        file_format = getattr(_fmt, "value", _fmt)
+        rows_in = list(result.get("records", []) or [])
+        rows = _ops_apply_content_ingest_policy(
+            rows_in,
+            config=config,
+            file_format=(str(file_format).lower().strip() if file_format else None),
+        )
+        if bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+        ):
+            print(f"[Ingest] Content rows → inserting {len(rows)} rows after policy")
+
         inserted_ids = self._ingest_file(
-            filename=filename,
-            records=list(result.get("records", []) or []),
+            file_path=file_path,
+            records=rows,
             config=config,
         )
 
+        if bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+        ):
+            print(f"[Ingest] Content rows inserted: {len(inserted_ids)} ids returned")
+
         # 3) Ingest per-file tables if enabled
         if config.ingest.table_ingest:
-            try:
-                dest_name = (
-                    filename
-                    if config.ingest.mode == "per_file"
-                    else (config.ingest.unified_label or "Unified")
-                )
-                self._ingest_tables_for_file(
-                    filename=dest_name,
-                    document=document,
-                    table_rows_batch_size=config.ingest.table_rows_batch_size,
-                )
-            except Exception:
-                pass
+            dest_name = (
+                file_path
+                if config.ingest.mode == "per_file"
+                else (config.ingest.unified_label or "Unified")
+            )
+            if bool(
+                getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+            ):
+                try:
+                    tables = (
+                        getattr(getattr(document, "metadata", None), "tables", []) or []
+                    )
+                    print(
+                        f"[Ingest] Tables → ingesting {len(tables)} extracted table(s) into per-file contexts",
+                    )
+                except Exception:
+                    print("[Ingest] Tables → ingesting per-file tables")
+
+            self._ingest_tables_for_file(
+                file_path=dest_name,
+                document=document,
+                table_rows_batch_size=config.ingest.table_rows_batch_size,
+            )
 
         return inserted_ids
 
     def _embed(
         self,
         *,
-        filename: str,
+        file_path: str,
         document: Any,
         result: Dict[str, Any],
         inserted_ids: Optional[List[int]],
@@ -999,15 +1075,26 @@ class FileManager(BaseFileManager):
         config : FilePipelineConfig
             Embeddings configuration.
         """
-        if not (config.embed.embed_along and config.embed.specs):
+        # Embedding is enabled when strategy != "off" and specs are provided.
+        if not (
+            getattr(getattr(config, "embed", None), "strategy", "auto") != "off"
+            and config.embed.specs
+        ):
             return
+        if bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+        ):
+            print(
+                f"[Embed] Starting embeddings for: {file_path} (strategy={getattr(config.embed, 'strategy', 'auto')})",
+            )
+            print(f"[Embed] Specs: {len(config.embed.specs)}")
         # Pre-embed hooks
         try:
             for fn in _resolve_callables(config.plugins.pre_embed):
                 try:
                     fn(
                         manager=self,
-                        filename=filename,
+                        filename=file_path,
                         result=result,
                         document=document,
                         config=config,
@@ -1019,13 +1106,23 @@ class FileManager(BaseFileManager):
 
         try:
             ctx_name = (
-                filename
+                file_path
                 if config.ingest.mode == "per_file"
                 else (config.ingest.unified_label or "Unified")
             )
             for spec in config.embed.specs:
                 if spec.context == "per_file":
-                    ctx = _ops_per_file_ctx(self, filename=ctx_name)
+                    ctx = _storage_ctx_for_file(self, file_path=ctx_name)
+                    if bool(
+                        getattr(
+                            getattr(config, "diagnostics", None),
+                            "enable_progress",
+                            False,
+                        ),
+                    ):
+                        print(
+                            f"[Embed] Ensuring vector column on Content: ctx={ctx}, target={spec.target_column}, source={spec.source_column}",
+                        )
                     ensure_vector_column(
                         ctx,
                         embed_column=spec.target_column,
@@ -1033,10 +1130,20 @@ class FileManager(BaseFileManager):
                         from_ids=(inserted_ids or None),
                     )
                 elif spec.context == "unified":
-                    ctx = _ops_per_file_ctx(
+                    ctx = _storage_ctx_for_file(
                         self,
-                        filename=(config.ingest.unified_label or "Unified"),
+                        file_path=(config.ingest.unified_label or "Unified"),
                     )
+                    if bool(
+                        getattr(
+                            getattr(config, "diagnostics", None),
+                            "enable_progress",
+                            False,
+                        ),
+                    ):
+                        print(
+                            f"[Embed] Ensuring vector column on Unified Content: ctx={ctx}, target={spec.target_column}, source={spec.source_column}",
+                        )
                     ensure_vector_column(
                         ctx,
                         embed_column=spec.target_column,
@@ -1044,14 +1151,48 @@ class FileManager(BaseFileManager):
                         from_ids=(inserted_ids or None),
                     )
                 elif spec.context == "per_file_table":
+                    # Traverse the file-scoped overview to find per-file Tables contexts.
                     overview = self._tables_overview(file=ctx_name)
-                    for _, meta in overview.items():
+                    tables_meta: list[dict] = []
+                    for _k, _v in overview.items():
+                        if isinstance(_v, dict) and isinstance(_v.get("Tables"), dict):
+                            tables_meta.extend(
+                                [
+                                    tm
+                                    for tm in _v["Tables"].values()
+                                    if isinstance(tm, dict)
+                                ],
+                            )
+                    # When a specific table label is provided, compare using the manager's safe() mapping
+                    # against the actual per-file context suffix (…/Tables/<safe_label>).
+                    table_filter = getattr(spec, "table", None)
+                    safe_target = None
+                    if table_filter not in (None, "*"):
+                        try:
+                            safe_target = self._safe(str(table_filter))  # type: ignore[attr-defined]
+                        except Exception:
+                            safe_target = str(table_filter)
+                    for meta in tables_meta:
                         ctx_label = meta.get("context")
-                        if not ctx_label or "/Tables/" not in ctx_label:
+                        if (
+                            not isinstance(ctx_label, str)
+                            or "/Tables/" not in ctx_label
+                        ):
                             continue
-                        if getattr(spec, "table", None) not in (None, "*"):
-                            if spec.table not in (meta.get("label"), meta.get("name")):
+                        if safe_target is not None:
+                            tail = ctx_label.split("/Tables/", 1)[-1]
+                            if tail != safe_target:
                                 continue
+                        if bool(
+                            getattr(
+                                getattr(config, "diagnostics", None),
+                                "enable_progress",
+                                False,
+                            ),
+                        ):
+                            print(
+                                f"[Embed] Ensuring vector column on Table: ctx={ctx_label}, target={spec.target_column}, source={spec.source_column}",
+                            )
                         ensure_vector_column(
                             ctx_label,
                             embed_column=spec.target_column,
@@ -1066,7 +1207,7 @@ class FileManager(BaseFileManager):
                 try:
                     fn(
                         manager=self,
-                        filename=filename,
+                        filename=file_path,
                         result=result,
                         document=document,
                         config=config,
@@ -1079,7 +1220,7 @@ class FileManager(BaseFileManager):
     def _ingest_file(
         self,
         *,
-        filename: str,
+        file_path: str,
         records: List[Dict[str, Any]],
         config: _FilePipelineConfig,
     ) -> List[int]:
@@ -1087,7 +1228,7 @@ class FileManager(BaseFileManager):
 
         Parameters
         ----------
-        filename : str
+        file_path : str
             Logical identifier/path of the source file. This is used for
             indexing lookups and as the default `file_path` on rows.
         records : list[dict]
@@ -1102,83 +1243,81 @@ class FileManager(BaseFileManager):
             Inserted Unify log-event ids, when available from `_ops_create_file`.
             Empty list on failure or when the backend does not return ids.
         """
-        try:
-            rows: List[Dict[str, Any]] = list(records or [])
-            # Filter to allowed columns if provided
-            allowed = (
-                set(config.ingest.allowed_columns)
-                if config.ingest.allowed_columns
-                else None
-            )
-            if allowed:
-                rows = [{k: v for k, v in rec.items() if k in allowed} for rec in rows]
+        rows: List[Dict[str, Any]] = list(records or [])
+        # Filter to allowed columns if provided
+        allowed = (
+            set(config.ingest.allowed_columns)
+            if config.ingest.allowed_columns
+            else None
+        )
+        if allowed:
+            rows = [{k: v for k, v in rec.items() if k in allowed} for rec in rows]
 
-            # Determine destination context "filename" (per-file or unified bucket)
-            dest_name = (
-                filename
-                if config.ingest.mode == "per_file"
-                else (config.ingest.unified_label or "Unified")
-            )
+        # Determine destination context "filename" (per-file or unified bucket)
+        dest_name = (
+            file_path
+            if config.ingest.mode == "per_file"
+            else (config.ingest.unified_label or "Unified")
+        )
 
-            # Ensure context exists
-            _ops_ensure_per_file_context(self, filename=dest_name)
+        # Lookup file_id from index to set FK on rows
+        _rows = unify.get_logs(
+            context=self._ctx,
+            filter=f"file_path == {file_path!r}",
+            limit=1,
+            from_fields=["file_id"],
+        )
+        _fid = _rows[0].entries.get("file_id") if _rows else None
 
-            # Optional: delete existing rows for the same file/doc identifiers
-            if config.ingest.replace_existing and rows:
-                fr = rows[0]
-                preds: List[str] = []
-                if fr.get("document_id") is not None:
-                    preds.append(f"document_id == '{fr['document_id']}'")
-                if fr.get("file_path"):
-                    preds.append(f"file_path.endswith('{fr['file_path']}')")
-                if fr.get("document_fingerprint"):
-                    preds.append(
-                        f"document_fingerprint == '{fr['document_fingerprint']}'",
+        if _fid is None:
+            raise ValueError(f"File ID not found for file_path: {file_path}")
+
+        # Optional: delete existing rows. For map/string layouts, purge-then-insert.
+        if config.ingest.replace_existing:
+            try:
+                if config.ingest.mode == "per_file":
+                    _ops_delete_per_file_rows_by_filter(
+                        self,
+                        file_path=dest_name,
+                        filter_expr=None,
                     )
-                if preds:
-                    try:
-                        _ops_delete_per_file_rows_by_filter(
-                            self,
-                            filename=dest_name,
-                            filter_expr=" or ".join(f"({p})" for p in preds),
-                        )
-                    except Exception:
-                        pass
-
-            # Lookup file_id from index to set FK on rows
-            try:
-                _rows = unify.get_logs(
-                    context=self._ctx,
-                    filter=f"file_path == {filename!r}",
-                    limit=1,
-                    from_fields=["file_id"],
-                )
-                _fid = _rows[0].entries.get("file_id") if _rows else None
+                else:
+                    # unified: delete only rows matching this file's file_id
+                    filt = f"file_id == {_fid}"
+                    _ops_delete_per_file_rows_by_filter(
+                        self,
+                        file_path=dest_name,
+                        filter_expr=filt,
+                    )
             except Exception:
-                _fid = None
+                pass
 
-            to_add: List[Dict[str, Any]] = []
-            for rec in rows:
-                new_rec = dict(rec)
-                new_rec.setdefault("file_path", filename)
-                if _fid is not None:
-                    new_rec.setdefault("file_id", _fid)
-                to_add.append(new_rec)
+        file_content_entries: List[Dict[str, Any]] = (
+            FileContent.to_file_content_entries(
+                file_id=int(_fid),
+                rows=rows,
+                id_layout=getattr(getattr(config, "ingest", None), "id_layout", "map"),
+            )
+        )
 
-            try:
-                inserted_ids = _ops_create_file(self, filename=dest_name, rows=to_add)
-                return list(inserted_ids or [])
-            except Exception:
-                return []
-        except Exception:
-            return []
+        inserted_ids = _ops_create_file_content(
+            self,
+            file_path=dest_name,
+            auto_counting_per_file=(
+                getattr(config.ingest, "id_hierarchy", None)
+                if getattr(config.ingest, "id_layout", "map") == "columns"
+                else None
+            ),
+            rows=file_content_entries,
+        )
+        return list(inserted_ids or [])
 
         # ---------- Per-table ingestion for spreadsheets (CSV/XLSX/Sheets) ----- #
 
     def _ingest_tables_for_file(
         self,
         *,
-        filename: str,
+        file_path: str,
         document: Any,
         table_rows_batch_size: int = 100,
     ) -> None:
@@ -1187,7 +1326,7 @@ class FileManager(BaseFileManager):
 
         Parameters
         ----------
-        filename : str
+        file_path : str
             Logical file identifier/path.
         document : Any
             Parsed document object exposing ``metadata.tables`` with ``rows`` and
@@ -1197,7 +1336,7 @@ class FileManager(BaseFileManager):
 
         Notes
         -----
-        - Context naming: File/<alias>/<safe_filename>/Tables/<safe_table_label>.
+        - Context naming: Files/<alias>/<safe_file_path>/Tables/<safe_table_label>.
         - Schema is dynamic per table; fields are inferred by the backend; a unique
           ``row_id`` is auto-counted.
 
@@ -1227,12 +1366,11 @@ class FileManager(BaseFileManager):
                 if isinstance(first, dict):
                     columns = list(first.keys())
                 else:
-                    # Fallback to generic headers based on row length
-                    try:
-                        num_cols = len(first)
-                    except Exception:
-                        num_cols = 0
-                columns = [f"col_{i+1}" for i in range(num_cols)]
+                    # Use the first row data as the column headers if the rows are not dict-like
+                    columns = [str(val) for val in first]
+
+                # Pop the first row from the rows list to remove the header row
+                rows.pop(0)
 
             # Build a stable table context name: sheet_name → safe(section_path) → idx
             sheet_name = getattr(tbl, "sheet_name", None)
@@ -1250,9 +1388,9 @@ class FileManager(BaseFileManager):
 
             # Ensure per-file-table context with fields from columns or first row keys
             try:
-                _ops_ensure_per_file_table_context(
+                _storage_ensure_file_table_context(
                     self,
-                    filename=filename,
+                    file_path=file_path,
                     table=table_label,
                     columns=list(columns) if columns else None,
                     example_row=(
@@ -1264,6 +1402,8 @@ class FileManager(BaseFileManager):
 
             # Batch rows for efficient logging via ops
             batch: List[Dict[str, Any]] = []
+            processed = 0
+            total_rows = len(rows)
             for r in rows:
                 if isinstance(r, dict):
                     entry = {
@@ -1279,7 +1419,7 @@ class FileManager(BaseFileManager):
                     try:
                         _ops_create_file_table(
                             self,
-                            filename=filename,
+                            file_path=file_path,
                             table=table_label,
                             rows=batch,
                             columns=list(columns) if columns else None,
@@ -1289,6 +1429,16 @@ class FileManager(BaseFileManager):
                                 else None
                             ),
                         )
+                        processed += len(batch)
+                        if bool(
+                            getattr(
+                                getattr(_FilePipelineConfig(), "diagnostics", None),
+                                "enable_progress",
+                                False,
+                            ),
+                        ):
+                            # This branch won't read user cfg; progress prints for table loops are handled in _ingest_and_embed
+                            pass
                     except Exception as e:
                         print(f"Error logging table rows batch: {e}")
                     batch = []
@@ -1298,7 +1448,7 @@ class FileManager(BaseFileManager):
                 try:
                     _ops_create_file_table(
                         self,
-                        filename=filename,
+                        file_path=file_path,
                         table=table_label,
                         rows=batch,
                         columns=list(columns) if columns else None,
@@ -1309,14 +1459,279 @@ class FileManager(BaseFileManager):
                 except Exception as e:
                     print(f"Error logging final table rows batch: {e}")
 
-    def parse(self, filenames: Union[str, List[str]], *, config: Optional[_FilePipelineConfig] = None) -> Dict[str, Dict[str, Any]]:  # type: ignore[override]
+    def _ingest_and_embed(
+        self,
+        *,
+        file_path: str,
+        document: Any,
+        result: Dict[str, Any],
+        config: _FilePipelineConfig,
+    ) -> None:
+        """
+        Ingest and embed along (chunk-by-chunk) for a single file until fully processed.
+        """
+        # 1) Index the file record (best-effort)
+        if bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+        ):
+            print(f"[Along] Starting ingest+embed for: {file_path}")
+        try:
+            from .ops import index_file_record as _ops_index_file_record
+
+            _ops_index_file_record(
+                self,
+                file_path=file_path,
+                result=result,
+                config=config,
+            )
+        except Exception:
+            # Fall through; downstream ingestion will still proceed.
+            pass
+
+        # Determine destination display name/context root for this file (content + tables)
+        dest_name = (
+            file_path
+            if config.ingest.mode == "per_file"
+            else (config.ingest.unified_label or "Unified")
+        )
+
+        # 2) Ingest content rows in chunks, embedding after each chunk
+        from .ops import iter_ingest_content_rows as _ops_iter_ingest_content_rows
+        from .ops import embed_content_chunk_for_ids as _ops_embed_content_chunk_for_ids
+
+        batch_size = int(
+            getattr(getattr(config, "ingest", None), "content_rows_batch_size", 1000),
+        )
+        # Filter specs for the correct content context
+        target_ctx_name = _storage_ctx_for_file(self, file_path=dest_name)
+        content_spec_context = (
+            "per_file" if config.ingest.mode == "per_file" else "unified"
+        )
+        content_specs = [
+            sp
+            for sp in (config.embed.specs or [])
+            if getattr(sp, "context", None) == content_spec_context
+        ]
+
+        total_records = int(
+            (result or {}).get("total_records")
+            or len(list(result.get("records", []) or [])),
+        )
+        processed_records = 0
+        chunk_index = 0
+        for inserted_ids in _ops_iter_ingest_content_rows(
+            self,
+            file_path=file_path,
+            records=list(result.get("records", []) or []),
+            config=config,
+            batch_size=batch_size,
+            replace_existing=bool(
+                getattr(getattr(config, "ingest", None), "replace_existing", True),
+            ),
+        ):
+            if not inserted_ids:
+                continue
+            chunk_index += 1
+            processed_records += len(inserted_ids)
+            if bool(
+                getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+            ):
+                print(
+                    f"[Along] Content chunk {chunk_index}: inserted={len(inserted_ids)} processed={processed_records}/{total_records}",
+                )
+            # Pre-embed hooks (per chunk when enabled)
+            if bool(getattr(getattr(config, "embed", None), "hooks_per_chunk", True)):
+                try:
+                    for fn in _resolve_callables(config.plugins.pre_embed):
+                        try:
+                            fn(
+                                manager=self,
+                                filename=file_path,
+                                result=result,
+                                document=document,
+                                config=config,
+                            )
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            # Embed the chunk (scoped to inserted ids)
+            try:
+                _ops_embed_content_chunk_for_ids(
+                    target_ctx_name,
+                    content_specs,
+                    inserted_ids,
+                    enable_progress=bool(
+                        getattr(
+                            getattr(config, "diagnostics", None),
+                            "enable_progress",
+                            False,
+                        ),
+                    ),
+                )
+                if bool(
+                    getattr(
+                        getattr(config, "diagnostics", None),
+                        "enable_progress",
+                        False,
+                    ),
+                ):
+                    print(
+                        f"[Along] Embedded content chunk {chunk_index} (ids={len(inserted_ids)})",
+                    )
+            except Exception:
+                pass
+
+            # Post-embed hooks (per chunk when enabled)
+            if bool(getattr(getattr(config, "embed", None), "hooks_per_chunk", True)):
+                try:
+                    for fn in _resolve_callables(config.plugins.post_embed):
+                        try:
+                            fn(
+                                manager=self,
+                                filename=file_path,
+                                result=result,
+                                document=document,
+                                config=config,
+                            )
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+        # 3) Ingest per-file tables in chunks (when enabled), embedding per batch
+        if bool(getattr(getattr(config, "ingest", None), "table_ingest", True)):
+            from .ops import (
+                iter_ingest_tables_for_document as _ops_iter_ingest_tables_for_document,
+            )
+            from .ops import embed_table_chunk_for_ids as _ops_embed_table_chunk_for_ids
+
+            table_specs = [
+                sp
+                for sp in (config.embed.specs or [])
+                if getattr(sp, "context", None) == "per_file_table"
+            ]
+            # Derive per-table total row counts for progress reporting
+            table_row_totals: Dict[str, int] = {}
+            try:
+                tables = (
+                    getattr(getattr(document, "metadata", None), "tables", []) or []
+                )
+                for t in tables:
+                    rows = getattr(t, "rows", None) or []
+                    # Account for header row removal when columns are inferred
+                    table_row_totals[
+                        str(
+                            getattr(t, "sheet_name", "")
+                            or getattr(t, "section_path", "")
+                            or "",
+                        )
+                    ] = max(0, len(rows))
+            except Exception:
+                table_row_totals = {}
+            table_progress: Dict[str, int] = {}
+            for table_ctx, inserted_ids in _ops_iter_ingest_tables_for_document(
+                self,
+                file_path=dest_name,
+                document=document,
+                table_rows_batch_size=int(
+                    getattr(
+                        getattr(config, "ingest", None),
+                        "table_rows_batch_size",
+                        100,
+                    ),
+                ),
+            ):
+                # Hooks per chunk when enabled
+                if bool(
+                    getattr(getattr(config, "embed", None), "hooks_per_chunk", True),
+                ):
+                    try:
+                        for fn in _resolve_callables(config.plugins.pre_embed):
+                            try:
+                                fn(
+                                    manager=self,
+                                    filename=file_path,
+                                    result=result,
+                                    document=document,
+                                    config=config,
+                                )
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+                if bool(
+                    getattr(
+                        getattr(config, "diagnostics", None),
+                        "enable_progress",
+                        False,
+                    ),
+                ):
+                    label = table_ctx.split("/Tables/", 1)[-1]
+                    table_progress[label] = table_progress.get(label, 0) + len(
+                        inserted_ids or [],
+                    )
+                    tot = table_row_totals.get(label, 0)
+                    if tot > 0:
+                        print(
+                            f"[Along] Table '{label}' chunk: inserted={len(inserted_ids or [])} processed={table_progress[label]}/{tot}",
+                        )
+                    else:
+                        print(
+                            f"[Along] Table '{label}' chunk: inserted={len(inserted_ids or [])}",
+                        )
+                try:
+                    _ops_embed_table_chunk_for_ids(
+                        self,
+                        table_ctx=table_ctx,
+                        specs=table_specs,
+                        inserted_ids=inserted_ids,
+                        enable_progress=bool(
+                            getattr(
+                                getattr(config, "diagnostics", None),
+                                "enable_progress",
+                                False,
+                            ),
+                        ),
+                    )
+                except Exception:
+                    pass
+                if bool(
+                    getattr(getattr(config, "embed", None), "hooks_per_chunk", True),
+                ):
+                    try:
+                        for fn in _resolve_callables(config.plugins.post_embed):
+                            try:
+                                fn(
+                                    manager=self,
+                                    filename=file_path,
+                                    result=result,
+                                    document=document,
+                                    config=config,
+                                )
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+        if bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+        ):
+            print(f"[Along] Completed ingest+embed for: {file_path}")
+
+    def parse(self, file_paths: Union[str, List[str]], *, config: Optional[_FilePipelineConfig] = None) -> Dict[str, Any]:  # type: ignore[override]
         """
         Parse one or more files, then ingest their content and tables according to config.
 
+        Return payload depends on cfg.output.return_mode:
+        - "compact" (default): format-specific Pydantic model (e.g., ParsedPDF, ParsedXlsx)
+        - "full": raw dict from Document.to_parse_result (includes heavy fields)
+        - "none": minimal stub with status/format/record counts
+
         Parameters
         ----------
-        filenames : str | list[str]
-            One or more logical file identifiers to parse.
+        file_paths : str | list[str]
+            One or more logical file paths to parse.
         config : FilePipelineConfig | None
             Pipeline configuration controlling parser kwargs, ingest layout,
             table ingestion and embedding behavior. When None, defaults are used
@@ -1324,17 +1739,17 @@ class FileManager(BaseFileManager):
 
         Returns
         -------
-        dict[str, dict]
-            Mapping of filename → result dict (status, records, flattened metadata fields).
+        dict[str, Any]
+            Mapping of filename → compact Pydantic model, raw dict, or minimal stub per output mode.
         """
         cfg = config or _FilePipelineConfig()
 
-        if isinstance(filenames, str):
-            filenames = [filenames]
+        if isinstance(file_paths, str):
+            file_paths = [file_paths]
 
-        results: Dict[str, Dict[str, Any]] = {}
-        file_paths: List[str] = []
-        filename_to_path: Dict[str, str] = {}
+        results: Dict[str, Any] = {}
+        exported_paths: List[str] = []
+        exported_paths_to_original_paths: Dict[str, str] = {}
 
         temp_dir: Optional[str] = None
         try:
@@ -1343,55 +1758,75 @@ class FileManager(BaseFileManager):
             temp_dir = _tempfile.mkdtemp(prefix="filemanager_parse_")
             print(f"[FileManager] Created temporary directory: {temp_dir}")
 
-            # Export files to a local temp directory
-            for name in filenames:
+            # Resolve parse inputs: prefer in-place local path; otherwise export via adapter
+            from pathlib import Path as _P
+
+            for path in file_paths:
                 try:
-                    exported_path = self.export_file(name, temp_dir)
+                    p = _P(str(path)).expanduser()
+                    if p.is_absolute() and p.exists():
+                        exported_path = str(p)
+                        print(
+                            f"[FileManager] Using local path in-place: {exported_path}",
+                        )
+                        exported_paths.append(exported_path)
+                        exported_paths_to_original_paths[exported_path] = path
+                        continue
+                except Exception:
+                    pass
+                try:
+                    exported_path = self.export_file(path, temp_dir)
                     print(f"[FileManager] Exported file to: {exported_path}")
-                    file_paths.append(exported_path)
-                    filename_to_path[exported_path] = name
+                    exported_paths.append(exported_path)
+                    exported_paths_to_original_paths[exported_path] = path
                 except Exception as e:
                     # Per-file export failure → do not fail the entire tool call
-                    results[name] = _Doc.error_result(name, f"export failed: {e}")
+                    results[path] = _Doc.error_result(path, f"export failed: {e}")
 
             # Nothing exported successfully
-            if not file_paths:
+            if not exported_paths:
                 return results
 
             # Parse exported files
             documents: List[Any] = []
-            if len(file_paths) > 1 and hasattr(self._parser, "parse_batch"):
+            if len(exported_paths) > 1 and hasattr(self._parser, "parse_batch"):
                 try:
                     documents = self._parser.parse_batch(
-                        file_paths,
+                        exported_paths,
                         **cfg.parse.parser_kwargs,
                     )
                 except Exception as e:
                     # Batch failure → mark all remaining as errors
-                    for fp in file_paths:
-                        name = filename_to_path.get(fp)
-                        if name and name not in results:
-                            results[name] = _Doc.error_result(
-                                name,
+                    for fp in exported_paths:
+                        original_path = exported_paths_to_original_paths.get(fp)
+                        if original_path and original_path not in results:
+                            results[original_path] = _Doc.error_result(
+                                original_path,
                                 f"parse_batch failed: {e}",
                             )
                     return results
             else:
                 try:
                     documents = [
-                        self._parser.parse(file_paths[0], **cfg.parse.parser_kwargs),
+                        self._parser.parse(
+                            exported_paths[0],
+                            **cfg.parse.parser_kwargs,
+                        ),
                     ]
                 except Exception as e:
-                    name = filename_to_path.get(file_paths[0], file_paths[0])
-                    results[name] = _Doc.error_result(name, str(e))
+                    original_path = exported_paths_to_original_paths.get(
+                        exported_paths[0],
+                        exported_paths[0],
+                    )
+                    results[original_path] = _Doc.error_result(original_path, str(e))
                     return results
 
             # Build results and ingest per-file artifacts
             for idx, document in enumerate(documents):
-                fp = file_paths[idx] if idx < len(file_paths) else None
+                fp = exported_paths[idx] if idx < len(exported_paths) else None
                 if fp is None:
                     continue
-                name = filename_to_path.get(fp, fp)
+                original_path = exported_paths_to_original_paths.get(fp, fp)
                 try:
                     # Post-parse hooks (document available)
                     try:
@@ -1399,44 +1834,88 @@ class FileManager(BaseFileManager):
                             try:
                                 fn(
                                     manager=self,
-                                    filename=name,
+                                    filename=original_path,
                                     result=None,
                                     document=document,
                                     config=cfg,
                                 )
                             except Exception as e:
-                                results[name] = _Doc.error_result(
-                                    name,
+                                results[original_path] = _Doc.error_result(
+                                    original_path,
                                     f"post-parse hook failed: {e}",
                                 )
                     except Exception as e:
-                        results[name] = _Doc.error_result(
-                            name,
+                        results[original_path] = _Doc.error_result(
+                            original_path,
                             f"post-parse hooks failed: {e}",
                         )
                     result = document.to_parse_result(
-                        name,
-                        auto_counting=cfg.ingest.auto_counting_per_file,
+                        original_path,
+                        auto_counting=(
+                            cfg.ingest.auto_counting_per_file
+                            if cfg.ingest.id_layout == "columns"
+                            else None
+                        ),
                         document_index=idx,
+                        id_layout=getattr(cfg.ingest, "id_layout", "map"),
+                        id_string_format=getattr(cfg.ingest, "id_string_format", None),
                     )
-                    results[name] = result
                 except Exception as e:
-                    results[name] = _Doc.error_result(name, f"parse failed: {e}")
+                    results[original_path] = _Doc.error_result(
+                        original_path,
+                        f"parse failed: {e}",
+                    )
 
-                # Ingest (index + content + tables) and then embed
-                inserted_ids = self._ingest(
-                    filename=name,
-                    document=document,
-                    result=result,
-                    config=cfg,
-                )
-                self._embed(
-                    filename=name,
-                    document=document,
-                    result=result,
-                    inserted_ids=inserted_ids,
-                    config=cfg,
-                )
+                # Choose strategy per-file
+                try:
+                    from .ops import resolve_embed_strategy as _res_strategy
+
+                    strategy = _res_strategy(document, result, cfg)
+                except Exception:
+                    strategy = "after"
+                if strategy == "along":
+                    self._ingest_and_embed(
+                        file_path=original_path,
+                        document=document,
+                        result=result,
+                        config=cfg,
+                    )
+                else:
+                    inserted_ids = self._ingest(
+                        file_path=original_path,
+                        document=document,
+                        result=result,
+                        config=cfg,
+                    )
+                    if strategy != "off":
+                        self._embed(
+                            file_path=original_path,
+                            document=document,
+                            result=result,
+                            inserted_ids=inserted_ids,
+                            config=cfg,
+                        )
+
+                # Decide return mode
+                mode = getattr(getattr(cfg, "output", None), "return_mode", "compact")
+                if mode == "full":
+                    results[original_path] = result
+                elif mode == "none":
+                    results[original_path] = {
+                        "file_path": original_path,
+                        "status": result.get("status"),
+                        "error": result.get("error"),
+                        "total_records": result.get("total_records"),
+                        "file_format": result.get("file_format"),
+                    }
+                else:  # compact
+                    results[original_path] = _build_compact_parse_model(
+                        self,
+                        file_path=original_path,
+                        document=document,
+                        result=result,
+                        config=cfg,
+                    )
 
             return results
         finally:
@@ -1451,147 +1930,226 @@ class FileManager(BaseFileManager):
 
     async def parse_async(
         self,
-        filenames: Union[str, List[str]],
+        file_paths: Union[str, List[str]],
         *,
         config: Optional[_FilePipelineConfig] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Parse one or more files asynchronously, then ingest according to config.
-
-        Parameters
-        ----------
-        filenames : str | list[str]
-            One or more logical file identifiers to parse.
-        config : FilePipelineConfig
-            Pipeline configuration controlling parser kwargs, ingest layout,
-            table ingestion and embedding behavior.
+        Parse one or more files asynchronously, then ingest their content and tables according to config.
 
         Yields
         ------
         dict
-            Result dict per file with status, records, and flattened metadata fields.
+            Result dict per file. Payload depends on cfg.output.return_mode:
+            - "compact" (default): format-specific Pydantic model (e.g., ParsedPDF, ParsedXlsx)
+            - "full": raw dict from Document.to_parse_result (includes heavy fields)
+            - "none": minimal stub with status/format/record counts
+
+        Parameters
+        ----------
+        file_paths : str | list[str]
+            One or more logical file paths to parse.
+        config : FilePipelineConfig | None
+            Pipeline configuration controlling parser kwargs, ingest layout,
+            table ingestion and embedding behavior. When None, defaults are used
+            (equivalent to ``FilePipelineConfig()``).
         """
+        import asyncio
+
         cfg = config or _FilePipelineConfig()
-        eff_batch_size: int = int(cfg.parse.batch_size or 3)
 
-        if isinstance(filenames, str):
-            filenames = [filenames]
-        file_paths: List[str] = []
-        filename_to_path: Dict[str, str] = {}
+        if isinstance(file_paths, str):
+            file_paths = [file_paths]
+        # buffer export errors to yield after processing successful files
+        export_errors: List[Dict[str, Any]] = []
+        exported_paths: List[str] = []
+        exported_paths_to_original_paths: Dict[str, str] = {}
+
         temp_dir: Optional[str] = None
-
         try:
             import tempfile as _tempfile
 
-            temp_dir = _tempfile.mkdtemp(prefix="filemanager_parse_async_")
+            temp_dir = _tempfile.mkdtemp(prefix="filemanager_parse_")
+            print(f"[FileManager] Created temporary directory: {temp_dir}")
 
-            # Export files; yield per-file errors without aborting the stream
-            for name in filenames:
+            # Resolve parse inputs: prefer in-place local path; otherwise export via adapter
+            from pathlib import Path as _P
+
+            for path in file_paths:
                 try:
-                    exported_path = self.export_file(name, temp_dir)
-                    file_paths.append(exported_path)
-                    filename_to_path[exported_path] = name
+                    p = _P(str(path)).expanduser()
+                    if p.is_absolute() and p.exists():
+                        exported_path = str(p)
+                        print(
+                            f"[FileManager] Using local path in-place: {exported_path}",
+                        )
+                        exported_paths.append(exported_path)
+                        exported_paths_to_original_paths[exported_path] = path
+                        continue
+                except Exception:
+                    pass
+                try:
+                    exported_path = self.export_file(path, temp_dir)
+                    print(f"[FileManager] Exported file to: {exported_path}")
+                    exported_paths.append(exported_path)
+                    exported_paths_to_original_paths[exported_path] = path
                 except Exception as e:
-                    yield _Doc.error_result(name, f"export failed: {e}")
+                    # Buffer per-file export failure; do not abort
+                    export_errors.append(_Doc.error_result(path, f"export failed: {e}"))
 
-            if not file_paths:
+            # Nothing exported successfully
+            if not exported_paths:
+                # yield any buffered export errors and exit
+                for err in export_errors:
+                    yield err
                 return
 
-            if hasattr(self._parser, "parse_batch_async"):
-                produced: set[str] = set()
+            # Parse exported files
+            documents: List[Any] = []
+            if len(exported_paths) > 1 and hasattr(self._parser, "parse_batch"):
                 try:
-                    async for index, document in self._parser.parse_batch_async(
-                        file_paths,
-                        batch_size=eff_batch_size,
+                    documents = await asyncio.to_thread(
+                        self._parser.parse_batch,
+                        exported_paths,
                         **cfg.parse.parser_kwargs,
-                    ):
-                        fp = file_paths[index]
-                        name = filename_to_path[fp]
-                        produced.add(fp)
-                        # Post-parse hooks
-                        try:
-                            for fn in _resolve_callables(cfg.plugins.post_parse):
-                                try:
-                                    fn(
-                                        manager=self,
-                                        filename=name,
-                                        result=None,
-                                        document=document,
-                                        config=cfg,
-                                    )
-                                except Exception as e:
-                                    yield _Doc.error_result(
-                                        name,
-                                        f"post-parse hook failed: {e}",
-                                    )
-                                    continue
-                        except Exception:
-                            yield _Doc.error_result(
-                                name,
-                                f"post-parse hooks failed: {e}",
-                            )
-                        result = document.to_parse_result(
-                            name,
-                            auto_counting=cfg.ingest.auto_counting_per_file,
-                            document_index=index,
-                        )
-                        # Ingest and embed
-                        inserted_ids = self._ingest(
-                            filename=name,
-                            document=document,
-                            result=result,
-                            config=cfg,
-                        )
-                        self._embed(
-                            filename=name,
-                            document=document,
-                            result=result,
-                            inserted_ids=inserted_ids,
-                            config=cfg,
-                        )
-                    yield result
+                    )
                 except Exception as e:
-                    # Emit error results for any files that didn't produce output yet
-                    for fp in file_paths:
-                        if fp in produced:
-                            continue
-                        name = filename_to_path[fp]
-                        yield _Doc.error_result(name, f"parse_batch_async failed: {e}")
+                    # Batch failure → mark all remaining as errors
+                    for fp in exported_paths:
+                        original_path = exported_paths_to_original_paths.get(fp)
+                        if original_path:
+                            yield _Doc.error_result(
+                                original_path,
+                                f"parse_batch failed: {e}",
+                            )
+                    # also yield any buffered export errors
+                    for err in export_errors:
+                        yield err
+                    return
             else:
-                # Fallback: sequential parse in async generator
-                for fp in file_paths:
-                    name = filename_to_path[fp]
+                try:
+                    documents = [
+                        await asyncio.to_thread(
+                            self._parser.parse,
+                            exported_paths[0],
+                            **cfg.parse.parser_kwargs,
+                        ),
+                    ]
+                except Exception as e:
+                    original_path = exported_paths_to_original_paths.get(
+                        exported_paths[0],
+                        exported_paths[0],
+                    )
+                    yield _Doc.error_result(original_path, str(e))
+                    for err in export_errors:
+                        yield err
+                    return
+
+            # Build results and ingest per-file artifacts
+            for idx, document in enumerate(documents):
+                fp = exported_paths[idx] if idx < len(exported_paths) else None
+                if fp is None:
+                    continue
+                original_path = exported_paths_to_original_paths.get(fp, fp)
+                try:
+                    # Post-parse hooks (document available)
                     try:
-                        document = self._parser.parse(fp, **cfg.parse.parser_kwargs)
-                        result = document.to_parse_result(
-                            name,
-                            auto_counting=cfg.ingest.auto_counting_per_file,
-                            document_index=0,
+                        for fn in _resolve_callables(cfg.plugins.post_parse):
+                            try:
+                                fn(
+                                    manager=self,
+                                    filename=original_path,
+                                    result=None,
+                                    document=document,
+                                    config=cfg,
+                                )
+                            except Exception as e:
+                                yield _Doc.error_result(
+                                    original_path,
+                                    f"post-parse hook failed: {e}",
+                                )
+                    except Exception as e:
+                        yield _Doc.error_result(
+                            original_path,
+                            f"post-parse hooks failed: {e}",
                         )
-                        # Ingest and embed
-                        inserted_ids = self._ingest(
-                            filename=name,
-                            document=document,
-                            result=result,
-                            config=cfg,
-                        )
+                    result = document.to_parse_result(
+                        original_path,
+                        auto_counting=(
+                            cfg.ingest.auto_counting_per_file
+                            if cfg.ingest.id_layout == "columns"
+                            else None
+                        ),
+                        document_index=idx,
+                        id_layout=getattr(cfg.ingest, "id_layout", "map"),
+                        id_string_format=getattr(cfg.ingest, "id_string_format", None),
+                    )
+                    # Defer assignment until after ingest/embed so we can choose return mode
+                except Exception as e:
+                    yield _Doc.error_result(original_path, f"parse failed: {e}")
+                    continue
+
+                # Choose strategy per-file
+                try:
+                    from .ops import resolve_embed_strategy as _res_strategy
+
+                    strategy = _res_strategy(document, result, cfg)
+                except Exception:
+                    strategy = "after"
+                if strategy == "along":
+                    self._ingest_and_embed(
+                        file_path=original_path,
+                        document=document,
+                        result=result,
+                        config=cfg,
+                    )
+                else:
+                    inserted_ids = self._ingest(
+                        file_path=original_path,
+                        document=document,
+                        result=result,
+                        config=cfg,
+                    )
+                    if strategy != "off":
                         self._embed(
-                            filename=name,
+                            file_path=original_path,
                             document=document,
                             result=result,
                             inserted_ids=inserted_ids,
                             config=cfg,
                         )
-                        yield result
-                    except Exception as e:
-                        yield _Doc.error_result(name, str(e))
+
+                # Decide return mode
+                mode = getattr(getattr(cfg, "output", None), "return_mode", "compact")
+                if mode == "full":
+                    yield result
+                elif mode == "none":
+                    yield {
+                        "file_path": original_path,
+                        "status": result.get("status"),
+                        "error": result.get("error"),
+                        "total_records": result.get("total_records"),
+                        "file_format": result.get("file_format"),
+                    }
+                else:  # compact
+                    yield _build_compact_parse_model(
+                        self,
+                        file_path=original_path,
+                        document=document,
+                        result=result,
+                        config=cfg,
+                    )
+
+            # finally, yield any buffered export errors (if any)
+            for err in export_errors:
+                yield err
         finally:
-            # Clean up temporary directory and all files within it
+            # Clean up temporary directory
             if temp_dir:
                 try:
-                    import shutil as _shutil
+                    import shutil as _shutil2
 
-                    _shutil.rmtree(temp_dir)
+                    _shutil2.rmtree(temp_dir)
                 except Exception:
                     pass
 
@@ -1664,50 +2222,42 @@ class FileManager(BaseFileManager):
         self,
         *,
         include_types: bool = True,
+        table: Optional[str] = None,
     ) -> Dict[str, Any] | List[str]:
         """
-        List index columns, optionally including types.
+        List columns for the FileRecords index or a resolved logical table.
 
         Parameters
         ----------
         include_types : bool, default True
-            When True, return a dict mapping column → type; otherwise return just
-            the column names as a list.
+            When True, return a mapping of column → type; otherwise return the
+            list of column names only.
+        table : str | None, default None
+            When provided, resolve the logical name (e.g., "<root>",
+            "<root>.Tables.<label>") or legacy ref and return that context's
+            columns. When None, return the FileRecords index columns.
 
         Returns
         -------
         dict[str, str] | list[str]
             Column→type mapping or a list of column names.
+
+        Examples
+        --------
+        - _list_columns() → FileRecords schema
+        - _list_columns(table="Q1_Report") → per-file Content schema
+        - _list_columns(table="Q1_Report.Tables.Products") → table schema
         """
-        cols = self._get_columns()
+        if table is None:
+            cols = self._get_columns()
+            return cols if include_types else list(cols)
+        # Resolve logical name → fully-qualified context then fetch
+        try:
+            ctx = self._resolve_table_ref(table)
+        except Exception:
+            ctx = table
+        cols = _storage_get_columns(self, table=ctx)
         return cols if include_types else list(cols)
-
-    def _allowed_fields(self) -> List[str]:
-        """
-        Return the set of safe fields for retrieval from the index.
-
-        Notes
-        -----
-        - Excludes private fields (leading underscore) and vector columns (suffix
-          "_emb") to keep payloads lean and avoid accidental large fetches.
-        - Ensures built-in fields required by the model remain included.
-
-        Returns
-        -------
-        list[str]
-            Safe column names to request in from_fields.
-        """
-        cols = self._get_columns()
-        allowed = [
-            name
-            for name in cols.keys()
-            if not str(name).startswith("_") and not str(name).endswith("_emb")
-        ]
-        # Ensure all built-ins present
-        for b in self._BUILTIN_FIELDS:
-            if b not in allowed:
-                allowed.append(b)
-        return allowed
 
     @read_only
     def _filter_files(
@@ -1716,50 +2266,39 @@ class FileManager(BaseFileManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-    ) -> List[FileRecord]:
+        tables: Optional[Union[str, List[str]]] = None,
+    ) -> List[Dict[str, Any]]:
         """
-        Filter files using a boolean Python expression evaluated per row.
-        Mirrors ContactManager.filter_contacts.
+        Filter files (index) or resolve-and-filter per-file Content/Tables.
 
         Parameters
         ----------
-        filter : str | None, default None
-            A Python boolean expression evaluated with column names in scope. Examples:
-            - "file_path.endswith('.pdf')"
-            - "status == 'success'"
-            - "metadata['file_size'] > 1000000"
-            When None, returns all files. String comparisons are case‑sensitive unless
-            your expression applies a case‑normalisation.
-        offset : int, default 0
-            Zero-based index of the first result to include.
-        limit : int, default 100
-            Maximum number of records to return. Must be <= 1000.
+        filter : str | None
+            Python boolean expression evaluated with column names in scope.
+        offset : int
+            Zero-based pagination offset per context.
+        limit : int
+            Maximum rows per context (<= 1000).
+        tables : list[str] | str | None
+            Logical names from `tables_overview()` (preferred) or legacy refs.
+            When None, only the FileRecords index is scanned.
 
         Returns
         -------
-        List[FileRecord]
-            Matching files as File objects in creation order.
-
-        Notes
-        -----
-        - Be careful with quoting inside the expression. Use single quotes to delimit string
-          literals inside the filter string.
-        - This tool is brittle for substring searches across text; prefer ``_search_files``
-          for that purpose.
+        list[dict]
+            Flat list of rows collected from the index (when tables=None) or
+            concatenated rows from all resolved contexts.
         """
         normalized = normalize_filter_expr(filter)
-        logs = unify.get_logs(
-            context=self._ctx,
+        from .search import filter_files as _srch_filter_files
+
+        rows = _srch_filter_files(
+            self,
             filter=normalized,
             offset=offset,
             limit=limit,
-            from_fields=self._allowed_fields(),
+            tables=tables,
         )
-
-        rows = [FileRecord(**lg.entries) for lg in logs]
-        # Write-through cache
-        for lg in logs:
-            self._data_store.put(lg.entries)
         return rows
 
     @read_only
@@ -1768,47 +2307,42 @@ class FileManager(BaseFileManager):
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
-    ) -> List[FileRecord]:
+        table: Optional[str] = None,
+        filter: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
-        Semantic search over files using one or more reference texts.
+        Semantic search over a resolved context using one or more reference texts.
 
         Parameters
         ----------
-        references : Dict[str, str] | None, default None
-            Mapping of ``source_expr → reference_text`` terms that define the search space.
-            - ``source_expr`` can be either a simple column name (e.g. ``"bio"``,
-              ``"first_name"``) or a full Unify derived‑expression (e.g.
-              ``"str({first_name}) + ' ' + str({surname})"``). For expressions, a stable
-              derived source column is created automatically if needed.
-            - ``reference_text`` is free‑form text which will be embedded using the
-              configured embedding model.
-              When None or empty dict, returns the most recent files.
-        k : int, default 10
-            Maximum number of files to return. Must be a positive integer. Must be <= 1000.
+        references : dict[str, str] | None
+            Mapping of source_expr → reference_text. Source expressions can be
+            column names or derived expressions. When omitted, returns recent files.
+        k : int
+            Number of results to return (1..1000).
+
+        table : str | None
+            Logical table name or legacy ref to target the search context. When None,
+            defaults to the global FileRecords index. Logical forms match
+            tables_overview(), e.g. "FileRecords", "<root>", "<root>.Tables.<label>".
+
+        filter : str | None
+            Row-level predicate (evaluated with column names as variables).
 
         Returns
         -------
-        List[File]
-            Up to k File objects. When semantic references are provided,
-            results are sorted by similarity. When references are omitted,
-            returns the most recent files.
+        list[dict]
+            Up to k rows ranked by similarity from the resolved context.
         """
-        from unity.common.search_utils import table_search_top_k
+        from .search import search_files as _srch_search_files
 
-        # Restrict payload to the File schema to avoid fetching private/vector fields
-        allowed_fields = self._allowed_fields()
-
-        rows = table_search_top_k(
-            context=self._ctx,
+        return _srch_search_files(
+            self,
             references=references,
             k=k,
-            allowed_fields=allowed_fields,
-            unique_id_field="file_id",
+            table=table,
+            filter=filter,
         )
-        # Write-through cache
-        for r in rows:
-            self._data_store.put(r)
-        return [FileRecord(**r) for r in rows]
 
     # ---------- Per-file join and multi-join tools (read-only) -------------- #
     @read_only
@@ -1831,26 +2365,24 @@ class FileManager(BaseFileManager):
         Parameters
         ----------
         tables : list[str] | str
-            Exactly two table references, e.g., ["A", "B"], or a comma-separated string.
+            Exactly two logical names or legacy refs.
         join_expr : str
-            Join predicate using the same identifiers as in ``tables``.
+            Join predicate using the same identifiers as in ``tables`` (auto-rewritten).
         select : dict[str, str]
-            Mapping of source expressions to output names for the result.
-        mode : str, default "inner"
-            Join mode ("inner", "left", "right", "outer").
+            Mapping of source expressions → output names.
+        mode : str
+            One of {"inner", "left", "right", "outer"}.
         left_where, right_where : str | None
-            Optional pre-filters for left/right inputs before joining.
-        result_where : str | None, default None
-            Predicate applied to the joined result (only over selected output columns).
-        result_limit : int, default 100
-            Max rows to return from the joined result (<= 1000).
-        result_offset : int, default 0
-            Pagination offset over the joined result.
+            Optional input predicates before joining.
+        result_where : str | None
+            Predicate applied to the joined result over the projected columns.
+        result_limit, result_offset : int
+            Pagination parameters; limit <= 1000.
 
         Returns
         -------
         dict[str, list[dict[str, Any]]]
-            Mapping of the derived context label to a list of rows.
+            Rows from the materialized join context.
         """
         return _srch_filter_join(
             self,
@@ -1882,29 +2414,18 @@ class FileManager(BaseFileManager):
         """
         Perform a semantic search over the result of joining two sources.
 
-        Parameters
-        ----------
-        tables : list[str] | str
-            Exactly two table references, e.g., ["A", "B"], or a comma-separated string.
-        join_expr : str
-            Join predicate using the same identifiers as in ``tables``.
-        select : dict[str, str]
-            Mapping of source expressions to output names for the result.
-        mode : str, default "inner"
-            Join mode ("inner", "left", "right", "outer").
-        left_where, right_where : str | None
-            Optional pre-filters for left/right inputs before joining.
+        Parameters mirror _filter_join with the addition of:
         references : dict[str, str] | None
-            Mapping of expressions in the join result to reference text for semantic ranking.
-        k : int, default 10
-            Maximum number of rows to return (<= 1000).
+            Mapping of expressions in the join result → reference text for semantic ranking.
+        k : int
+            Maximum rows to return (<= 1000).
         filter : str | None
-            Predicate over the joined result (only over selected output columns).
+            Optional predicate over the joined result before ranking.
 
         Returns
         -------
         list[dict[str, Any]]
-            Up to ``k`` rows from the joined result sorted by semantic similarity.
+            Top-k rows ranked by semantic similarity.
         """
         return _srch_search_join(
             self,
@@ -1934,20 +2455,17 @@ class FileManager(BaseFileManager):
         Parameters
         ----------
         joins : list[dict]
-            Ordered join steps. Each step supports keys: "tables", "join_expr",
-            "select", optional "mode", "left_where", "right_where".
-            Use "$prev" to reference the previous result in later steps.
+            Ordered steps; each step provides ``tables`` (two refs or "$prev"),
+            ``join_expr``, ``select`` and optional ``mode``, ``left_where``, ``right_where``.
         result_where : str | None
-            Predicate applied over the final result (over selected output columns).
-        result_limit : int, default 100
-            Max rows to return (<= 1000).
-        result_offset : int, default 0
-            Pagination offset into the final result set.
+            Predicate applied to the final joined result over projected columns.
+        result_limit, result_offset : int
+            Pagination parameters; limit <= 1000.
 
         Returns
         -------
         dict[str, list[dict[str, Any]]]
-            Mapping of the final derived context label to its rows.
+            Rows from the final materialized context.
         """
         return _srch_filter_multi_join(
             self,
@@ -1969,21 +2487,18 @@ class FileManager(BaseFileManager):
         """
         Perform a semantic search over a chain of joined results.
 
-        Parameters
-        ----------
-        joins : list[dict]
-            Ordered join steps (see ``_filter_multi_join`` for shape).
+        Parameters mirror _filter_multi_join with the addition of:
         references : dict[str, str] | None
-            Mapping of expressions in the final result to reference text.
-        k : int, default 10
-            Maximum number of rows to return (<= 1000).
+            Mapping of expressions in the final result → reference text for ranking.
+        k : int
+            Maximum rows to return (<= 1000).
         filter : str | None
-            Predicate applied over the final join result.
+            Optional predicate before ranking.
 
         Returns
         -------
         list[dict[str, Any]]
-            Up to ``k`` rows from the final result, ranked by semantic similarity.
+            Top-k rows ranked by semantic similarity.
         """
         return _srch_search_multi_join(
             self,
@@ -1992,75 +2507,6 @@ class FileManager(BaseFileManager):
             k=k,
             filter=filter,
         )
-
-    # File ingestion / deprecation
-    async def _ingest_files(
-        self,
-        *,
-        filenames: Union[str, List[str]],
-        config: _FilePipelineConfig,
-    ) -> Dict[str, Any]:
-        """Parse and ingest multiple files using the config-driven pipeline.
-
-        This is a thin wrapper over `parse_async(..., config=config)` that
-        aggregates a simple summary. Ingestion (content + tables + embeddings)
-        occurs within the parse pipeline itself.
-
-        Parameters
-        ----------
-        filenames : str | list[str]
-            One or more logical file identifiers to parse and ingest.
-        config : FilePipelineConfig
-            Pipeline configuration controlling parsing, ingestion, and embeddings.
-
-        Returns
-        -------
-        dict[str, Any]
-            Summary with counts and per-file outcomes.
-        """
-        try:
-            if isinstance(filenames, str):
-                filenames = [filenames]
-            if not filenames:
-                return {"success": False, "error": "No filenames provided"}
-
-            total_inserted = 0
-            file_results: Dict[str, Any] = {}
-
-            async for result in self.parse_async(filenames, config=config):
-                filename = result.get("file_path") or result.get("filename")
-                if result.get("status") == "error":
-                    file_results[filename] = {
-                        "file_path": filename,
-                        "success": False,
-                        "error": result.get("error"),
-                        "inserted": 0,
-                    }
-                    continue
-                inserted = len(result.get("records", []) or [])
-                total_inserted += inserted
-                file_results[filename] = {
-                    "file_path": filename,
-                    "success": True,
-                    "inserted": inserted,
-                    "error": None,
-                }
-
-            successful_files = sum(
-                1 for fr in file_results.values() if fr.get("success", False)
-            )
-            failed_files = len(filenames) - successful_files
-            return {
-                "success": failed_files == 0,
-                "total_files": len(filenames),
-                "successful_files": successful_files,
-                "failed_files": failed_files,
-                "total_records": total_inserted,
-                "total_inserted": total_inserted,
-                "file_results": list(file_results.values()),
-            }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
 
     @staticmethod
     def _default_ask_tool_policy(
@@ -2111,7 +2557,7 @@ class FileManager(BaseFileManager):
             raise NotImplementedError("No adapter configured for import_directory")
         return self._adapter.import_directory(str(directory))
 
-    def export_file(self, filename: str, destination_dir: str) -> str:  # type: ignore[override]
+    def export_file(self, file_path: str, destination_dir: str) -> str:  # type: ignore[override]
         """Export a file from the underlying filesystem to a local destination directory.
 
         This method delegates to the adapter's export_file method, which:
@@ -2121,8 +2567,8 @@ class FileManager(BaseFileManager):
 
         Parameters
         ----------
-        filename : str
-            The display name or path of the file to export.
+        file_path : str
+            The path of the file to export.
         destination_dir : str
             Local directory path where the file should be exported.
 
@@ -2133,7 +2579,7 @@ class FileManager(BaseFileManager):
         """
         if self._adapter is None:
             raise NotImplementedError("No adapter configured for export_file")
-        return self._adapter.export_file(filename, destination_dir)
+        return self._adapter.export_file(file_path, destination_dir)
 
     def export_directory(self, directory: str, destination_dir: str) -> List[str]:  # type: ignore[override]
         """Export all files from a directory to a local destination directory.
@@ -2175,19 +2621,19 @@ class FileManager(BaseFileManager):
             protected=protected,
         )
 
-    def is_protected(self, filename: str) -> bool:
+    def is_protected(self, file_path: str) -> bool:
         """Return True when the file is marked as protected (adapter-specific)."""
         if self._adapter is None:
             return False
-        return self._adapter.is_protected(filename)
+        return self._adapter.is_protected(file_path)
 
-    def save_file_to_downloads(self, filename: str, contents: bytes) -> str:
+    def save_file_to_downloads(self, file_path: str, contents: bytes) -> str:
         """Save file contents into a downloads area and return the saved path."""
         if self._adapter is None:
             raise NotImplementedError(
                 "No adapter configured for save_file_to_downloads",
             )
-        return self._adapter.save_file_to_downloads(filename, contents)
+        return self._adapter.save_file_to_downloads(file_path, contents)
 
     # Filesystem-level Q&A
     @functools.wraps(BaseFileManager.ask, updated=())
@@ -2202,6 +2648,7 @@ class FileManager(BaseFileManager):
         _clarification_up_q: Optional[Any] = None,
         _clarification_down_q: Optional[Any] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        business_context: Optional[str] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:  # type: ignore[override]
         """
@@ -2219,6 +2666,9 @@ class FileManager(BaseFileManager):
             If both provided, enables an interactive clarification tool.
         rolling_summary_in_prompts : bool | None
             Override whether to include rolling activity summaries in system prompts.
+        business_context : str | None
+            Optional domain-specific guidance appended to the system prompt to tailor behaviour
+            for a particular use case. Kept separate from general tool instructions.
         _call_id : str | None
             Correlation ID for event logging.
 
@@ -2255,7 +2705,9 @@ class FileManager(BaseFileManager):
             columns=self._list_columns(),
             table_schemas_json=overview_json,
             include_activity=include_activity,
+            business_context=business_context,
         )
+        open("system_msg.txt", "w").write(system_msg)
         client.set_system_message(system_msg)
         use_semantic_cache = "both" if is_semantic_cache_enabled() else None
         tool_policy_fn = (
@@ -2287,13 +2739,85 @@ class FileManager(BaseFileManager):
             handle.result = _wrapped_result  # type: ignore[attr-defined]
         return handle
 
+    # ---------- Unified stat helper (read-only) ------------------------------ #
+    @read_only
+    def stat(self, path_or_uri: str | int) -> Dict[str, Any]:
+        """Return unified status for filesystem vs index existence.
+
+        Returns
+        -------
+        dict
+            {
+              "canonical_uri": str | None,
+              "filesystem_exists": bool,
+              "indexed_exists": bool,
+              "parsed_status": str | None,
+            }
+        """
+        canonical_uri = self._resolve_to_uri(path_or_uri)
+
+        fs_exists = False
+        try:
+            fs_exists = bool(self.exists(path_or_uri))
+        except Exception:
+            fs_exists = False
+
+        indexed_exists = False
+        parsed_status = None
+        try:
+            # Try by source_uri first when available
+            logs = []
+            if canonical_uri:
+                try:
+                    logs = unify.get_logs(
+                        context=self._ctx,
+                        filter=f"source_uri == {canonical_uri!r}",
+                        limit=5,
+                        from_fields=["status", "file_path", "source_uri"],
+                    )
+                except Exception:
+                    logs = []
+            if not logs:
+                # Fallback to file_path match
+                try:
+                    logs = unify.get_logs(
+                        context=self._ctx,
+                        filter=f"file_path == {str(path_or_uri)!r}",
+                        limit=5,
+                        from_fields=["status", "file_path", "source_uri"],
+                    )
+                except Exception:
+                    logs = []
+            indexed_exists = bool(logs)
+            if logs:
+                # If any 'success' exists, report success
+                st = next(
+                    (
+                        lg.entries.get("status")
+                        for lg in logs
+                        if lg.entries.get("status")
+                    ),
+                    None,
+                )
+                parsed_status = st
+        except Exception:
+            indexed_exists = False
+            parsed_status = None
+
+        return {
+            "canonical_uri": canonical_uri,
+            "filesystem_exists": fs_exists,
+            "indexed_exists": indexed_exists,
+            "parsed_status": parsed_status,
+        }
+
     # File-specific Q&A
     @functools.wraps(BaseFileManager.ask_about_file, updated=())
     @manager_tool
     @log_manager_call("FileManager", "ask_about_file", payload_key="question")
     async def ask_about_file(
         self,
-        filename: str,
+        file_path: str,
         question: str,
         *,
         _return_reasoning_steps: bool = False,
@@ -2301,6 +2825,7 @@ class FileManager(BaseFileManager):
         _clarification_up_q: Optional[Any] = None,
         _clarification_down_q: Optional[Any] = None,
         rolling_summary_in_prompts: Optional[bool] = None,
+        response_format: Optional[Any] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:  # type: ignore[override]
         """
@@ -2308,7 +2833,7 @@ class FileManager(BaseFileManager):
 
         Parameters
         ----------
-        filename : str
+        file_path : str
             Identifier/path of the file in the underlying adapter.
         question : str
             The user's natural-language question about the file.
@@ -2317,15 +2842,26 @@ class FileManager(BaseFileManager):
         _parent_chat_context, _clarification_up_q, _clarification_down_q, rolling_summary_in_prompts, _call_id
             See ask().
 
+        response_format : Any | None
+            Optional structured output contract. Provide a Pydantic model class
+            or a JSON Schema dict to request a strictly structured response.
+
         Returns
         -------
         SteerableToolHandle
-            Interactive tool loop handle (read-only).
+            Interactive tool loop handle (read-only). When a Pydantic model is
+            supplied via response_format, the final result will adhere to that
+            schema.
         """
-        if not self.exists(filename):
-            raise FileNotFoundError(filename)
+        if not self.exists(file_path):
+            raise FileNotFoundError(file_path)
         client = new_llm_client()
+
         tools = dict(self.get_tools("ask_about_file"))
+
+        # Expose join/multi-join tools for cross-context retrieval
+        tools.update(dict(self.get_tools("ask_about_file.multi_table")))
+
         if _clarification_up_q is not None and _clarification_down_q is not None:
             add_clarification_tool_with_events(
                 tools,
@@ -2340,7 +2876,7 @@ class FileManager(BaseFileManager):
             if rolling_summary_in_prompts is None
             else rolling_summary_in_prompts
         )
-        file_overview_json = json.dumps(self._tables_overview(file=filename), indent=4)
+        file_overview_json = json.dumps(self._tables_overview(file=file_path), indent=4)
         system_msg = build_file_manager_ask_about_file_prompt(
             tools=tools,
             table_schemas_json=file_overview_json,
@@ -2349,7 +2885,7 @@ class FileManager(BaseFileManager):
         client.set_system_message(system_msg)
         # Use filesystem type without exposing absolute paths to LLM
         user_blob = json.dumps(
-            {"filesystem": self._fs_type, "file_path": filename, "question": question},
+            {"filesystem": self._fs_type, "file_path": file_path, "question": question},
             indent=2,
         )
         use_semantic_cache = "both" if is_semantic_cache_enabled() else None
@@ -2371,6 +2907,7 @@ class FileManager(BaseFileManager):
             ),
             semantic_cache=use_semantic_cache,
             semantic_cache_namespace=f"{self.__class__.__name__}.ask_about_file",
+            response_format=response_format,
         )
         if _return_reasoning_steps:
             original_result = handle.result
@@ -2459,26 +2996,45 @@ class FileManager(BaseFileManager):
     @functools.wraps(BaseFileManager.clear, updated=())
     def clear(self) -> None:  # type: ignore[override]
         """
-        Clear this manager's index context and local caches, then re-provision.
+        Clear ALL contexts under this filesystem alias and local caches, then re‑provision.
 
         Behaviour
         ---------
-        - Drops the index context for this filesystem.
-        - Clears any local DataStore mirrors.
+        - Drops the per‑file namespace ``Files/<alias>/**`` (Content and Tables contexts).
+        - Drops the index context ``FileRecords/<alias>`` for this filesystem.
+        - Clears any local DataStore mirrors and TableStore ensure memo.
         - Re-provisions storage so future operations see a consistent schema.
 
         Returns
         -------
         None
         """
+        # 1) Delete all per-file contexts under the alias root
+        try:
+            per_file_prefix = str(self._per_file_root)
+            try:
+                ctxs = list(unify.get_contexts(prefix=per_file_prefix))
+            except Exception:
+                ctxs = []
+            for ctx in sorted(ctxs, key=len, reverse=True):
+                try:
+                    unify.delete_context(ctx)
+                except Exception:
+                    continue
+            # Attempt to drop the root itself as well
+            try:
+                unify.delete_context(per_file_prefix)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # 2) Delete the index context for this filesystem
         try:
             unify.delete_context(self._ctx)
         except Exception:
             pass
-        try:
-            self._data_store.clear()
-        except Exception:
-            pass
+
         try:
             # Drop ensure memo for TableStore if used
             from unity.common.context_store import TableStore as _TS  # local import
