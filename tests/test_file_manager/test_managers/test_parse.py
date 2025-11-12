@@ -14,9 +14,15 @@ async def test_parse_single_file(file_manager, supported_file_examples: dict):
     """Test parsing a single file."""
     # Get the first available test file
     filename, example_data = next(iter(supported_file_examples.items()))
-    display_name = file_manager.import_file(example_data["path"])  # new API
+    display_name = str(example_data["path"])  # absolute path
 
-    result = file_manager.parse(display_name)
+    from unity.file_manager.types.config import FilePipelineConfig
+
+    # Request full mode to assert heavy fields like 'records'
+    result = file_manager.parse(
+        display_name,
+        config=FilePipelineConfig(output={"return_mode": "full"}),
+    )
 
     assert display_name in result
     assert result[display_name]["status"] == "success"
@@ -24,7 +30,7 @@ async def test_parse_single_file(file_manager, supported_file_examples: dict):
     assert isinstance(result[display_name]["records"], list)
 
     # Check flattened metadata
-    assert "file_type" in result[display_name]
+    assert "file_format" in result[display_name]
     assert "file_size" in result[display_name]
 
 
@@ -34,16 +40,19 @@ async def test_parse_multiple_files(file_manager, supported_file_examples: dict)
     # Import all example files
     display_names = []
     for filename, example_data in supported_file_examples.items():
-        display_name = file_manager.import_file(example_data["path"])  # new API
+        display_name = str(example_data["path"])  # absolute path
         display_names.append(display_name)
 
     # Parse all files
+    # Compact is default; coerce to dict for assertions
     results = file_manager.parse(display_names)
 
     assert len(results) == len(display_names)
     for display_name in display_names:
         assert display_name in results
-        assert results[display_name]["status"] == "success"
+        item = results[display_name]
+        item = item if isinstance(item, dict) else item.model_dump()
+        assert item["status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -51,7 +60,7 @@ async def test_parse_with_options(file_manager, supported_file_examples: dict):
     """Test parsing with custom options."""
     # Get the first available test file
     filename, example_data = next(iter(supported_file_examples.items()))
-    display_name = file_manager.import_file(example_data["path"])  # new API
+    display_name = str(example_data["path"])  # absolute path
 
     # Parse with options via config (forwarded to parser)
     from unity.file_manager.types.config import FilePipelineConfig, ParseConfig
@@ -62,17 +71,25 @@ async def test_parse_with_options(file_manager, supported_file_examples: dict):
     result = file_manager.parse(display_name, config=cfg)
 
     assert display_name in result
-    assert result[display_name]["status"] == "success"
+    item = result[display_name]
+    item = item if isinstance(item, dict) else item.model_dump()
+    assert item["status"] == "success"
 
 
 @pytest.mark.asyncio
 async def test_parse_empty_file(file_manager, sample_files: Path):
     """Test parsing an empty file."""
-    # Import empty file (this fixture still creates empty.txt)
+    # Use empty file by absolute path
     empty_file = sample_files / "empty.txt"
-    display_name = file_manager.import_file(empty_file)  # new API
+    display_name = str(empty_file)
 
-    result = file_manager.parse(display_name)
+    from unity.file_manager.types.config import FilePipelineConfig
+
+    # Request full mode to test 'records' semantics on empty file
+    result = file_manager.parse(
+        display_name,
+        config=FilePipelineConfig(output={"return_mode": "full"}),
+    )
 
     assert display_name in result
     # Empty file should still parse successfully
@@ -95,23 +112,25 @@ async def test_parse_supported_formats(file_manager, supported_file_examples: di
     # Add all example files to the file manager
     display_names = []
     for filename, example_data in supported_file_examples.items():
-        display_name = file_manager.import_file(example_data["path"])  # new API
+        display_name = str(example_data["path"])  # absolute path
         display_names.append(display_name)
 
     # Test parsing each file individually
+    from unity.file_manager.types.config import FilePipelineConfig
+
     for display_name in display_names:
-        result = file_manager.parse(display_name)
+        result = file_manager.parse(
+            display_name,
+            config=FilePipelineConfig(output={"return_mode": "full"}),
+        )
 
         assert display_name in result
         assert result[display_name]["status"] == "success"
         assert len(result[display_name]["records"]) > 0
 
         # If this is a spreadsheet (csv or xlsx), ensure per-table context is present
-        file_type = result[display_name].get("file_type")
-        if file_type in (
-            "text/csv",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ):
+        file_format = result[display_name].get("file_format")
+        if file_format in ("csv", "xlsx"):
             try:
                 import unify
 
@@ -135,11 +154,16 @@ async def test_parse_multiple_supported_files(
     # Add all example files to the file manager
     display_names = []
     for filename, example_data in supported_file_examples.items():
-        display_name = file_manager.import_file(example_data["path"])  # new API
+        display_name = str(example_data["path"])  # absolute path
         display_names.append(display_name)
 
     # Parse all files at once
-    result = file_manager.parse(display_names)
+    from unity.file_manager.types.config import FilePipelineConfig
+
+    result = file_manager.parse(
+        display_names,
+        config=FilePipelineConfig(output={"return_mode": "full"}),
+    )
 
     for display_name in display_names:
         assert display_name in result

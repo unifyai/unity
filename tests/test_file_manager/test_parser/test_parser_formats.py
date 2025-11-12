@@ -59,7 +59,8 @@ async def test_parse_txt_simple(parser, supported_format_files):
     doc = parser.parse(txt_file)
 
     # Check metadata
-    assert doc.metadata.file_type == "text/plain"
+    assert doc.metadata.mime_type.value == "text/plain"
+    assert doc.metadata.file_format.value == "txt"
     assert doc.metadata.file_name.endswith(".txt")
 
     # Check content is preserved
@@ -81,7 +82,8 @@ async def test_parse_txt_multi_paragraph(parser, supported_format_files):
     doc = parser.parse(txt_file)
 
     # Check metadata
-    assert doc.metadata.file_type == "text/plain"
+    assert doc.metadata.mime_type.value == "text/plain"
+    assert doc.metadata.file_format.value == "txt"
 
     # Check content preservation
     full_text = doc.to_plain_text()
@@ -104,7 +106,8 @@ async def test_parse_txt_special_characters(parser, supported_format_files):
     doc = parser.parse(txt_file)
 
     # Check metadata
-    assert doc.metadata.file_type == "text/plain"
+    assert doc.metadata.mime_type.value == "text/plain"
+    assert doc.metadata.file_format.value == "txt"
 
     # Check Unicode handling
     full_text = doc.to_plain_text()
@@ -134,7 +137,8 @@ async def test_parse_pdf_file(parser):
     doc = parser.parse(pdf_file)
 
     # Check metadata
-    assert doc.metadata.file_type == "application/pdf"
+    assert doc.metadata.mime_type.value == "application/pdf"
+    assert doc.metadata.file_format.value == "pdf"
     assert doc.metadata.file_name == "IT_Department_Policy_Document.pdf"
     assert doc.metadata.file_size > 0
 
@@ -164,10 +168,10 @@ async def test_parse_docx_file(parser):
     doc = parser.parse(docx_file)
 
     # Check metadata
-    assert (
-        doc.metadata.file_type
-        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    assert doc.metadata.mime_type.value == (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+    assert doc.metadata.file_format.value == "docx"
     assert doc.metadata.file_name == "SmartHome_Hub_X200_Technical_Documentation.docx"
     assert doc.metadata.file_size > 0
 
@@ -197,7 +201,8 @@ async def test_parse_csv_file(parser):
     doc = parser.parse(csv_file)
 
     # Check metadata
-    assert doc.metadata.file_type == "text/csv"
+    assert doc.metadata.mime_type.value == "text/csv"
+    assert doc.metadata.file_format.value == "csv"
     assert doc.metadata.file_name == "employee_records.csv"
     assert doc.metadata.file_size > 0
     assert doc.processing_status == "completed"
@@ -235,13 +240,13 @@ async def test_parse_csv_file(parser):
     assert "Department" in full_text, "Should contain Department header"
     assert "Salary" in full_text, "Should contain Salary header"
 
-    # Check structure - CSV should produce at least one section
-    assert len(doc.sections) >= 1, "CSV should produce at least one section"
+    # Check structure - CSV produces tables, not sections
+    assert len(doc.metadata.tables) >= 1, "CSV should produce at least one table"
 
     # Check statistics
     assert doc.metadata.total_characters > 0
     assert doc.metadata.total_words > 0
-    assert doc.metadata.total_sections >= 1
+    assert doc.metadata.total_sections >= 0
 
     # Validate table extraction with pandas HTML comparison (if pandas available)
     try:
@@ -296,11 +301,11 @@ async def test_parse_xlsx_file(parser):
     doc = parser.parse(xlsx_file)
 
     # Check metadata
+    mt = doc.metadata.mime_type.value.lower()
     assert (
-        "xlsx" in doc.metadata.file_type.lower()
-        or "spreadsheet" in doc.metadata.file_type.lower()
-        or "openxmlformats" in doc.metadata.file_type.lower()
-    ), f"Expected XLSX file type, got: {doc.metadata.file_type}"
+        "xlsx" in mt or "spreadsheet" in mt or "openxmlformats" in mt
+    ), f"Expected XLSX file type, got: {doc.metadata.mime_type}"
+    assert doc.metadata.file_format.value == "xlsx"
     assert doc.metadata.file_name == "project_status.xlsx"
     assert doc.metadata.file_size > 0
     assert doc.processing_status == "completed"
@@ -379,13 +384,13 @@ async def test_parse_xlsx_file(parser):
     assert "Status" in full_text, "Should contain Status header"
     assert "Budget" in full_text, "Should contain Budget header"
 
-    # Check structure - XLSX should produce at least one section
-    assert len(doc.sections) >= 1, "XLSX should produce at least one section"
+    # Check structure - XLSX produces tables, not sections
+    assert len(doc.metadata.tables) >= 1, "XLSX should produce at least one table"
 
     # Check statistics
     assert doc.metadata.total_characters > 0
     assert doc.metadata.total_words > 0
-    assert doc.metadata.total_sections >= 1
+    assert doc.metadata.total_sections >= 0
 
     # Validate table extraction with pandas HTML comparison (if pandas available)
     try:
@@ -433,7 +438,7 @@ async def test_parse_empty_txt_file(parser, supported_format_files):
     doc = parser.parse(empty_file)
 
     # Check metadata
-    assert doc.metadata.file_type == "text/plain"
+    assert doc.metadata.mime_type.value == "text/plain"
     assert doc.processing_status == "completed"
 
     # Empty file should have empty content
@@ -466,7 +471,8 @@ async def test_parse_formats_comprehensive(parser):
     pdf_file = sample_dir / "IT_Department_Policy_Document.pdf"
     if pdf_file.exists():
         pdf_doc = parser.parse(pdf_file)
-        assert pdf_doc.metadata.file_type == "application/pdf"
+        assert pdf_doc.metadata.mime_type.value == "application/pdf"
+        assert pdf_doc.metadata.file_format.value == "pdf"
         assert pdf_doc.processing_status == "completed"
         assert len(pdf_doc.to_plain_text().strip()) > 0
 
@@ -474,10 +480,10 @@ async def test_parse_formats_comprehensive(parser):
     docx_file = sample_dir / "SmartHome_Hub_X200_Technical_Documentation.docx"
     if docx_file.exists():
         docx_doc = parser.parse(docx_file)
-        assert (
-            docx_doc.metadata.file_type
-            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        assert docx_doc.metadata.mime_type.value == (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
+        assert docx_doc.metadata.file_format.value == "docx"
         assert docx_doc.processing_status == "completed"
         assert len(docx_doc.to_plain_text().strip()) > 0
 
@@ -498,7 +504,8 @@ async def test_parse_binary_format_metadata(parser):
 
         # Check all required metadata fields
         assert pdf_doc.metadata.file_name == "IT_Department_Policy_Document.pdf"
-        assert pdf_doc.metadata.file_type == "application/pdf"
+        assert pdf_doc.metadata.mime_type.value == "application/pdf"
+        assert pdf_doc.metadata.file_format.value == "pdf"
         assert pdf_doc.metadata.file_size > 0
         assert pdf_doc.metadata.parser_name == "DoclingParser"
         assert pdf_doc.metadata.parser_version == "1.0.0"
@@ -515,10 +522,10 @@ async def test_parse_binary_format_metadata(parser):
             docx_doc.metadata.file_name
             == "SmartHome_Hub_X200_Technical_Documentation.docx"
         )
-        assert (
-            docx_doc.metadata.file_type
-            == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        assert docx_doc.metadata.mime_type.value == (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
+        assert docx_doc.metadata.file_format.value == "docx"
         assert docx_doc.metadata.file_size > 0
         assert docx_doc.metadata.parser_name == "DoclingParser"
         assert docx_doc.metadata.parser_version == "1.0.0"
@@ -560,7 +567,7 @@ async def test_all_supported_formats_dynamic(
                 doc = parser.parse(file_path)
 
                 # Validate basic structure
-                validation["validate_metadata"](doc, format_info["mime_type"])
+                assert doc.metadata.mime_type.value == format_info["mime_type"]
                 validation["validate_structure"](
                     doc,
                     format_info["structure_expectations"],
@@ -578,14 +585,28 @@ async def test_all_supported_formats_dynamic(
             doc = parser.parse(simple_file)
 
             # Validate metadata
-            validation["validate_metadata"](doc, format_info["mime_type"])
+            assert doc.metadata.mime_type.value == format_info["mime_type"]
 
-            # Validate structure meets expectations
-            validation["validate_structure"](doc, format_info["structure_expectations"])
-
-            # Validate content preservation
-            if format_info["validation_patterns"]:
-                validation["validate_content"](doc, format_info["validation_patterns"])
+            # CSV/XLSX produce tables, not sections – adjust validation
+            if fmt in (".csv", ".xlsx"):
+                assert len(doc.metadata.tables) >= 1
+                if format_info["validation_patterns"]:
+                    validation["validate_content"](
+                        doc,
+                        format_info["validation_patterns"],
+                    )
+            else:
+                # Validate structure meets expectations
+                validation["validate_structure"](
+                    doc,
+                    format_info["structure_expectations"],
+                )
+                # Validate content preservation
+                if format_info["validation_patterns"]:
+                    validation["validate_content"](
+                        doc,
+                        format_info["validation_patterns"],
+                    )
 
 
 @pytest.mark.asyncio
@@ -656,10 +677,16 @@ async def test_flat_records_all_formats(
         para_records = [r for r in records if r["content_type"] == "paragraph"]
 
         assert len(doc_records) == 1
-        if expectations["min_sections"] > 0:
-            assert len(section_records) >= expectations["min_sections"]
-        if expectations["min_paragraphs"] > 0:
-            assert len(para_records) >= expectations["min_paragraphs"]
+        if fmt in (".csv", ".xlsx"):
+            table_records = [r for r in records if r.get("content_type") == "table"]
+            assert (
+                len(table_records) >= 1
+            ), f"Expected at least one table record for {fmt}"
+        else:
+            if expectations["min_sections"] > 0:
+                assert len(section_records) >= expectations["min_sections"]
+            if expectations["min_paragraphs"] > 0:
+                assert len(para_records) >= expectations["min_paragraphs"]
 
 
 @pytest.mark.asyncio
@@ -739,7 +766,7 @@ async def test_metadata_consistency_across_formats(parser, supported_format_file
         doc = parser.parse(file_path)
 
         # Check required metadata fields
-        assert doc.metadata.file_type == format_info["mime_type"]
+        assert doc.metadata.mime_type.value == format_info["mime_type"]
         assert doc.metadata.parser_name == "DoclingParser"
         assert doc.metadata.parser_version is not None
 
@@ -814,7 +841,7 @@ async def test_parse_csv_simple(parser, supported_format_files):
     doc = parser.parse(csv_file)
 
     # Check metadata
-    assert doc.metadata.file_type == "text/csv"
+    assert doc.metadata.mime_type.value == "text/csv"
     assert doc.metadata.file_name.endswith(".csv")
     assert doc.processing_status == "completed"
 
@@ -825,7 +852,7 @@ async def test_parse_csv_simple(parser, supported_format_files):
     assert "New York" in full_text or "USA" in full_text
 
     # Should have structure (Docling extracts tables)
-    assert len(doc.sections) >= 1, "CSV should produce at least one section"
+    assert len(doc.metadata.tables) >= 1, "CSV should produce at least one table"
 
     # Check basic statistics
     assert doc.metadata.total_characters > 0
@@ -872,7 +899,8 @@ async def test_parse_csv_complex(parser, supported_format_files):
     doc = parser.parse(csv_file)
 
     # Check metadata
-    assert doc.metadata.file_type == "text/csv"
+    assert doc.metadata.mime_type.value == "text/csv"
+    assert doc.metadata.file_format.value == "csv"
     assert doc.processing_status == "completed"
 
     # Check content preservation with quotes
@@ -880,8 +908,8 @@ async def test_parse_csv_complex(parser, supported_format_files):
     assert "john.doe@company.com" in full_text.lower() or "Engineering" in full_text
     assert "Department" in full_text or "Salary" in full_text
 
-    # Validate structure - CSV files have sections but not necessarily paragraphs
-    assert len(doc.sections) >= 1
+    # Validate structure - CSV files produce tables
+    assert len(doc.metadata.tables) >= 1
     # CSV files store data in tables, not paragraphs
     assert doc.metadata.total_characters > 0
 
@@ -1232,11 +1260,12 @@ Data,456"""
 
     # Check metadata fields
     assert doc.metadata.file_name == "metadata_test.csv"
-    assert doc.metadata.file_type == "text/csv"
+    assert doc.metadata.mime_type.value == "text/csv"
+    assert doc.metadata.file_format.value == "csv"
     assert doc.metadata.file_size > 0
     assert doc.metadata.total_characters > 0
     assert doc.metadata.total_words > 0
-    assert doc.metadata.total_sections >= 1
+    assert doc.metadata.total_sections >= 0
     assert doc.metadata.parser_name == "DoclingParser"
 
     # Check timestamps are set
@@ -1293,8 +1322,8 @@ Gizmo,39.99,75"""
     assert doc.document_id is not None
     assert len(doc.document_id) > 0
 
-    # Should have sections
-    assert len(doc.sections) >= 1
+    # CSVs produce tables (sections may be 0)
+    assert len(doc.metadata.tables) > 0
 
     # For CSV files, validate document has content and table metadata
     assert doc.metadata.total_characters > 0
@@ -1326,11 +1355,10 @@ async def test_parse_workforce_data_xlsx(parser):
     doc = parser.parse(xlsx_file)
 
     # Check metadata
+    mt = doc.metadata.mime_type.value.lower()
     assert (
-        "xlsx" in doc.metadata.file_type.lower()
-        or "spreadsheet" in doc.metadata.file_type.lower()
-        or "openxmlformats" in doc.metadata.file_type.lower()
-    ), f"Expected XLSX file type, got: {doc.metadata.file_type}"
+        "xlsx" in mt or "spreadsheet" in mt or "openxmlformats" in mt
+    ), f"Expected XLSX file type, got: {doc.metadata.mime_type}"
     assert doc.metadata.file_name == "workforce_data.xlsx"
     assert doc.metadata.file_size > 0
     assert doc.processing_status == "completed"
@@ -1425,13 +1453,13 @@ async def test_parse_workforce_data_xlsx(parser):
         "Bonus" in full_text or "bonus" in full_text.lower()
     ), "Should have Bonus column"
 
-    # Check structure - XLSX with multiple sheets should produce multiple sections or tables
-    assert len(doc.sections) >= 1, "XLSX should produce at least one section"
+    # Check structure - XLSX with multiple sheets should produce multiple tables
+    assert len(doc.metadata.tables) >= 1, "XLSX should produce at least one table"
 
     # Check statistics
     assert doc.metadata.total_characters > 0
     assert doc.metadata.total_words > 0
-    assert doc.metadata.total_sections >= 1
+    assert doc.metadata.total_sections >= 0
 
     # Validate table extraction - should have multiple tables for multiple sheets
     try:
@@ -1493,11 +1521,10 @@ async def test_parse_retail_data_xlsx(parser):
     doc = parser.parse(xlsx_file)
 
     # Check metadata
+    mt = doc.metadata.mime_type.value.lower()
     assert (
-        "xlsx" in doc.metadata.file_type.lower()
-        or "spreadsheet" in doc.metadata.file_type.lower()
-        or "openxmlformats" in doc.metadata.file_type.lower()
-    ), f"Expected XLSX file type, got: {doc.metadata.file_type}"
+        "xlsx" in mt or "spreadsheet" in mt or "openxmlformats" in mt
+    ), f"Expected XLSX file type, got: {doc.metadata.mime_type}"
     assert doc.metadata.file_name == "retail_data.xlsx"
     assert doc.metadata.file_size > 0
     assert doc.processing_status == "completed"
@@ -1622,13 +1649,13 @@ async def test_parse_retail_data_xlsx(parser):
     ), "Should have Return column"
     assert "SKU" in full_text or "sku" in full_text.lower(), "Should have SKU column"
 
-    # Check structure - XLSX with multiple sheets should produce multiple sections or tables
-    assert len(doc.sections) >= 1, "XLSX should produce at least one section"
+    # Check structure - XLSX with multiple sheets should produce multiple tables
+    assert len(doc.metadata.tables) >= 1, "XLSX should produce at least one table"
 
     # Check statistics
     assert doc.metadata.total_characters > 0
     assert doc.metadata.total_words > 0
-    assert doc.metadata.total_sections >= 1
+    assert doc.metadata.total_sections >= 0
 
     # Validate table extraction - should have multiple tables for multiple sheets
     try:
@@ -1872,13 +1899,11 @@ async def test_xlsx_metadata_extraction(parser, tmp_path):
 
     # Check all metadata fields
     assert doc.metadata.file_name == "metadata_test.xlsx"
-    assert (
-        "xlsx" in doc.metadata.file_type.lower()
-        or "spreadsheet" in doc.metadata.file_type.lower()
-    )
+    mt = doc.metadata.mime_type.value.lower()
+    assert "xlsx" in mt or "spreadsheet" in mt
     assert doc.metadata.file_size > 0
     assert doc.metadata.total_characters > 0
-    assert doc.metadata.total_sections >= 1
+    assert doc.metadata.total_sections >= 0
     assert doc.metadata.parser_name == "DoclingParser"
     assert doc.metadata.processing_time is not None
     assert doc.metadata.processing_time >= 0

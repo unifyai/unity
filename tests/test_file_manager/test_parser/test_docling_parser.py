@@ -27,7 +27,8 @@ def test_txt_file_parsing(parser: DoclingParser, supported_format_files):
     assert result["processing_status"] == "completed"
     assert "This is a simple text file." in result["full_text"]
     assert len(result["sections"]) >= 1
-    assert result["metadata"]["file_type"] == "text/plain"
+    assert result["metadata"]["mime_type"] == "text/plain"
+    assert result["metadata"].get("file_format") in ("txt", "text")
 
 
 @pytest.mark.unit
@@ -126,7 +127,12 @@ def test_various_text_formats(parser: DoclingParser, supported_format_files):
             result = document.to_dict()
 
             assert result["processing_status"] == "completed"
-            assert result["metadata"]["file_type"] == format_info["mime_type"]
+            assert result["metadata"]["mime_type"] == format_info["mime_type"]
+            # file_format should match filename suffix
+            from pathlib import Path as _P
+
+            expected_fmt = _P(file_path).suffix.lstrip(".").lower()
+            assert result["metadata"].get("file_format") == expected_fmt
 
             # Verify content was extracted
             full_text = result["full_text"]

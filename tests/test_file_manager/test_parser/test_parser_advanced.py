@@ -82,7 +82,8 @@ async def test_parser_error_handling_corrupt_file(tmp_path: Path):
     try:
         doc = parser.parse(corrupt_file)
         # If it succeeds, check it handled the binary data
-        assert doc.metadata.file_type is not None
+        assert doc.metadata.mime_type is not None
+        assert doc.metadata.file_format is not None
     except Exception as e:
         # Should be a reasonable exception, not a crash
         assert "decode" in str(e).lower() or "parse" in str(e).lower()
@@ -247,7 +248,8 @@ async def test_parser_metadata_extraction(tmp_path: Path):
 
     # Check metadata
     assert doc.metadata.file_name == "metadata_test.txt"
-    assert doc.metadata.file_type == "text/plain"
+    assert doc.metadata.mime_type.value == "text/plain"
+    assert doc.metadata.file_format.value == "txt"
     assert doc.metadata.file_size == len(content.encode("utf-8"))
     # Note: encoding attribute may not be available in metadata
     # assert doc.metadata.encoding in ["utf-8", "UTF-8"]

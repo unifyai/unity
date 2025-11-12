@@ -39,12 +39,21 @@ async def test_unique_name_generation_on_conflict(file_manager, tmp_path: Path):
     (src2 / "conflict.pdf").write_text("y", encoding="utf-8")
 
     fm = file_manager
-    first = fm.import_directory(src1)
-    second = fm.import_directory(src2)
-    all_names = fm.list()
-    assert "conflict.pdf" in all_names
-    assert "conflict (1).pdf" in all_names
-    assert len(set(all_names)) == len(all_names)
+    fm.clear()
+    # Use import_directory to exercise unique naming policy on import
+    # Make the stem unique to avoid collisions with prior tests
+    import uuid
+
+    stem = f"conflict_{uuid.uuid4().hex[:8]}"
+    (src1 / f"{stem}.pdf").write_text("x", encoding="utf-8")
+    (src2 / f"{stem}.pdf").write_text("y", encoding="utf-8")
+
+    fm.import_directory(src1)
+    fm.import_directory(src2)
+
+    names = fm.list()
+    assert f"{stem}.pdf" in names
+    assert f"{stem} (1).pdf" in names
 
 
 @pytest.mark.asyncio
@@ -53,13 +62,18 @@ async def test_unique_name_generation_on_conflict(file_manager, tmp_path: Path):
 async def test_parse_all_supported_formats(file_manager, supported_file_examples: dict):
     """Test parsing of all supported file formats."""
     fm = file_manager
-
+    fm.clear()
     for filename, example_data in supported_file_examples.items():
-        # Add the file to file manager
-        display_name = fm.import_file(example_data["path"])  # new API
+        # Parse by absolute path (no import needed)
+        display_name = str(example_data["path"])  # absolute path
 
         # Parse the file
-        result = fm.parse(display_name)
+        from unity.file_manager.types.config import FilePipelineConfig
+
+        result = fm.parse(
+            display_name,
+            config=FilePipelineConfig(output={"return_mode": "full"}),
+        )
 
         # Check result structure (flattened fields)
         assert display_name in result
@@ -67,8 +81,9 @@ async def test_parse_all_supported_formats(file_manager, supported_file_examples
         assert file_result["status"] == "success"
         assert "records" in file_result
         # flattened top-level file metadata
-        assert "file_type" in file_result
+        assert "file_format" in file_result
         assert "file_size" in file_result
+        assert "file_format" in file_result
 
         # Check content was parsed - combine all record content
         all_content = " ".join(
@@ -104,15 +119,19 @@ async def test_parse_error_handling(file_manager, tmp_path: Path):
     bad_file.write_text("unsupported content", encoding="utf-8")
 
     fm = file_manager
-    fm.import_directory(tmp_path)
-
-    # Should still import the file
-    assert fm.exists("bad.xyz")
+    fm.clear()
+    # The file exists on disk; exists should reflect filesystem
+    assert fm.exists(str(bad_file))
 
     # Parsing should return a result (basic text parsing as fallback)
-    result = fm.parse("bad.xyz")
-    assert "bad.xyz" in result
-    file_result = result["bad.xyz"]
+    from unity.file_manager.types.config import FilePipelineConfig
+
+    result = fm.parse(
+        str(bad_file),
+        config=FilePipelineConfig(output={"return_mode": "full"}),
+    )
+    assert str(bad_file) in result
+    file_result = result[str(bad_file)]
 
     # Should parse successfully as text
     assert file_result["status"] == "success"
@@ -131,13 +150,14 @@ async def test_parse_error_handling(file_manager, tmp_path: Path):
 async def test_ask_tool_loop_uses_parse(file_manager, temp_dir: Path):
     """Test that the ask method correctly uses the parse tool."""
     fm = file_manager
-    imported_files = fm.import_directory(temp_dir)
+    fm.clear()
+    files = [str(p) for p in temp_dir.iterdir() if p.is_file()]
 
     # Parse files to add them to Unify logs before ask
-    fm.parse(imported_files)
+    fm.parse(files)
 
     # Ask a trivial question which should rely on parsed content
-    name = next(n for n in fm.list() if n.endswith(".txt"))
+    name = next(n for n in files if n.endswith(".txt"))
     instruction = f"What does the file {name} contain?"
     handle = await fm.ask(instruction)
     ans = await handle.result()
@@ -145,7 +165,9 @@ async def test_ask_tool_loop_uses_parse(file_manager, temp_dir: Path):
     assert ans  # non-empty answer
 
     # Read file content for the judge
-    file_content = (temp_dir / name).read_text(encoding="utf-8")
+    from pathlib import Path as _Path
+
+    file_content = _Path(name).read_text(encoding="utf-8")
 
     # Ask judge to verify
     verdict = await ask_judge(instruction, ans, file_content=file_content)
@@ -160,12 +182,17 @@ async def test_ask_tool_loop_uses_parse(file_manager, temp_dir: Path):
 async def test_file_content_preservation(file_manager, supported_file_examples: dict):
     """Test that file content is preserved correctly during parsing."""
     fm = file_manager
-
+    fm.clear()
     for filename, example_data in supported_file_examples.items():
-        # Add the file to file manager
-        display_name = fm.import_file(example_data["path"])  # new API
+        # Parse by absolute path instead of importing
+        display_name = str(example_data["path"])  # absolute path
 
-        result = fm.parse(display_name)
+        from unity.file_manager.types.config import FilePipelineConfig
+
+        result = fm.parse(
+            display_name,
+            config=FilePipelineConfig(output={"return_mode": "full"}),
+        )
         assert display_name in result
         file_result = result[display_name]
         assert file_result["status"] == "success"
@@ -198,10 +225,15 @@ async def test_document_structure_integrity(
 ):
     """Test that all supported formats produce proper document structure."""
     fm = file_manager
-
+    fm.clear()
     for filename, example_data in supported_file_examples.items():
-        display_name = fm.import_file(example_data["path"])  # new API
-        result = fm.parse(display_name)
+        display_name = str(example_data["path"])  # absolute path
+        from unity.file_manager.types.config import FilePipelineConfig
+
+        result = fm.parse(
+            display_name,
+            config=FilePipelineConfig(output={"return_mode": "full"}),
+        )
 
         assert display_name in result
         file_result = result[display_name]
