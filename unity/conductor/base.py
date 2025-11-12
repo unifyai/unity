@@ -211,7 +211,7 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
         ----------
         target : StateManager
             Which manager to clear. Options include: CONTACTS, TRANSCRIPTS, KNOWLEDGE,
-            TASKS, WEB_SEARCH, and forward-compat entries FUNCTIONS, GUIDANCE, IMAGES, SECRETS.
+            TASKS, WEB_SEARCH, FILES and forward-compat entries FUNCTIONS, GUIDANCE, IMAGES, SECRETS.
         """
 
 
