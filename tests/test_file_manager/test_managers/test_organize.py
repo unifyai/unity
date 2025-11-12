@@ -16,10 +16,10 @@ from tests.test_file_manager.helpers import ask_judge
 async def test_organize_rename_file(file_manager, tmp_path: Path):
     """Test renaming a file using the organize method."""
     fm = file_manager
-    # Create test file OUTSIDE fm_root to avoid duplication on import
-    test_file = tmp_path / "rename_test.txt"
-    test_file.write_text("This is a file to be renamed.")
-    display_name = fm.import_file(test_file)
+    fm.clear()
+    # Create test file under fm_root (no import needed)
+    display_name = "rename_test.txt"
+    (Path(fm._adapter._root) / display_name).write_text("This is a file to be renamed.")  # type: ignore[attr-defined]
 
     assert fm.exists(display_name)
     assert not fm.exists("renamed_file.txt")
@@ -52,13 +52,13 @@ async def test_organize_rename_file(file_manager, tmp_path: Path):
 async def test_organize_move_file(file_manager, fm_root: Path, tmp_path: Path):
     """Test moving a file using the organize method."""
     fm = file_manager
+    fm.clear()
     target_dir = Path(fm_root) / "move_destination"
     target_dir.mkdir()
 
-    # Create test file OUTSIDE fm_root to avoid duplication on import
-    test_file = tmp_path / "move_test.txt"
-    test_file.write_text("This is a file to be moved.")
-    display_name = fm.import_file(test_file)
+    # Create test file under fm_root (no import needed)
+    display_name = "move_test.txt"
+    (Path(fm._adapter._root) / display_name).write_text("This is a file to be moved.")  # type: ignore[attr-defined]
 
     assert fm.exists(display_name)
 
@@ -91,10 +91,10 @@ async def test_organize_move_file(file_manager, fm_root: Path, tmp_path: Path):
 async def test_organize_delete_file(file_manager, tmp_path: Path):
     """Test deleting a file using the organize method."""
     fm = file_manager
-    # Create test file OUTSIDE fm_root to avoid duplication on import
-    test_file = tmp_path / "delete_test.txt"
-    test_file.write_text("This is a file to be deleted.")
-    display_name = fm.import_file(test_file)
+    fm.clear()
+    # Create test file under fm_root (no import needed)
+    display_name = "delete_test.txt"
+    (Path(fm._adapter._root) / display_name).write_text("This is a file to be deleted.")  # type: ignore[attr-defined]
 
     assert fm.exists(display_name)
 
@@ -102,7 +102,7 @@ async def test_organize_delete_file(file_manager, tmp_path: Path):
     fm.parse(display_name)
 
     rows = fm._filter_files(filter=f"file_path == '{display_name}'")
-    file_id = rows[0].file_id
+    file_id = rows[0].get("file_id")
 
     instruction = f"Delete the file with ID {file_id}."
     before_state = {"files": fm.list()}

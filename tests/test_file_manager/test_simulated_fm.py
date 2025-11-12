@@ -49,7 +49,7 @@ async def test_start_and_ask_simulated_fm(simulated_file_manager):
     fm.add_simulated_file(
         "sample.txt",
         records=[{"content": "Sample document content"}],
-        metadata={"file_type": "text/plain"},
+        metadata={"mime_type": "text/plain"},
         full_text="Sample document content for testing",
         description="A sample document for testing purposes",
     )
@@ -68,7 +68,7 @@ async def test_ask_about_file_simulated_fm(simulated_file_manager):
     fm.add_simulated_file(
         "topic.txt",
         records=[{"content": "Space exploration notes"}],
-        metadata={"file_type": "text/plain"},
+        metadata={"mime_type": "text/plain"},
         full_text=file_content,
         description="Space notes",
     )
@@ -166,14 +166,14 @@ async def test_simulated_fm_synchronous_operations(simulated_file_manager):
     fm.add_simulated_file(
         "doc1.txt",
         records=[{"content": "Document 1"}],
-        metadata={"file_type": "text/plain"},
+        metadata={"mime_type": "text/plain"},
         full_text="Document 1 content",
         description="First test document",
     )
     fm.add_simulated_file(
         "doc2.txt",
         records=[{"content": "Document 2"}],
-        metadata={"file_type": "text/plain"},
+        metadata={"mime_type": "text/plain"},
         full_text="Document 2 content",
         description="Second test document",
     )

@@ -71,7 +71,8 @@ async def test_parse_simple_text(parser, supported_format_files):
     assert doc.document_id is not None
     assert doc.metadata is not None
     assert doc.metadata.file_name == "test_simple.txt"
-    assert doc.metadata.file_type == "text/plain"
+    assert doc.metadata.mime_type.value == "text/plain"
+    assert doc.metadata.file_format.value == "txt"
     assert doc.metadata.parser_name == "DoclingParser"
 
     # Check content
