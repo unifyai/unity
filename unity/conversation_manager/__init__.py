@@ -36,7 +36,7 @@ def terminate_process(proc: subprocess.Popen) -> None:
 
         # Wait for process to terminate
         try:
-            proc.wait(timeout=5)
+            proc.wait(timeout=6)
             print("Process terminated gracefully")
         except subprocess.TimeoutExpired:
             # If process doesn't terminate gracefully, force kill
@@ -123,6 +123,7 @@ def wait_for_service_ready(timeout: int = 30) -> bool:
 
 
 def start(
+    use_realtime: bool = False,
     start_local: bool = False,
     enabled_tools: list | str | None = "conductor",
     project_name: str = "Assistants",
@@ -147,20 +148,8 @@ def start(
         print(f"Starting Unity service (main.py) for assistant {assistant_id}")
 
         cmd = [sys.executable, "unity/conversation_manager/main.py"]
-        if enabled_tools is None:
-            cmd.append("--no-tools")
-        else:
-            cmd.append("--enabled-tools")
-            cmd.append(
-                (
-                    ",".join(enabled_tools)
-                    if isinstance(enabled_tools, list)
-                    else enabled_tools
-                ),
-            )
-        if start_local:
-            cmd.append("--start-local")
-
+        if use_realtime:
+            cmd.append("--realtime")
         cmd.append("--project-name")
         cmd.append(project_name)
 
@@ -179,14 +168,7 @@ def start(
             print("Unity service started successfully")
             _shutdown_reason = None  # Clear any previous shutdown reason
             _start_monitoring()
-
-            # Wait for service to be ready
-            if wait_for_service_ready():
-                return True
-            else:
-                print("Unity service failed to become ready, stopping...")
-                stop("startup_timeout")
-                return False
+            return True
         else:
             print("Unity service failed to start (process exited)")
             _shutdown_reason = "startup_failure"

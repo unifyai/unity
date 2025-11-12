@@ -1,278 +1,75 @@
-# The event manager job is to listen for events coming from GUI and call processes
-# and send llm responses to both / ui updates
-# the event manager will accumulate events and trigger an llm call when timeout happens or
-# urgent event is sent, and cancel any running llm calls
-import asyncio
-from collections import defaultdict
 from datetime import datetime
-from dotenv import load_dotenv
-import json
-import os
 import signal
-import traceback
+from dotenv import load_dotenv
 
 load_dotenv()
-from unity.conversation_manager.comms_agent import CommsAgent
+import os
+import asyncio
+
 from unity.conversation_manager.comms_manager import CommsManager
-from unity.constants import ASYNCIO_DEBUG
+from unity.conversation_manager.event_broker import (
+    get_event_broker,
+    create_event_broker,
+)
+from unity.conversation_manager.domains.utils import log_task_exc
+from unity.conversation_manager.conversation_manager import ConversationManager
+from unity.helpers import cleanup_dangling_call_processes
 
 
-# globals
-conv_context_length = 50
-user_agent = None
-
-
-class EventManager:
-    def __init__(self):
-        self.servers = {}
-        self.readers = {}
-        self.writers: dict[str, asyncio.StreamWriter] = {}
-        self.topic_to_subs = defaultdict(set)
-
-        self.events_queue = asyncio.Queue()
-
-        # Inactivity timeout management
-        self.INACTIVITY_TIMEOUT = 360  # 6 minutes in seconds
-        self.last_activity_time = asyncio.get_event_loop().time()
-        self.is_shutting_down = False
-
-    async def serve(self):
-        self.servers["call"] = await asyncio.start_server(
-            self.handle_client,
-            "127.0.0.1",
-            8090,
-        )
-
-        self.event_aggregator_task = asyncio.create_task(self.collect_events())
-        # Start inactivity monitor
-        self.inactivity_task = asyncio.create_task(self.check_inactivity())
-
-        async with self.servers["call"]:
-            await self.servers["call"].serve_forever()
-
-    def update_topics_to_subs(
-        self,
-        user_number: str,
-        user_whatsapp_number: str,
-        user_email: str,
-    ):
-        self.topic_to_subs[user_number] = self.topic_to_subs["tool_use"]
-        self.topic_to_subs[user_whatsapp_number] = self.topic_to_subs["tool_use"]
-        self.topic_to_subs[user_email] = self.topic_to_subs["tool_use"]
-
-    async def collect_events(self):
-        print("collecting...")
-        while True:
-            try:
-                if self.is_shutting_down:
-                    break
-
-                # print(self.topic_to_subs)
-                event = await self.events_queue.get()
-                print("EVENT MANAGER:", event)
-
-                # Update activity time on any event
-                self.last_activity_time = asyncio.get_event_loop().time()
-
-                if event["topic"] == "ping":
-                    print("ping received - keeping event manager alive")
-                    continue
-                elif event["topic"] == "call_process":
-                    print("waiting for call process to be ready...")
-                    while "call" not in self.writers:
-                        await asyncio.sleep(0.1)
-                    print("recieved call event")
-                    # handle messages going to the call process
-                    # like gen
-                    self.writers["call"].write(
-                        (json.dumps(event) + "\n").encode("utf-8"),
-                    )
-                    await self.writers["call"].drain()
-                else:
-                    if event["event"]["event_name"] == "PhoneCallInitiatedEvent":
-                        self.update_topics_to_subs(
-                            event["event"]["payload"]["target_number"],
-                            event["event"]["payload"]["target_number"],
-                            event["event"]["payload"]["target_number"],
-                        )
-                    if event["topic"] == "startup":
-                        self.update_topics_to_subs(
-                            event["event"]["payload"]["user_number"],
-                            event["event"]["payload"]["user_whatsapp_number"],
-                            event["event"]["payload"]["user_email"],
-                        )
-                    if (
-                        event["topic"] not in self.topic_to_subs
-                        and "contact_details" in event["event"]["payload"]
-                        and event["event"]["payload"]["contact_details"] is not None
-                    ):
-                        contact_details = event["event"]["payload"]["contact_details"]
-                        self.update_topics_to_subs(
-                            contact_details["phone_number"],
-                            contact_details["whatsapp_number"],
-                            contact_details["email_address"],
-                        )
-                    for client in self.topic_to_subs[event["topic"]]:
-                        client.handle_event(event)
-                if "event" in event and event["event"]["event_name"] in [
-                    "PhoneCallEndedEvent",
-                    "PhoneCallStopEvent",
-                ]:
-                    self.writers["call"].close()
-                    await self.writers["call"].wait_closed()
-                    self.writers.pop("call")
-                    self.readers.pop("call")
-                    print("call stream closed")
-            except Exception as e:
-                print("Event Manager Error:")
-                traceback.print_exc()
-                print(str(e))
-
-    async def handle_client(
-        self,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-    ):
-        """Generic client connection handler that identifies connection type"""
-        # Wait for connection type identification
-        raw = await reader.readline()
-        if not raw:
-            return
-
-        # Set read and write streams for the connection type
-        init_msg = json.loads(raw.decode())
-        print(f"Received connection init message: {init_msg}")
-        if not init_msg.get("topic") == "init":
-            print("Unknown connection type, closing connection")
-            writer.close()
-            await writer.wait_closed()
-            return
-
-        # Set read and write streams for the connection type
-        connection_type = init_msg.get("type", "unknown")
-        self.readers[connection_type] = reader
-        self.writers[connection_type] = writer
-
-        print(f"{connection_type} connected")
-        while True:
-            if self.is_shutting_down:
-                break
-
-            try:
-                raw = await reader.readline()
-                if not raw:
-                    break
-                msg = json.loads(raw.decode())
-                # Update activity time on any message from client
-                self.last_activity_time = asyncio.get_event_loop().time()
-                self.events_queue.put_nowait(msg)
-            except Exception as e:
-                traceback.print_exc()
-                print(str(e))
-                print(f"{connection_type.upper()} CLOSED")
-                writer.close()
-                await writer.wait_closed()
-                break
-
-    def publish(self, event):
-        # Update activity time when events are published
-        self.last_activity_time = asyncio.get_event_loop().time()
-        self.events_queue.put_nowait(event)
-
-    async def check_inactivity(self):
-        """Monitor for inactivity and shut down gracefully after timeout"""
-        while True:
-            if self.is_shutting_down:
-                break
-
-            await asyncio.sleep(30)  # Check every 30 seconds
-            current_time = asyncio.get_event_loop().time()
-            if current_time - self.last_activity_time > self.INACTIVITY_TIMEOUT:
-                print(
-                    f"Inactivity timeout reached ({self.INACTIVITY_TIMEOUT}s), "
-                    "shutting down gracefully...",
-                )
-                await self.shutdown_gracefully()
-                break
-
-    async def shutdown_gracefully(self):
-        """Gracefully shut down the event manager and all components"""
-        print("Starting graceful shutdown...")
-        self.is_shutting_down = True
-
-        # Signal the global user agent to clean up
-        global user_agent
-        if user_agent:
-            try:
-                # Clean up main user agent call process
-                user_agent.cleanup()
-            except Exception as e:
-                print(f"Error during user agent cleanup: {e}")
-
-        # Close all connections
-        for connection_type, writer in self.writers.items():
-            if writer and not writer.is_closing():
-                try:
-                    writer.close()
-                    await writer.wait_closed()
-                except Exception as e:
-                    print(f"Error closing {connection_type} writer: {e}")
-
-        # Close servers
-        for server in self.servers.values():
-            if server:
-                try:
-                    server.close()
-                    await server.wait_closed()
-                except Exception as e:
-                    print(f"Error closing server: {e}")
-
-        print("Graceful shutdown completed")
-
-        # Exit the application
-        os._exit(0)
-
+stop = None
+conversation_manager = None
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
+    global conversation_manager, managers_worker, stop
+
     print(
         datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         + " - [MAIN.PY] Received signal "
         + str(signum)
         + ", shutting down gracefully...",
     )
-
-    # Clean up any running call processes
-    global user_agent
-    if user_agent:
-        # Clean up main user agent call process
-        user_agent.cleanup()
-
-
-def loop_exception_handler(loop, context):
-    print("Error:", context.get("message"), context.get("exception"))
+    if conversation_manager:
+        print("Cleaning up conversation manager...")
+        conversation_manager.cleanup()
+        print("Cleanup finished")
+    # Set the stop event to trigger graceful shutdown in main()
+    # This ensures cleanup happens only once, in the main async function
+    if stop:
+        stop.set()
 
 
-async def main(
-    start_local: bool = False,
-    enabled_tools: list | str | None = "conductor",
-    project_name: str = "Assistants",
-):
-    global user_agent
+async def main(use_realtime=False, project_name: str = "Assistants"):
+    global conversation_manager, managers_worker, stop
 
     # Set up signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    event_manager = EventManager()
-    user_agent = CommsAgent(
+    # Ensure Unify traced logging is disabled outside the main thread
+    # (avoids ValueError: signal only works in main thread)
+    os.environ.setdefault("UNIFY_TRACED", "false")
+
+    # Clean up any dangling call processes from previous runs
+    # This prevents conflicts when multiple call processes can't run simultaneously
+    print("Checking for dangling call processes from previous runs...")
+    cleanup_dangling_call_processes()
+
+    stop = asyncio.Event()
+
+    # passes events around, uses redis
+    event_broker = get_event_broker()
+
+    # directly talks with the user
+    conversation_manager = ConversationManager(
+        event_broker,
         os.getenv("JOB_NAME", ""),
         os.getenv("USER_ID", ""),
         os.getenv("ASSISTANT_ID", ""),
         os.getenv("USER_NAME", ""),
         os.getenv("ASSISTANT_NAME", ""),
         os.getenv("ASSISTANT_AGE", ""),
-        os.getenv("ASSISTANT_REGION", ""),
+        os.getenv("ASSISTANT_NATIONALITY", ""),
         os.getenv("ASSISTANT_ABOUT", ""),
         os.getenv("ASSISTANT_NUMBER", ""),
         os.getenv("ASSISTANT_EMAIL", ""),
@@ -281,74 +78,34 @@ async def main(
         os.getenv("USER_EMAIL", ""),
         os.getenv("VOICE_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
-        conv_context_length=conv_context_length,
-        start_local=start_local,
-        enabled_tools=enabled_tools,
         project_name=project_name,
-    )
-    user_agent.set_event_manager(event_manager)
-    user_agent.subscribe(
-        [
-            os.getenv("USER_NUMBER", ""),
-            os.getenv("USER_WHATSAPP_NUMBER", ""),
-            os.getenv("USER_EMAIL", ""),
-            "tool_use",
-            "startup",
-        ],
+        stop=stop,
+        user_turn_end_callback=None,
+
+        # whether to use realtime settings or not
+        realtime=use_realtime
     )
 
-    # Initialize Redis connection (waits for Redis to be ready)
-    print("Initializing Redis connection...")
-    await user_agent.initialize_redis()
-    print("Redis connection initialized successfully")
+    # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
+    comms_manager = CommsManager(event_broker=event_broker)
 
-    comms_manager = CommsManager(events_queue=event_manager.events_queue)
-    event_manager_task = asyncio.create_task(event_manager.serve())
-    asyncio.create_task(comms_manager.start())
-    asyncio.create_task(user_agent.listen_for_events())
-    await event_manager_task
+    asyncio.create_task(conversation_manager.wait_for_events()).add_done_callback(log_task_exc)
+    asyncio.create_task(conversation_manager.check_inactivity())
+    if not os.getenv("TEST"):
+        asyncio.create_task(comms_manager.start())
+
+    print("Server is Running...")
+    await stop.wait()
+
+    print("Cleaning up conversation manager...")
+    conversation_manager.cleanup()
+    print("Cleanup finished")
+
+    print("Shutdown finished")
 
 
 if __name__ == "__main__":
-    import argparse
+    import sys
 
-    parser = argparse.ArgumentParser()
-    # Mutually exclusive group for enabling or disabling tools
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--enabled-tools",
-        dest="enabled_tools",
-        type=lambda s: [t.strip() for t in s.split(",")],
-        default=["conductor"],
-        help="Comma-separated list of enabled tools with choices of conductor, contact, transcript, knowledge, scheduler. Default: conductor",
-    )
-    group.add_argument(
-        "--no-tools",
-        dest="enabled_tools",
-        action="store_const",
-        const=None,
-        help="Disable all tool-based actions",
-    )
-    parser.add_argument(
-        "--start-local",
-        dest="start_local",
-        action="store_true",
-        default=False,
-        help="Start local GUI instead of server",
-    )
-    parser.add_argument(
-        "--project-name",
-        dest="project_name",
-        type=str,
-        default="Assistants",
-        help="Name of the project to use",
-    )
-    args = parser.parse_args()
-    asyncio.run(
-        main(
-            start_local=args.start_local,
-            enabled_tools=args.enabled_tools,
-            project_name=args.project_name,
-        ),
-        debug=ASYNCIO_DEBUG,
-    )
+    use_realtime = "--realtime" in sys.argv
+    asyncio.run(main(use_realtime=use_realtime))

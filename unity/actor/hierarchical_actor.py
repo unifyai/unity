@@ -46,7 +46,7 @@ from unity.common._async_tool.loop_config import (
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
-from unity.conversation_manager_2.handle import ConversationManagerHandle
+from unity.conversation_manager.handle import ConversationManagerHandle
 
 current_run_id_var = contextvars.ContextVar("hp_run_id", default=0)
 current_interaction_sink_var = contextvars.ContextVar(

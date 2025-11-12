@@ -51,9 +51,9 @@ from livekit.plugins import (
 
 load_dotenv()
 
-from unity.conversation_manager_2.utils import dispatch_agent
-from unity.conversation_manager_2.event_broker import get_event_broker
-from unity.conversation_manager_2.new_events import *
+from unity.conversation_manager.utils import dispatch_agent
+from unity.conversation_manager.event_broker import get_event_broker
+from unity.conversation_manager.new_events import *
 
 from pathlib import Path
 
