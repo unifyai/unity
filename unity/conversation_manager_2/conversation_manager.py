@@ -123,7 +123,7 @@ class ConversationManager:
         self.debouncer = Debouncer()
 
         # call manager
-        self.call_manager = LivekitCallManager(realtime=realtime)
+        self.call_manager = LivekitCallManager(self.assistant_id, self.assistant_number, self.voice_provider, self.voice_id, realtime=realtime)
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -153,6 +153,7 @@ class ConversationManager:
         self.call_start_timestamp = None
         self.unify_call_start_timestamp = None
         self.conference_name = ""
+        self.call_contact = None
         self.is_summarizing = None
         self.max_messages = 30
 
@@ -167,8 +168,8 @@ class ConversationManager:
     
     # this is non-blocking, it will quickly submit the 
     # coro and return
-    async def run_llm(self, delay=0):
-        await self.debouncer.submit(self._run_llm, delay=delay)
+    async def run_llm(self, delay=0, cancel_running=False):
+        await self.debouncer.submit(self._run_llm, delay=delay, cancel_running=cancel_running)
 
     async def _run_llm(self):
         self.snapshot()
@@ -197,7 +198,8 @@ class ConversationManager:
                                 
                                 # realtime model will handle the call so no need to stream anything to the call
                                 stream_to_call=self.mode in ["call", "unify_call", "gmeet"] and not self.realtime,
-                                response_model=response_model)
+                                response_model=response_model,
+                                call_type=self.mode)
         parsed_out = json.loads(out)
         if "call" in self.mode:
             if not self.realtime:
@@ -207,7 +209,7 @@ class ConversationManager:
                 else:
                     topic = "app:comms:phone_utterance"
                     event = AssistantPhoneUtterance(
-                        self.state.phone_contact.phone_number, parsed_out["phone_utterance"]
+                        self.call_contact["phone_number"], parsed_out["phone_utterance"]
                     )
                 await self.event_broker.publish(topic, event.to_json())
 

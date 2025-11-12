@@ -33,47 +33,77 @@ class EventHandler:
             return asyncio.sleep(0)
         return f(event, cm, *args, **kwargs)
 
-CallEvents = Union[PhoneCallRecieved, PhoneCallSent, UnifyCallReceived]
+CallEvents = Union[PhoneCallReceived, PhoneCallSent, UnifyCallReceived]
 
 @EventHandler.register(
-        (PhoneCallRecieved, PhoneCallSent, UnifyCallReceived)
+        (PhoneCallReceived, PhoneCallSent, UnifyCallReceived)
         )
 async def _(event: CallEvents, cm: 'ConversationManager', *args, **kwargs):
     if cm.mode in ["phone", "gmeet", "unify_call"]:
         # can't make call
         # TODO: we should handle this somehow tbh
+        # for now do nothing, but we can think of adding a notification of an attempted call
         ...
     else:
         # update state
         message_content = None
         notif_content = None
         match event:
-            case PhoneCallRecieved():
-                ...
-            case PhoneCallSent():
-                ...
-            case UnifyCallReceived():
-                ...
+            case PhoneCallReceived() as e:
+                cm.call_manager.start_call(e.contact["phone_number"])
+                message_content = "<Recvieving Call...>"
+                notif_content = f"Call received from {e.contact['first_name']}"
+            case PhoneCallSent() as e:
+                cm.call_manager.start_call(e.contact["phone_number"])
+                message_content = "<Sending Call...>"
+                notif_content = f"Call sent to {e.contact['first_name']}"
+            case UnifyCallReceived() as e:
+                cm.call_manager.start_unify_call(e.agent_name, e.room_name)
+                message_content = "<Recieving Call...>"
+                notif_content = f"Call received from {e.contact['first_name']}"
 
-        cm.notifications_bar.push_notification(...)
-        cm.contact_index.push_message(event.contact["contact_id"], "phone", )
-
-        # start call process
-        cm.call_manager.start_call()
-
-        # make an llm run
-        await cm.run_llm()
+        cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
+        cm.contact_index.push_message(event.contact, "phone", message_content=message_content,
+                                      role="user" if "received" in event.__class__.__name__.lower() else "assistant",
+                                      timestamp=event.timestamp)
 
 
-@EventHandler.register((PhoneUtterance, UnifyCallUtterance))
+@EventHandler.register((PhoneCallStarted, UnifyCallStarted))
+async def _(event: PhoneCallStarted | UnifyCallStarted, cm: 'ConversationManager', *args, **kwargs):
+    if isinstance(event, PhoneCallStarted):
+        cm.mode = "call"
+        phone_number = event.contact
+        contact = cm.contact_index.get_contact(phone_number=phone_number)
+    else:
+        cm.mode = "unify_call"
+        contact = cm.contact_index.get_contact(contact_id=1)
+    
+    cm.call_contact = contact
+    cm.notifications_bar.push_notif("Comms", f"Phone Call started with {contact['first_name']}", timestamp=event.timestamp)
+    cm.contact_index.push_message(contact, "phone", "<Call Started>", timestamp=event.timestamp)
+    cm.contact_index.active_conversations[contact["contact_id"]].on_call = True
+    await cm.run_llm(delay=0)
+
+@EventHandler.register((PhoneUtterance, UnifyCallUtterance, AssistantPhoneUtterance, AssistantUnifyCallUtterance))
 async def _(event: PhoneCallEnded, cm: 'ConversationManager', *args, **kwargs):
     # publish transcript
-    asyncio.create_task(managers_utils.log_message(cm, event))
-    ...
+    # asyncio.create_task(managers_utils.log_message(cm, event))
+    if isinstance(event, (PhoneUtterance, AssistantPhoneUtterance)):
+        contact = cm.contact_index.get_contact(phone_number=event.contact)
+        cm.contact_index.push_message(contact, "phone", event.content, role="user" if "assistant" not in event.__class__.__name__.lower() else "assistant")
+    if isinstance(event, PhoneUtterance):
+        await cm.run_llm(delay=0, cancel_running=True)
 
 @EventHandler.register((PhoneCallEnded, UnifyCallEnded))
 async def _(event: PhoneCallEnded | UnifyCallEnded, cm: 'ConversationManager', *args, **kwargs):
-    ...
+    cm.mode = "text"
+    if isinstance(event, PhoneCallEnded):
+        cm.call_contact = None
+    elif isinstance(event, UnifyCallEnded):
+        cm.unify_call_contact = None
+    contact = cm.contact_index.get_contact(phone_number=event.contact)
+    cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
+    cm.call_manager.cleanup_call_proc()
 
 @EventHandler.register((
                 ConductorResponse,
@@ -87,11 +117,11 @@ async def _(event, cm: 'ConversationManager', *args, **kwargs):
 
 @EventHandler.register((
                     SMSSent,
-                    SMSRecieved,
+                    SMSReceived,
                     EmailSent,
-                    EmailRecieved,
+                    EmailReceived,
                     UnifyMessageSent,
-                    UnifyMessageRecieved,
+                    UnifyMessageReceived,
                 ))
 async def _(event, cm: 'ConversationManager', *args, **kwargs):
     asyncio.create_task(managers_utils.log_message(cm, event))
@@ -111,10 +141,10 @@ async def _(event, cm: 'ConversationManager', *args, **kwargs):
             message_content = event.content
             notif_content = f"SMS sent to {contact['first_name']}"
             role = "assistant"
-        case SMSRecieved():
+        case SMSReceived():
             thread = "sms"
             message_content = event.content
-            notif_content = f"SMS recieved from {contact['first_name']}"
+            notif_content = f"SMS Received from {contact['first_name']}"
             role="user"
         case EmailSent():
             thread = "email"
@@ -122,18 +152,18 @@ async def _(event, cm: 'ConversationManager', *args, **kwargs):
             body = event.body
             notif_content = f"Email sent to {contact['first_name']}"
             role="assistant"
-        case EmailRecieved():
+        case EmailReceived():
             thread = "email"
             subject = event.subject
             body = event.body
-            notif_content = f"Email recieved from {contact['first_name']}"
+            notif_content = f"Email Received from {contact['first_name']}"
             role="user"
         case UnifyMessageSent():
             thread = "unify"
             message_content = event.content
             notif_content = f"Unify message sent to {contact['first_name']}"
             role="assistant"
-        case UnifyMessageRecieved():
+        case UnifyMessageReceived():
             thread = "unify"
             message_content = event.content
             notif_content = f"Unify message from {contact['first_name']}"
@@ -149,8 +179,6 @@ async def _(event, cm: 'ConversationManager', *args, **kwargs):
                                   role=role)
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
     
-    # run llm (TODO: add cancel running if not on a call)
-    print("Running LLM now...")
     await cm.run_llm(delay=2)
 
 # TODO: put all managers in the cm and move start up logic from managers worker to here

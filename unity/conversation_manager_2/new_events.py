@@ -83,7 +83,7 @@ class Event:
 
 
 @dataclass
-class PhoneCallRecieved(Event):
+class PhoneCallReceived(Event):
     contact: dict
     conference_name: str = ""
 
@@ -144,13 +144,13 @@ class UnifyCallEnded(Event):
 
 
 @dataclass
-class SMSRecieved(Event):
+class SMSReceived(Event):
     contact: dict
     content: str
 
 
 @dataclass
-class UnifyMessageRecieved(Event):
+class UnifyMessageReceived(Event):
     contact: dict
     content: str
 
@@ -175,7 +175,7 @@ class AssistantUnifyCallUtterance(Event):
 
 
 @dataclass
-class EmailRecieved(Event):
+class EmailReceived(Event):
     contact: dict
     subject: str
     body: str

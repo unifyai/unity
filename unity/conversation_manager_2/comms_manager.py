@@ -34,9 +34,9 @@ subscription_id = (
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
     # "whatsapp": WhatsappMessageRecievedEvent,
-    "msg": SMSRecieved,
-    "email": EmailRecieved,
-    "unify_message": UnifyMessageRecieved,
+    "msg": SMSReceived,
+    "email": EmailReceived,
+    "unify_message": UnifyMessageReceived,
 }
 
 
@@ -282,16 +282,18 @@ class CommsManager:
                     # Create the event based on the thread
                     if thread == "unify_call":
                         event = UnifyCallReceived(
-                            contact=1,
+                            contact=next(c for c in contacts if c["contact_id"] == 1),
                             agent_name=event.get("agent_name"),
                             room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_call_received"
                     else:
-                        event = PhoneCallRecieved(
-                            contact=event.get(
+                        number = event.get(
                                 "caller_number", event.get("user_number")
-                            ),
+                            )
+                        contact = next(c for c in contacts if c["phone_number"] == number)
+                        event = PhoneCallReceived(
+                            contact=contact,
                             conference_name=event.get("conference_name", ""),
                         )
                         topic = "app:comms:call_recieved"

@@ -130,7 +130,7 @@ async def log_message(cm: 'ConversationManager', event: Event) -> None:
         role = (
             "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
         )
-        if isinstance(event, (EmailSent, EmailRecieved)):
+        if isinstance(event, (EmailSent, EmailReceived)):
             content = event.subject + "\n\n" + event.body
         else:
             content = event.content
@@ -140,7 +140,7 @@ async def log_message(cm: 'ConversationManager', event: Event) -> None:
             event,
             (
                 UnifyMessageSent,
-                UnifyMessageRecieved,
+                UnifyMessageReceived,
                 UnifyCallUtterance,
                 AssistantUnifyCallUtterance,
             ),
@@ -316,8 +316,9 @@ async def init_conv_manager(cm: 'ConversationManager'):
             print("[ManagersWorker] Initializing ContactManager...")
             cm.contact_manager = ContactManager()
 
-            contacts_task = asyncio.create_task(get_contacts())
-            await asyncio.gather(bus_events_task, contacts_task)
+            # contacts_task = asyncio.create_task(get_contacts())
+            # await asyncio.gather(bus_events_task, contacts_task)
+            await bus_events_task
             print("[ManagersWorker] ContactManager initialized")
 
             # 3. Initialize TranscriptManager with ContactManager
