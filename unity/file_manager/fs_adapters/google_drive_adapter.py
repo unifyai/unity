@@ -98,6 +98,10 @@ class GoogleDriveAdapter(BaseFileSystemAdapter):
         return f"GoogleDrive"
 
     @property
+    def uri_name(self) -> str:
+        return "gdrive"
+
+    @property
     def capabilities(self) -> FileSystemCapabilities:
         return self._caps
 
@@ -320,6 +324,8 @@ class GoogleDriveAdapter(BaseFileSystemAdapter):
             yield FileReference(
                 path=path,
                 name=file_name,
+                provider=self.name,
+                uri=f"{self.uri_name}://{file_id}",
                 size_bytes=size,
                 modified_at=modified,
                 mime_type=mime_type,
@@ -356,6 +362,8 @@ class GoogleDriveAdapter(BaseFileSystemAdapter):
             return FileReference(
                 path=self._get_file_path(file_metadata["id"], file_metadata["name"]),
                 name=file_metadata["name"],
+                provider=self.name,
+                uri=f"{self.uri_name}://{file_metadata['id']}",
                 size_bytes=(
                     int(file_metadata.get("size", 0))
                     if "size" in file_metadata
@@ -393,6 +401,8 @@ class GoogleDriveAdapter(BaseFileSystemAdapter):
             return FileReference(
                 path=self._get_file_path(file_metadata["id"], file_metadata["name"]),
                 name=file_metadata["name"],
+                provider=self.name,
+                uri=f"{self.uri_name}://{file_metadata['id']}",
                 size_bytes=(
                     int(file_metadata.get("size", 0))
                     if "size" in file_metadata

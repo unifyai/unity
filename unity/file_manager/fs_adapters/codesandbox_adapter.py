@@ -53,6 +53,10 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         return f"CodeSandbox"
 
     @property
+    def uri_name(self) -> str:
+        return "csb"
+
+    @property
     def capabilities(self) -> FileSystemCapabilities:
         return self._caps
 
@@ -200,6 +204,8 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
             yield FileReference(
                 path=path,
                 name=name,
+                provider=self.name,
+                uri=f"{self.uri_name}://{self._sandbox_id}{path}",
                 size_bytes=size,
                 modified_at=None,
                 mime_type=None,
@@ -218,6 +224,8 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         return FileReference(
             path=p,
             name=name,
+            provider=self.name,
+            uri=f"{self.uri_name}://{self._sandbox_id}{p}",
             size_bytes=size,
         )
 
@@ -419,6 +427,8 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         return FileReference(
             path=new_path,
             name=new_name,
+            provider=self.name,
+            uri=f"{self.uri_name}://{self._sandbox_id}{new_path}",
         )
 
     def move(self, path: str, new_parent_path: str) -> FileReference:
@@ -450,6 +460,8 @@ class CodeSandboxFileSystemAdapter(BaseFileSystemAdapter):
         return FileReference(
             path=new_path,
             name=name,
+            provider=self.name,
+            uri=f"{self.uri_name}://{self._sandbox_id}{new_path}",
         )
 
     def delete(self, path: str) -> None:
