@@ -128,6 +128,19 @@ def file_manager(fm_root: str) -> LocalFileManager:
 
 
 @pytest.fixture()
+def rootless_file_manager():
+    """Provide a non-singleton FileManager with a rootless Local adapter.
+
+    This allows tests to exercise absolute-path behavior without conflicting
+    with the session-scoped LocalFileManager singleton.
+    """
+    from unity.file_manager.managers.file_manager import FileManager
+    from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
+
+    return FileManager(adapter=LocalFileSystemAdapter(None))
+
+
+@pytest.fixture()
 def global_file_manager(file_manager):
     """Return the singleton GlobalFileManager configured with the local manager."""
     local = file_manager
@@ -713,7 +726,7 @@ def parser_validation_suite() -> Dict[str, Any]:
     def validate_metadata(document, expected_mime_type: str):
         """Validate document metadata is properly set."""
         assert document.metadata is not None
-        assert document.metadata.file_type == expected_mime_type
+        assert str(document.metadata.mime_type) == expected_mime_type
         assert document.metadata.parser_name == "DoclingParser"
         assert document.metadata.processing_time is not None
         assert document.processing_status == "completed"
@@ -723,7 +736,7 @@ def parser_validation_suite() -> Dict[str, Any]:
         full_text = document.to_plain_text()
 
         # Check if this is a CSV file (has tables but no paragraphs)
-        is_csv = document.metadata.file_type == "text/csv" or (
+        is_csv = str(document.metadata.mime_type) == "text/csv" or (
             len(document.metadata.tables) > 0
             and sum(len(s.paragraphs) for s in document.sections) == 0
         )

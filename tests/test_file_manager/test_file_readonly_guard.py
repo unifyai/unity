@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
 
 import pytest
 
@@ -23,13 +22,10 @@ async def test_file_manager_ask_guard_triggers_when_enabled(fm_root, monkeypatch
 
     fm = FileManager(root=fm_root)
 
-    # Create a temporary file and register it with the FileManager
-    with tempfile.NamedTemporaryFile(delete=False) as tf:
-        tf.write(b"Hello world")
-        tmp_path = tf.name
-
     try:
-        display_name = fm.import_file(tmp_path)
+        # Create a file under fm_root (no import needed)
+        display_name = "guard_demo.txt"
+        open(os.path.join(fm_root, display_name), "wb").write(b"Hello world")
 
         # Spy on guard stop() to verify classifier-triggered early stop
         stop_called: dict[str, str | None] = {"reason": None}
@@ -56,6 +52,6 @@ async def test_file_manager_ask_guard_triggers_when_enabled(fm_root, monkeypatch
         assert "mutation intent detected" in str(stop_called["reason"]).lower()
     finally:
         try:
-            os.unlink(tmp_path)
+            os.unlink(os.path.join(fm_root, display_name))
         except Exception:
             pass

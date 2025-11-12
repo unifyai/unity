@@ -19,12 +19,13 @@ async def test_csv_per_table_context(file_manager, tmp_path: Path):
         "Name,Age,City\nJohn,30,NYC\nJane,25,LDN\n",
         encoding="utf-8",
     )
-    display_name = file_manager.import_file(csv_path)
+    display_name = str(csv_path)
 
-    # Parse file
+    # Parse file (absolute path)
     result = file_manager.parse(display_name)
-    print(result)
-    assert result[display_name]["status"] == "success"
+    _item = result[display_name]
+    _item = _item if isinstance(_item, dict) else _item.model_dump()
+    assert _item["status"] == "success"
 
     # Verify a per-table context exists
     import unify
@@ -64,10 +65,11 @@ async def test_xlsx_multi_tab_per_table_context(file_manager):
 
     for path in [retail, workforce]:
         if path.exists():
-            display_name = file_manager.import_file(path)
+            display_name = str(path)
             res = file_manager.parse(display_name)
-            print(res)
-            assert res[display_name]["status"] == "success"
+            _item = res[display_name]
+            _item = _item if isinstance(_item, dict) else _item.model_dump()
+            assert _item["status"] == "success"
         else:
             print(f"Path {path} does not exist")
             assert False

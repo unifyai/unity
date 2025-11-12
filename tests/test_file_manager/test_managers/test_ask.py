@@ -25,7 +25,7 @@ async def test_ask_with_mocked_llm(file_manager, supported_file_examples: dict):
     """Test basic ask functionality with mocked LLM."""
     # Get the first available test file
     filename, example_data = next(iter(supported_file_examples.items()))
-    display_name = file_manager.import_file(example_data["path"])  # new API
+    display_name = str(example_data["path"])  # absolute path; no import needed
 
     file_manager.parse(display_name)
 
@@ -71,7 +71,7 @@ async def test_ask_with_reasoning_steps(file_manager, supported_file_examples: d
     """Test ask with reasoning steps enabled."""
     # Get the first available test file
     filename, example_data = next(iter(supported_file_examples.items()))
-    display_name = file_manager.import_file(example_data["path"])  # new API
+    display_name = str(example_data["path"])  # absolute path
 
     file_manager.parse(display_name)
 
@@ -113,7 +113,7 @@ async def test_ask_with_clarification_queues(
     """Test ask with clarification support."""
     # Get the first available test file
     filename, example_data = next(iter(supported_file_examples.items()))
-    display_name = file_manager.import_file(example_data["path"])  # new API
+    display_name = str(example_data["path"])  # absolute path
 
     file_manager.parse(display_name)
 
@@ -158,7 +158,7 @@ async def test_ask_with_rolling_summary(file_manager, supported_file_examples: d
     """Test ask with rolling summary in prompts."""
     # Get the first available test file
     filename, example_data = next(iter(supported_file_examples.items()))
-    display_name = file_manager.import_file(example_data["path"])  # new API
+    display_name = str(example_data["path"])  # absolute path
 
     file_manager.parse(display_name)
 
@@ -196,17 +196,15 @@ async def test_ask_with_rolling_summary(file_manager, supported_file_examples: d
 async def test_ask_about_file_integration(file_manager, fm_root, tmp_path: Path):
     """Integration test for the ask_about_file method."""
     fm = file_manager
-    # Create test file OUTSIDE fm_root to avoid duplication on import
+    # Create test file and parse by absolute path (no import needed)
     file_path = tmp_path / "about_test.txt"
     file_content = "This file is about the history of artificial intelligence."
     file_path.write_text(file_content)
-    display_name = fm.import_file(file_path)
+    # Parse by absolute path to add to Unify logs before ask_about_file
+    fm.parse(str(file_path))
 
-    # Parse the file to add it to Unify logs before ask_about_file
-    fm.parse(display_name)
-
-    instruction = f"Summarize the file {display_name}."
-    handle = await fm.ask_about_file(display_name, instruction)
+    instruction = f"Summarize the file {file_path}."
+    handle = await fm.ask_about_file(str(file_path), instruction)
     response = await handle.result()
 
     assert response and isinstance(response, str)
@@ -221,16 +219,16 @@ async def test_ask_about_file_integration(file_manager, fm_root, tmp_path: Path)
 async def test_ask_multiple_files_integration(file_manager, fm_root, tmp_path: Path):
     """Integration test for asking about multiple files."""
     fm = file_manager
-    # Create test files OUTSIDE fm_root to avoid duplication on import
+    # Create test files (no import needed)
     file1_path = tmp_path / "multi_ask1.txt"
     file1_content = "The first document discusses renewable energy sources."
     file1_path.write_text(file1_content)
-    name1 = fm.import_file(file1_path)
+    name1 = str(file1_path)
 
     file2_path = tmp_path / "multi_ask2.txt"
     file2_content = "The second document is a report on climate change."
     file2_path.write_text(file2_content)
-    name2 = fm.import_file(file2_path)
+    name2 = str(file2_path)
 
     # Parse the files to add them to Unify logs before ask
     fm.parse([name1, name2])
@@ -257,7 +255,7 @@ async def test_ask_about_file_triggers_filter_join_via_loop(
     fm = file_manager
     p = tmp_path / "join_src.txt"
     p.write_text("seed to create file record")
-    name = fm.import_file(p)
+    name = str(p)
     fm.parse(name)
 
     # Track tool invocations
@@ -265,7 +263,7 @@ async def test_ask_about_file_triggers_filter_join_via_loop(
 
     def _stub_loop(client, text, tools, **kwargs):  # type: ignore[override]
         # Wrap filter_join to record invocation and return a canned result
-        orig_filter_join = tools.get("_filter_join")
+        orig_filter_join = tools.get("filter_join")
 
         def _wrapped_filter_join(**kw):
             calls["filter_join"] += 1
@@ -275,12 +273,12 @@ async def test_ask_about_file_triggers_filter_join_via_loop(
         # Inject wrapper
         tools = dict(tools)
         if orig_filter_join is not None:
-            tools["_filter_join"] = _wrapped_filter_join
+            tools["filter_join"] = _wrapped_filter_join
 
         class _Handle:
             async def result(self):
                 # Simulate the LLM deciding to use filter_join
-                _ = tools["_filter_join"](
+                _ = tools["filter_join"](
                     tables=["A", "B"],
                     join_expr="A.id == B.id",
                     select={"A.name": "product", "B.qty": "total"},
@@ -312,7 +310,7 @@ async def test_ask_about_file_triggers_search_multi_join_via_loop(
     fm = file_manager
     p = tmp_path / "multi_join_src.txt"
     p.write_text("seed")
-    name = fm.import_file(p)
+    name = str(p)
     fm.parse(name)
 
     calls = {"search_multi_join": 0}
@@ -324,11 +322,11 @@ async def test_ask_about_file_triggers_search_multi_join_via_loop(
             return [{"product": "Beta", "score": 0.99}]
 
         tools = dict(tools)
-        tools["_search_multi_join"] = _wrapped_search_multi_join
+        tools["search_multi_join"] = _wrapped_search_multi_join
 
         class _Handle:
             async def result(self):
-                _ = tools["_search_multi_join"](
+                _ = tools["search_multi_join"](
                     joins=[
                         {
                             "tables": ["A", "B"],

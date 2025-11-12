@@ -17,7 +17,7 @@ async def test_ask_exposes_join_tools(file_manager, tmp_path: Path):
     fm = file_manager
     p = tmp_path / "exp.txt"
     p.write_text("some content")
-    name = fm.import_file(p)
+    name = str(p)
     fm.parse(name)
 
     with patch(
@@ -44,7 +44,7 @@ async def test_ask_about_file_exposes_join_tools(file_manager, tmp_path: Path):
     fm = file_manager
     p = tmp_path / "exp2.txt"
     p.write_text("other content")
-    name = fm.import_file(p)
+    name = str(p)
     fm.parse(name)
 
     with patch(
