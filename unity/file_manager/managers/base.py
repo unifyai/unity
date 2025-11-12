@@ -48,50 +48,81 @@ class BaseFileManager(BaseStateManager):
     # Basic inventory operations                                          #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def exists(self, filename: str) -> bool:
-        """Return True if a file with the given display name exists in this filesystem."""
+    def exists(self, file_path: str) -> bool:
+        """Return True if a file with the given file path exists in this filesystem."""
 
     @abstractmethod
     def list(self) -> List[str]:
-        """Return the list of display names (stable order) for files in this filesystem."""
+        """Return the list of file paths (stable order) for files in this filesystem."""
 
     @abstractmethod
     def parse(
         self,
-        filenames: Union[str, List[str]],
+        file_paths: Union[str, List[str]],
         **options: Any,
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
         Parse one or more files and return structured results per file.
 
         Parameters
         ----------
-        filenames : str | list[str]
-            Single filename or a list of filenames to parse.
+        file_paths : str | list[str]
+            Single file path or a list of file paths to parse.
         **options : Any
             Parser-specific options (forwarded as-is).
 
         Returns
         -------
-        dict[str, dict]
-            Mapping from filename → result dict containing status/records/full_text/metadata.
+        dict[str, Any]
+            Mapping from file path → result. The concrete return depends on the
+            configured output mode:
+
+            - compact (default): a typed Pydantic model (per file type) containing
+              reference-first pointers (content_ref, tables_ref) and light metadata.
+            - full: the raw dict returned by the parser's Document.to_parse_result.
+            - none: a minimal stub (file_path, status, error, total_records, file_format).
+
+            The concrete model type is format-specific (e.g., ParsedPDF, ParsedXlsx).
+
+        Options
+        -------
+        config : FilePipelineConfig | dict | None
+            Complete pipeline configuration controlling parsing, ingestion, embeddings,
+            plugins, and output return mode. When a dict is provided, it will be coerced
+            to `FilePipelineConfig` (unknown keys are ignored).
+
+            Key sub-models and fields:
+            - parse.batch_size: int (parse_async parallelism when available)
+            - parse.parser_kwargs: dict forwarded to parser.parse/parse_batch
+            - ingest.mode: "per_file" | "unified" (destination layout)
+            - ingest.allowed_columns: list[str] (column filter)
+            - ingest.table_ingest: bool (ingest extracted tables)
+            - embed.strategy/large_threshold/hooks_per_chunk/specs: embedding behaviour
+            - plugins.pre/post_*: hook lists (dotted names or callables)
+            - output.return_mode: "compact" | "full" | "none"
+
+        Notes
+        -----
+        - Implementations SHOULD accept `config` in **options and default to a sensible
+          `FilePipelineConfig()` when omitted.
+        - For legacy callers, ad-hoc kwargs MAY be mapped into `parse.parser_kwargs`.
         """
 
     # ------------------------------------------------------------------ #
     # File export operations (for parsing)                               #
     # ------------------------------------------------------------------ #
     @abstractmethod
-    def export_file(self, filename: str, destination_dir: str) -> str:
+    def export_file(self, file_path: str, destination_dir: str) -> str:
         """
         Export a file from the underlying filesystem to a local destination directory.
 
         This method is used by parse operations to bring files from the adapter's
-        filesystem into a local temporary directory with their original filenames preserved.
+        filesystem into a local temporary directory with their original file paths preserved.
 
         Parameters
         ----------
-        filename : str
-            The display name or path of the file to export.
+        file_path : str
+            The file path of the file to export.
         destination_dir : str
             Local directory path where the file should be exported.
 
@@ -135,15 +166,21 @@ class BaseFileManager(BaseStateManager):
         self,
         *,
         include_types: bool = True,
+        table: Optional[str] = None,
     ) -> Dict[str, Any] | List[str]:
         """
-        Return the schema for this manager's primary index context.
+        Return the schema for a context managed by this FileManager.
 
         Parameters
         ----------
         include_types : bool, default True
             When True, return a mapping of column → logical type. When False,
             return just the list of column names.
+        table : str | None, default None
+            Logical table name or fully-qualified context. When None, returns
+            the FileRecords (index) columns. When provided, resolves logical
+            names (e.g., "<root>", "<root>.Tables.<label>") to the correct
+            context and returns its columns.
 
         Returns
         -------
@@ -158,15 +195,34 @@ class BaseFileManager(BaseStateManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        tables: Optional[Union[str, List[str]]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Filter files using a boolean expression evaluated per row.
+        Filter the FileRecords index or resolve-and-filter per-file contexts.
+
+        Parameters
+        ----------
+        filter : str | None
+            Row-level predicate evaluated per context (column names in scope).
+        offset : int
+            Pagination offset per context.
+        limit : int
+            Maximum rows per context (<= 1000).
+        tables : str | list[str] | None
+            Logical table names from `tables_overview()` (preferred) or legacy
+            refs. When None, only the FileRecords index is scanned.
+
+        Returns
+        -------
+        list[dict]
+            Flat list of rows (index-only when tables=None, concatenated when tables provided).
 
         Notes
         -----
-        For queries that need attributes from per-file content (e.g., content_type,
-        title, summary), prefer joining the global index with a per-file context via
-        the join tools provided by the concrete manager.
+        - For text-heavy questions, prefer semantic search over joins.
+        - When joining or scanning per-file contexts, consider calling
+          `tables_overview(file=...)` first and then `list_columns(table=...)`
+          to choose the correct columns for filters.
         """
 
     @abstractmethod
@@ -175,50 +231,20 @@ class BaseFileManager(BaseStateManager):
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
+        table: Optional[str] = None,
+        filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Semantic search over files using Unify vector columns and references.
+        Semantic search over a resolved context using Unify vector columns and references.
 
         Notes
         -----
-        For content-aware queries (e.g., search within sections/sentences), prefer
-        performing a semantic search after joining the global index with the
-        relevant per-file table using the join tools; this focuses embeddings on the
-        correct text column (e.g., "summary").
-        """
-
-    @abstractmethod
-    def _update_file(
-        self,
-        *,
-        file_id: int,
-        _log_id: Optional[int] = None,
-        **updates: Any,
-    ) -> Dict[str, Any]:
-        """
-        Update one or more fields of an existing file record in Unify.
-
-        This is a low-level helper that follows the same pattern as
-        _update_contact, _update_rows, _update_secret in other managers.
-
-        Parameters
-        ----------
-        file_id : int
-            The unique file ID to update
-        _log_id : int | None
-            Optional: The specific log ID if already known (avoids lookup)
-        **updates : Any
-            Field names and new values to update
-
-        Returns
-        -------
-        dict
-            Outcome with 'outcome' and 'details' keys
-
-        Raises
-        ------
-        ValueError
-            If no file found with the given file_id or no updates provided
+        - The `table` parameter narrows the target context. It accepts logical
+          names from `tables_overview()` (e.g., "FileRecords", "<root>",
+          "<root>.Tables.<label>") or legacy refs and resolves them identically to
+          join tools and `_list_columns(table=...)`.
+        - The `filter` parameter is a row-level predicate (evaluated with column
+          names as variables) applied before ranking/backfill.
         """
 
     @abstractmethod
@@ -231,7 +257,7 @@ class BaseFileManager(BaseStateManager):
         target_id_or_path : str
             Adapter-native identifier or path for the file.
         new_name : str
-            New filename or basename; adapter determines full path semantics.
+            New file name; adapter determines full path semantics.
 
         Returns
         -------
@@ -315,7 +341,7 @@ class BaseFileManager(BaseStateManager):
         --------------
         Do not use this method to ask the human follow‑up questions. If the
         caller needs clarification about what to retrieve (e.g., which folder,
-        which filename, which topic), route the question via a dedicated
+        which file path, which topic), route the question via a dedicated
         ``request_clarification`` tool when available. If no clarification
         channel exists, proceed with sensible defaults/best‑guess values and
         state those assumptions in the outer loop's final reply.
@@ -363,13 +389,14 @@ class BaseFileManager(BaseStateManager):
     @abstractmethod
     async def ask_about_file(
         self,
-        filename: str,
+        file_path: str,
         question: str,
         *,
         _return_reasoning_steps: bool = False,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
+        response_format: Optional[Any] = None,
     ) -> SteerableToolHandle:
         """
         Interrogate **one specific file** (read‑only) and obtain a live
@@ -384,14 +411,14 @@ class BaseFileManager(BaseStateManager):
         Clarifications
         --------------
         Do not use this method to ask the human follow‑up questions. If the
-        filename is ambiguous and a clarification tool is available, route a
+        file_path is ambiguous and a clarification tool is available, route a
         targeted question via ``request_clarification``; if no channel exists,
         proceed with sensible defaults/best‑guess values and state assumptions
         in the outer reply.
 
         Parameters
         ----------
-        filename : str
+        file_path : str
             Logical identifier/path of the target file.
         question : str
             Natural‑language question about the specific file.
@@ -401,6 +428,22 @@ class BaseFileManager(BaseStateManager):
         SteerableToolHandle
             Handle that eventually yields the answer text (and optionally the
             hidden reasoning steps) for this file‑scoped query.
+        """
+
+    # ------------------------------------------------------------------ #
+    # Async parse                                                         #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    async def parse_async(
+        self,
+        file_paths: Union[str, List[str]],
+        **options: Any,
+    ) -> Any:
+        """
+        Asynchronously parse one or more files and yield per-file results.
+
+        Implementations should mirror the return modes of parse and may yield
+        compact/full/none results depending on configuration.
         """
 
     # ------------------------------------------------------------------ #
@@ -453,6 +496,18 @@ class BaseFileManager(BaseStateManager):
     @abstractmethod
     def clear(self) -> None:
         raise NotImplementedError
+
+    # ------------------------------------------------------------------ #
+    # Public sync                                                        #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    def sync(self, *, file_path: str) -> Dict[str, Any]:
+        """
+        Synchronize a previously ingested file with the underlying filesystem.
+
+        Purge existing rows in relevant contexts and re-ingest. Implementations
+        must respect ingest layout (per_file vs unified) when purging.
+        """
 
 
 # Attach centralised docstring
