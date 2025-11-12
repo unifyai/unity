@@ -455,12 +455,30 @@ class SimulatedFileManager(BaseFileManager):
         for filename in filenames:
             if filename in self._files:
                 file_data = self._files[filename]
+                meta = file_data.get("metadata", {}) or {}
+                # Derive file_format from mime when not provided
+                mime = meta.get("mime_type") or meta.get("file_type")
+                file_format = meta.get("file_format")
+                if not file_format and isinstance(mime, str):
+                    fmt_map = {
+                        "text/plain": "txt",
+                        "text/markdown": "txt",
+                        "text/csv": "csv",
+                        "text/html": "html",
+                        "application/json": "json",
+                        "application/pdf": "pdf",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+                        "application/msword": "doc",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+                        "application/vnd.ms-excel": "xlsx",
+                    }
+                    file_format = fmt_map.get(mime, "unknown")
                 results[filename] = {
                     "status": "success",
                     "records": file_data.get("records", []),
                     "file_path": filename,
                     "summary": file_data.get("description", ""),
-                    "file_type": file_data.get("metadata", {}).get("file_type"),
+                    "file_format": file_format,
                     "error": None,
                 }
             else:
@@ -473,6 +491,13 @@ class SimulatedFileManager(BaseFileManager):
                 }
 
         return results
+
+    async def parse_async(self, filenames):
+        """Async variant of parse that yields per-file results (simulated)."""
+        if isinstance(filenames, str):
+            filenames = [filenames]
+        for name, result in self.parse(filenames).items():
+            yield {**result, "file_path": name}
 
     # --------------------------------------------------------------------- #
     # ask_about_file                                                        #
@@ -490,6 +515,7 @@ class SimulatedFileManager(BaseFileManager):
         _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
+        response_format: Optional[Any] = None,
     ) -> SteerableToolHandle:
         if filename not in self._files:
             raise FileNotFoundError(filename)
@@ -568,7 +594,11 @@ class SimulatedFileManager(BaseFileManager):
         self.add_simulated_file(
             filename,
             records=[{"content": f"Simulated content from {file_path}"}],
-            metadata={"file_type": extension, "source_path": file_path},
+            metadata={
+                "file_format": extension.lstrip(".").lower(),
+                "mime_type": None,
+                "source_path": file_path,
+            },
             full_text=f"Simulated content from {file_path}",
             description=f"Imported file: {filename}",
         )
@@ -600,7 +630,11 @@ class SimulatedFileManager(BaseFileManager):
             self.add_simulated_file(
                 filename,
                 records=[{"content": f"Simulated content from {directory}/{filename}"}],
-                metadata={"file_type": ext, "source_directory": directory},
+                metadata={
+                    "file_format": ext.lstrip(".").lower(),
+                    "mime_type": None,
+                    "source_directory": directory,
+                },
                 full_text=f"Simulated content from {directory}/{filename}",
                 description=f"File from directory: {filename}",
             )
@@ -664,6 +698,7 @@ class SimulatedFileManager(BaseFileManager):
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
+        tables: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Filter files using a boolean expression evaluated per row (Unify)."""
         files = list(self._files.values())
@@ -697,8 +732,22 @@ class SimulatedFileManager(BaseFileManager):
         *,
         references: Optional[Dict[str, str]] = None,
         k: int = 10,
+        table: Optional[str] = None,
+        filter: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Semantic search over files using Unify vector columns and references."""
+        """Semantic search over a (simulated) resolved context.
+
+        Parameters
+        ----------
+        references : dict[str, str] | None
+            Mapping of source_expr → reference text.
+        k : int
+            Number of rows to return.
+        table : str | None
+            Ignored in simulation; present for signature parity.
+        filter : str | None
+            Ignored in simulation; present for signature parity.
+        """
         files = list(self._files.values())
 
         if not references:
@@ -731,32 +780,6 @@ class SimulatedFileManager(BaseFileManager):
             files = files[:k]
 
         return files
-
-    def _update_file(
-        self,
-        *,
-        file_id: int,
-        _log_id: Optional[int] = None,
-        **updates: Any,
-    ) -> Dict[str, Any]:
-        """Simulate updating a file record."""
-        if not updates:
-            raise ValueError("At least one field must be provided for update")
-
-        # Find file by ID
-        for filename, file_data in self._files.items():
-            if file_data.get("file_id", 0) == file_id:
-                # Update the fields
-                file_data.update(updates)
-                return {
-                    "outcome": "file updated",
-                    "details": {
-                        "file_id": file_id,
-                        "updated_fields": list(updates.keys()),
-                    },
-                }
-
-        raise ValueError(f"No file found with file_id {file_id}")
 
     def _rename_file(self, *, target_id_or_path: str, new_name: str) -> Dict[str, Any]:
         """Simulate renaming a file."""
@@ -799,8 +822,9 @@ class SimulatedFileManager(BaseFileManager):
         self,
         *,
         include_types: bool = True,
+        table: Optional[str] = None,
     ) -> Dict[str, Any] | List[str]:
-        """Simulate listing table columns."""
+        """Simulate listing table columns (returns index schema for any table)."""
         columns = {
             "file_id": "int",
             "filename": "str",
@@ -810,9 +834,21 @@ class SimulatedFileManager(BaseFileManager):
             "full_text": "str",
             "metadata": "dict",
             "description": "str",
+            "file_format": "str",
             "imported_at": "datetime",
         }
         return columns if include_types else list(columns.keys())
+
+    def sync(self, *, file_path: str) -> Dict[str, Any]:
+        """Simulate a sync operation (no-op with a plausible summary)."""
+        exists = file_path in self._files
+        return {
+            "outcome": (
+                "sync complete (simulated)" if exists else "sync skipped (not found)"
+            ),
+            "purged": {"content_rows": 0, "table_rows": 0},
+            "file_path": file_path,
+        }
 
     # --------------------------------------------------------------------- #
     # Simulation helpers                                                    #

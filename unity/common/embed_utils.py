@@ -66,7 +66,7 @@ def ensure_derived_column(
     - By default, scopes placeholders to a local alias `lg` referencing the
       provided `context` when `referenced_logs_context` is not specified.
     """
-    # Fast path: if field already exists and we are not doing targeted 
+    # Fast path: if field already exists and we are not doing targeted
     # derived logs creation using from_ids, return without locking or logging
     try:
         fields = unify.get_fields(context=context)
@@ -92,7 +92,7 @@ def ensure_derived_column(
         try:
             try:
                 fields = unify.get_fields(context=context)
-                if key in fields:
+                if key in fields and not from_ids:
                     return
             except Exception:
                 pass
