@@ -247,7 +247,7 @@ async def init_conv_manager(cm: 'ConversationManager'):
                 "agent_id": cm.assistant_id,
                 "first_name": cm.assistant_name,
                 "age": cm.assistant_age,
-                "region": cm.assistant_region,
+                "nationality": cm.assistant_nationality,
                 "about": cm.assistant_about,
                 "phone": cm.assistant_number,
                 "email": cm.assistant_email,

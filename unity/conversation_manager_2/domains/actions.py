@@ -244,6 +244,10 @@ async def send_sms(cm: 'ConversationManager', action_name: str, *args, **kwargs)
     await event_broker.publish("app:comms:sms_sent", event.to_json())
 
 @Action.register()
+async def send_unify_message(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+    pass
+
+@Action.register()
 async def send_email(cm: 'ConversationManager', action_name: str, *args, **kwargs):
     contact_id = kwargs.get("contact_id")
     to_email = kwargs.get("email_address")

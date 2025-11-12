@@ -290,7 +290,7 @@ class ConversationManager:
         self.assistant_id = payload["assistant_id"]
         self.assistant_name = payload["assistant_name"]
         self.assistant_age = payload["assistant_age"]
-        self.assistant_region = payload["assistant_region"]
+        self.assistant_nationality = payload["assistant_nationality"]
         self.assistant_about = payload["assistant_about"]
         self.assistant_number = payload["assistant_number"]
         self.assistant_email = payload["assistant_email"]
