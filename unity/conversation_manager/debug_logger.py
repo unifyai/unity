@@ -1,11 +1,15 @@
+from dotenv import load_dotenv
+
+load_dotenv()
 import os
 import traceback
+import requests
 import unify
 
 
 api_key = os.environ.get("SHARED_UNIFY_KEY")
-if "Debug" not in unify.list_projects(api_key=api_key):
-    unify.create_project("Debug", api_key=api_key)
+if "AssistantJobs" not in unify.list_projects(api_key=api_key):
+    unify.create_project("AssistantJobs", api_key=api_key)
 
 
 def log_job_startup(
@@ -23,37 +27,76 @@ def log_job_startup(
     assistant_email: str,
 ):
     try:
+        # Create startup event log and get log instance
         unify.create_logs(
-            project="Debug",
+            project="AssistantJobs",
             context="startup_events",
-            params={},
-            entries={
-                "job_name": job_name,
-                "timestamp": timestamp,
-                "medium": medium,
-                "user_id": user_id,
-                "assistant_id": assistant_id,
-                "user_name": user_name,
-                "assistant_name": assistant_name,
-                "user_number": user_number,
-                "user_whatsapp_number": user_whatsapp_number,
-                "assistant_number": assistant_number,
-                "user_email": user_email,
-                "assistant_email": assistant_email,
-                "running": True,
-            },
+            entries=[
+                {
+                    "job_name": job_name,
+                    "timestamp": timestamp,
+                    "medium": medium,
+                    "user_id": user_id,
+                    "assistant_id": assistant_id,
+                    "user_name": user_name,
+                    "assistant_name": assistant_name,
+                    "user_number": user_number,
+                    "user_whatsapp_number": user_whatsapp_number,
+                    "assistant_number": assistant_number,
+                    "user_email": user_email,
+                    "assistant_email": assistant_email,
+                    "running": True,
+                }
+            ],
             api_key=api_key,
         )
+        log = unify.get_logs(
+            project="AssistantJobs",
+            context="startup_events",
+            filter=f"job_name == '{job_name}'",
+            api_key=api_key,
+        )[0]
         print("Logged Startup Event", job_name)
     except Exception as e:
-        print(f"Error creating logs: {e}")
+        print(f"Error logging startup event: {e}")
+        traceback.print_exc()
+
+    try:
+        # Resolve liveview URL via comms infra service
+        liveview_url = None
+        retries = 3
+        comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
+        admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
+        if comms_url and admin_key and job_name:
+            for _ in range(retries):
+                if liveview_url:
+                    break
+                print(f"\n\nAttempt {_ + 1} to set up liveview URL for job {job_name}")
+                svc = f"unity-svc-{job_name}"
+                resp = requests.get(
+                    f"{comms_url}/infra/job/service/ip",
+                    params={"service_name": svc},
+                    headers={"Authorization": f"Bearer {admin_key}"},
+                    timeout=20,
+                )
+                print("\n\nDesktop view liveview URL:", resp.json())
+                if resp.ok:
+                    data = resp.json() or {}
+                    addr = ((data or {}).get("external") or {}).get("address")
+                    if isinstance(addr, str) and addr:
+                        liveview_url = f"http://{addr}:6080/vnc.html"
+        log.update_entries(liveview_url=liveview_url)
+        print("Updated log with liveview URL:", job_name)
+    except Exception as e:
+        print(f"Error resolving liveview URL: {e}")
         traceback.print_exc()
 
 
 def mark_job_done(job_name: str):
+    # mark job done in the logs
     try:
         job_log = unify.get_logs(
-            project="Debug",
+            project="AssistantJobs",
             context="startup_events",
             filter=f"job_name == '{job_name}'",
             api_key=api_key,
@@ -62,4 +105,19 @@ def mark_job_done(job_name: str):
         print("Job marked done", job_name)
     except Exception as e:
         print(f"Error finding job: {e}")
+        traceback.print_exc()
+
+    # delete the job service
+    try:
+        comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
+        admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
+        svc = f"unity-svc-{job_name}"
+        response = requests.delete(
+            f"{comms_url}/infra/job/service",
+            data={"service_name": svc},
+            headers={"Authorization": f"Bearer {admin_key}"},
+        )
+        print(f"Job service deleted: {response.text}")
+    except Exception as e:
+        print(f"Error deleting job service: {e}")
         traceback.print_exc()

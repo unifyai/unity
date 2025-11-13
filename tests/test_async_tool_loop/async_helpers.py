@@ -64,6 +64,105 @@ async def _wait_for_tool_request(
 
 
 @unify.traced
+async def _wait_for_tool_scheduled(
+    outer_handle,
+    tool_name: str,
+    *,
+    timeout: float = 300.0,
+    poll: float = 0.05,
+) -> None:
+    """Wait until the async tool loop has actually scheduled `tool_name`
+    into its live `task_info` mapping (not just visible in assistant tool_calls).
+    """
+    import time as _time
+
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        try:
+            ti = getattr(outer_handle._task, "task_info", {})  # type: ignore[attr-defined]
+            if isinstance(ti, dict):
+                if any(
+                    getattr(_inf, "name", None) == tool_name for _inf in ti.values()
+                ):
+                    return
+        except Exception:
+            pass
+        await asyncio.sleep(poll)
+    raise TimeoutError(
+        f"Timed out after {timeout}s waiting for {tool_name!r} to be scheduled",
+    )
+
+
+@unify.traced
+async def _wait_for_tools_scheduled(
+    outer_handle,
+    tool_names: list[str],
+    *,
+    timeout: float = 300.0,
+    poll: float = 0.05,
+) -> None:
+    """Wait until all `tool_names` are present in the loop's live `task_info`."""
+    import time as _time
+
+    pending = set(tool_names or [])
+    start = _time.perf_counter()
+    while _time.perf_counter() - start < timeout:
+        try:
+            ti = getattr(outer_handle._task, "task_info", {})  # type: ignore[attr-defined]
+            if isinstance(ti, dict):
+                have = {getattr(_inf, "name", None) for _inf in ti.values()}
+                if pending.issubset(have):
+                    return
+        except Exception:
+            pass
+        await asyncio.sleep(poll)
+    raise TimeoutError(
+        f"Timed out after {timeout}s waiting for tools to be scheduled: {sorted(pending)}",
+    )
+
+
+@unify.traced
+async def _wait_for_tool_requested_and_scheduled(
+    client: "unify.AsyncUnify",
+    outer_handle,
+    tool_name: str,
+    *,
+    timeout: float = 300.0,
+    poll: float = 0.05,
+) -> None:
+    """Wait until an assistant tool_call for `tool_name` is visible AND the loop
+    has scheduled it (present in task_info)."""
+    await _wait_for_tool_request(client, tool_name, timeout=timeout, poll=poll)
+    await _wait_for_tool_scheduled(
+        outer_handle,
+        tool_name,
+        timeout=timeout,
+        poll=poll,
+    )
+
+
+@unify.traced
+async def _wait_for_tools_requested_and_scheduled(
+    client: "unify.AsyncUnify",
+    outer_handle,
+    tool_names: list[str],
+    *,
+    timeout: float = 300.0,
+    poll: float = 0.05,
+) -> None:
+    """Wait until assistant has requested all `tool_names` AND the loop
+    has scheduled each one into task_info."""
+    for name in tool_names or []:
+        await _wait_for_tool_request(client, name, timeout=timeout, poll=poll)
+    await _wait_for_tools_scheduled(
+        outer_handle,
+        tool_names or [],
+        timeout=timeout,
+        poll=poll,
+    )
+
+
+@unify.traced
 async def _wait_for_tool_result(
     client: "unify.AsyncUnify",
     tool_name: str | None = None,

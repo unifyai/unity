@@ -84,7 +84,7 @@ async def test_conductor_steers_with_ask():
     behavior and to avoid actual LLM calls during testing.
     """
     # 1. Create a real instance of the handle we want to mock methods on.
-    from unity.conversation_manager_2.simulated import (
+    from unity.conversation_manager.simulated import (
         SimulatedConversationManagerHandle,
     )
 

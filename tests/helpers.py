@@ -7,7 +7,6 @@ from os import sep
 from typing import Any, Callable
 from unity.events.event_bus import EVENT_BUS
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from datetime import datetime
 
 # Contexts that were pre-created during collection;
 PRECREATED_CONTEXTS: set[str] = set()
@@ -37,22 +36,9 @@ SETTINGS = TestingSettings()
 
 
 # ---------- CURSOR DEBUG LOGGER --------------------------------
-def CURSOR_DEBUG_LOG(*message_parts: Any) -> None:
-    """
-    TEMPORARY debug logger used exclusively by Cursor during failure investigation.
-    - Unconditional: always logs; do not gate behind environment variables or flags.
-    - Usage: CURSOR_DEBUG_LOG(\"key=\", value, \"state:\", state_dict)
-    - Cleanup: grep for 'CURSOR_DEBUG_LOG(' to remove all temporary logs.
-    """
-    caller = inspect.stack()[1]
-    location = f"{caller.filename}:{caller.lineno}:{caller.function}"
-    timestamp = datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
-    text = " ".join(str(p) for p in message_parts)
-    print(
-        f"[CURSOR-DEBUG] {timestamp} {location} :: {text}",
-        file=sys.stderr,
-        flush=True,
-    )
+# Re-export the leaf logger from the production module to keep a single
+# grep-able function name while avoiding circular imports in production code.
+from unity.common.debug import CURSOR_DEBUG_LOG  # noqa: E402,F401
 
 
 # ---------- helper -------------------------------------------------

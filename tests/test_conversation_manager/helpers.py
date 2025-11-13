@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from unity.conversation_manager_2.new_events import (
+from unity.conversation_manager.new_events import (
     ConductorClarificationRequest,
     ConductorClarificationResponse,
     ConductorHandleRequest,
@@ -299,7 +299,7 @@ async def send_conductor_response(
     query: str,
 ):
     """Manually send a ConductorResponse event (simulating conductor responding)"""
-    from unity.conversation_manager_2.new_events import ConductorResponse
+    from unity.conversation_manager.new_events import ConductorResponse
 
     conductor_response = ConductorResponse(
         handle_id=handle_id,

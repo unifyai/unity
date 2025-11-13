@@ -188,6 +188,7 @@ class ToolsData:
         parent_chat_context,
         propagate_chat_context,
         assistant_meta,
+        initial_paused: bool = False,
     ) -> None:
         # Base tool must exist
         if name not in self.normalized:
@@ -225,7 +226,10 @@ class ToolsData:
         pause_ev: Optional[asyncio.Event] = None
         if sig_accepts_pause_event:
             pause_ev = asyncio.Event()
-            pause_ev.set()  # start running
+            if initial_paused:
+                pause_ev.clear()  # start paused
+            else:
+                pause_ev.set()  # start running
             extra_kwargs["_pause_event"] = pause_ev
 
         clar_up_q: Optional[asyncio.Queue[str]] = None
@@ -567,8 +571,9 @@ class ToolsData:
         channels, and synchronises passthrough interjections/pause/stop with the
         outer handle when applicable.
         """
-        # Passthrough wiring: replay any steering commands issued after scheduling
-        # and before adoption, and sync pause/stop state minimally.
+        # Passthrough wiring: replay steering commands that were issued AFTER this
+        # tool was scheduled and BEFORE adoption (per-child, no duplication), then
+        # sync pause/stop state minimally.
         try:
             if (
                 getattr(child_handle, "__passthrough__", False)
@@ -576,39 +581,139 @@ class ToolsData:
                 and outer_handle_container[0] is not None
             ):
                 _outer = outer_handle_container[0]
-                # Replay steer events recorded on the outer handle that occurred
-                # after this tool was scheduled (with a small safety delta) and
-                # not later than adoption. We skip entries that were already
-                # forwarded immediately at record time (had_passthrough=True).
                 adopt_now = time.perf_counter()
-                SAFETY_DELTA = 0.2  # seconds; cushion to cover scheduling vs. interject ordering races
+                POST_ADOPT_EPSILON = (
+                    0.05  # small cushion to exclude post-adoption events
+                )
                 _log = list(getattr(_outer, "_steer_log", []) or [])
                 for rec in _log:
-                    if rec.get("had_passthrough") is True:
+                    # Skip replay for this child if the event was already forwarded to it
+                    try:
+                        fwd_list = rec.get("forwarded_to", [])
+                        if isinstance(fwd_list, (list, tuple)) and str(
+                            info.call_id,
+                        ) in set(str(x) for x in fwd_list):
+                            continue
+                    except Exception:
+                        pass
+                    # Lower bound: event must have been recorded when this call_id
+                    # was already scheduled (state-based, robust to timing races).
+                    try:
+                        sched_ids = rec.get("scheduled_call_ids") or []
+                        if str(info.call_id) not in set(str(x) for x in sched_ids):
+                            continue
+                    except Exception:
                         continue
-                    t = rec.get("t", 0.0)
-                    if not isinstance(t, (int, float)):
-                        continue
-                    # Window: [scheduled_time - delta, adopt_now + delta]
-                    if (t + SAFETY_DELTA) < info.scheduled_time or (
-                        t - SAFETY_DELTA
-                    ) > adopt_now:
-                        continue
+                    # Upper bound: exclude events that clearly arrived after adoption.
+                    try:
+                        t = rec.get("t", 0.0)
+                        if (
+                            isinstance(t, (int, float))
+                            and (t - POST_ADOPT_EPSILON) > adopt_now
+                        ):
+                            continue
+                    except Exception:
+                        pass
                     method = rec.get("method") or ""
                     if not isinstance(method, str) or not method:
+                        continue
+                    # Do NOT replay pause/resume; adoption will sync current state below
+                    _m_base = method.lower().strip()
+                    if _m_base in ("pause", "resume"):
                         continue
                     args = rec.get("args") or ()
                     kwargs = rec.get("kwargs") or {}
                     fb = rec.get("fallback") or ()
+                    # For custom methods (non built-ins), only replay when the child supports it
+                    is_builtin = _m_base in (
+                        "interject",
+                        "ask",
+                        "pause",
+                        "resume",
+                        "stop",
+                        "clarify",
+                    )
+                    if not is_builtin:
+                        try:
+                            has_exact = callable(getattr(child_handle, method, None))
+                        except Exception:
+                            has_exact = False
+                        try:
+                            has_base = callable(getattr(child_handle, _m_base, None))
+                        except Exception:
+                            has_base = False
+                        if not (has_exact or has_base):
+                            # Skip replay and do not synthesize mirrors when unsupported
+                            continue
+                        # Prefer exact name if present
+                        method_to_call = method if has_exact else _m_base
+                    else:
+                        method_to_call = method
                     await forward_handle_call(  # type: ignore[name-defined]
                         child_handle,
-                        method,
+                        method_to_call,
                         kwargs,
                         call_args=args if isinstance(args, (list, tuple)) else (),
                         fallback_positional_keys=(
                             fb if isinstance(fb, (list, tuple)) else ()
                         ),
                     )
+                    # Also mirror as a synthetic helper tool_call and acknowledgement (no LLM step)
+                    try:
+                        base = _m_base
+                        helper_name = f"{base}_{info.name}_{str(info.call_id)[-6:]}"
+                        if base in ("pause", "resume"):
+                            # Already skipped replay; do not synthesize mirrors either
+                            continue
+                        # Build assistant message with a single tool_call
+                        call_id = f"mirror_{int(time.perf_counter()*1000)}"
+                        args_json = {}
+                        if base == "interject":
+                            msg = (kwargs or {}).get("message") or (kwargs or {}).get(
+                                "content",
+                            )
+                            if msg is not None:
+                                args_json["content"] = msg
+                        elif base == "ask":
+                            q = (kwargs or {}).get("question")
+                            if q is not None:
+                                args_json["question"] = q
+                        elif base == "stop":
+                            if "reason" in (kwargs or {}):
+                                args_json["reason"] = kwargs.get("reason")
+                        elif base == "clarify":
+                            if "answer" in (kwargs or {}):
+                                args_json["answer"] = kwargs.get("answer")
+                        asst_msg = {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": helper_name,
+                                        "arguments": json.dumps(args_json or {}),
+                                    },
+                                },
+                            ],
+                        }
+                        await msg_dispatcher.append_msgs([asst_msg])
+                        # Ensure assistant_meta bookkeeping before inserting ack
+                        assistant_meta[id(asst_msg)] = {"results_count": 0}
+                        from .messages import acknowledge_helper_call  # local import
+
+                        await acknowledge_helper_call(
+                            asst_msg,
+                            call_id,
+                            helper_name,
+                            json.dumps(args_json or {}),
+                            assistant_meta=assistant_meta,
+                            client=self._client,
+                            msg_dispatcher=msg_dispatcher,
+                        )
+                    except Exception:
+                        pass
                 try:
                     if not getattr(_outer, "_pause_event", None).is_set() and hasattr(
                         child_handle,

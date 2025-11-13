@@ -24,6 +24,7 @@ from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.messages import is_non_final_tool_reply as _is_non_final_tool_reply
 from ._async_tool.loop import async_tool_loop_inner
+from typing import Iterable
 
 # inline-tools support removed in simplified manager-only snapshots
 from .loop_snapshot import (
@@ -351,23 +352,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
     # ── internal: passthrough forwarding/buffering helpers ──────────────────
     def _iter_passthrough_handles(self):
-        task_info = {}
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-        if not isinstance(task_info, dict):
-            return []
-        out = []
-        for _t, _inf in task_info.items():
-            h = getattr(_inf, "handle", None)
-            is_pt = getattr(_inf, "is_passthrough", False)
-            if h is not None and is_pt:
-                out.append(h)
-        return out
+        return []
 
     def _has_scheduled_tools(self) -> bool:
-        with suppress(Exception):
-            ti = getattr(self._task, "task_info", {})
-            return isinstance(ti, dict) and len(ti) > 0
         return False
 
     async def _forward_call_to_handle(
@@ -393,35 +380,41 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         args: tuple | list | None = None,
         kwargs: dict | None = None,
         fallback: tuple[str, ...] = (),
+        had_passthrough: bool | None = None,
+        forwarded_to: list[str] | tuple[str, ...] | None = None,
     ) -> None:
-        # Check current passthrough handles first so we can record this fact.
-        handles = self._iter_passthrough_handles()
         # Record the steering event with a timestamp for later replay at adoption time.
         try:
             from time import perf_counter as _pc  # local import to avoid top pollution
         except Exception:  # pragma: no cover
             _pc = lambda: 0.0  # type: ignore
+        # Snapshot which call_ids are already scheduled at the moment of recording.
+        # This provides a robust lower bound for adoption-time replay without relying
+        # on fragile cross-task timing windows.
+        try:
+            _ti = getattr(self._task, "task_info", {}) or {}
+            _scheduled_ids = []
+            for _t, _inf in _ti.items():
+                try:
+                    _scheduled_ids.append(str(getattr(_inf, "call_id", "")))
+                except Exception:
+                    continue
+        except Exception:
+            _scheduled_ids = []
         rec = {
             "t": _pc(),
             "method": str(method_name or ""),
             "args": tuple(args or ()),
             "kwargs": dict(kwargs or {}),
             "fallback": tuple(fallback or ()),
-            "had_passthrough": bool(handles),
+            "had_passthrough": bool(had_passthrough),
+            "forwarded_to": list(forwarded_to or []),
+            "scheduled_call_ids": _scheduled_ids,
         }
         try:
             self._steer_log.append(rec)
         except Exception:
             pass
-        # Forward immediately to any active passthrough handles (multicast).
-        if handles:
-            for h in handles:
-                await self._forward_call_to_handle(
-                    h,
-                    method_name,
-                    rec["kwargs"],
-                    rec["fallback"],
-                )
 
     async def ask(
         self,
@@ -450,7 +443,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record the user-visible question immediately (even if delegated)
         self._append_user_visible_user(question, parent_chat_context_cont)
 
-        # Unified steering: record and forward ask to any active passthrough handle(s)
+        # Centralized steering: record steer event; functional forwarding happens via mirror path
         await self._record_and_forward(
             "ask",
             kwargs={
@@ -458,6 +451,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
             },
+            had_passthrough=False,
+            forwarded_to=[],
         )
 
         # 0.  Defensive guard: if the outer loop has already finished we can
@@ -635,6 +630,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 return ans
 
             helper_handle.result = _rec_result  # type: ignore[attr-defined]
+            # Mirror as synthetic helper tool_call (no LLM step)
+            try:
+                await self._queue.put(
+                    {
+                        "_mirror": {
+                            "method": "ask",
+                            "kwargs": {"question": question, "images": images},
+                        },
+                    },
+                )
+            except Exception:
+                pass
             return helper_handle
 
         async def _wrap():
@@ -643,6 +650,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             return answer, inspection_client.messages
 
         helper_handle.result = _wrap  # type: ignore[attr-defined]
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            await self._queue.put(
+                {
+                    "_mirror": {
+                        "method": "ask",
+                        "kwargs": {"question": question, "images": images},
+                    },
+                },
+            )
+        except Exception:
+            pass
         return helper_handle
 
     # -- public API -----------------------------------------------------------
@@ -653,34 +672,50 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         *,
         parent_chat_context_cont: list[dict] | None = None,
         images: list | None = None,
+        trigger_immediate_llm_turn: bool = True,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
-        # No delegate forwarding – outer loop remains in control.
         # Record user-visible immediately
         self._append_user_visible_user(message, parent_chat_context_cont)
-        # Unified steering: record and forward to any active passthrough handle(s)
+
+        # Centralized steering: record steer event; functional forwarding happens via mirror path
         await self._record_and_forward(
             "interject",
             kwargs={
                 "message": message,
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
+                "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
             },
             fallback=("content", "message"),
+            had_passthrough=False,
+            forwarded_to=[],
         )
 
         # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
-        payload = (
-            {
-                "message": message,
-                "parent_chat_context_continuted": parent_chat_context_cont,
-                "images": images,
-            }
-            if parent_chat_context_cont is not None or images is not None
-            else message
-        )
+        payload = {
+            "message": message,
+            "parent_chat_context_continuted": parent_chat_context_cont,
+            "images": images,
+            "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
+        }
         await self._queue.put(payload)
+        # Also mirror as synthetic helper tool_calls immediately (no LLM step)
+        try:
+            await self._queue.put(
+                {
+                    "_mirror": {
+                        "method": "interject",
+                        "kwargs": {
+                            "message": message,
+                            "images": images,
+                        },
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     @functools.wraps(SteerableToolHandle.stop, updated=())
     def stop(
@@ -703,53 +738,109 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 f"🛑 [{_label}] Stop requested"
                 + (f" – reason: {reason}" if reason else ""),
             )
-        # Do not directly forward stop to nested handles here; the inner loop
-        # will propagate stop exactly once during cancellation to avoid duplicates.
-        # No delegate forwarding – outer loop remains in control.
-
-        # Pre-adoption nested handles are stopped by the inner loop via propagate_stop_once.
 
         # Expedite shutdown of the outer task and signal stop_event for any waiters
         with suppress(Exception):
             self._task.cancel()
         with suppress(Exception):
             self._stop_event.set()
+        # Record steer event (best-effort). Functional forwarding happens via mirror path.
+        try:
+            asyncio.create_task(
+                self._record_and_forward(
+                    "stop",
+                    kwargs={"reason": reason},
+                    had_passthrough=False,
+                    forwarded_to=[],
+                ),
+            )
+        except Exception:
+            pass
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            self._queue.put_nowait(
+                {
+                    "_mirror": {
+                        "method": "stop",
+                        "kwargs": {"reason": reason},
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
     def pause(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
-        # Propagate pause to any nested handles first (always)
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-            items = task_info.items() if isinstance(task_info, dict) else []
-            for _t, _inf in items:
-                h = getattr(_inf, "handle", None)
-                if h is not None and hasattr(h, "pause"):
-                    with suppress(Exception):
-                        maybe = h.pause()  # may be sync or async
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
 
         self._pause_event.clear()
+        # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
+        try:
+            asyncio.create_task(
+                self._record_and_forward(
+                    "pause",
+                    kwargs={},
+                    had_passthrough=False,
+                    forwarded_to=[],
+                ),
+            )
+        except Exception:
+            pass
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            self._queue.put_nowait(
+                {
+                    "_mirror": {
+                        "method": "pause",
+                        "kwargs": {},
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
     def resume(self) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
-        # Propagate resume to any nested handles first (always)
+        # Auto-resume base tools that were started in paused state while the outer loop was paused
         with suppress(Exception):
             task_info = getattr(self._task, "task_info", {})
             items = task_info.items() if isinstance(task_info, dict) else []
             for _t, _inf in items:
                 h = getattr(_inf, "handle", None)
-                if h is not None and hasattr(h, "resume"):
-                    with suppress(Exception):
-                        maybe = h.resume()  # may be sync or async
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
+                if h is None:
+                    ev = getattr(_inf, "pause_event", None)
+                    if ev is not None and hasattr(ev, "set"):
+                        with suppress(Exception):
+                            ev.set()
 
         self._pause_event.set()
+        # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
+        try:
+            asyncio.create_task(
+                self._record_and_forward(
+                    "resume",
+                    kwargs={},
+                    had_passthrough=False,
+                    forwarded_to=[],
+                ),
+            )
+        except Exception:
+            pass
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            self._queue.put_nowait(
+                {
+                    "_mirror": {
+                        "method": "resume",
+                        "kwargs": {},
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     @functools.wraps(SteerableToolHandle.done, updated=())
     def done(self) -> bool:
@@ -801,27 +892,27 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         This looks up the down-queue for the given call and pushes the answer.
         Falls through silently if the mapping is missing (tool may have finished).
         """
-        task_info, clar_map = {}, {}
-        with suppress(Exception):
-            task_info = getattr(self._task, "task_info", {})
-            clar_map = getattr(self._task, "clarification_channels", {})
-
-        # Direct lookup by full ID; if not present, try suffix matching
-        down_q = None
+        # Centralized steering: record steer event; functional forwarding happens via mirror path.
         try:
-            if call_id in clar_map:
-                down_q = clar_map[call_id][1]
-            else:
-                for k, (_up, _down) in list(clar_map.items()):
-                    if str(k).endswith(str(call_id)):
-                        down_q = _down
-                        break
+            await self._record_and_forward(
+                "clarify",
+                kwargs={"call_id": call_id, "answer": answer},
+                had_passthrough=False,
+            )
         except Exception:
-            down_q = None
-
-        with suppress(Exception):
-            if down_q is not None:
-                await down_q.put(answer)
+            pass
+        # Mirror as synthetic helper tool_call (no LLM step)
+        try:
+            await self._queue.put(
+                {
+                    "_mirror": {
+                        "method": "clarify",
+                        "kwargs": {"call_id": call_id, "answer": answer},
+                    },
+                },
+            )
+        except Exception:
+            pass
 
     # --- targeted nested steerability (programmatic, no LLM) -----------------
     async def nested_steer(self, spec: dict) -> dict:
@@ -2638,6 +2729,14 @@ def start_async_tool_loop(
 
     task = asyncio.create_task(_loop_wrapper(), name="ToolUseLoop")
 
+    # Make introspection surfaces available immediately on the wrapper task.
+    # The inner loop rebinding will point these to the live dicts once running.
+    try:  # pragma: no cover
+        setattr(task, "task_info", {})  # asyncio.Task -> ToolCallMetadata
+        setattr(task, "clarification_channels", {})  # call_id -> (up_q, down_q)
+    except Exception:
+        pass
+
     # Determine initial_user_message for the handle from diverse input forms
     init_content = None
     if isinstance(message, dict):
@@ -2737,3 +2836,115 @@ def start_async_tool_loop(
     outer_handle_container[0] = handle
 
     return handle
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom steering decorator
+# ─────────────────────────────────────────────────────────────────────────────
+def custom_steering_method(
+    *,
+    aliases: Iterable[str] | None = None,
+    fallback: Iterable[str] | None = None,
+):
+    """
+    Decorator for custom public steering methods defined on classes derived from
+    AsyncToolLoopHandle.
+
+    Behaviour
+    ---------
+    - Executes the original method.
+    - Records the steering event into the handle's steer log so adoption can replay.
+    - Enqueues a mirror sentinel that the inner loop consumes to:
+        • synthesize helper tool_calls/acks, and
+        • forward the call to all in‑flight passthrough children that implement it.
+    - The mirror payload carries control keys ("_custom", "_aliases", "_fallback")
+      used only by the inner loop; these are NOT forwarded to child handles.
+
+    Parameters
+    ----------
+    aliases : Iterable[str] | None
+        Optional alternative method names to try on children during forwarding.
+    fallback : Iterable[str] | None
+        Optional ordered list of argument keys to use as positional fallbacks
+        when a child's method signature does not accept kwargs (passed to
+        forward_handle_call as fallback_positional_keys).
+    """
+
+    def _decorator(fn):
+        is_async = asyncio.iscoroutinefunction(fn)
+        alias_list = list(aliases or [])
+        fb_list = list(fallback or [])
+
+        async def _post_call(self: "AsyncToolLoopHandle", args, kwargs, result):
+            # Record without control keys
+            await self._record_and_forward(
+                fn.__name__,
+                args=list(args or ()),
+                kwargs=dict(kwargs or {}),
+                fallback=tuple(fb_list),
+                had_passthrough=False,
+                forwarded_to=[],
+            )
+            # Mirror to the inner loop with control keys for routing/dispatch
+            try:
+                await self._queue.put(
+                    {
+                        "_mirror": {
+                            "method": fn.__name__,
+                            "kwargs": dict(kwargs or {}),
+                            "_custom": True,
+                            "_aliases": list(alias_list),
+                            "_fallback": list(fb_list),
+                        },
+                    },
+                )
+            except Exception:
+                pass
+            return result
+
+        if is_async:
+
+            @functools.wraps(fn, updated=())
+            async def _async_wrapped(self: "AsyncToolLoopHandle", *a, **kw):
+                res = await fn(self, *a, **kw)
+                return await _post_call(self, a, kw, res)
+
+            return _async_wrapped
+
+        @functools.wraps(fn, updated=())
+        def _sync_wrapped(self: "AsyncToolLoopHandle", *a, **kw):
+            res = fn(self, *a, **kw)
+            # Fire-and-forget record (do not block caller)
+            try:
+                asyncio.create_task(
+                    self._record_and_forward(
+                        fn.__name__,
+                        args=list(a or ()),
+                        kwargs=dict(kw or {}),
+                        fallback=tuple(fb_list),
+                        had_passthrough=False,
+                        forwarded_to=[],
+                    ),
+                )
+            except Exception:
+                pass
+            # Mirror sentinel nowait
+            try:
+                self._queue.put_nowait(
+                    {
+                        "_mirror": {
+                            "method": fn.__name__,
+                            "kwargs": dict(kw or {}),
+                            "_custom": True,
+                            "_aliases": list(alias_list),
+                            "_fallback": list(fb_list),
+                        },
+                    },
+                )
+            except Exception:
+                pass
+            return res
+
+        return _sync_wrapped
+
+    return _decorator
