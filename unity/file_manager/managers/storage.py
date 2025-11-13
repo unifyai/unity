@@ -396,5 +396,9 @@ def tables_overview(
         out[ulabel]["Content"]["description"] = ""
     if table_ingest:
         leaf = _safe(file)
-        out[leaf] = {"Tables": _tables_map(tables_prefix, info.get("target_name"))}
+        # If leaf matches ulabel (file path matches unified label), merge Tables into existing entry
+        if leaf == ulabel:
+            out[ulabel]["Tables"] = _tables_map(tables_prefix, info.get("target_name"))
+        else:
+            out[leaf] = {"Tables": _tables_map(tables_prefix, info.get("target_name"))}
     return out

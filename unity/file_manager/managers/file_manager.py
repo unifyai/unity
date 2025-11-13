@@ -260,14 +260,13 @@ class FileManager(BaseFileManager):
             )
         except Exception:
             source_provider = getattr(self, "_fs_type", None) or "Unknown"
-        display_path = str(file_path)
 
         # Canonical URI
         source_uri = self._resolve_to_uri(file_path)
 
         # Prefer adapter's provider when available
         try:
-            ref = self._adapter_get(target_id_or_path=file_path)
+            ref = self._adapter_get(file_id_or_path=file_path)
             source_provider = str(ref.get("provider") or source_provider)
         except Exception:
             pass
@@ -435,7 +434,7 @@ class FileManager(BaseFileManager):
             pass
         # Adapter lookup
         try:
-            ref = self._adapter_get(target_id_or_path=s)
+            ref = self._adapter_get(file_id_or_path=s)
             uri = ref.get("uri")
             if isinstance(uri, str) and uri:
                 return uri
@@ -596,8 +595,8 @@ class FileManager(BaseFileManager):
         ref : str
             Accepted forms:
             - Logical names from `tables_overview()` (preferred):
-              "FileRecords" → index; "<root>" → per-file Content;
-              "<root>.Tables.<label>" → per-file table.
+              "FileRecords" → index; "<file_path>" → per-file Content;
+              "<file_path>.Tables.<label>" → per-file table.
             - Legacy forms (backward compatible):
               "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>".
 
@@ -688,13 +687,13 @@ class FileManager(BaseFileManager):
         except Exception:
             return []
 
-    def _adapter_get(self, *, target_id_or_path: str) -> Dict[str, Any]:
+    def _adapter_get(self, *, file_id_or_path: str) -> Dict[str, Any]:
         """
         Return adapter metadata for a file identified by id or path.
 
         Parameters
         ----------
-        target_id_or_path : str
+        file_id_or_path : str
             Adapter-native identifier or path for the file.
 
         Returns
@@ -704,16 +703,16 @@ class FileManager(BaseFileManager):
         """
         if self._adapter is None:
             raise NotImplementedError("No adapter configured for direct file lookups")
-        ref = self._adapter.get_file(target_id_or_path)
+        ref = self._adapter.get_file(file_id_or_path)
         return getattr(ref, "model_dump", lambda: ref.__dict__)()
 
-    def _adapter_open_bytes(self, *, target_id_or_path: str) -> Dict[str, Any]:
+    def _adapter_open_bytes(self, *, file_id_or_path: str) -> Dict[str, Any]:
         """
         Open raw file bytes via the adapter and return a safe payload.
 
         Parameters
         ----------
-        target_id_or_path : str
+        file_id_or_path : str
             Adapter-native identifier or path for the file.
 
         Returns
@@ -724,17 +723,17 @@ class FileManager(BaseFileManager):
         """
         if self._adapter is None:
             raise NotImplementedError("No adapter configured for opening file bytes")
-        data = self._adapter.open_bytes(target_id_or_path)
+        data = self._adapter.open_bytes(file_id_or_path)
         # Return as base64-ish payload for safety; caller can decide how to use
         try:
             import base64
 
             return {
-                "file_path": target_id_or_path,
+                "file_path": file_id_or_path,
                 "bytes_b64": base64.b64encode(data).decode("utf-8"),
             }
         except Exception:
-            return {"file_path": target_id_or_path, "length": len(data)}
+            return {"file_path": file_id_or_path, "length": len(data)}
 
     def _open_bytes_by_filename(self, filename: str) -> bytes:
         """
@@ -761,14 +760,21 @@ class FileManager(BaseFileManager):
         raise FileNotFoundError(f"Unable to resolve file bytes for '{filename}'")
 
     # ---------- Adapter-backed mutators (capability-guarded) --------------- #
-    def _rename_file(self, *, target_id_or_path: str, new_name: str) -> Dict[str, Any]:
+    def _rename_file(
+        self,
+        *,
+        file_id_or_path: Union[str, int],
+        new_name: str,
+    ) -> Dict[str, Any]:
         """
         Rename a file in the underlying filesystem and update index/context metadata.
 
         Parameters
         ----------
-        target_id_or_path : str
-            Adapter-native identifier or path for the file.
+        file_id_or_path : str | int
+            Either the file_id (int) as preserved in the FileRecords index, or the
+            fully-qualified file_path (str) as stored in the FileRecords index/context.
+            When a file_id is provided, it is resolved to the corresponding file_path.
         new_name : str
             New file name; adapter determines path semantics.
 
@@ -796,14 +802,14 @@ class FileManager(BaseFileManager):
 
         return _ops_rename(
             self,
-            target_id_or_path=str(target_id_or_path),
+            file_id_or_path=file_id_or_path,
             new_name=str(new_name),
         )
 
     def _move_file(
         self,
         *,
-        target_id_or_path: str,
+        file_id_or_path: Union[str, int],
         new_parent_path: str,
     ) -> Dict[str, Any]:
         """
@@ -811,8 +817,10 @@ class FileManager(BaseFileManager):
 
         Parameters
         ----------
-        target_id_or_path : str
-            Adapter-native identifier or path for the file.
+        file_id_or_path : str | int
+            Either the file_id (int) as preserved in the FileRecords index, or the
+            fully-qualified file_path (str) as stored in the FileRecords index/context.
+            When a file_id is provided, it is resolved to the corresponding file_path.
         new_parent_path : str
             Destination directory in adapter-native form.
 
@@ -838,14 +846,14 @@ class FileManager(BaseFileManager):
 
         return _ops_move(
             self,
-            target_id_or_path=str(target_id_or_path),
+            file_id_or_path=file_id_or_path,
             new_parent_path=str(new_parent_path),
         )
 
     def _delete_file(
         self,
         *,
-        file_id: int,
+        file_id_or_path: Union[str, int],
         _log_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
@@ -853,8 +861,10 @@ class FileManager(BaseFileManager):
 
         Parameters
         ----------
-        file_id : int
-            Unique file ID from the FileRecords index.
+        file_id_or_path : str | int
+            Either the file_id (int) as preserved in the FileRecords index, or the
+            fully-qualified file_path (str) as stored in the FileRecords index/context.
+            When a file_id is provided, it is resolved to the corresponding file_path.
         _log_id : int | None
             Optional existing log ID to delete (speeds up deletion).
 
@@ -873,15 +883,15 @@ class FileManager(BaseFileManager):
         Raises
         ------
         ValueError
-            If the file_id does not exist.
+            If the file_id_or_path does not exist.
         PermissionError
             If the file is protected.
         RuntimeError
-            If multiple rows exist for the same file_id (integrity issue).
+            If multiple rows exist for the same file_id_or_path (integrity issue).
         """
         from .ops import delete_file as _ops_delete
 
-        return _ops_delete(self, file_id=file_id, _log_id=_log_id)
+        return _ops_delete(self, file_id_or_path=file_id_or_path, _log_id=_log_id)
 
     # ---------- Unify-backed retrieval + BaseFileManager API --------------- #
     def exists(self, filename: str) -> bool:  # type: ignore[override]
@@ -1469,6 +1479,10 @@ class FileManager(BaseFileManager):
     ) -> None:
         """
         Ingest and embed along (chunk-by-chunk) for a single file until fully processed.
+
+        Ingestion happens sequentially (chunk N+1 starts only after chunk N finishes),
+        but embedding jobs run asynchronously without blocking subsequent ingestion.
+        All embedding jobs are tracked and awaited at the end.
         """
         # 1) Index the file record (best-effort)
         if bool(
@@ -1495,9 +1509,8 @@ class FileManager(BaseFileManager):
             else (config.ingest.unified_label or "Unified")
         )
 
-        # 2) Ingest content rows in chunks, embedding after each chunk
-        from .ops import iter_ingest_content_rows as _ops_iter_ingest_content_rows
-        from .ops import embed_content_chunk_for_ids as _ops_embed_content_chunk_for_ids
+        # 2) Ingest content rows in chunks, embedding asynchronously
+        from .ops import embed_content_chunks_async as _ops_embed_content_chunks_async
 
         batch_size = int(
             getattr(getattr(config, "ingest", None), "content_rows_batch_size", 1000),
@@ -1512,129 +1525,41 @@ class FileManager(BaseFileManager):
             for sp in (config.embed.specs or [])
             if getattr(sp, "context", None) == content_spec_context
         ]
-
-        total_records = int(
-            (result or {}).get("total_records")
-            or len(list(result.get("records", []) or [])),
+        enable_progress = bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
         )
-        processed_records = 0
-        chunk_index = 0
-        for inserted_ids in _ops_iter_ingest_content_rows(
+
+        _ops_embed_content_chunks_async(
             self,
             file_path=file_path,
             records=list(result.get("records", []) or []),
+            target_ctx_name=target_ctx_name,
+            content_specs=content_specs,
+            result=result,
+            document=document,
             config=config,
             batch_size=batch_size,
-            replace_existing=bool(
-                getattr(getattr(config, "ingest", None), "replace_existing", True),
-            ),
-        ):
-            if not inserted_ids:
-                continue
-            chunk_index += 1
-            processed_records += len(inserted_ids)
-            if bool(
-                getattr(getattr(config, "diagnostics", None), "enable_progress", False),
-            ):
-                print(
-                    f"[Along] Content chunk {chunk_index}: inserted={len(inserted_ids)} processed={processed_records}/{total_records}",
-                )
-            # Pre-embed hooks (per chunk when enabled)
-            if bool(getattr(getattr(config, "embed", None), "hooks_per_chunk", True)):
-                try:
-                    for fn in _resolve_callables(config.plugins.pre_embed):
-                        try:
-                            fn(
-                                manager=self,
-                                filename=file_path,
-                                result=result,
-                                document=document,
-                                config=config,
-                            )
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
+            enable_progress=enable_progress,
+        )
 
-            # Embed the chunk (scoped to inserted ids)
-            try:
-                _ops_embed_content_chunk_for_ids(
-                    target_ctx_name,
-                    content_specs,
-                    inserted_ids,
-                    enable_progress=bool(
-                        getattr(
-                            getattr(config, "diagnostics", None),
-                            "enable_progress",
-                            False,
-                        ),
-                    ),
-                )
-                if bool(
-                    getattr(
-                        getattr(config, "diagnostics", None),
-                        "enable_progress",
-                        False,
-                    ),
-                ):
-                    print(
-                        f"[Along] Embedded content chunk {chunk_index} (ids={len(inserted_ids)})",
-                    )
-            except Exception:
-                pass
-
-            # Post-embed hooks (per chunk when enabled)
-            if bool(getattr(getattr(config, "embed", None), "hooks_per_chunk", True)):
-                try:
-                    for fn in _resolve_callables(config.plugins.post_embed):
-                        try:
-                            fn(
-                                manager=self,
-                                filename=file_path,
-                                result=result,
-                                document=document,
-                                config=config,
-                            )
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
-
-        # 3) Ingest per-file tables in chunks (when enabled), embedding per batch
+        # 3) Ingest per-file tables in chunks (when enabled), embedding asynchronously
         if bool(getattr(getattr(config, "ingest", None), "table_ingest", True)):
-            from .ops import (
-                iter_ingest_tables_for_document as _ops_iter_ingest_tables_for_document,
-            )
-            from .ops import embed_table_chunk_for_ids as _ops_embed_table_chunk_for_ids
+            from .ops import embed_table_chunks_async as _ops_embed_table_chunks_async
 
             table_specs = [
                 sp
                 for sp in (config.embed.specs or [])
                 if getattr(sp, "context", None) == "per_file_table"
             ]
-            # Derive per-table total row counts for progress reporting
-            table_row_totals: Dict[str, int] = {}
-            try:
-                tables = (
-                    getattr(getattr(document, "metadata", None), "tables", []) or []
-                )
-                for t in tables:
-                    rows = getattr(t, "rows", None) or []
-                    # Account for header row removal when columns are inferred
-                    table_row_totals[
-                        str(
-                            getattr(t, "sheet_name", "")
-                            or getattr(t, "section_path", "")
-                            or "",
-                        )
-                    ] = max(0, len(rows))
-            except Exception:
-                table_row_totals = {}
-            table_progress: Dict[str, int] = {}
-            for table_ctx, inserted_ids in _ops_iter_ingest_tables_for_document(
+
+            _ops_embed_table_chunks_async(
                 self,
                 file_path=dest_name,
                 document=document,
+                target_ctx_name=target_ctx_name,
+                table_specs=table_specs,
+                result=result,
+                config=config,
                 table_rows_batch_size=int(
                     getattr(
                         getattr(config, "ingest", None),
@@ -1642,78 +1567,9 @@ class FileManager(BaseFileManager):
                         100,
                     ),
                 ),
-            ):
-                # Hooks per chunk when enabled
-                if bool(
-                    getattr(getattr(config, "embed", None), "hooks_per_chunk", True),
-                ):
-                    try:
-                        for fn in _resolve_callables(config.plugins.pre_embed):
-                            try:
-                                fn(
-                                    manager=self,
-                                    filename=file_path,
-                                    result=result,
-                                    document=document,
-                                    config=config,
-                                )
-                            except Exception:
-                                continue
-                    except Exception:
-                        pass
-                if bool(
-                    getattr(
-                        getattr(config, "diagnostics", None),
-                        "enable_progress",
-                        False,
-                    ),
-                ):
-                    label = table_ctx.split("/Tables/", 1)[-1]
-                    table_progress[label] = table_progress.get(label, 0) + len(
-                        inserted_ids or [],
-                    )
-                    tot = table_row_totals.get(label, 0)
-                    if tot > 0:
-                        print(
-                            f"[Along] Table '{label}' chunk: inserted={len(inserted_ids or [])} processed={table_progress[label]}/{tot}",
-                        )
-                    else:
-                        print(
-                            f"[Along] Table '{label}' chunk: inserted={len(inserted_ids or [])}",
-                        )
-                try:
-                    _ops_embed_table_chunk_for_ids(
-                        self,
-                        table_ctx=table_ctx,
-                        specs=table_specs,
-                        inserted_ids=inserted_ids,
-                        enable_progress=bool(
-                            getattr(
-                                getattr(config, "diagnostics", None),
-                                "enable_progress",
-                                False,
-                            ),
-                        ),
-                    )
-                except Exception:
-                    pass
-                if bool(
-                    getattr(getattr(config, "embed", None), "hooks_per_chunk", True),
-                ):
-                    try:
-                        for fn in _resolve_callables(config.plugins.post_embed):
-                            try:
-                                fn(
-                                    manager=self,
-                                    filename=file_path,
-                                    result=result,
-                                    document=document,
-                                    config=config,
-                                )
-                            except Exception:
-                                continue
-                    except Exception:
-                        pass
+                enable_progress=enable_progress,
+            )
+
         if bool(
             getattr(getattr(config, "diagnostics", None), "enable_progress", False),
         ):
@@ -2132,13 +1988,29 @@ class FileManager(BaseFileManager):
                         "file_format": result.get("file_format"),
                     }
                 else:  # compact
-                    yield _build_compact_parse_model(
+                    _model = _build_compact_parse_model(
                         self,
                         file_path=original_path,
                         document=document,
                         result=result,
                         config=cfg,
                     )
+                    # Ensure a stable dict payload with file_path for async tests/consumers
+                    if isinstance(_model, dict):
+                        _out = dict(_model)
+                        _out.setdefault("file_path", original_path)
+                        yield _out
+                    else:
+                        try:
+                            _as_dict = getattr(
+                                _model,
+                                "model_dump",
+                                lambda: dict(_model),
+                            )()
+                        except Exception:
+                            _as_dict = {"value": _model}
+                        _as_dict.setdefault("file_path", original_path)
+                        yield _as_dict
 
             # finally, yield any buffered export errors (if any)
             for err in export_errors:
@@ -2233,8 +2105,8 @@ class FileManager(BaseFileManager):
             When True, return a mapping of column → type; otherwise return the
             list of column names only.
         table : str | None, default None
-            When provided, resolve the logical name (e.g., "<root>",
-            "<root>.Tables.<label>") or legacy ref and return that context's
+            When provided, resolve the logical name (e.g., "<file_path>",
+            "<file_path>.Tables.<label>") or legacy ref and return that context's
             columns. When None, return the FileRecords index columns.
 
         Returns
@@ -2280,7 +2152,12 @@ class FileManager(BaseFileManager):
         limit : int
             Maximum rows per context (<= 1000).
         tables : list[str] | str | None
-            Logical names from `tables_overview()` (preferred) or legacy refs.
+            Table references to filter. Accepted forms:
+            - Path-first (preferred): "<file_path>" for per-file Content,
+              "<file_path>.Tables.<label>" for per-file tables
+            - Logical names from `tables_overview()`: "FileRecords" for index,
+              or legacy refs like "<root>" (deprecated)
+            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
             When None, only the FileRecords index is scanned.
 
         Returns
@@ -2322,9 +2199,12 @@ class FileManager(BaseFileManager):
             Number of results to return (1..1000).
 
         table : str | None
-            Logical table name or legacy ref to target the search context. When None,
-            defaults to the global FileRecords index. Logical forms match
-            tables_overview(), e.g. "FileRecords", "<root>", "<root>.Tables.<label>".
+            Table reference to search. Accepted forms:
+            - Path-first (preferred): "<file_path>" for per-file Content,
+              "<file_path>.Tables.<label>" for per-file tables
+            - Logical names: "FileRecords" for index, or legacy refs like "<root>" (deprecated)
+            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+            When None, defaults to the global FileRecords index.
 
         filter : str | None
             Row-level predicate (evaluated with column names as variables).
@@ -2365,7 +2245,11 @@ class FileManager(BaseFileManager):
         Parameters
         ----------
         tables : list[str] | str
-            Exactly two logical names or legacy refs.
+            Exactly two table references. Accepted forms:
+            - Path-first (preferred): "<file_path>" for per-file Content,
+              "<file_path>.Tables.<label>" for per-file tables
+            - Logical names from `tables_overview()` or legacy refs
+            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
         join_expr : str
             Join predicate using the same identifiers as in ``tables`` (auto-rewritten).
         select : dict[str, str]
@@ -2414,7 +2298,22 @@ class FileManager(BaseFileManager):
         """
         Perform a semantic search over the result of joining two sources.
 
-        Parameters mirror _filter_join with the addition of:
+        Parameters
+        ----------
+        tables : list[str] | str
+            Exactly two table references. Accepted forms:
+            - Path-first (preferred): "<file_path>" for per-file Content,
+              "<file_path>.Tables.<label>" for per-file tables
+            - Logical names from `tables_overview()` or legacy refs
+            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        join_expr : str
+            Join predicate using the same identifiers as in ``tables`` (auto-rewritten).
+        select : dict[str, str]
+            Mapping of source expressions → output names.
+        mode : str
+            One of {"inner", "left", "right", "outer"}.
+        left_where, right_where : str | None
+            Optional input predicates before joining.
         references : dict[str, str] | None
             Mapping of expressions in the join result → reference text for semantic ranking.
         k : int
@@ -2457,6 +2356,12 @@ class FileManager(BaseFileManager):
         joins : list[dict]
             Ordered steps; each step provides ``tables`` (two refs or "$prev"),
             ``join_expr``, ``select`` and optional ``mode``, ``left_where``, ``right_where``.
+            Table references in ``tables`` accept:
+            - Path-first (preferred): "<file_path>" for per-file Content,
+              "<file_path>.Tables.<label>" for per-file tables
+            - Logical names from `tables_overview()` or legacy refs
+            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+            - "$prev" to reference the previous join step's result
         result_where : str | None
             Predicate applied to the final joined result over projected columns.
         result_limit, result_offset : int
@@ -2487,7 +2392,17 @@ class FileManager(BaseFileManager):
         """
         Perform a semantic search over a chain of joined results.
 
-        Parameters mirror _filter_multi_join with the addition of:
+        Parameters
+        ----------
+        joins : list[dict]
+            Ordered steps; each step provides ``tables`` (two refs or "$prev"),
+            ``join_expr``, ``select`` and optional ``mode``, ``left_where``, ``right_where``.
+            Table references in ``tables`` accept:
+            - Path-first (preferred): "<file_path>" for per-file Content,
+              "<file_path>.Tables.<label>" for per-file tables
+            - Logical names from `tables_overview()` or legacy refs
+            - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+            - "$prev" to reference the previous join step's result
         references : dict[str, str] | None
             Mapping of expressions in the final result → reference text for ranking.
         k : int
@@ -2513,12 +2428,11 @@ class FileManager(BaseFileManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require search_files on the first step; auto thereafter."""
-        if step_index < 1 and "search_files" in current_tools:
-            return (
-                "required",
-                {"search_files": current_tools["search_files"]},
-            )
+        """
+        Prefer path-first targeting; avoid forcing broad discovery.
+        - If the user supplied an explicit path, allow immediate use of read-only tools.
+        - Do not require a first-step semantic search; keep the toolset on auto.
+        """
         return ("auto", current_tools)
 
     @staticmethod

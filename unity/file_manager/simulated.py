@@ -6,7 +6,7 @@ import json
 import os
 import functools
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 import unify
 from .base import BaseFileManager, BaseGlobalFileManager
@@ -781,15 +781,33 @@ class SimulatedFileManager(BaseFileManager):
 
         return files
 
-    def _rename_file(self, *, target_id_or_path: str, new_name: str) -> Dict[str, Any]:
+    def _rename_file(
+        self,
+        *,
+        file_id_or_path: Union[str, int],
+        new_name: str,
+    ) -> Dict[str, Any]:
         """Simulate renaming a file."""
-        # Ensure string type and strip leading slashes (mirror FileManager behavior)
-        target_id_or_path = str(target_id_or_path).lstrip("/")
+        # Resolve file_id_or_path to filename
+        if isinstance(file_id_or_path, int):
+            # Find file by ID
+            filename = None
+            for fname, fdata in self._files.items():
+                if fdata.get("file_id", 0) == file_id_or_path:
+                    filename = fname
+                    break
+            if filename is None:
+                raise FileNotFoundError(
+                    f"File with file_id {file_id_or_path} not found.",
+                )
+        else:
+            filename = str(file_id_or_path).lstrip("/")
+
         new_name = str(new_name)
 
-        if target_id_or_path not in self._files:
-            raise FileNotFoundError(f"File '{target_id_or_path}' not found.")
-        file_data = self._files.pop(target_id_or_path)
+        if filename not in self._files:
+            raise FileNotFoundError(f"File '{filename}' not found.")
+        file_data = self._files.pop(filename)
         file_data["filename"] = new_name
         self._files[new_name] = file_data
         return {"path": new_name, "name": new_name}
@@ -797,23 +815,32 @@ class SimulatedFileManager(BaseFileManager):
     def _move_file(
         self,
         *,
-        target_id_or_path: str,
+        file_id_or_path: Union[str, int],
         new_parent_path: str,
     ) -> Dict[str, Any]:
         """Simulate moving a file."""
-        # Ensure string type and strip leading slashes (mirror FileManager behavior)
-        target_id_or_path = str(target_id_or_path).lstrip("/")
+        # Resolve file_id_or_path to filename
+        if isinstance(file_id_or_path, int):
+            # Find file by ID
+            filename = None
+            for fname, fdata in self._files.items():
+                if fdata.get("file_id", 0) == file_id_or_path:
+                    filename = fname
+                    break
+            if filename is None:
+                raise FileNotFoundError(
+                    f"File with file_id {file_id_or_path} not found.",
+                )
+        else:
+            filename = str(file_id_or_path).lstrip("/")
+
         new_parent_path = str(new_parent_path).lstrip("/")
 
-        if target_id_or_path not in self._files:
-            raise FileNotFoundError(f"File '{target_id_or_path}' not found.")
+        if filename not in self._files:
+            raise FileNotFoundError(f"File '{filename}' not found.")
         # In simulation, path is just the filename. Moving is like renaming with a path prefix.
-        new_path = (
-            f"{new_parent_path}/{target_id_or_path}"
-            if new_parent_path
-            else target_id_or_path
-        )
-        file_data = self._files.pop(target_id_or_path)
+        new_path = f"{new_parent_path}/{filename}" if new_parent_path else filename
+        file_data = self._files.pop(filename)
         file_data["filename"] = new_path
         self._files[new_path] = file_data
         return {"path": new_path, "parent": new_parent_path}
@@ -885,22 +912,38 @@ class SimulatedFileManager(BaseFileManager):
         """Clear all simulated files."""
         self._files.clear()
 
-    def _delete_file(self, *, file_id: int) -> Dict[str, Any]:
+    def _delete_file(self, *, file_id_or_path: Union[str, int]) -> Dict[str, Any]:
         """Simulate deleting a file record."""
-        # Find file by ID (simplified simulation)
-        for filename, file_data in list(self._files.items()):
-            if file_data.get("file_id", 0) == file_id:
-                if filename in self._protected:
-                    raise PermissionError(
-                        f"'{filename}' is protected and cannot be deleted by FileManager.",
-                    )
-                del self._files[filename]
-                return {
-                    "outcome": "file deleted",
-                    "details": {"file_id": file_id, "filename": filename},
-                }
+        # Resolve file_id_or_path to filename
+        if isinstance(file_id_or_path, int):
+            # Find file by ID
+            filename = None
+            for fname, fdata in list(self._files.items()):
+                if fdata.get("file_id", 0) == file_id_or_path:
+                    filename = fname
+                    break
+            if filename is None:
+                raise ValueError(
+                    f"No file found with file_id {file_id_or_path} to delete.",
+                )
+        else:
+            filename = str(file_id_or_path).lstrip("/")
+            if filename not in self._files:
+                raise ValueError(
+                    f"No file found with file_path '{file_id_or_path}' to delete.",
+                )
 
-        raise ValueError(f"No file found with file_id {file_id} to delete.")
+        if filename in self._protected:
+            raise PermissionError(
+                f"'{filename}' is protected and cannot be deleted by FileManager.",
+            )
+        file_data = self._files[filename]
+        file_id = file_data.get("file_id", 0)
+        del self._files[filename]
+        return {
+            "outcome": "file deleted",
+            "details": {"file_id": file_id, "file_path": filename},
+        }
 
     @functools.wraps(BaseFileManager.clear, updated=())
     def clear(self) -> None:  # type: ignore[override]

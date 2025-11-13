@@ -248,14 +248,21 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _rename_file(self, *, target_id_or_path: str, new_name: str) -> Dict[str, Any]:
+    def _rename_file(
+        self,
+        *,
+        file_id_or_path: Union[str, int],
+        new_name: str,
+    ) -> Dict[str, Any]:
         """
         Rename a file in the underlying filesystem.
 
         Parameters
         ----------
-        target_id_or_path : str
-            Adapter-native identifier or path for the file.
+        file_id_or_path : str | int
+            Either the file_id (int) as preserved in the FileRecords index, or the
+            fully-qualified file_path (str) as stored in the FileRecords index/context.
+            When a file_id is provided, it is resolved to the corresponding file_path.
         new_name : str
             New file name; adapter determines full path semantics.
 
@@ -269,7 +276,7 @@ class BaseFileManager(BaseStateManager):
     def _move_file(
         self,
         *,
-        target_id_or_path: str,
+        file_id_or_path: Union[str, int],
         new_parent_path: str,
     ) -> Dict[str, Any]:
         """
@@ -277,8 +284,10 @@ class BaseFileManager(BaseStateManager):
 
         Parameters
         ----------
-        target_id_or_path : str
-            Adapter-native identifier or path for the file.
+        file_id_or_path : str | int
+            Either the file_id (int) as preserved in the FileRecords index, or the
+            fully-qualified file_path (str) as stored in the FileRecords index/context.
+            When a file_id is provided, it is resolved to the corresponding file_path.
         new_parent_path : str
             Destination directory path in adapter-native form.
 
@@ -289,15 +298,17 @@ class BaseFileManager(BaseStateManager):
         """
 
     @abstractmethod
-    def _delete_file(self, *, file_id: int) -> Dict[str, Any]:
+    def _delete_file(self, *, file_id_or_path: Union[str, int]) -> Dict[str, Any]:
         """
         Delete a file record from the Unify table and, if supported by the adapter,
         from the underlying filesystem.
 
         Parameters
         ----------
-        file_id : int
-            Unique file ID from the Unify table.
+        file_id_or_path : str | int
+            Either the file_id (int) as preserved in the FileRecords index, or the
+            fully-qualified file_path (str) as stored in the FileRecords index/context.
+            When a file_id is provided, it is resolved to the corresponding file_path.
 
         Returns
         -------
@@ -307,7 +318,7 @@ class BaseFileManager(BaseStateManager):
         Raises
         ------
         ValueError
-            If no file with the given file_id exists.
+            If no file with the given file_id_or_path exists.
         PermissionError
             If the file is protected or the adapter doesn't support deletion.
         """

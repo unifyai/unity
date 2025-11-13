@@ -50,16 +50,16 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             "------------------",
             # Context discovery
             f"• Always call `{tables_overview_fname}()` for a global map, or `{tables_overview_fname}(file=...)` for a file-scoped view (ingest-aware).",
-            "• Use logical names from the overview: `<root>` for per-file Content, `<root>.Tables.<label>` for per-file tables.",
-            f"• Introspect schemas via `{list_columns_fname}(table='<root>')` and `{list_columns_fname}(table='<root>.Tables.<label>')`.",
+            "• Prefer path‑first references: use `<file_path>` for per‑file Content and `<file_path>.Tables.<label>` for per‑file tables.",
+            f"• Introspect schemas via `{list_columns_fname}(table='<file_path>')` and `{list_columns_fname}(table='<file_path>.Tables.<label>')`.",
             f"• Return only column names (no types): `{list_columns_fname}(include_types=False)`.",
             "",
-            # Root placeholder disambiguation
-            "Resolving <root>",
-            "-----------------",
-            "• Do not pass the literal string '<root>' to tools.",
-            "• Obtain the actual root key from `tables_overview(file=...)` (the non-'FileRecords' key).",
-            "• Use that key in `tables=['<actual_root>']` or `'<actual_root>.Tables.<label>'`.",
+            # Path-first targeting
+            "Path-first targeting",
+            "--------------------",
+            "• Do not pass the literal string '<file_path>' to tools.",
+            "• Use the exact absolute `<file_path>` as stored in FileRecords and returned by stat/identity helpers.",
+            "• Reference contexts directly using `<file_path>` and `<file_path>.Tables.<label>`.",
             "",
             "Examples",
             "--------",
@@ -68,9 +68,8 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             "      'FileRecords': {...},",
             "      'abs_path_pdf': { 'Content': {...}, 'Tables': { 'Products': {...}, 'Prices': {...} } }",
             "    }",
-            "  - Root = 'abs_path_pdf'",
-            "  - Content filter: `tables=['abs_path_pdf']`",
-            "  - Table filter: `tables=['abs_path_pdf.Tables.Products']`",
+            "  - Content filter: `tables=['/abs/path.pdf']`",
+            "  - Table filter: `tables=['/abs/path.pdf.Tables.Products']`",
             "",
             "• Unified mode:",
             "  - tables_overview(file='/abs/path.pdf') → {",
@@ -78,19 +77,18 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             "      'UnifiedDocs': { 'Content': {...} },",
             "      'abs_path_pdf': { 'Tables': { 'Products': {...} } }",
             "    }",
-            "  - Root for Content = 'UnifiedDocs' (the unified label)",
-            "  - Root for Tables = 'abs_path_pdf' (per‑file tables remain keyed by safe(file_path))",
+            "  - Content lives under the unified label; per‑file tables remain keyed by `<file_path>`.",
             "  - Content filter: `tables=['UnifiedDocs']`",
-            "  - Table filter: `tables=['abs_path_pdf.Tables.Products']`",
+            "  - Table filter: `tables=['/abs/path.pdf.Tables.Products']`",
             "",
             # Index/multi-context retrieval
             "Index & multi-context retrieval",
             "-------------------------------",
             f"• Exact filtering over the index: `{filter_files_fname}(filter=\"status == 'success'\")`. Prefer `source_uri` when available.",
             f"• Semantic discovery over index fields: `{search_files_fname}(references={{'summary': 'ISO 27001'}}, k=10)`.",
-            f"• Scan specific contexts: `{filter_files_fname}(filter=..., tables=['<root>', '<root>.Tables.<label>'])`.",
+            f"• Scan specific contexts: `{filter_files_fname}(filter=..., tables=['<file_path>', '<file_path>.Tables.<label>'])`.",
             f"• Paginate scans to control volume: `{filter_files_fname}(filter=..., offset=200, limit=100)`.",
-            f"• Semantic search inside a specific context: `{search_files_fname}(references={{'content': 'paymentterms'}}, table='<root>', filter=\"file_format == 'pdf'\")`.",
+            f"• Semantic search inside a specific context: `{search_files_fname}(references={{'content': 'paymentterms'}}, table='<file_path>', filter=\"file_format == 'pdf'\")`.",
             "",
             # Dict-based content_id usage
             "Dict-based hierarchical IDs (per-file Content)",
@@ -104,22 +102,22 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             "  - table row → {'document': 0, 'section': 2, 'table': 0}",
             "  - image row → {'document': 0, 'section': 2, 'image': 0}",
             "• Filter using Pythonic dict access:",
-            f"  `{filter_files_fname}(filter=\"content_type == 'table' and content_id.get('section') == 2\", tables=['<root>'])`",
-            f"  `{filter_files_fname}(filter=\"content_id.get('document') == 0 and content_type in ('image','table')\", tables=['<root>'])`",
+            f"  `{filter_files_fname}(filter=\"content_type == 'table' and content_id.get('section') == 2\", tables=['<file_path>'])`",
+            f"  `{filter_files_fname}(filter=\"content_id.get('document') == 0 and content_type in ('image','table')\", tables=['<file_path>'])`",
             "",
             # Joins (two tables)
             "Joins (two tables)",
             "-------------------",
-            f"• Filter a join result: `{filter_join_fname}(tables=['<root>', '<root>.Tables.<label>'], join_expr=\"<root>.file_id == <root>.Tables.<label>.file_id\", select={{'<root>.file_id': 'fid', '<root>.Tables.<label>.col': 'val'}}, result_where=\"val == 'ok'\")`.",
+            f"• Filter a join result: `{filter_join_fname}(tables=['<file_path>', '<file_path>.Tables.<label>'], join_expr=\"<file_path>.file_id == <file_path>.Tables.<label>.file_id\", select={{'<file_path>.file_id': 'fid', '<file_path>.Tables.<label>.col': 'val'}}, result_where=\"val == 'ok'\")`.",
             f"• Join modes and input filters: `{filter_join_fname}(tables=['A', 'B'], join_expr=\"A.id == B.a_id\", select={{'A.id': 'id', 'B.score': 'score'}}, mode='left', left_where=\"A.active\", right_where=\"B.score > 0\")`.",
-            f"• Semantic join search: `{search_join_fname}(tables=['<root>', '<root>.Tables.<label>'], join_expr=..., select=..., references={{'val': 'target'}}, k=10)`.",
+            f"• Semantic join search: `{search_join_fname}(tables=['<file_path>', '<file_path>.Tables.<label>'], join_expr=..., select=..., references={{'val': 'target'}}, k=10)`.",
             "Notes: `left_where`/`right_where` filter inputs pre-join; `result_where` filters the projection and may only reference names from `select`.",
             "",
             # Multi-step joins
             "Multi-step joins",
             "-----------------",
             f"• Chain steps with `{filter_mjoin_fname}` / `{search_mjoin_fname}` and use '$prev' to reference the previous step.",
-            f"  Example: `{filter_mjoin_fname}(joins=[{{'tables': ['<root>.Tables.A', '<root>.Tables.B'], 'join_expr': 'A.id == B.id', 'select': {{'A.id': 'id', 'B.score': 'score'}}}}, {{'tables': ['$prev', '<root>'], 'join_expr': \"prev.id == <root>.file_id\", 'select': {{'prev.score': 'score', '<root>.summary': 'summary'}}}}], result_where=\"score > 0\")`",
+            f"  Example: `{filter_mjoin_fname}(joins=[{{'tables': ['<file_path>.Tables.A', '<file_path>.Tables.B'], 'join_expr': 'A.id == B.id', 'select': {{'A.id': 'id', 'B.score': 'score'}}}}, {{'tables': ['$prev', '<file_path>'], 'join_expr': \"prev.id == <file_path>.file_id\", 'select': {{'prev.score': 'score', '<file_path>.summary': 'summary'}}}}], result_where=\"score > 0\")`",
             f"• Semantic variant: `{search_mjoin_fname}(joins=[...], references={{'summary': 'budget update'}}, k=10)`.",
             "",
             # Patterns / anti-patterns
@@ -127,7 +125,7 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             "-------------------------",
             f"• Pattern: Start with `{tables_overview_fname}` → `{list_columns_fname}` to decide which contexts and columns to use.",
             "• Pattern: Prefer semantic search for long text; exact filters for ids/labels.",
-            "• Anti‑pattern: Hand-constructing Unify context strings – always pass logical names.",
+            "• Anti‑pattern: Hand-constructing raw Unify contexts – always pass `<file_path>` or `<file_path>.Tables.<label>` instead.",
             "• Anti‑pattern: Using substring filters for meaning over long text (prefer semantic search).",
             "• Anti‑pattern: Referencing columns in `result_where` not present in `select`.",
         ],
@@ -206,12 +204,12 @@ def build_file_manager_ask_prompt(
             "  Access with Pythonic dict ops, e.g., content_id.get('section') == 2.",
         )
         usage_lines += [
-            "  Resolving <root>:",
-            "  • Call `tables_overview(file=<the file identifier>)` to get an ingest-aware map.",
-            "  • Per‑file mode: the non-'FileRecords' key is the safe(file_path). Use that as <root>.",
-            "  • Unified mode: Content lives under the unified label key; per‑file tables remain under safe(file_path).",
-            "    - Content: tables=['<unified_label>']",
-            "    - Table: tables=['<safe(file_path)>.Tables.<label>']",
+            "  Path‑first targeting (preferred):",
+            "  • Use the fully qualified absolute file path directly as the table reference:",
+            "    - Content: `table='<file_path>'`",
+            "    - Per‑file table: `table='<file_path>.Tables.<label>'`",
+            "  • When needed, `tables_overview(file=<file_path>)` reveals the ingest layout.",
+            "  • In unified mode, Content lives under the unified label; per‑file tables remain under `<file_path>.Tables.<label>`.",
         ]
     # Inventory listing
     usage_lines += [
@@ -226,6 +224,9 @@ def build_file_manager_ask_prompt(
         "─ Tool selection (read carefully) ─",
         f"• Use `{exists_fname}` to check filesystem availability before operations.",
         "• Use `tables_overview()` for an index-wide map, or `tables_overview(file=...)` for a specific file.",
+        "• If the user supplies an explicit path, prefer direct, path-first targeting instead of broad discovery.",
+        "  - Reference Content with `table='<file_path>'` and per‑file tables with `table='<file_path>.Tables.<label>'`.",
+        "  - Keep discovery lightweight (avoid full scans); use semantic search only when the path is unknown.",
     ]
     if stat_fname:
         usage_lines += [
@@ -329,14 +330,15 @@ def build_file_manager_ask_prompt(
         "",
         "─ Filtering per-file Content by hierarchy ─",
         "• Use dict access on `content_id`:",
-        "  - Example: filter_files(filter=\"content_type == 'sentence' and content_id.get('paragraph') == 3\", tables=['<root>'])",
-        "  - Example: filter_files(filter=\"content_id.get('section') == 1 and content_type in ('image','table')\", tables=['<root>'])",
+        "  - Example: filter_files(filter=\"content_type == 'sentence' and content_id.get('paragraph') == 3\", tables=['<file_path>'])",
+        "  - Example: filter_files(filter=\"content_id.get('section') == 1 and content_type in ('image','table')\", tables=['<file_path>'])",
         "",
-        "─ Resolving the <root> name ─",
-        "• <root> is a placeholder in this guidance; do not pass the literal '<root>' string.",
-        "• Obtain the actual root name from `tables_overview(file=...)`:",
-        "  - It returns a mapping; pick the single non-'FileRecords' key as the root for this file.",
-        "  - Use that key in `tables=[<actual_root>]` or `'<actual_root>.Tables.<label>'`.",
+        "─ Path-first targeting ─",
+        "• Use the exact absolute `<file_path>` as stored in FileRecords and returned by stat/identity helpers.",
+        "• Do not pass the literal string '<file_path>' to tools; use the actual file path value.",
+        "• When needed, call `tables_overview(file=<file_path>)` to see the ingest layout.",
+        "  - Per‑file mode: Content at `<file_path>`, Tables at `<file_path>.Tables.<label>`",
+        "  - Unified mode: Content at unified label (e.g., 'UnifiedDocs'), Tables at `<file_path>.Tables.<label>`",
         "",
         "─ Parallelism and single‑call preference ─",
         "• Prefer one comprehensive join or search call over several micro-calls when feasible.",
@@ -497,29 +499,28 @@ def build_file_manager_ask_about_file_prompt(
     tool_usage_lines += [
         "• Per-file Content rows include a dict `content_id` encoding hierarchy.",
         "  - Filter examples:",
-        "    `filter_files(filter=\"content_type == 'table' and content_id.get('section') == 2\", tables=['<root>'])`",
-        "    `filter_files(filter=\"content_id.get('document') == 0 and content_type == 'image'\", tables=['<root>'])`",
-        "• Resolving <root>: call `tables_overview(file=...)` (do not pass '<root>' literally).",
-        "  - Per‑file mode: Root = safe(file_path). Content: tables=['<root>']; table: tables=['<root>.Tables.<label>']",
-        "  - Unified mode: Content root = unified label; Tables root = safe(file_path).",
-        "    Content: tables=['<unified_label>']; table: tables=['<safe(file_path)>.Tables.<label>']",
+        "    `filter_files(filter=\"content_type == 'table' and content_id.get('section') == 2\", tables=['<file_path>'])`",
+        "    `filter_files(filter=\"content_id.get('document') == 0 and content_type == 'image'\", tables=['<file_path>'])`",
+        "• Path-first targeting: use the exact absolute `<file_path>` from the user or stat/identity helpers.",
+        "  - Per‑file mode: Content: tables=['<file_path>']; table: tables=['<file_path>.Tables.<label>']",
+        "  - Unified mode: Content lives under unified label (e.g., 'UnifiedDocs'); Tables: tables=['<file_path>.Tables.<label>']",
     ]
     # Argument combinations (file-scoped focus)
     if _tool_name(tools, "tables_overview"):
         tool_usage_lines.append(
-            "• `tables_overview(file='<root>')` → file-scoped overview; use logical names from this map in joins.",
+            "• `tables_overview(file='<file_path>')` → file-scoped overview; use logical names from this map in joins.",
         )
     if _tool_name(tools, "list_columns"):
         tool_usage_lines.append(
-            "• `list_columns(table='<root>.Tables.<label>')` and `list_columns(include_types=False)` for compact headers.",
+            "• `list_columns(table='<file_path>.Tables.<label>')` and `list_columns(include_types=False)` for compact headers.",
         )
     if _tool_name(tools, "filter_files"):
         tool_usage_lines.append(
-            "• `filter_files(filter=..., tables=['<root>', '<root>.Tables.<label>'], offset=0, limit=50)` to scan file Content/Tables.",
+            "• `filter_files(filter=..., tables=['<file_path>', '<file_path>.Tables.<label>'], offset=0, limit=50)` to scan file Content/Tables.",
         )
     if _tool_name(tools, "search_files"):
         tool_usage_lines.append(
-            "• `search_files(references={'content': 'revenue'}, table='<root>', filter=\"quarter == 'Q1'\", k=5)`.",
+            "• `search_files(references={'content': 'revenue'}, table='<file_path>', filter=\"quarter == 'Q1'\", k=5)`.",
         )
     if any(
         [
@@ -533,10 +534,10 @@ def build_file_manager_ask_about_file_prompt(
             "• Join tools operate over this file's per-file context and extracted tables (when present).",
         )
         tool_usage_lines.append(
-            "• Example two-table join with filters: `filter_join(tables=['<root>.Tables.A','<root>.Tables.B'], join_expr='A.id == B.id', select={'A.id':'id','B.total':'total'}, left_where='A.ok', right_where='B.total > 0', result_where='total > 100')`.",
+            "• Example two-table join with filters: `filter_join(tables=['<file_path>.Tables.A','<file_path>.Tables.B'], join_expr='A.id == B.id', select={'A.id':'id','B.total':'total'}, left_where='A.ok', right_where='B.total > 0', result_where='total > 100')`.",
         )
         tool_usage_lines.append(
-            "• Example chained join using $prev: `filter_multi_join(joins=[{'tables':['<root>.Tables.A','<root>.Tables.B'],'join_expr':'A.id == B.id','select':{'A.id':'id'}},{'tables':['$prev','<root>'],'join_expr':'id == <root>.file_id','select':{'id':'id','<root>.summary':'summary'}}])`.",
+            "• Example chained join using $prev: `filter_multi_join(joins=[{'tables':['<file_path>.Tables.A','<file_path>.Tables.B'],'join_expr':'A.id == B.id','select':{'A.id':'id'}},{'tables':['$prev','<file_path>'],'join_expr':'id == <file_path>.file_id','select':{'id':'id','<file_path>.summary':'summary'}}])`.",
         )
 
     anti_patterns_lines = [
@@ -665,15 +666,15 @@ def build_file_manager_organize_prompt(
     operation_tools = []
     if rename_file_fname:
         operation_tools.append(
-            f"• Rename a file: `{rename_file_fname}(target_id_or_path='old.txt', new_name='new.txt')`",
+            f"• Rename a file: `{rename_file_fname}(file_id_or_path='old.txt', new_name='new.txt')` or `{rename_file_fname}(file_id_or_path=123, new_name='new.txt')`",
         )
     if move_file_fname:
         operation_tools.append(
-            f"• Move a file: `{move_file_fname}(target_id_or_path='file.txt', new_parent_path='/dest/')`",
+            f"• Move a file: `{move_file_fname}(file_id_or_path='file.txt', new_parent_path='/dest/')` or `{move_file_fname}(file_id_or_path=123, new_parent_path='/dest/')`",
         )
     if delete_file_fname:
         operation_tools.append(
-            f"• Delete a file: `{delete_file_fname}(file_id=123)`",
+            f"• Delete a file: `{delete_file_fname}(file_id_or_path='file.txt')` or `{delete_file_fname}(file_id_or_path=123)`",
         )
     if sync_fname:
         operation_tools.append(
@@ -691,6 +692,9 @@ def build_file_manager_organize_prompt(
         "─ Discovery via ask() (read-only) ─",
         f"• Delegate discovery to `{ask_fname}` to identify targets before mutating.",
         f"  `{ask_fname}(text='Which files under /docs mention quarterly reports?')`",
+        f"• When you have explicit file paths from the user, pass them directly to `{ask_fname}`:",
+        f"  `{ask_fname}(text='What is the status of /abs/path/to/file.pdf?')`",
+        f"• Always use fully-qualified absolute paths when calling `{ask_fname}`; do not rewrite or normalize paths.",
     ]
 
     usage_lines += [
@@ -700,22 +704,25 @@ def build_file_manager_organize_prompt(
         "",
         "─ Argument combinations (mutations) ─",
         (
-            f"• Rename within same folder: `{rename_file_fname}(target_id_or_path='a.txt', new_name='b.txt')`"
+            f"• Rename within same folder: `{rename_file_fname}(file_id_or_path='a.txt', new_name='b.txt')` or `{rename_file_fname}(file_id_or_path=42, new_name='b.txt')`"
+            if rename_file_fname
+            else ""
+        ),
+        "  - new_name is a filename only (no directory components).",
+        "  - file_id_or_path accepts either file_id (int) or fully-qualified file_path (str).",
+        (
+            f"• Rename with extension change: `{rename_file_fname}(file_id_or_path='data.csv', new_name='data_2024.csv')`"
             if rename_file_fname
             else ""
         ),
         (
-            f"• Rename with extension change: `{rename_file_fname}(target_id_or_path='data.csv', new_name='data_2024.csv')`"
-            if rename_file_fname
-            else ""
-        ),
-        (
-            f"• Move into subfolder: `{move_file_fname}(target_id_or_path='a.txt', new_parent_path='/archive/')`"
+            f"• Move into subfolder: `{move_file_fname}(file_id_or_path='a.txt', new_parent_path='/archive/')` or `{move_file_fname}(file_id_or_path=42, new_parent_path='/archive/')`"
             if move_file_fname
             else ""
         ),
+        "  - new_parent_path must be a directory path; do not include the filename here.",
         (
-            f"• Delete by id (protected files may raise PermissionError): `{delete_file_fname}(file_id=42)`"
+            f"• Delete by file_path or file_id (protected files may raise PermissionError): `{delete_file_fname}(file_id_or_path='file.txt')` or `{delete_file_fname}(file_id_or_path=42)`"
             if delete_file_fname
             else ""
         ),
@@ -727,7 +734,11 @@ def build_file_manager_organize_prompt(
         "",
         "─ Identity & Preflight ─",
         "• Accept absolute paths and provider URIs as-is; do not rewrite them.",
+        "• CRITICAL: Always use fully-qualified absolute paths (starting with '/') when calling mutation tools.",
+        "  - If the user provides a relative path, resolve it to absolute first using stat() or list().",
+        "  - Example: stat('file.txt') → use the canonical_uri or resolve to absolute path before rename/move/delete.",
         f"• Use `{ask_fname}` to preflight with read-only checks (e.g., list, stat via ask-surface) before mutating.",
+        f"• When calling `{ask_fname}`, always pass fully-qualified absolute paths in your query text if available.",
         "",
         "─ Parallelism & Sequencing ─",
         "• Group independent operations (e.g., renaming several files in different folders) and execute in a minimal number of calls.",
@@ -852,12 +863,12 @@ def build_global_file_manager_ask_prompt(
             "• When delegating, pass the identifier exactly as provided to the target FileManager.",
             "• Prefer resolving identity with the target filesystem's `stat` (via its ask surface).",
             "",
-            "─ Resolving <root> for file-scoped operations ─",
-            "• <root> is a placeholder in examples; do not pass the literal '<root>' string.",
-            "• First call `<SomeFileManager>_ask(... tables_overview(file=...))` to get the real root key (non-'FileRecords').",
-            "• Per‑file mode: root = safe(file_path) (e.g., 'abs_path_pdf'); use `tables=['<root>']` and `'<root>.Tables.<label>'`.",
-            "• Unified mode: Content root = unified label (e.g., 'UnifiedDocs'); Tables root = safe(file_path).",
-            "  - Content: `tables=['UnifiedDocs']`; Tables: `tables=['abs_path_pdf.Tables.Products']`.",
+            "─ Path‑first targeting for file-scoped operations ─",
+            "• Do not pass the literal '<file_path>' string to tools; use the actual file path value.",
+            "• Prefer using the exact absolute `<file_path>` from the user or stat/identity helpers.",
+            "  - Content: `tables=['<file_path>']`",
+            "  - Table:   `tables=['<file_path>.Tables.<label>']`",
+            "• In unified mode, Content lives under the unified label (e.g., 'UnifiedDocs'); per‑file tables remain keyed by `<file_path>`.",
             "",
             "Parallelism and single‑call preference",
             "-------------------------------------",
