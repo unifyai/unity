@@ -69,11 +69,11 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..common.search_utils import table_search_top_k
-from .queue_utils import (
-    sched_prev as _q_prev,
-    sched_next as _q_next,
-    sync_adjacent_links as _q_sync_adjacent_links,
+from .types.schedule import (
+    sched_prev,
+    sched_next,
 )
+from .queue_utils import sync_adjacent_links as _q_sync_adjacent_links
 from .activation_ops import (
     detach_from_queue_for_activation as _ops_detach_for_activation,
 )
@@ -1108,7 +1108,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Normalise status and extract linkage/timestamp
         status = to_status(status)
-        prev_task_id = _q_prev(schedule)
+        prev_task_id = sched_prev(schedule)
         start_at_ts = self._extract_start_at(schedule)
 
         # Head-of-queue tasks with explicit start_at must be 'scheduled'
@@ -1350,7 +1350,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         #  If the task is explicitly linked **behind**  another task (prev_task ≠ None)
         # and that task is not terminal, we NEVER mark the newcomer as *primed*.
-        prev_ptr = _q_prev(schedule)
+        prev_ptr = sched_prev(schedule)
 
         if trigger is not None:
             # --------  event-driven task  -------- #
@@ -1417,7 +1417,7 @@ class TaskScheduler(BaseTaskScheduler):
             if queue_id is not None:
                 derived_qid = int(queue_id)
             elif schedule is not None:
-                prev_tid = _q_prev(schedule)
+                prev_tid = sched_prev(schedule)
                 if prev_tid is not None:
                     try:
                         prev_task = self._get_task_or_raise(int(prev_tid))
@@ -1467,7 +1467,7 @@ class TaskScheduler(BaseTaskScheduler):
             prefetched = None
             try:
                 # from earlier derivation
-                prev_tid = _q_prev(schedule)
+                prev_tid = sched_prev(schedule)
                 if prev_tid is not None:
                     try:
                         prev_task = locals().get("prev_row")
@@ -1499,7 +1499,7 @@ class TaskScheduler(BaseTaskScheduler):
             # explicit linkage (prev/next).  If linkage was given we assume
             # the user knows where the task belongs.
             explicit_linkage = schedule is not None and (
-                _q_prev(schedule) is not None or _q_next(schedule) is not None
+                sched_prev(schedule) is not None or sched_next(schedule) is not None
             )
 
             if explicit_linkage:

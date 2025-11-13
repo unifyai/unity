@@ -19,25 +19,6 @@ if TYPE_CHECKING:
     from .task_scheduler import TaskScheduler
 
 
-def sched_prev(sched: Union[Schedule, dict, None]) -> Optional[int]:
-    """Return `prev_task` from a `Schedule` or dict."""
-    if sched is None:
-        return None
-    if isinstance(sched, dict):
-        return sched.get("prev_task")
-    # Read attribute from Schedule model
-    return getattr(sched, "prev_task", None)
-
-
-def sched_next(sched: Union[Schedule, dict, None]) -> Optional[int]:
-    """Return `next_task` from a `Schedule` or dict."""
-    if sched is None:
-        return None
-    if isinstance(sched, dict):
-        return sched.get("next_task")
-    return getattr(sched, "next_task", None)
-
-
 def sync_adjacent_links(
     scheduler: "TaskScheduler",
     *,
