@@ -1034,7 +1034,11 @@ async def async_tool_loop_inner(
         # pause
         if base == "pause":
             if h is not None and hasattr(h, "pause"):
-                await maybe_await(h.pause())  # type: ignore[func-returns-value]
+                await forward_handle_call(  # type: ignore[name-defined]
+                    h,
+                    "pause",
+                    args if isinstance(args, dict) else {},
+                )
                 return
             ev = getattr(inf, "pause_event", None)
             if ev is not None:
@@ -1043,7 +1047,11 @@ async def async_tool_loop_inner(
         # resume
         if base == "resume":
             if h is not None and hasattr(h, "resume"):
-                await maybe_await(h.resume())  # type: ignore[func-returns-value]
+                await forward_handle_call(  # type: ignore[name-defined]
+                    h,
+                    "resume",
+                    args if isinstance(args, dict) else {},
+                )
                 return
             ev = getattr(inf, "pause_event", None)
             if ev is not None:
@@ -1143,50 +1151,38 @@ async def async_tool_loop_inner(
             try:
                 base = str(method or "").lower().strip()
                 helper_name = f"{base}_{inf.name}_{str(inf.call_id)[-6:]}"
-                # Normalise arguments per helper convention
-                args: dict[str, Any] = {}
+                # Build full forward kwargs for dispatch (strip control keys)
+                try:
+                    forward_args = dict(payload or {})
+                except Exception:
+                    forward_args = {}
+                for _k in ("_custom", "_aliases", "_fallback"):
+                    try:
+                        forward_args.pop(_k, None)
+                    except Exception:
+                        pass
+
+                # Minimal helper args for transcript readability
                 args_json: dict[str, Any] = {}
                 if base == "interject":
                     msg = payload.get("message") or payload.get("content")
                     if msg is not None:
-                        args["content"] = msg
                         args_json["content"] = msg
                     if "images" in payload:
-                        # Do not embed non-JSON-serializable objects in the helper call
-                        args["images"] = payload.get("images")
                         args_json["images_present"] = True
                 elif base == "ask":
                     q = payload.get("question")
                     if q is not None:
-                        args["question"] = q
                         args_json["question"] = q
                     if "images" in payload:
-                        # Preserve full object for dispatch; only log presence in helper args
-                        args["images"] = payload.get("images")
                         args_json["images_present"] = True
                 elif base == "stop":
                     if "reason" in payload:
-                        args["reason"] = payload.get("reason")
                         args_json["reason"] = payload.get("reason")
                 elif base == "clarify":
                     if "answer" in payload:
-                        args["answer"] = payload.get("answer")
                         args_json["answer"] = payload.get("answer")
-                else:
-                    # Custom steering: forward original payload (minus control keys) to dispatch,
-                    # but keep helper tool_call arguments minimal to avoid transcript bloat.
-                    try:
-                        forward_args = dict(payload or {})
-                    except Exception:
-                        forward_args = {}
-                    # Strip control keys
-                    for _k in ("_custom", "_aliases", "_fallback"):
-                        try:
-                            forward_args.pop(_k, None)
-                        except Exception:
-                            pass
-                    args = forward_args
-                # pause/resume carry no args
+                # pause/resume carry no helper args
                 call_id = f"mirror_{short_id(6)}"
                 tool_calls.append(
                     {
@@ -1198,7 +1194,8 @@ async def async_tool_loop_inner(
                         },
                     },
                 )
-                args_by_id[call_id] = (helper_name, args, inf)
+                # Use full forward kwargs for dispatch
+                args_by_id[call_id] = (helper_name, forward_args, inf)
             except Exception:
                 continue
 
