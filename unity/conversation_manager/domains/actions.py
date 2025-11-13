@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import os
 from typing import Literal, Optional, Union, TYPE_CHECKING
 import asyncio
 from pydantic import BaseModel, Field, create_model
@@ -250,9 +251,12 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
     contact_id = kwargs.get("contact_id")
     to_number = kwargs.get("phone_number")
     message = kwargs.get("message")
-    response = await comms_utils.send_sms_message_via_number(
-        to_number=to_number, message=message
-    )
+    if not os.getenv("TEST"):
+        response = await comms_utils.send_sms_message_via_number(
+            to_number=to_number, message=message
+        )
+    else:
+        response = {"success": True}
     if response["success"]:
         contact = cm.contact_index.get_contact(
             contact_id=contact_id, phone_number=to_number
@@ -269,7 +273,10 @@ async def send_unify_message(
 ):
     message = kwargs.get("message")
     contact_id = kwargs.get("contact_id")
-    response = await comms_utils.send_unify_message(message=message)
+    if not os.getenv("TEST"):
+        response = await comms_utils.send_unify_message(message=message)
+    else:
+        response = {"success": True}
     if response["success"]:
         contact = cm.contact_index.get_contact(contact_id=contact_id)
         event = UnifyMessageSent(contact=contact, content=message)
@@ -285,9 +292,12 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
     subject = kwargs.get("subject")
     body = kwargs.get("body")
     message_id = kwargs.get("message_id")
-    response = await comms_utils.send_email_via_address(
-        to_email=to_email, subject=subject, body=body, message_id=message_id
-    )
+    if not os.getenv("TEST"):
+        response = await comms_utils.send_email_via_address(
+            to_email=to_email, subject=subject, body=body, message_id=message_id
+        )
+    else:
+        response = {"success": True}
     if response["success"]:
         contact = cm.contact_index.get_contact(contact_id=contact_id, email=to_email)
         event = EmailSent(
@@ -303,9 +313,12 @@ async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs
     contact_id = kwargs.get("contact_id")
     from_number = kwargs.get("assistant_number")
     to_number = kwargs.get("phone_number")
-    response = await comms_utils.start_call(
-        from_number=from_number, to_number=to_number
-    )
+    if not os.getenv("TEST"):
+        response = await comms_utils.start_call(
+            from_number=from_number, to_number=to_number
+        )
+    else:
+        response = {"success": True}
     if response["successs"]:
         contact = cm.contact_index.get_contact(
             contact_id=contact_id, phone_number=to_number
