@@ -12,7 +12,6 @@ from unity.common.grouping_helpers import build_grouped_dump_payload
 from .types import ColumnType
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -258,9 +257,10 @@ class KnowledgeManager(BaseKnowledgeManager):
                 return None
 
             table_to_ctx = {t: self._ctx_for_table(t) for t in all_tables}
-            table_to_columns: Dict[str, List[str]] = dict(
-                [(t, list(lt["columns"].keys())) for t, lt in overview.items()],
-            )
+            # Be robust to tables without a "columns" key in their overview entry
+            table_to_columns: Dict[str, List[str]] = {
+                t: list((lt.get("columns") or {}).keys()) for t, lt in overview.items()
+            }
 
             est = await _tok.estimate_tables_tokens_parallel(
                 table_to_ctx=table_to_ctx,
