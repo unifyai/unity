@@ -12,18 +12,21 @@ from unity.common.embed_utils import list_private_fields
 
 def ctx_for_table(self, table: str) -> str:
     """
-    Resolve a logical table name (as exposed by FileManager.tables_overview) to a
-    fully-qualified Unify context.
+    Resolve a table reference to a fully-qualified Unify context.
 
-    Accepted logical forms:
+    Preferred forms (path-first):
+    - "<file_path>" → per-file Content context for that exact file path
+    - "<file_path>.Tables.<label>" → per-file Tables context for the given table label
+
+    Also accepted for backward compatibility:
     - "FileRecords" → global index context (`self._ctx`)
-    - "<root>" → per-file Content context (root is `safe(file_path)` or `unified_label`)
-    - "<root>.Tables.<label>" → per-file Tables context for the given table label
+    - "<root>" → legacy alias for a per-file Content root
+    - "<root>.Tables.<label>" → legacy per-file Tables form
 
     Notes
     -----
-    - Roots and table labels should be taken from `tables_overview()` keys; callers
-      should not construct raw context strings.
+    - Use fully qualified absolute file paths whenever possible, as stored in
+      FileRecords and returned by identity helpers. Avoid legacy "<root>" forms.
     - All returned contexts are built by prefixing the manager base +
       "/Files/<alias>/…" via the ops helpers.
     """
@@ -48,14 +51,16 @@ def resolve_table_ref(self, ref: str) -> str:
     """
     Resolve a table reference to a fully-qualified context.
 
-    Accepted forms:
-    - Logical names from tables_overview (preferred):
-      - "FileRecords" → index
-      - "<root>" → Content
-      - "<root>.Tables.<label>" → per-file table
-    - Backward-compatible legacy forms:
-      - "<file_path>:<table>"
-      - "id=<file_id>:<table>" or "#<file_id>:<table>"
+    Preferred forms (path-first):
+    - "<file_path>" → per-file Content context for that exact file path
+    - "<file_path>.Tables.<label>" → per-file Tables context for the given table label
+    - "FileRecords" → global index context
+
+    Also accepted for backward compatibility:
+    - "<root>" → legacy alias for a per-file Content root (deprecated; use <file_path>)
+    - "<root>.Tables.<label>" → legacy per-file Tables form (deprecated; use <file_path>.Tables.<label>)
+    - "<file_path>:<table>" (legacy colon-separated form)
+    - "id=<file_id>:<table>" or "#<file_id>:<table>" (id-based addressing)
     """
     # If the ref already looks like a fully-qualified context under this manager,
     # return as-is using known manager roots (no hard-coded labels).
@@ -126,10 +131,28 @@ def filter_files(
 ) -> List[Dict[str, Any]]:
     """Filter rows from one or more contexts (index by default).
 
-    - When `tables` is None, filters the FileRecords index and returns a flat list.
-    - When `tables` is provided (logical names or legacy refs), resolves each to
-      a fully-qualified context and filters them in parallel; returns concatenated
-      rows (flat list).
+    Parameters
+    ----------
+    filter : str | None
+        Python boolean expression evaluated with column names in scope.
+    offset : int
+        Zero-based pagination offset per context.
+    limit : int
+        Maximum rows per context (<= 1000).
+    tables : list[str] | str | None
+        Table references to filter. Accepted forms:
+        - Path-first (preferred): "<file_path>" for per-file Content,
+          "<file_path>.Tables.<label>" for per-file tables
+        - Logical names from `tables_overview()`: "FileRecords" for index,
+          or legacy refs like "<root>" (deprecated)
+        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        When None, only the FileRecords index is scanned.
+
+    Returns
+    -------
+    list[dict]
+        Flat list of rows collected from the index (when tables=None) or
+        concatenated rows from all resolved contexts.
     """
     normalized = normalize_filter_expr(filter)
     if tables is None:
@@ -209,18 +232,15 @@ def search_files(
     k : int
         Number of rows to return (1..1000).
     table: str | None
-        Logical table name or legacy ref to target the search context. When None,
-        defaults to the global FileRecords index. Logical forms match
-        tables_overview(), e.g. "FileRecords", "<root>", "<root>.Tables.<label>".
+        Table reference to search. Accepted forms:
+        - Path-first (preferred): "<file_path>" for per-file Content,
+          "<file_path>.Tables.<label>" for per-file tables
+        - Logical names: "FileRecords" for index, or legacy refs like "<root>" (deprecated)
+        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        When None, defaults to the global FileRecords index.
     filter: str | None
         Row-level predicate (evaluated with column names as variables).
         *None* returns all rows.
-
-    Notes
-    -----
-    This helper accepts an optional `table` parameter (logical name as in
-    tables_overview or legacy refs) to select the target context. When
-    omitted, it defaults to the global FileRecords index.
     """
     normalized = normalize_filter_expr(filter)
 
@@ -263,9 +283,24 @@ def create_join(
     right_ctx = resolve_table_ref(self, right_ref)
 
     # Rewrite join/select to fully-qualified contexts
-    join_expr = join_expr.replace(left_ref, left_ctx).replace(right_ref, right_ctx)
+    # Replace table refs with contexts, but be careful to avoid double-replacement
+    # when refs are substrings of contexts. Replace only complete matches.
+    import re
+
+    # Replace refs only when they appear as complete identifiers (not substrings)
+    # Use lookahead/lookbehind to ensure we're not replacing within a larger path
+    # Pattern: start of string or non-word char, then ref, then end of string or non-word char or dot
+    def _safe_replace(text: str, ref: str, ctx: str) -> str:
+        ref_escaped = re.escape(ref)
+        # Match ref only when it's a complete identifier (not part of a path)
+        # Allow ref to be followed by .column_name or end of string
+        pattern = rf"(?<![./\w]){ref_escaped}(?=[.\s]|$)"
+        return re.sub(pattern, ctx, text)
+
+    join_expr = _safe_replace(join_expr, left_ref, left_ctx)
+    join_expr = _safe_replace(join_expr, right_ref, right_ctx)
     select = {
-        c.replace(left_ref, left_ctx).replace(right_ref, right_ctx): v
+        _safe_replace(_safe_replace(c, left_ref, left_ctx), right_ref, right_ctx): v
         for c, v in select.items()
     }
 
@@ -318,8 +353,11 @@ def filter_join(
     Parameters
     ----------
     tables : str | list[str]
-        Logical table names (preferred) or legacy refs. Use names from
-        `tables_overview()` such as `<root>.Tables.<label>`.
+        Exactly two table references. Accepted forms:
+        - Path-first (preferred): "<file_path>" for per-file Content,
+          "<file_path>.Tables.<label>" for per-file tables
+        - Logical names from `tables_overview()` or legacy refs
+        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
     join_expr : str
         Join expression using the same refs as provided in `tables`.
     select : dict[str, str]
@@ -386,10 +424,33 @@ def search_join(
     """
     Join two tables and return top-k semantic matches from the join result.
 
-    Parameters mirror filter_join; additionally:
-    - references: mapping of ref → example text to bias embedding search
-    - k: number of results to return
-    - filter: optional filter on the joined result before search
+    Parameters
+    ----------
+    tables : str | list[str]
+        Exactly two table references. Accepted forms:
+        - Path-first (preferred): "<file_path>" for per-file Content,
+          "<file_path>.Tables.<label>" for per-file tables
+        - Logical names from `tables_overview()` or legacy refs
+        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+    join_expr : str
+        Join expression using the same refs as provided in `tables`.
+    select : dict[str, str]
+        Mapping of output column → source column (use refs as in `tables`).
+    mode : str
+        One of 'inner', 'left', 'right', 'outer'.
+    left_where, right_where : str | None
+        Optional filter expressions applied to left and right inputs.
+    references : dict[str, str] | None
+        Mapping of ref → example text to bias embedding search.
+    k : int
+        Number of results to return (1..1000).
+    filter : str | None
+        Optional filter on the joined result before search.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Top-k rows ranked by semantic similarity.
     """
     if isinstance(tables, str):
         tables = [tables]
@@ -432,7 +493,26 @@ def filter_multi_join(
     - tables: [left, right] (logical names or "$prev")
     - join_expr, select, mode, left_where, right_where
 
-    Returns {"rows": [...]} from the final join context.
+    Parameters
+    ----------
+    joins : list[dict]
+        Ordered steps; each step provides ``tables`` (two refs or "$prev"),
+        ``join_expr``, ``select`` and optional ``mode``, ``left_where``, ``right_where``.
+        Table references in ``tables`` accept:
+        - Path-first (preferred): "<file_path>" for per-file Content,
+          "<file_path>.Tables.<label>" for per-file tables
+        - Logical names from `tables_overview()` or legacy refs
+        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        - "$prev" to reference the previous join step's result
+    result_where : str | None
+        Predicate applied to the final joined result over projected columns.
+    result_limit, result_offset : int
+        Pagination parameters; limit <= 1000.
+
+    Returns
+    -------
+    dict[str, list[dict[str, Any]]]
+        {"rows": [...]} from the final join context.
     """
     if not joins:
         return {"rows": []}
@@ -491,7 +571,30 @@ def search_multi_join(
 ) -> List[Dict[str, Any]]:
     """
     Execute a sequence of joins then run semantic search (top-k) over the
-    final materialized result. See filter_multi_join for step semantics.
+    final materialized result.
+
+    Parameters
+    ----------
+    joins : list[dict]
+        Ordered steps; each step provides ``tables`` (two refs or "$prev"),
+        ``join_expr``, ``select`` and optional ``mode``, ``left_where``, ``right_where``.
+        Table references in ``tables`` accept:
+        - Path-first (preferred): "<file_path>" for per-file Content,
+          "<file_path>.Tables.<label>" for per-file tables
+        - Logical names from `tables_overview()` or legacy refs
+        - Legacy forms: "<file_path>:<table>", "id=<file_id>:<table>", "#<file_id>:<table>"
+        - "$prev" to reference the previous join step's result
+    references : dict[str, str] | None
+        Mapping of expressions in the final result → reference text for ranking.
+    k : int
+        Maximum rows to return (<= 1000).
+    filter : str | None
+        Optional predicate before ranking.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        Top-k rows ranked by semantic similarity.
     """
     if not joins:
         return []
