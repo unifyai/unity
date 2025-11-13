@@ -70,7 +70,6 @@ def test_unified_mode_context_created(file_manager, tmp_path: Path):
 
     # Unified context should exist under the unified label
     ov = fm._tables_overview(file="Docs")
-    print(f"ov: {ov}")
     assert isinstance(ov, dict) and len(ov) >= 1
     # Unified label entry should exist with Content
     assert "Docs" in ov and "Content" in ov["Docs"]
