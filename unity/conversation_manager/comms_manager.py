@@ -245,14 +245,6 @@ class CommsManager:
                     assistant_id = event.get("assistant_id", "")
                     body = event.get("body", []) or []
 
-                    def _map_sender_id(val):
-                        if isinstance(val, int):
-                            return max(0, val)
-                        if isinstance(val, str):
-                            v = val.lower().strip()
-                            return 0 if v in ("assistant", "system", "bot", "ai") else 1
-                        return 1
-
                     published = 0
                     for item in body:
                         try:
@@ -261,17 +253,9 @@ class CommsManager:
                             if not isinstance(msg_content, str):
                                 msg_content = str(msg_content)
 
-                            sender_id = _map_sender_id(role)
-                            receiver_ids = [1] if sender_id == 0 else [0]
-
-                            payload = LogMessageRequest(
-                                medium="unify_message",
-                                sender_id=sender_id,
-                                receiver_ids=receiver_ids,
+                            payload = PreHireMessage(
                                 content=msg_content,
-                                exchange_id=0,
-                                call_utterance_timestamp="",
-                                call_url="",
+                                role=role,
                                 metadata={
                                     "source": "pre_hire",
                                     "assistant_id": assistant_id,

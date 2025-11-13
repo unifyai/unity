@@ -122,7 +122,8 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     """Log a message via TranscriptManager."""
     event_name = event.__class__.__name__
     print("publishing transcript", event_name)
-    if "unify" in event_name:
+    event_name = event_name.lower()
+    if "unify" in event_name or "prehire" in event_name:
         medium = "unify_call" if "call" in event_name else "unify_message"
     elif "phone" in event_name:
         medium = "phone_call"
@@ -133,6 +134,8 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     else:
         medium = "whatsapp_message"
     role = "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
+    if "prehire" in event_name:
+        role = event.role.capitalize()
     if isinstance(event, (EmailSent, EmailReceived)):
         content = event.subject + "\n\n" + event.body
     else:
@@ -146,6 +149,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
             UnifyMessageReceived,
             UnifyCallUtterance,
             AssistantUnifyCallUtterance,
+            PreHireMessage,
         ),
     ):
         contact_id = 1
@@ -156,7 +160,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     else:
         sender_id, receiver_ids = contact_id, [0]
 
-    exchange_id = UNASSIGNED
+    exchange_id = getattr(event, "exchange_id", UNASSIGNED)
     if medium == "phone_call":
         exchange_id = cm.call_exchange_id
     if medium == "unify_call":
