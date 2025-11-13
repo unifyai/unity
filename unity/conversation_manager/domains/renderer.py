@@ -63,8 +63,9 @@ class Renderer:
         if isinstance(message, EmailMessage):
             return (
                 f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]:\n"""
-                f"Subject: {message.subject}"
-                f"Body:"
+                f"Subject: {message.subject}\n"
+                f"Message ID: {message.message_id}\n"
+                f"Body:\n"
                 f"{message.body}"
             )
         return f"""{'**NEW**' if is_new else ""} [{message.name} @ {message.timestamp.strftime("%A, %B %d, %Y at %I:%M %p")}]: {message.content}"""

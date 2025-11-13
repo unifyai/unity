@@ -87,8 +87,15 @@ class SendEmail(BaseModel):
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    subject: str
+    subject: str = Field(
+        ...,
+        description="the subject of the email, should be the same as the subject of the received email without any prefix.",
+    )
     body: str
+    message_id: Optional[str] = Field(
+        ...,
+        description="the message id of the email, should be the same as the message id of the received email.",
+    )
 
 
 class SendSMS(BaseModel):
@@ -269,12 +276,15 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
     to_email = kwargs.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
+    message_id = kwargs.get("message_id")
     response = await comms_utils.send_email_via_address(
-        to_email=to_email, subject=subject, body=body
+        to_email=to_email, subject=subject, body=body, message_id=message_id
     )
     if response["success"]:
         contact = cm.contact_index.get_contact(contact_id=contact_id, email=to_email)
-        event = EmailSent(contact=contact, body=body, subject=subject)
+        event = EmailSent(
+            contact=contact, body=body, subject=subject, message_id=message_id
+        )
     else:
         event = Error(f"Failed to send email to {to_email}")
     await event_broker.publish("app:comms:email_sent", event.to_json())
