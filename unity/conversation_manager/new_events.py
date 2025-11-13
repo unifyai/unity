@@ -290,6 +290,7 @@ class GetBusEventsResponse(Event):
 class PreHireMessage(Event):
     content: str
     role: str
+    exchange_id: int
     metadata: dict[str, str]
 
 

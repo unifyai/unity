@@ -190,41 +190,49 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         print(f"[ManagersWorker] Logging message: {event.to_dict()}")
         # call_utterance_timestamp = event.call_utterance_timestamp
         # call_url = event.call_url
-        metadata = getattr(event, "metadata", None)
 
-        # Log the message
-        messages = cm.transcript_manager.log_messages(
-            {
-                "medium": medium,
-                "sender_id": sender_id,
-                "receiver_ids": receiver_ids,
-                # not sure if this is right but that's how it is in the code in main
-                "timestamp": event.timestamp,
-                "content": content,
-                "exchange_id": exchange_id,
-                # "call_utterance_timestamp": call_utterance_timestamp,
-                # "call_url": call_url,
-                "_metadata": metadata,
-            },
-            synchronous=True,
-        )
+        if exchange_id == UNASSIGNED:
+            exchange_id = cm.transcript_manager.log_first_message_in_new_exchange(
+                {
+                    "medium": medium,
+                    "sender_id": sender_id,
+                    "receiver_ids": receiver_ids,
+                    "timestamp": event.timestamp,
+                    "content": content,
+                },
+            )
+        else:
+            metadata = getattr(event, "metadata", None)
+            cm.transcript_manager.log_messages(
+                {
+                    "medium": medium,
+                    "sender_id": sender_id,
+                    "receiver_ids": receiver_ids,
+                    # not sure if this is right but that's how it is in the code in main
+                    "timestamp": event.timestamp,
+                    "content": content,
+                    "exchange_id": exchange_id,
+                    # "call_utterance_timestamp": call_utterance_timestamp,
+                    # "call_url": call_url,
+                    "_metadata": metadata,
+                },
+                synchronous=True,
+            )
 
-        message = messages[0] if messages else None
         print(
             f"[ManagersWorker] Logged message: {medium}"
             f" from {sender_id} to {receiver_ids}",
         )
 
         # Publish reply as Event envelope
-        if message:
-            await event_broker.publish(
-                "app:logging:message_logged",
-                LogMessageResponse(
-                    medium=medium,
-                    exchange_id=message.exchange_id,
-                ).to_json(),
-            )
-            print(f"[ManagersWorker] Published exchange_id {message.exchange_id}")
+        await event_broker.publish(
+            "app:logging:message_logged",
+            LogMessageResponse(
+                medium=medium,
+                exchange_id=exchange_id,
+            ).to_json(),
+        )
+        print(f"[ManagersWorker] Published exchange_id {exchange_id}")
 
     except Exception as e:
         print(f"[ManagersWorker] Error logging message: {e}")
