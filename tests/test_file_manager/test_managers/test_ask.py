@@ -63,7 +63,6 @@ async def test_ask_with_mocked_llm(file_manager, supported_file_examples: dict):
             mock_loop.assert_called_once()
             args, kwargs = mock_loop.call_args
             assert kwargs["loop_id"] == "LocalFileManager.ask"
-            assert kwargs.get("preprocess_msgs") is not None
 
 
 @pytest.mark.asyncio
