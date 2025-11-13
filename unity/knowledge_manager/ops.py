@@ -29,11 +29,43 @@ def update_rows(
     unique_column_name = keys[0] if isinstance(keys, list) and keys else keys
     unique_ids = sorted(int(k) for k in updates.keys())
     filt = f"{unique_column_name} in {unique_ids}"
-    log_ids: List[int] = list(
-        unify.get_logs(context=ctx, filter=filt, return_ids_only=True),
+    # Build a stable mapping from unique ids → log ids so updates align correctly
+    events = list(
+        unify.get_logs(
+            context=ctx,
+            filter=filt,
+            from_fields=[unique_column_name],
+        ),
     )
-    entries = [updates[i] for i in unique_ids]
-    res = unify.update_logs(logs=log_ids, context=ctx, entries=entries, overwrite=True)
+    id_to_log: Dict[int, int] = {}
+    for ev in events:
+        try:
+            key_val = ev.entries.get(unique_column_name)
+            uid = int(key_val) if key_val is not None else None
+        except Exception:
+            uid = None
+        if uid is None:
+            continue
+        # type: ignore[attr-defined] – unify events expose .id at runtime
+        id_to_log[uid] = int(getattr(ev, "id"))
+    # Pair only ids present in both the request and the backend
+    matched: List[tuple[int, Dict[str, Any]]] = [
+        (id_to_log[i], updates[i])
+        for i in unique_ids
+        if i in updates and i in id_to_log
+    ]
+    if not matched:
+        raise ValueError(
+            f"No matching rows for ids={unique_ids} in table '{table}'",
+        )
+    log_ids = [lid for (lid, _) in matched]
+    entries = [entry for (_, entry) in matched]
+    res = unify.update_logs(
+        logs=log_ids,
+        context=ctx,
+        entries=entries,
+        overwrite=True,
+    )
     return res
 
 
