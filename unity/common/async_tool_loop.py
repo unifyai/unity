@@ -423,6 +423,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         parent_chat_context_cont: list[dict] | None = None,
         images: list | dict | None = None,
         _return_reasoning_steps: bool = False,
+        **kwargs,
     ) -> "SteerableToolHandle":
         """
         Answers *question* about this *pending* tool, associated with this handle.
@@ -450,6 +451,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "question": question,
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
+                **(kwargs or {}),
             },
             had_passthrough=False,
             forwarded_to=[],
@@ -636,7 +638,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     {
                         "_mirror": {
                             "method": "ask",
-                            "kwargs": {"question": question, "images": images},
+                            "kwargs": {
+                                "question": question,
+                                "images": images,
+                                **(kwargs or {}),
+                            },
                         },
                     },
                 )
@@ -656,7 +662,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 {
                     "_mirror": {
                         "method": "ask",
-                        "kwargs": {"question": question, "images": images},
+                        "kwargs": {
+                            "question": question,
+                            "images": images,
+                            **(kwargs or {}),
+                        },
                     },
                 },
             )
@@ -673,6 +683,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         parent_chat_context_cont: list[dict] | None = None,
         images: list | None = None,
         trigger_immediate_llm_turn: bool = True,
+        **kwargs,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
@@ -687,6 +698,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
                 "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
+                **(kwargs or {}),
             },
             fallback=("content", "message"),
             had_passthrough=False,
@@ -710,6 +722,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "kwargs": {
                             "message": message,
                             "images": images,
+                            **(kwargs or {}),
                         },
                     },
                 },
@@ -723,13 +736,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         reason: Optional[str] = None,
         *,
         parent_chat_context_cont: list[dict] | None = None,
+        **kwargs,
     ) -> None:
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
         if self._cancel_event.is_set():
             return
-
-        # Flip the cancel event first so concurrent callers see we are stopping
-        self._cancel_event.set()
 
         # Only the root/top-level handle logs the stop request
         if getattr(self, "_is_root_handle", False):
@@ -739,38 +750,38 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 + (f" – reason: {reason}" if reason else ""),
             )
 
-        # Expedite shutdown of the outer task and signal stop_event for any waiters
-        with suppress(Exception):
-            self._task.cancel()
-        with suppress(Exception):
-            self._stop_event.set()
         # Record steer event (best-effort). Functional forwarding happens via mirror path.
         try:
             asyncio.create_task(
                 self._record_and_forward(
                     "stop",
-                    kwargs={"reason": reason},
+                    kwargs={"reason": reason, **(kwargs or {})},
                     had_passthrough=False,
                     forwarded_to=[],
                 ),
             )
         except Exception:
             pass
-        # Mirror as synthetic helper tool_call (no LLM step)
+        # Mirror as synthetic helper tool_call (no LLM step) before signalling cancel/stop
         try:
             self._queue.put_nowait(
                 {
                     "_mirror": {
                         "method": "stop",
-                        "kwargs": {"reason": reason},
+                        "kwargs": {"reason": reason, **(kwargs or {})},
                     },
                 },
             )
         except Exception:
             pass
+        # Now signal cancellation and stop for any waiters; inner loop will exit after processing mirror
+        with suppress(Exception):
+            self._cancel_event.set()
+        with suppress(Exception):
+            self._stop_event.set()
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
-    def pause(self) -> None:
+    def pause(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
 
@@ -780,7 +791,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             asyncio.create_task(
                 self._record_and_forward(
                     "pause",
-                    kwargs={},
+                    kwargs=dict(kwargs or {}),
                     had_passthrough=False,
                     forwarded_to=[],
                 ),
@@ -793,7 +804,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 {
                     "_mirror": {
                         "method": "pause",
-                        "kwargs": {},
+                        "kwargs": dict(kwargs or {}),
                     },
                 },
             )
@@ -801,7 +812,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             pass
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
-    def resume(self) -> None:
+    def resume(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
         # Auto-resume base tools that were started in paused state while the outer loop was paused
@@ -822,7 +833,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             asyncio.create_task(
                 self._record_and_forward(
                     "resume",
-                    kwargs={},
+                    kwargs=dict(kwargs or {}),
                     had_passthrough=False,
                     forwarded_to=[],
                 ),
@@ -835,7 +846,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 {
                     "_mirror": {
                         "method": "resume",
-                        "kwargs": {},
+                        "kwargs": dict(kwargs or {}),
                     },
                 },
             )
