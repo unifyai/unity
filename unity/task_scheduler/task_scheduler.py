@@ -2103,41 +2103,42 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Identify head with tolerance for terminal/missing predecessor.
         # A row is a head if: prev_task is None OR prev_task not present among non-terminal members.
-        ids_in_q: set[int] = set()
-        for r in tasks_in_queue:
-            ids_in_q.add(r.task_id)
+        ids_in_q: set[int] = set(t.task_id for t in tasks_in_queue)
 
         head_candidates: list[Task] = []
         prefer_none_prev: list[Task] = []
-        for r in tasks_in_queue:
-            prev_id = r.schedule_prev
+        for task in tasks_in_queue:
+            prev_id = task.schedule_prev
             if prev_id is None:
-                prefer_none_prev.append(r)
-                head_candidates.append(r)
+                prefer_none_prev.append(task)
+                head_candidates.append(task)
             else:
                 if prev_id not in ids_in_q:
-                    head_candidates.append(r)
+                    head_candidates.append(task)
+
         if not head_candidates:
             return []
+
         # If multiple, prefer a true None-prev head; else choose deterministically by task_id
+        head_task: Task
         if len(head_candidates) > 1:
             if prefer_none_prev:
-                head = prefer_none_prev[0]
+                head_task = prefer_none_prev[0]
             else:
-                head = sorted(
+                head_task = sorted(
                     head_candidates,
                     key=lambda x: x.task_id,
                 )[0]
         else:
-            head = head_candidates[0]
+            head_task = head_candidates[0]
 
         # Build id -> row map for O(1) next lookups without further backend reads
-        task_by_id: Dict[int, Task] = {r.task_id: r for r in tasks_in_queue}
+        task_by_id: Dict[int, Task] = {t.task_id: t for t in tasks_in_queue}
 
         # Walk head→tail using next_task pointers in-memory
         ordered: List[Task] = []
         seen: set[int] = set()
-        current_task = head
+        current_task = head_task
         while current_task is not None:
             if current_task.task_id in seen:
                 break
@@ -2169,37 +2170,36 @@ class TaskScheduler(BaseTaskScheduler):
             return []
 
         # Walk to head using prev_task pointers
-        head = current_task
-        while head is not None:
-            prev_id = head.schedule_prev
+        head_task = current_task
+        while head_task is not None:
+            prev_id = head_task.schedule_prev
             if prev_id is None:
                 break
             prev_task = self._filter_tasks(
                 filter=f"task_id == {prev_id}",
                 limit=1,
             )
-            head = prev_task[0] if prev_task else None
+            head_task = prev_task[0] if prev_task else None
 
-        if head is None:
+        if head_task is None:
             return []
 
         # Walk forward using next_task pointers; include terminal rows for context
         ordered: List[Task] = []
-        node: Task | None = head
+        current_task: Task | None = head_task
         seen: set[int] = set()
-        while node is not None:
-            task_id = node.task_id
-            if task_id is not None and task_id in seen:
+        while current_task is not None:
+            task_id = current_task.task_id
+            if task_id in seen:
                 break
-            if task_id is not None:
-                seen.add(task_id)
+            seen.add(task_id)
             # Strip stale activation metadata on non-active rows
-            ordered.append(self._sanitize_activation_task(node))
-            next_id = node.schedule_next
+            ordered.append(self._sanitize_activation_task(current_task))
+            next_id = current_task.schedule_next
             if next_id is None:
                 break
             next_task = self._filter_tasks(filter=f"task_id == {next_id}", limit=1)
-            node = next_task[0] if next_task else None
+            current_task = next_task[0] if next_task else None
 
         return ordered
 
@@ -2464,10 +2464,10 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Determine each task's current queue (prefer local index; reuse prefetched rows)
         source_qid_by_tid: Dict[int, Optional[int]] = {}
-        for tid in block:
-            qid = self._view.get_queue_id_for_task(tid)
-            if qid is not None:
-                source_qid_by_tid[tid] = qid
+        for _task_id in block:
+            _queue_id = self._view.get_queue_id_for_task(_task_id)
+            if _queue_id is not None:
+                source_qid_by_tid[_task_id] = _queue_id
         # For any remaining ids, reuse the single consolidated read done above
         missing = [t for t in block if t not in source_qid_by_tid]
         if missing:
@@ -2540,7 +2540,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Materialize edits: source queues first (detach cleanly), then target queue
         checkpoint_id = None
-        for qid, cur_order in source_orders.items():
+        for _queue_id, cur_order in source_orders.items():
             # Skip when no member actually moved
             try:
                 if cur_order == _current_order_for(q_id):
@@ -2548,7 +2548,7 @@ class TaskScheduler(BaseTaskScheduler):
             except Exception:
                 pass
             # Use core primitive to preserve head start_at and status semantics reliably
-            self._set_queue(queue_id=qid, order=cur_order)
+            self._set_queue(queue_id=_queue_id, order=cur_order)
 
         if tgt_new_order:
             # Apply target queue materialization in one batch using the core primitive
