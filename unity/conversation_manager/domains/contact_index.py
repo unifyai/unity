@@ -39,6 +39,7 @@ class EmailMessage:
     name: str
     subject: str
     body: str
+    message_id: str | None = None
     timestamp: datetime
 
 
@@ -60,6 +61,7 @@ class ContactIndex:
         message_content=None,
         subject=None,
         body=None,
+        message_id=None,
         timestamp=None,
         role: Literal["user", "assistant"] = "user",
     ):
@@ -71,7 +73,7 @@ class ContactIndex:
         contact = self.active_conversations[contact_id]
         if thread_name == "email":
             message = EmailMessage(
-                contact.full_name if role == "user" else "You", body, subject, timestamp
+                contact.full_name if role == "user" else "You", subject, body, message_id, timestamp
             )
         else:
             message = Message(
