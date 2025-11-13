@@ -286,6 +286,13 @@ class GetBusEventsResponse(Event):
         return f"{self.__class__.__name__}(events_len={len(self.events)})"
 
 
+@dataclass
+class PreHireMessage(Event):
+    content: str
+    role: str
+    metadata: dict[str, str]
+
+
 # --------------------------------------------------------------------------- #
 # LLM inference events
 # --------------------------------------------------------------------------- #

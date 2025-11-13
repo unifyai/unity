@@ -292,3 +292,8 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
         cm.call_exchange_id = event.exchange_id
     if event.medium == "unify_call" and cm.unify_call_exchange_id == UNASSIGNED:
         cm.unify_call_exchange_id = event.exchange_id
+
+
+@EventHandler.register(PreHireMessage)
+async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
+    asyncio.create_task(managers_utils.log_message(cm, event))
