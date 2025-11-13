@@ -612,6 +612,260 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
     assert h1.stopped >= 1 and h2.stopped >= 1, "stop did not propagate to all handles"
 
 
+# ---------------------------------------------------------------------------
+#  New tests: kwargs passthrough for standard steering on passthrough handles
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_programmatic_interject_with_kwargs_forwarded_to_passthrough_handle(
+    monkeypatch,
+):
+    """Programmatic outer.interject(..., priority=..., metadata=...) forwards kwargs to a passthrough child."""
+
+    from unity.common.async_tool_loop import SteerableToolHandle
+
+    class InterjectKwargsHandle(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+            self.calls: list[dict] = []
+            self._interject_ev = asyncio.Event()
+
+        async def ask(self, question: str, **_):
+            return self
+
+        async def interject(
+            self,
+            message: str,
+            *,
+            priority: int = 1,
+            metadata: dict | None = None,
+        ):
+            self.calls.append(
+                {"message": message, "priority": priority, "metadata": metadata or {}},
+            )
+            self._interject_ev.set()
+            return None
+
+        def stop(self, *_, **__):
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *_, **__):
+            return "paused"
+
+        def resume(self, *_, **__):
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    inner = InterjectKwargsHandle()
+
+    async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
+        return inner
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
+        "Wait for it to finish before replying.",
+    )
+
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"spawn": spawn},
+    )
+
+    # Wait until spawn requested and adoption complete
+    await _wait_for_tool_request(client, "spawn")
+
+    async def _wait_adopted(timeout: float = 5.0):
+        import time as _time
+
+        start = _time.perf_counter()
+        while _time.perf_counter() - start < timeout:
+            try:
+                ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    pts = [
+                        _inf
+                        for _inf in ti.values()
+                        if getattr(_inf, "handle", None) is not None
+                        and getattr(_inf, "is_passthrough", False)
+                    ]
+                    if pts:
+                        return
+            except Exception:
+                pass
+            await asyncio.sleep(0)
+        raise TimeoutError("timeout waiting for passthrough adoption")
+
+    await _wait_adopted()
+
+    # Programmatic interject with extra kwargs
+    await outer.interject("HELLO", priority=3, metadata={"k": "v"})  # type: ignore[arg-type]
+
+    async def _got_kwargs():
+        return (
+            bool(inner.calls)
+            and inner.calls[-1]["priority"] == 3
+            and inner.calls[-1]["metadata"].get("k") == "v"
+        )
+
+    await _wait_for_condition(_got_kwargs, poll=0.01, timeout=60.0)
+    assert inner.calls and inner.calls[-1]["priority"] == 3
+    assert inner.calls[-1]["metadata"].get("k") == "v"
+
+    outer.stop("done")
+    await outer.result()
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_programmatic_pause_resume_stop_kwargs_forwarded(monkeypatch):
+    """Programmatic pause/resume/stop kwargs are forwarded to a passthrough child that overrides their signatures."""
+
+    from unity.common.async_tool_loop import SteerableToolHandle
+
+    class CtlHandleKwargs(SteerableToolHandle):
+        __passthrough__ = True
+
+        def __init__(self):
+            self._done = asyncio.Event()
+            self.pauses: list[dict] = []
+            self.resumes: list[dict] = []
+            self.stops: list[dict] = []
+
+        async def ask(self, question: str, **_):
+            return self
+
+        async def interject(self, message: str, **_):
+            return None
+
+        def stop(self, *, reason: str | None = None, abandon: bool = False):
+            self.stops.append({"reason": reason, "abandon": abandon})
+            self._done.set()
+            return "stopped"
+
+        def pause(self, *, reason: str, log_to_backend: bool = False):
+            self.pauses.append({"reason": reason, "log_to_backend": log_to_backend})
+            return "paused"
+
+        def resume(self, *, token: str | None = None):
+            self.resumes.append({"token": token})
+            return "resumed"
+
+        def done(self) -> bool:
+            return self._done.is_set()
+
+        async def result(self) -> str:
+            await self._done.wait()
+            return "ok"
+
+        async def next_clarification(self) -> dict:
+            return {}
+
+        async def next_notification(self) -> dict:
+            return {}
+
+        async def answer_clarification(self, call_id: str, answer: str) -> None:
+            return None
+
+    inner = CtlHandleKwargs()
+
+    async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
+        return inner
+
+    client = unify.AsyncUnify(
+        endpoint="gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message(
+        "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
+        "Wait for it to finish before replying.",
+    )
+    outer = start_async_tool_loop(
+        client=client,  # type: ignore[arg-type]
+        message="start",
+        tools={"spawn": spawn},
+    )
+
+    # Wait until the tool request and adoption
+    await _wait_for_tool_request(client, "spawn")
+
+    async def _wait_adopted(timeout: float = 5.0):
+        import time as _time
+
+        start = _time.perf_counter()
+        while _time.perf_counter() - start < timeout:
+            try:
+                ti = getattr(outer._task, "task_info", {})  # type: ignore[attr-defined]
+                if isinstance(ti, dict):
+                    pts = [
+                        _inf
+                        for _inf in ti.values()
+                        if getattr(_inf, "handle", None) is not None
+                        and getattr(_inf, "is_passthrough", False)
+                    ]
+                    if pts:
+                        return
+            except Exception:
+                pass
+            await asyncio.sleep(0)
+        raise TimeoutError("timeout waiting for passthrough adoption")
+
+    await _wait_adopted()
+
+    # Programmatic kwargs steering
+    outer.pause(reason="maintenance", log_to_backend=True)  # type: ignore[arg-type]
+    outer.resume(token="session-123")  # type: ignore[arg-type]
+    outer.stop(reason="done", abandon=True)  # type: ignore[arg-type]
+
+    async def _all_seen():
+        return (
+            inner.pauses
+            and inner.pauses[-1]["reason"] == "maintenance"
+            and inner.pauses[-1]["log_to_backend"] is True
+            and inner.resumes
+            and inner.resumes[-1]["token"] == "session-123"
+            and inner.stops
+            and inner.stops[-1]["reason"] == "done"
+            and inner.stops[-1]["abandon"] is True
+        )
+
+    await _wait_for_condition(_all_seen, poll=0.01, timeout=60.0)
+
+    assert inner.pauses and inner.pauses[-1]["log_to_backend"] is True
+    assert inner.resumes and inner.resumes[-1]["token"] == "session-123"
+    assert inner.stops and inner.stops[-1]["abandon"] is True
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
