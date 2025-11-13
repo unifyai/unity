@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 event_broker = get_event_broker()
 
+
 # conductor
 class ConductorAction(BaseModel):
     """Ask or request the Conductor to perform a task."""
@@ -27,7 +28,9 @@ class ConductorAction(BaseModel):
             "'conductor_request': read-write request\n"
         ),
     )
-    query: str = Field(..., )
+    query: str = Field(
+        ...,
+    )
 
 
 class ConductorHandleAction(BaseModel):
@@ -124,7 +127,7 @@ def build_dynamic_response_models(
     include_email: bool = True,
     include_sms: bool = True,
     include_call: bool = True,
-    realtime=False
+    realtime=False,
 ):
     """
     Dynamically create response models with conditional actions based on available contact info.
@@ -181,7 +184,6 @@ def build_dynamic_response_models(
             __base__=BaseModel,
         )
 
-
     return {
         "call": DynamicResponsePhone,
         "gmeet": DynamicResponsePhone,
@@ -190,15 +192,16 @@ def build_dynamic_response_models(
     }
 
 
-
 class Action:
     action_handlers = {}
-    
+
     @classmethod
     def take_action(cls, cm, action_name, _as_task=True, *args, **kwargs):
         f = cls.action_handlers.get(action_name)
         if not f:
-            raise Exception(f"unregisted action: {action_name}, make sure to register action")
+            raise Exception(
+                f"unregisted action: {action_name}, make sure to register action"
+            )
         if inspect.iscoroutinefunction(f):
             if _as_task:
                 t = asyncio.create_task(f(cm, action_name, *args, **kwargs))
@@ -209,51 +212,66 @@ class Action:
         else:
             # could be awaitable
             return f(*args, **kwargs)
-        
 
     @classmethod
-    def register(cls, action_name: str | list[str]=None):
+    def register(cls, action_name: str | list[str] = None):
         def wrapper(func):
-            names = [action_name or func.__name__] if not isinstance(action_name, list) else action_name
+            names = (
+                [action_name or func.__name__]
+                if not isinstance(action_name, list)
+                else action_name
+            )
             for name in names:
                 cls.action_handlers[name] = func
             return func
+
         return wrapper
-            
 
 
 # registered actions, make sure to add *args, **kwargs to make calling these actions easier
 # TODO: add sending/performing [action] notification when actions are made
+
 
 @Action.register()
 async def wait(cm, action_name, *args, **kwargs):
     # does nothing
     pass
 
+
 @Action.register()
-async def send_sms(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs):
     contact_id = kwargs.get("contact_id")
     to_number = kwargs.get("phone_number")
     message = kwargs.get("message")
-    response = await comms_utils.send_sms_message_via_number(to_number=to_number, message=message)
+    response = await comms_utils.send_sms_message_via_number(
+        to_number=to_number, message=message
+    )
     if response["success"]:
-        contact = cm.contact_index.get_contact(contact_id=contact_id, phone_number=to_number)
+        contact = cm.contact_index.get_contact(
+            contact_id=contact_id, phone_number=to_number
+        )
         event = SMSSent(contact=contact, content=message)
     else:
         event = Error(f"Failed to send sms to {to_number}")
     await event_broker.publish("app:comms:sms_sent", event.to_json())
 
-@Action.register()
-async def send_unify_message(cm: 'ConversationManager', action_name: str, *args, **kwargs):
-    pass
 
 @Action.register()
-async def send_email(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+async def send_unify_message(
+    cm: "ConversationManager", action_name: str, *args, **kwargs
+):
+    pass
+
+
+@Action.register()
+async def send_email(cm: "ConversationManager", action_name: str, *args, **kwargs):
     contact_id = kwargs.get("contact_id")
     to_email = kwargs.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
-    response = await comms_utils.send_email_via_address(to_email=to_email, subject=subject, body=body)
+    response = await comms_utils.send_email_via_address(
+        to_email=to_email, subject=subject, body=body
+    )
     if response["success"]:
         contact = cm.contact_index.get_contact(contact_id=contact_id, email=to_email)
         event = EmailSent(contact=contact, body=body, subject=subject)
@@ -261,14 +279,19 @@ async def send_email(cm: 'ConversationManager', action_name: str, *args, **kwarg
         event = Error(f"Failed to send email to {to_email}")
     await event_broker.publish("app:comms:email_sent", event.to_json())
 
+
 @Action.register()
-async def make_call(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs):
     contact_id = kwargs.get("contact_id")
     from_number = kwargs.get("assistant_number")
     to_number = kwargs.get("phone_number")
-    response = await comms_utils.start_call(from_number=from_number, to_number=to_number)
+    response = await comms_utils.start_call(
+        from_number=from_number, to_number=to_number
+    )
     if response["successs"]:
-        contact = cm.contact_index.get_contact(contact_id=contact_id, phone_number=to_number)
+        contact = cm.contact_index.get_contact(
+            contact_id=contact_id, phone_number=to_number
+        )
         event = PhoneCallSent(contact=contact)
     else:
         event = Error(f"Failed to send call to {to_number}")
@@ -276,8 +299,12 @@ async def make_call(cm: 'ConversationManager', action_name: str, *args, **kwargs
 
 
 _next_handle_id = 0
+
+
 @Action.register(["conductor_ask", "conductor_request"])
-async def conductor_ask_request(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+async def conductor_ask_request(
+    cm: "ConversationManager", action_name: str, *args, **kwargs
+):
     """Start a Conductor ask/request, store handle, and publish started."""
     global _next_handle_id
     query = kwargs["query"]
@@ -314,11 +341,15 @@ async def conductor_ask_request(cm: 'ConversationManager', action_name: str, *ar
     # spawn watchers
     asyncio.create_task(managers_utils.conductor_watch_result(handle_id, handle))
     asyncio.create_task(managers_utils.conductor_watch_notifications(handle_id, handle))
-    asyncio.create_task(managers_utils.conductor_watch_clarifications(handle_id, handle))
+    asyncio.create_task(
+        managers_utils.conductor_watch_clarifications(handle_id, handle)
+    )
 
 
 @Action.register([...])
-async def conductor_handle_actions(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+async def conductor_handle_actions(
+    cm: "ConversationManager", action_name: str, *args, **kwargs
+):
     handle_id = kwargs["handle_id"]
     query = kwargs["query"]
     handle_data = cm.handle_registry.get(handle_id)
@@ -380,8 +411,11 @@ async def conductor_handle_actions(cm: 'ConversationManager', action_name: str, 
         ).to_json(),
     )
 
+
 @Action.register()
-async def summarize_conversation(cm: 'ConversationManager', action_name: str, *args, **kwargs):
+async def summarize_conversation(
+    cm: "ConversationManager", action_name: str, *args, **kwargs
+):
     pass
     # cm.transcript_manager
     # tasks = [

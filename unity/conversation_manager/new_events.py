@@ -7,7 +7,6 @@ from dataclasses import dataclass, asdict, field
 from pydantic import BaseModel
 
 
-
 def custom_dict_factory(kv):
     d = {}
     for k, v in kv:
@@ -255,18 +254,22 @@ class Ping(Event):
 class Error(Event):
     message: str
 
+
 @dataclass
 class LogMessageResponse(Event):
     medium: str
     exchange_id: int
 
+
 @dataclass
 class GetContactsResponse(Event):
     contacts: list[dict[str, Any]]
 
+
 @dataclass
 class ContactInfoResponse(Event):
     contact_details: dict[str, Any]
+
 
 @dataclass
 class GetBusEventsResponse(Event):
@@ -282,12 +285,14 @@ class GetBusEventsResponse(Event):
     def _repr_truncated(self) -> str:
         return f"{self.__class__.__name__}(events_len={len(self.events)})"
 
+
 # --------------------------------------------------------------------------- #
 # LLM inference events
 # --------------------------------------------------------------------------- #
 @dataclass
 class LLMInput(Event):
     chat_history: list[dict]
+
 
 @dataclass
 class UpdateContactRollingSummaryResponse(Event):
@@ -411,6 +416,7 @@ class ConductorClarificationRequest(Event):
 @dataclass
 class ConductorClarificationResponse(Event):
     """Event to respond to a Conductor clarification request."""
+
     handle_id: int
     response: str
     call_id: str
@@ -423,11 +429,13 @@ class ConductorNotification(Event):
     handle_id: int
     response: str
 
+
 @dataclass
 class ConductorHandleStarted(Event):
     action_name: str
     handle_id: id
     query: str
+
 
 @dataclass
 class ConductorPauseActor(Event):

@@ -18,7 +18,10 @@ from unity.conversation_manager.domains.renderer import Renderer
 from unity.conversation_manager.new_events import *
 
 from unity.conversation_manager.domains.llm import LLM
-from unity.conversation_manager.domains.actions import Action, build_dynamic_response_models
+from unity.conversation_manager.domains.actions import (
+    Action,
+    build_dynamic_response_models,
+)
 from unity.conversation_manager.domains.notifications import NotificationBar
 from unity.conversation_manager.domains.utils import Debouncer
 
@@ -45,8 +48,9 @@ if not logger.handlers:
     logger.addHandler(console_handler)
 
 
-
 MAX_CONV_MANAGER_MSGS = 50
+
+
 class ConversationManager:
     def __init__(
         self,
@@ -71,7 +75,7 @@ class ConversationManager:
         project_name: str = "Assistants",
         stop: asyncio.Event = None,
         user_turn_end_callback: Optional[Callable[[list[dict]], str]] = None,
-        realtime=False
+        realtime=False,
     ):
         # assistant details
         self.job_name = job_name
@@ -79,7 +83,7 @@ class ConversationManager:
         self.assistant_id = assistant_id
         self.assistant_name = assistant_name
         self.assistant_age = assistant_age
-        self.assistant_nationality=assistant_nationality
+        self.assistant_nationality = assistant_nationality
         self.assistant_about = assistant_about
         self.voice_provider = voice_provider
         self.voice_id = voice_id
@@ -110,14 +114,20 @@ class ConversationManager:
         self.contact_manager: ContactManager = None
         self.memory_manager: MemoryManager = None
         self.conductor: Conductor = None
-        
+
         # llm
         self.llm = LLM("gpt-4.1", event_broker)
         # debouncer (used to debounce llm runs)
         self.debouncer = Debouncer()
 
         # call manager
-        self.call_manager = LivekitCallManager(self.assistant_id, self.assistant_number, self.voice_provider, self.voice_id, realtime=realtime)
+        self.call_manager = LivekitCallManager(
+            self.assistant_id,
+            self.assistant_number,
+            self.voice_provider,
+            self.voice_id,
+            realtime=realtime,
+        )
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -133,13 +143,14 @@ class ConversationManager:
             with open(Path(__file__).parent.resolve() / "prompts" / "realtime.md") as f:
                 self.system_prompt = f.read()
 
-        
         self.mode = "text"
         self.realtime = realtime
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
-        self.conductor_handles: dict[int, dict] = {}  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
+        self.conductor_handles: dict[int, dict] = (
+            {}
+        )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
         self.last_snapshot = datetime.now()
         self._current_snapshot = None
         self.call_exchange_id = None
@@ -154,20 +165,27 @@ class ConversationManager:
     def snapshot(self):
         self._current_snapshot = datetime.now()
         return self._current_snapshot
-    
+
     def commit(self):
         self.last_snapshot = self._current_snapshot
         notifs = self.notifications_bar.notifications
         self.notifications_bar.notifications = [n for n in notifs if n.pinned]
-    
-    # this is non-blocking, it will quickly submit the 
+
+    # this is non-blocking, it will quickly submit the
     # coro and return
     async def run_llm(self, delay=0, cancel_running=False):
-        await self.debouncer.submit(self._run_llm, delay=delay, cancel_running=cancel_running)
+        await self.debouncer.submit(
+            self._run_llm, delay=delay, cancel_running=cancel_running
+        )
 
     async def _run_llm(self):
         self.snapshot()
-        prompt = self.prompt_renderer.render_state(self.contact_index, self.notifications_bar, self.conductor_handles, self.last_snapshot)
+        prompt = self.prompt_renderer.render_state(
+            self.contact_index,
+            self.notifications_bar,
+            self.conductor_handles,
+            self.last_snapshot,
+        )
         print(prompt)
         input_message = {"role": "user", "content": prompt}
         boss_contact = self.contact_index.boss_contact
@@ -184,22 +202,26 @@ class ConversationManager:
             include_email=self.assistant_email not in [None, ""],
             include_sms=self.assistant_number not in [None, ""],
             include_call=self.assistant_number not in [None, ""],
-            realtime=self.realtime
+            realtime=self.realtime,
         )
         response_model = dynamic_response_models[self.mode]
-        out = await self.llm.run(system_prompt=system_prompt, 
-                                messages=self.chat_history + [input_message],
-                                
-                                # realtime model will handle the call so no need to stream anything to the call
-                                stream_to_call=self.mode in ["call", "unify_call", "gmeet"] and not self.realtime,
-                                response_model=response_model,
-                                call_type=self.mode)
+        out = await self.llm.run(
+            system_prompt=system_prompt,
+            messages=self.chat_history + [input_message],
+            # realtime model will handle the call so no need to stream anything to the call
+            stream_to_call=self.mode in ["call", "unify_call", "gmeet"]
+            and not self.realtime,
+            response_model=response_model,
+            call_type=self.mode,
+        )
         parsed_out = json.loads(out)
         if "call" in self.mode:
             if not self.realtime:
                 if self.mode == "unify_call":
                     topic = "app:comms:unify_call_utterance"
-                    event = AssistantUnifyCallUtterance(1, parsed_out["phone_utterance"])
+                    event = AssistantUnifyCallUtterance(
+                        1, parsed_out["phone_utterance"]
+                    )
                 else:
                     topic = "app:comms:phone_utterance"
                     event = AssistantPhoneUtterance(
@@ -215,10 +237,12 @@ class ConversationManager:
                     )
 
         print(f"parsed_out {parsed_out}")
-        actions = parsed_out.get("actions") or [] # sometimes actions exist but is None
+        actions = parsed_out.get("actions") or []  # sometimes actions exist but is None
         for action in actions:
             print("taking actions...")
-            Action.take_action(self, action.pop("action_name"), **action, realtime=self.realtime)
+            Action.take_action(
+                self, action.pop("action_name"), **action, realtime=self.realtime
+            )
             print("done taking actions...")
         self.commit()
         print("commiting...")
@@ -228,6 +252,7 @@ class ConversationManager:
         # if len(self.chat_history) >= int(0.7 * self.max_messages) and not self.is_summarizing:
         #    print("summarizing conversation...")
         #    Action.take_action(self, "summarize_conversation")
+
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
             await pubsub.psubscribe(
@@ -246,19 +271,20 @@ class ConversationManager:
                 # way to deal with this
                 await managers_utils.init_conv_manager(self)
                 print("Default startup")
-            
+
             while True:
                 msg = await pubsub.get_message(
                     timeout=2,
                     ignore_subscribe_messages=True,
                 )
 
-                if not msg: continue
+                if not msg:
+                    continue
                 self.last_activity_time = self.loop.time()
                 # process events
                 event = Event.from_json(msg["data"])
                 await EventHandler.handle_event(event, self, realtime=self.realtime)
-        
+
     async def check_inactivity(self):
         """Monitor for inactivity and shut down gracefully after timeout"""
         while True:
@@ -270,7 +296,6 @@ class ConversationManager:
                 )
                 self.stop.set()
                 await self.event_broker.aclose()
-
 
     # Convenience setter to allow late binding of the callback
     def set_user_turn_end_callback(self, callback: Callable[[list[dict]], str]) -> None:
@@ -313,7 +338,7 @@ class ConversationManager:
         os.environ["ASSISTANT_EMAIL"] = self.assistant_email
         os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
-    
+
     def cleanup(self):
         """Clean up any running call processes"""
         print(f"Marking job {self.job_name} done")

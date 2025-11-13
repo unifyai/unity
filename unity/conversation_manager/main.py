@@ -19,6 +19,7 @@ from unity.helpers import cleanup_dangling_call_processes
 stop = None
 conversation_manager = None
 
+
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
     global conversation_manager, managers_worker, stop
@@ -81,15 +82,16 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
         project_name=project_name,
         stop=stop,
         user_turn_end_callback=None,
-
         # whether to use realtime settings or not
-        realtime=use_realtime
+        realtime=use_realtime,
     )
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
 
-    asyncio.create_task(conversation_manager.wait_for_events()).add_done_callback(log_task_exc)
+    asyncio.create_task(conversation_manager.wait_for_events()).add_done_callback(
+        log_task_exc
+    )
     asyncio.create_task(conversation_manager.check_inactivity())
     if not os.getenv("TEST"):
         asyncio.create_task(comms_manager.start())
