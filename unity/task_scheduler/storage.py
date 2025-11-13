@@ -481,9 +481,6 @@ class LocalTaskView:
         )
 
     # ----------------------------- Queue index -----------------------------
-    def queue_index_is_fresh(self) -> bool:
-        return (not self._queue_index_stale) and (not self._cache_disabled())
-
     def mark_queue_changed(self) -> None:
         self._queue_index_stale = True
 
