@@ -1,8 +1,13 @@
+from dotenv import load_dotenv
+import json
 import os
 import asyncio
 import aiohttp
+from google.cloud import pubsub_v1
 
+load_dotenv()
 headers = {"Authorization": f"Bearer {os.getenv('ORCHESTRA_ADMIN_KEY')}"}
+publisher = pubsub_v1.PublisherClient()
 
 
 async def send_sms_message_via_number(to_number: str, message: str) -> str:
@@ -35,6 +40,49 @@ async def send_sms_message_via_number(to_number: str, message: str) -> str:
                 print(e)
                 return {"success": False}
             return await response.json()
+
+
+async def send_unify_message(message: str) -> str:
+    """
+    Send a message to the boss chat.
+    """
+    topic_name = (
+        "unity-"
+        + (
+            os.getenv("ASSISTANT_ID")
+            if os.getenv("ASSISTANT_ID")
+            else "default-assistant"
+        )
+        + (
+            "-staging"
+            if os.getenv("STAGING")
+            and "default-assistant" not in os.getenv("ASSISTANT_ID", "")
+            else ""
+        )
+    )
+    topic_path = publisher.topic_path("responsive-city-458413-a2", topic_name)
+
+    print(f"Sending unify message: {message}")
+    message_data = {
+        "thread": "unify_message_outbound",
+        "event": {"content": message, "role": "assistant"},
+    }
+    try:
+        # Publish with attributes
+        future = publisher.publish(
+            topic_path,
+            json.dumps(message_data).encode("utf-8"),
+            thread="unify_message_outbound",
+        )
+        message_id = future.result()
+        print(f"Unify message published with ID: {message_id}")
+        if message_id:
+            return {"success": True}
+        else:
+            return {"success": False}
+    except Exception as e:
+        print(f"Error sending unify message: {e}")
+        return {"success": False, "error": str(e)}
 
 
 async def send_email_via_address(

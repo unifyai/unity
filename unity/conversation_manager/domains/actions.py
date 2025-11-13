@@ -267,7 +267,15 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
 async def send_unify_message(
     cm: "ConversationManager", action_name: str, *args, **kwargs
 ):
-    pass
+    message = kwargs.get("message")
+    contact_id = kwargs.get("contact_id")
+    response = await comms_utils.send_unify_message(message=message)
+    if response["success"]:
+        contact = cm.contact_index.get_contact(contact_id=contact_id)
+        event = UnifyMessageSent(contact=contact, content=message)
+    else:
+        event = Error(f"Failed to send unify message")
+    await event_broker.publish("app:comms:unify_message_sent", event.to_json())
 
 
 @Action.register()
