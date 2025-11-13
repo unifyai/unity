@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ..constants import LOGGER
-from ..common.async_tool_loop import AsyncToolLoopHandle
+from ..common.async_tool_loop import AsyncToolLoopHandle, custom_steering_method
 
 
 class ExecuteLoopHandle(AsyncToolLoopHandle):
@@ -67,3 +67,23 @@ class ExecuteLoopHandle(AsyncToolLoopHandle):
             self._stop_event.set()
         except Exception:
             pass
+
+    @custom_steering_method()
+    async def append_to_queue(self, task_id: int) -> None:
+        """
+        Request appending an existing runnable task to the live task queue.
+
+        Behaviour
+        ---------
+        - Adds a concise user-visible interjection on the current tool loop.
+        - The custom steering decorator mirrors this call (no extra LLM step) and
+          forwards it to any adopted passthrough child that implements the same
+          method signature (e.g., ActiveQueue.append_to_queue).
+        """
+        await self.interject(
+            (
+                f"outer append_to_queue({int(task_id)}) called, requesting for task "
+                f"with task_id={int(task_id)} to be added to the live task queue, ready for execution."
+            ),
+            trigger_immediate_llm_turn=False,
+        )
