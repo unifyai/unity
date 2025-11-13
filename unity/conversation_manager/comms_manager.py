@@ -256,6 +256,7 @@ class CommsManager:
                             payload = PreHireMessage(
                                 content=msg_content,
                                 role=role,
+                                exchange_id=0,
                                 metadata={
                                     "source": "pre_hire",
                                     "assistant_id": assistant_id,
