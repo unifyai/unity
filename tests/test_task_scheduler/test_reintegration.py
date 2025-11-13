@@ -318,11 +318,10 @@ async def test_reinstate_refuses_when_trigger_present():
     handle.stop()
     await handle.result()
 
-    # Add a trigger to the task → schedule restoration should be refused
-    ts._update_task(task_id=head_id, trigger=Trigger(medium=Medium.EMAIL))
-
+    # Auto‑reinstatement occurs on defer (cancel=False), so the head has a schedule again.
+    # Adding a trigger while a schedule exists must now be refused immediately.
     with pytest.raises(ValueError):
-        ts._reinstate_task_to_previous_queue(task_id=head_id)
+        ts._update_task(task_id=head_id, trigger=Trigger(medium=Medium.EMAIL))
 
 
 @pytest.mark.asyncio
@@ -333,7 +332,7 @@ async def test_reinstate_head_with_all_neighbors_deleted_fallback():
 
     # Activate head and cancel to record reintegration plan (captures original start_at)
     handle = await ts.execute(text=str(head_id), isolated=True)
-    handle.stop()
+    handle.stop(cancel=True)
     await handle.result()
 
     # Delete both original neighbors before reinstatement (drift)
@@ -389,7 +388,7 @@ async def test_reinstate_primed_conflict_downgrades_to_queued():
 
     # Activate head and cancel
     handle = await ts.execute(text=str(h_id))
-    handle.stop()
+    handle.stop(cancel=True)
     await handle.result()
 
     # Create a new task now – with no active and no primed, this becomes the new 'primed'
