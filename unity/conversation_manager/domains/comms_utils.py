@@ -158,4 +158,3 @@ async def add_email_attachments(
                 )
             except Exception as e:
                 print(f"Failed to fetch/write attachment '{att}': {e}")
-

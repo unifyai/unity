@@ -8,7 +8,14 @@ from unity.conversation_manager.new_events import *
 
 
 class LivekitCallManager:
-    def __init__(self, assistant_id=None, assistant_number=None, voice_provider=None, voice_id=None, realtime: bool = False):
+    def __init__(
+        self,
+        assistant_id=None,
+        assistant_number=None,
+        voice_provider=None,
+        voice_id=None,
+        realtime: bool = False,
+    ):
         self.assistant_id = assistant_id
         self.assistant_number = assistant_number
         self.voice_provider = voice_provider
@@ -23,7 +30,7 @@ class LivekitCallManager:
     # TODO: support unify calls and clean up boss data passage
     def start_call(self, contact_phone_number):
         # start the process here
-        target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"  
+        target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         target_path = target_path / "call.py"
         args = [
             contact_phone_number,
@@ -36,7 +43,7 @@ class LivekitCallManager:
         print(f"target_path: {target_path}, args: {args}")
         if not os.getenv("TEST"):
             self.call_proc = run_script(str(target_path), "dev", *args)
-    
+
     def start_unify_call(self, agent_name, room_name=None):
         target_path = target_path / "unify_call.py"
         agent_name = (
@@ -66,7 +73,7 @@ class LivekitCallManager:
         print(f"target_path: {target_path}, args: {args}")
         if not os.getenv("TEST"):
             self.call_proc = run_script(str(target_path), "dev", *args)
-    
+
     def cleanup_call_proc(self):
         print(f"Terminating call process")
         try:

@@ -25,10 +25,12 @@ event_broker = get_event_broker()
 
 # Thought: This entire file could actually be turned into a mixin class
 
+
 # EVENT BUS
 async def get_bus_events():
     bus_events = await EVENT_BUS.search(filter='type == "Comms"', limit=50)
     return [Event.from_bus_event(e).to_dict() for e in bus_events][::-1]
+
 
 async def publish_bus_events(event):
     try:
@@ -40,6 +42,7 @@ async def publish_bus_events(event):
         await EVENT_BUS.publish(bus_event)
     except Exception as e:
         print(f"[ManagersWorker] Error publishing bus event: {e}")
+
 
 # CONDUCTOR
 async def conductor_watch_result(
@@ -61,6 +64,7 @@ async def conductor_watch_result(
             result=result,
         ).to_json(),
     )
+
 
 async def conductor_watch_notifications(
     handle_id: int,
@@ -85,6 +89,7 @@ async def conductor_watch_notifications(
                 response=msg,
             ).to_json(),
         )
+
 
 async def conductor_watch_clarifications(
     handle_id: int,
@@ -113,124 +118,120 @@ async def conductor_watch_clarifications(
         )
 
 
-async def log_message(cm: 'ConversationManager', event: Event) -> None:
-        """Log a message via TranscriptManager."""
-        event_name = event.__class__.__name__
-        print("publishing transcript", event_name)
-        if "unify" in event_name:
-            medium = "unify_call" if "call" in event_name else "unify_message"
-        elif "phone" in event_name:
-            medium = "phone_call"
-        elif "sms" in event_name:
-            medium = "sms_message"
-        elif "email" in event_name:
-            medium = "email"
-        else:
-            medium = "whatsapp_message"
-        role = (
-            "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
-        )
-        if isinstance(event, (EmailSent, EmailReceived)):
-            content = event.subject + "\n\n" + event.body
-        else:
-            content = event.content
+async def log_message(cm: "ConversationManager", event: Event) -> None:
+    """Log a message via TranscriptManager."""
+    event_name = event.__class__.__name__
+    print("publishing transcript", event_name)
+    if "unify" in event_name:
+        medium = "unify_call" if "call" in event_name else "unify_message"
+    elif "phone" in event_name:
+        medium = "phone_call"
+    elif "sms" in event_name:
+        medium = "sms_message"
+    elif "email" in event_name:
+        medium = "email"
+    else:
+        medium = "whatsapp_message"
+    role = "Assistant" if "sent" in event_name or "assistant" in event_name else "User"
+    if isinstance(event, (EmailSent, EmailReceived)):
+        content = event.subject + "\n\n" + event.body
+    else:
+        content = event.content
 
-        contact_id = None
-        if isinstance(
-            event,
-            (
-                UnifyMessageSent,
-                UnifyMessageReceived,
-                UnifyCallUtterance,
-                AssistantUnifyCallUtterance,
-            ),
-        ):
-            contact_id = 1
-        elif event.contact["contact_id"] in cm.contact_index.contacts:
-            contact_id = event.contact["contact_id"]
+    contact_id = None
+    if isinstance(
+        event,
+        (
+            UnifyMessageSent,
+            UnifyMessageReceived,
+            UnifyCallUtterance,
+            AssistantUnifyCallUtterance,
+        ),
+    ):
+        contact_id = 1
+    elif event.contact["contact_id"] in cm.contact_index.contacts:
+        contact_id = event.contact["contact_id"]
+    if role == "Assistant":
+        sender_id, receiver_ids = 0, [contact_id]
+    else:
+        sender_id, receiver_ids = contact_id, [0]
+
+    exchange_id = UNASSIGNED
+    if medium == "phone_call":
+        exchange_id = cm.call_exchange_id
+    if medium == "unify_call":
+        exchange_id = cm.unify_call_exchange_id
+
+    call_utterance_timestamp = ""
+    call_url = ""
+    # compute utterance timestamp based on active call type
+    timestamp = (
+        cm.call_start_timestamp
+        if medium == "phone_call"
+        else (cm.unify_call_start_timestamp if medium == "unify_call" else None)
+    )
+    if timestamp:
+        delta = datetime.now() - timestamp
         if role == "Assistant":
-            sender_id, receiver_ids = 0, [contact_id]
-        else:
-            sender_id, receiver_ids = contact_id, [0]
-
-        exchange_id = UNASSIGNED
-        if medium == "phone_call":
-            exchange_id = cm.call_exchange_id
-        if medium == "unify_call":
-            exchange_id = cm.unify_call_exchange_id
-
-        call_utterance_timestamp = ""
-        call_url = ""
-        # compute utterance timestamp based on active call type
-        timestamp = (
-           cm.call_start_timestamp
-            if medium == "phone_call"
-            else (
-               cm.unify_call_start_timestamp
-                if medium == "unify_call"
-                else None
-            )
+            delta += timedelta(seconds=2)
+        minutes, seconds = divmod(int(delta.total_seconds()), 60)
+        # ToDo: Make this MM:SS once we have explicit types working
+        call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
+    if "default-assistant" not in cm.assistant_id:
+        call_url = (
+            "https://storage.cloud.google.com/assistant-call-recordings/staging/"
+            f"{cm.assistant_id}/{cm.conference_name}.mp3"
         )
-        if timestamp:
-            delta = datetime.now() - timestamp
-            if role == "Assistant":
-                delta += timedelta(seconds=2)
-            minutes, seconds = divmod(int(delta.total_seconds()), 60)
-            # ToDo: Make this MM:SS once we have explicit types working
-            call_utterance_timestamp = f"{minutes:02d}.{seconds:02d}"
-        if "default-assistant" not in cm.assistant_id:
-            call_url = (
-                "https://storage.cloud.google.com/assistant-call-recordings/staging/"
-                f"{cm.assistant_id}/{cm.conference_name}.mp3"
+    try:
+        print(f"[ManagersWorker] Logging message: {event.to_dict()}")
+        # call_utterance_timestamp = event.call_utterance_timestamp
+        # call_url = event.call_url
+        metadata = getattr(event, "metadata", None)
+
+        # Log the message
+        messages = cm.transcript_manager.log_messages(
+            {
+                "medium": medium,
+                "sender_id": sender_id,
+                "receiver_ids": receiver_ids,
+                # not sure if this is right but that's how it is in the code in main
+                "timestamp": event.timestamp,
+                "content": content,
+                "exchange_id": exchange_id,
+                # "call_utterance_timestamp": call_utterance_timestamp,
+                # "call_url": call_url,
+                "_metadata": metadata,
+            },
+            synchronous=True,
+        )
+
+        message = messages[0] if messages else None
+        print(
+            f"[ManagersWorker] Logged message: {medium}"
+            f" from {sender_id} to {receiver_ids}",
+        )
+
+        # Publish reply as Event envelope
+        if message:
+            await event_broker.publish(
+                "app:logging:message_logged",
+                LogMessageResponse(
+                    medium=medium,
+                    exchange_id=message.exchange_id,
+                ).to_json(),
             )
-        try:
-            print(f"[ManagersWorker] Logging message: {event.to_dict()}")
-            # call_utterance_timestamp = event.call_utterance_timestamp
-            # call_url = event.call_url
-            metadata = getattr(event, "metadata", None)
+            print(f"[ManagersWorker] Published exchange_id {message.exchange_id}")
 
-            # Log the message
-            messages = cm.transcript_manager.log_messages(
-                {
-                    "medium": medium,
-                    "sender_id": sender_id,
-                    "receiver_ids": receiver_ids,
-                    # not sure if this is right but that's how it is in the code in main
-                    "timestamp": event.timestamp,
-                    "content": content,
-                    "exchange_id": exchange_id,
-                    # "call_utterance_timestamp": call_utterance_timestamp,
-                    # "call_url": call_url,
-                    "_metadata": metadata,
-                },
-                synchronous=True,
-            )
-
-            message = messages[0] if messages else None
-            print(
-                f"[ManagersWorker] Logged message: {medium}"
-                f" from {sender_id} to {receiver_ids}",
-            )
-
-            # Publish reply as Event envelope
-            if message:
-                await event_broker.publish(
-                    "app:logging:message_logged",
-                    LogMessageResponse(
-                        medium=medium,
-                        exchange_id=message.exchange_id,
-                    ).to_json(),
-                )
-                print(f"[ManagersWorker] Published exchange_id {message.exchange_id}")
-
-        except Exception as e:
-            print(f"[ManagersWorker] Error logging message: {e}")
+    except Exception as e:
+        print(f"[ManagersWorker] Error logging message: {e}")
 
 
 _init_lock = asyncio.Lock()
 _initialized = False
+
+
 # TODO: this will be blocking so might have to run it in a thread? it should be fast but its actually very slow it seems
-async def init_conv_manager(cm: 'ConversationManager'):
+async def init_conv_manager(cm: "ConversationManager"):
     print("[ManagersWorker] Processing startup")
     global _init_lock, _initialized
 
@@ -254,7 +255,7 @@ async def init_conv_manager(cm: 'ConversationManager'):
                 "user_phone": cm.user_number,
                 "user_whatsapp_number": cm.user_whatsapp_number,
                 "assistant_whatsapp_number": cm.assistant_number,
-}
+            }
             if not unity.ASSISTANT:
                 unity.init(
                     assistant_id=int(
@@ -277,8 +278,7 @@ async def init_conv_manager(cm: 'ConversationManager'):
                         "phone": payload["phone"] or None,
                         "email": payload["email"] or None,
                         "user_phone": payload["user_phone"] or None,
-                        "user_whatsapp_number": payload["user_whatsapp_number"]
-                        or None,
+                        "user_whatsapp_number": payload["user_whatsapp_number"] or None,
                         "assistant_whatsapp_number": payload[
                             "assistant_whatsapp_number"
                         ]
@@ -302,10 +302,8 @@ async def init_conv_manager(cm: 'ConversationManager'):
             EVENT_BUS.set_window("Comms", 50)
             EVENT_BUS.register_auto_pin(
                 event_type="Comms",
-                open_predicate=lambda e: e.payload.get("role", "")
-                == "tool_use start",
-                close_predicate=lambda e: e.payload.get("role", "")
-                == "tool_use end",
+                open_predicate=lambda e: e.payload.get("role", "") == "tool_use start",
+                close_predicate=lambda e: e.payload.get("role", "") == "tool_use end",
                 key_fn=lambda e: e.payload.get("handle_id", ""),
             )
             bus_events_task = asyncio.create_task(get_bus_events())
@@ -370,10 +368,9 @@ async def init_conv_manager(cm: 'ConversationManager'):
 
         except Exception as e:
             print(f"[ManagersWorker] Error during initialization: {e}")
-        
 
         cm.initialized = True
-        
+
         print(
             "[ManagersWorker] Initialization complete in "
             f"{perf_counter() - start_time:.2f} seconds",

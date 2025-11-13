@@ -317,13 +317,12 @@ class CommsManager:
                         )
                         topic = "app:comms:unify_call_received"
                     else:
-                        number = event.get(
-                                "caller_number", event.get("user_number")
-                            )
-                        contact = next(c for c in contacts if c["phone_number"] == number)
+                        number = event.get("caller_number", event.get("user_number"))
+                        contact = next(
+                            c for c in contacts if c["phone_number"] == number
+                        )
                         event = PhoneCallReceived(
                             contact=contact,
-
                             conference_name=event.get("conference_name", ""),
                         )
                         topic = "app:comms:call_recieved"
