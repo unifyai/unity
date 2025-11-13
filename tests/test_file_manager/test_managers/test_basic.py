@@ -162,16 +162,11 @@ async def test_filter_by_content_id_dict(file_manager, supported_file_examples: 
     display_name = str(example_data["path"])  # absolute path
     # Parse file to create per-file Content rows
     fm.parse(display_name)
-    # Resolve the logical root name for per-file Content from overview
-    overview = fm._tables_overview(file=display_name)
-    # Pick the first root key that exposes Content (skip FileRecords)
-    roots = [k for k, v in overview.items() if isinstance(v, dict) and "Content" in v]
-    assert roots, "Expected a per-file Content root in the overview"
-    root = roots[0]
+    # Use file_path directly instead of legacy root from tables_overview
     # Filter for the document row using dict-based content_id
     rows = fm._filter_files(
         filter="content_type == 'document' and content_id.get('document') == 0",
-        tables=[root],
+        tables=[display_name],
     )
     assert isinstance(rows, list)
     assert rows, "Expected at least one Content row for the document"
