@@ -221,6 +221,7 @@ class StartupEvent(Event):
     user_email: str
     voice_id: str
     voice_provider: str = "cartesia"
+    voice_mode: str = "tts"
 
 
 @dataclass
@@ -242,6 +243,7 @@ class AssistantUpdateEvent(Event):
     user_email: str
     voice_id: str
     voice_provider: str = "cartesia"
+    voice_mode: str = "tts"
 
 
 @dataclass

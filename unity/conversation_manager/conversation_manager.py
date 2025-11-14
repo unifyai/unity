@@ -338,6 +338,7 @@ class ConversationManager:
         self.user_email = payload["user_email"]
         self.voice_provider = payload["voice_provider"]
         self.voice_id = payload["voice_id"]
+        self.voice_mode = payload["voice_mode"]
         self.build_response_model()
         if payload.get("api_key"):
             os.environ["UNIFY_KEY"] = payload["api_key"]
@@ -351,6 +352,7 @@ class ConversationManager:
         os.environ["ASSISTANT_EMAIL"] = self.assistant_email
         os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
+        os.environ["VOICE_MODE"] = self.voice_mode
 
     def get_details(self) -> dict:
         return {
