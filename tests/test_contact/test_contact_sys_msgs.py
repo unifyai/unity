@@ -9,6 +9,7 @@ from tests.assertion_helpers import (
     assert_section_spacing,
     assert_selected_headers_have_blank_line,
     assert_time_footer,
+    first_diff_block,
 )
 
 
@@ -215,17 +216,20 @@ def test_contact_manager_ask_prompt_is_stable_across_serial_builds():
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess("ask")
     p2 = _build_prompt_in_subprocess("ask")
-    assert p1 == p2, (
-        "Ask system prompt changed between separate Python sessions.\n\n"
-        f"First (normalized):\n\n{p1}\n\nSecond (normalized):\n\n{p2}"
-    )
+    if p1 != p2:
+        snippet = first_diff_block(p1, p2, context=3, label_a="First", label_b="Second")
+        raise AssertionError(
+            "Ask system prompt changed between separate Python sessions.\n\n" + snippet,
+        )
 
 
 def test_contact_manager_update_prompt_is_stable_across_serial_builds():
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess("update")
     p2 = _build_prompt_in_subprocess("update")
-    assert p1 == p2, (
-        "Update system prompt changed between separate Python sessions.\n\n"
-        f"First (normalized):\n\n{p1}\n\nSecond (normalized):\n\n{p2}"
-    )
+    if p1 != p2:
+        snippet = first_diff_block(p1, p2, context=3, label_a="First", label_b="Second")
+        raise AssertionError(
+            "Update system prompt changed between separate Python sessions.\n\n"
+            + snippet,
+        )
