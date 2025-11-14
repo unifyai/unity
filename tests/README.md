@@ -91,6 +91,35 @@ How it interprets arguments:
   - When you do not specify individual tests, the script creates one session per file.
   - With `-t/--per-test`, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
 
+## Match tests by filename (glob-style)
+
+Use `-m/--match` to run tests whose basenames match a simple glob pattern. The pattern is matched against the filename only (not the full path). Quote the pattern to prevent your shell from expanding it.
+
+Examples:
+
+```bash
+# Run all "docstring" focused tests (each in its own tmux session)
+./.parallel_run.sh -m "*_tool_docstring*"
+```
+
+This one-liner matches files such as:
+
+- `tests/test_contact/test_contact_tool_docstrings.py`
+- `tests/test_transcript_manager/test_transcript_tool_docstrings.py`
+- `tests/test_task_scheduler/test_task_tool_docstrings.py`
+- `tests/test_conductor/test_conductor_tool_docstrings.py`
+- `tests/test_file_manager/test_file_tool_docstrings.py`
+- `tests/test_guidance/test_guidance_tool_docstring.py`
+- `tests/test_knowledge/test_knowledge_tool_docstrings.py`
+- `tests/test_secret_manager/test_secret_manager_tool_docstrings.py`
+- `tests/test_skill_manager/test_skill_tool_docstrings.py`
+- `tests/test_web_searcher/test_web_tool_docstrings.py`
+
+Notes:
+
+- `*` means “anything before/after” in the filename. You can combine it with other characters (e.g., `test_*_tool_docstring*.py`).
+- When using `-m/--match`, the default behavior still applies: one tmux session per matching test file.
+
 ## Defaults & conventions
 
 - **Environment**:
