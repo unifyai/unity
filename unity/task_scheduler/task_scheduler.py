@@ -227,23 +227,6 @@ class TaskScheduler(BaseTaskScheduler):
         }
         self.add_tools("update", update_tools)
 
-        # Execute helpers – read-only inspection + safe execution entrypoints
-        execute_tools = {
-            **methods_to_tool_dict(
-                # Read-only helpers that the execute loop may call
-                self.ask,
-                self._list_queues,
-                self._get_queue,
-                # Start execution (queue semantics vs isolated)
-                self._execute_by_id,
-                self._execute_isolated_by_id,
-                # Minimal creator for missing tasks (name + description only)
-                self.create_task,
-                include_class_name=False,
-            ),
-        }
-        self.add_tools("execute", execute_tools)
-
         # active task
         if actor is None:
             # Allow tests to override default simulated duration via env var

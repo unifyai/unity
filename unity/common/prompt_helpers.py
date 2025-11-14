@@ -22,7 +22,6 @@ __all__ = [
     "special_contacts_block",
     "two_table_reasoning_block",
     "task_queue_invariants_block",
-    "task_execute_decision_policy_block",
     "images_extras_for_transcripts",
     "images_first_ask_for_tasks",
 ]
@@ -371,58 +370,6 @@ def task_queue_invariants_block() -> str:
             "• Status is updated implicitly based on operations (activation, scheduling, completion). Do not set status explicitly.",
         ],
     )
-
-
-def task_execute_decision_policy_block(
-    *,
-    execute_by_id_fname: Optional[str],
-    execute_isolated_by_id_fname: Optional[str],
-    list_queues_fname: Optional[str],
-    get_queue_fname: Optional[str],
-) -> str:
-    """Decision policy and workflow for TaskScheduler.execute."""
-    lines: List[str] = [
-        "Decision policy (isolation vs chain)",
-        "------------------------------------",
-        "• Consider the broader chat context and the user's exact phrasing to infer execution scope (single task now vs the whole sequence now).",
-        "• Choose isolation for “start X now” requests. Choose queue/chained execution only when the user clearly requests running the whole sequence now.",
-        "• Do not attempt to modify queue order or dates during execute; execute does not have queue editing tools.",
-        "",
-        "Tool semantics (for your decision)",
-        "-----------------------------------",
-    ]
-    if execute_isolated_by_id_fname:
-        lines.append(
-            f"• `{execute_isolated_by_id_fname}(task_id=…)` – isolation: detach the selected task and start only that task.",
-        )
-    if execute_by_id_fname:
-        lines.append(
-            f"• `{execute_by_id_fname}(task_id=…)` – queue mode: start the selected task within its queue so followers remain attached.",
-        )
-    lines.extend(
-        [
-            "",
-            "EXECUTION WORKFLOW (no queue mutation):",
-        ],
-    )
-    if list_queues_fname and get_queue_fname:
-        lines.append(
-            f"1) Optionally inspect queues using `{list_queues_fname}()` and `{get_queue_fname}(queue_id=…)` to confirm context.",
-        )
-    else:
-        lines.append(
-            "1) Optionally inspect the queue context using the available queue tools.",
-        )
-    if execute_isolated_by_id_fname and execute_by_id_fname:
-        lines.append(
-            f"2) Execute by choosing `{execute_isolated_by_id_fname}` (preferred for single‑task‑now) or `{execute_by_id_fname}` (for explicit chain‑now).",
-        )
-    elif execute_by_id_fname:
-        lines.append(f"2) Execute by calling `{execute_by_id_fname}(task_id=<id>)`.")
-    lines.append(
-        "3) Do not write status fields directly; lifecycle is managed by the scheduler.",
-    )
-    return "\n".join(lines)
 
 
 def images_extras_for_transcripts(

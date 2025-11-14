@@ -1,8 +1,8 @@
 """
 Prompt builders for the Task Scheduler.
 
-This module constructs system prompts for the scheduler's ask, update, and
-execute methods, plus a helper for the simulated scheduler. Each builder
+This module constructs system prompts for the scheduler's ask and update
+methods, plus a helper for the simulated scheduler. Each builder
 derives tool names dynamically from the provided tool dictionary, validates the
 required tools, and composes guidance and examples that reflect current
 behavior.
@@ -26,7 +26,6 @@ from ..common.prompt_helpers import (
     PromptSpec,
     compose_system_prompt,
     images_first_ask_for_tasks,
-    task_execute_decision_policy_block,
 )
 
 
@@ -444,74 +443,6 @@ def build_update_prompt(
         images_extras_block=None,
         include_parallelism=True,
         schemas=[("Task schema", Task.model_json_schema())],
-        special_blocks=[],
-        include_clarification_footer=True,
-        include_time_footer=True,
-    )
-
-    return compose_system_prompt(spec)
-
-
-def build_execute_prompt(
-    tools: Dict[str, Callable],
-) -> str:
-    """
-    Build a minimal system prompt for the `execute` surface.
-
-    Note: Execution is now strictly by id. The prompt exists only for
-    implementations that still expose execution helpers as tools in other
-    loops/tests; it documents the expected usage of the tools.
-    """
-
-    # Resolve names dynamically
-    execute_by_id_fname = tool_name(tools, "execute_by_id")
-    execute_isolated_by_id_fname = tool_name(tools, "execute_isolated_by_id")
-
-    # Require by-id execution tool
-    require_tools(
-        {
-            "execute_by_id": execute_by_id_fname,
-        },
-        tools,
-    )
-
-    # Usage (by-id only)
-    usage_block = "\n".join(
-        [
-            "Execution policy (by id only)",
-            "------------------------------",
-            (f"• Start a task by id using `{execute_by_id_fname}(task_id=<id>)`."),
-            (
-                f"• To run in isolation, use `{execute_isolated_by_id_fname}(task_id=<id>)`."
-                if execute_isolated_by_id_fname
-                else ""
-            ),
-            "• Do not create or modify tasks from this surface; use update tools instead.",
-        ],
-    )
-
-    # Compose a short, static prompt (no dynamic schema blocks needed)
-    spec = PromptSpec(
-        manager="TaskScheduler",
-        method="execute",
-        tools=tools,
-        role_line="You are an assistant that starts tasks by their numeric id.",
-        global_directives=[
-            "This surface only accepts task ids; no free‑form resolution.",
-        ],
-        include_read_only_guard=False,
-        positioning_lines=[],
-        counts_entity_plural=None,
-        counts_value=None,
-        columns_payload=None,
-        include_tools_block=True,
-        usage_examples=usage_block,
-        clarification_examples_block=None,
-        include_images_policy=False,
-        include_images_forwarding=True,
-        images_extras_block=None,
-        include_parallelism=False,
-        schemas=[],
         special_blocks=[],
         include_clarification_footer=True,
         include_time_footer=True,
