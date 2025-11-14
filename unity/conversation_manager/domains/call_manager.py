@@ -81,7 +81,7 @@ class LivekitCallManager:
     def cleanup_call_proc(self):
         print(f"Terminating call process")
         try:
-            terminate_process(self.call_proc)
+            terminate_process(self.call_proc, timeout=3)
             self.call_proc = None
             print(f"Call process terminated")
         except Exception as e:

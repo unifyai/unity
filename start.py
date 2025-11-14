@@ -9,6 +9,8 @@ import unity.conversation_manager as cm
 def signal_handler(signum, frame):
     print("Shutting down convo manager...")
     cm.stop("signal_shutdown")
+    while cm.is_running():
+        time.sleep(1)
     exit(0)
 
 
