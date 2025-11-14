@@ -117,7 +117,7 @@ class CommsManager:
                     "user_email": event["user_email"],
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
-                    "voice_mode": event[f"voice_mode"]
+                    "voice_mode": event["voice_mode"],
                 }
                 task = asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(

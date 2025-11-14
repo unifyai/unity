@@ -39,7 +39,7 @@ class EmailMessage:
     name: str
     subject: str
     body: str
-    message_id: str | None = None
+    message_id: str | None
     timestamp: datetime
 
 

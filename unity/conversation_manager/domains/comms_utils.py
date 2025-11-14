@@ -88,7 +88,7 @@ async def send_unify_message(message: str) -> str:
 async def send_email_via_address(
     to_email: str,
     subject: str,
-    content: str,
+    body: str,
     message_id: str = None,
 ) -> str:
     """
@@ -97,7 +97,7 @@ async def send_email_via_address(
     Args:
         to_email: The email address to send the email to
         subject: The subject of the email
-        content: The message content to send
+        body: The message body to send
         message_id: The message ID of the email to reply to
 
     Returns:
@@ -106,7 +106,7 @@ async def send_email_via_address(
     from_email = os.getenv("ASSISTANT_EMAIL")
 
     print(
-        f"Sending email from {from_email} to {to_email}: {content}, {subject} {message_id}",
+        f"Sending email from {from_email} to {to_email}: {body}, {subject} {message_id}",
     )
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -116,7 +116,7 @@ async def send_email_via_address(
                 "from": from_email,
                 "to": to_email,
                 "subject": subject,
-                "body": content,
+                "body": body,
                 "in_reply_to": message_id,
             },
         ) as response:
