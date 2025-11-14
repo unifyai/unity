@@ -1451,11 +1451,8 @@ class TaskScheduler(BaseTaskScheduler):
         # materialized (if any). This ensures preview calls to
         # _allocate_new_queue_id() do not consume ids and tests that capture a
         # queue id before creation continue to pass.
-        try:
-            if derived_qid is not None:
-                self._view.sync_max_queue_id_seen(derived_qid)
-        except Exception:
-            pass
+        if derived_qid is not None:
+            self._view.sync_max_queue_id_seen(derived_qid)
 
         # Maintain cached total count (+1 new row)
         if self._num_tasks_cached is not None:
