@@ -206,7 +206,7 @@ class CommsManager:
 
                 elif thread == "unify_message":
                     # No phone/email; boss contact id is always "1"
-                    contact = next(c for c in contacts if c["id"] == 1)
+                    contact = next(c for c in contacts if c["contact_id"] == 1)
                     task = asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:{thread}_message",
