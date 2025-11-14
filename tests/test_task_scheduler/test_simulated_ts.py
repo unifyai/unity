@@ -263,16 +263,16 @@ async def test_handle_ask():
     handle = await ts.ask("Summarize all tasks due this week.")
 
     # Add extra context to ensure nested prompt includes it
-    handle.interject("Focus on European enterprise accounts.")
+    handle.interject("Focus on emails that need to be sent.")
 
     # Invoke the dynamic ask on the running handle
-    nested = await handle.ask("What is the key task to prioritize?")
+    nested = await handle.ask("What is the key task to prioritize within this summary?")
 
     nested_answer = await nested.result()
     assert isinstance(nested_answer, str) and nested_answer.strip(), (
         "Nested ask() should yield a non-empty string answer",
     )
-    assert "europe" in nested_answer.lower()
+    assert "email" in nested_answer.lower()
 
     # The original handle should still be awaitable and produce an answer
     handle_answer = await handle.result()
