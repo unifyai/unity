@@ -16,8 +16,8 @@ from typing import List, Optional, Callable, Any
 import unify
 
 from ..common.async_tool_loop import SteerableToolHandle
+from ..common._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ..constants import LOGGER, LLM_IO_DEBUG, SESSION_ID
-from ..common.llm_helpers import short_id
 from .base import BaseTaskScheduler
 from .prompt_builders import (
     build_ask_prompt,
@@ -30,6 +30,7 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..common.simulated import mirror_task_scheduler_tools
+from secrets import token_hex
 
 # Per-run file sink for simulated LLM I/O logs (request/response)
 _SIM_TS_LLM_IO_DIR: str | None = None
@@ -62,9 +63,16 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
                 "Clarification queues must be provided when _requests_clarification is True",
             )
         self._needs_clar = _requests_clarification
-
-        # Human-friendly log label mirroring async loop style
-        self._log_label = f"SimulatedTaskScheduler.{self._mode}({short_id()})"
+        # Human-friendly log label derived from current lineage, mirroring async loop style:
+        # "<outer...>->SimulatedTaskScheduler.<mode>(abcd)"
+        try:
+            parent_lineage = TOOL_LOOP_LINEAGE.get([])
+            parts = list(parent_lineage) if isinstance(parent_lineage, list) else []
+        except Exception:
+            parts = []
+        segment = f"SimulatedTaskScheduler.{self._mode}"
+        base = "->".join([*parts, segment]) if parts else segment
+        self._log_label = f"{base}({token_hex(2)})"
 
         # ── fire the clarification request right away ──────────────────
         self._clar_requested = False
@@ -634,7 +642,12 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         # Emit a scheduler-level execute log with a stable label
         try:
-            _exec_label = f"SimulatedTaskScheduler.execute({short_id()})"
+            # Build nested label from current lineage
+            parent_lineage = TOOL_LOOP_LINEAGE.get([])
+            parts = list(parent_lineage) if isinstance(parent_lineage, list) else []
+            segment = "SimulatedTaskScheduler.execute"
+            base = "->".join([*parts, segment]) if parts else segment
+            _exec_label = f"{base}({token_hex(2)})"
             _preview = text if len(text) <= 120 else f"{text[:120]}…"
             LOGGER.info(f"🎬 [{_exec_label}] Execute requested: {_preview}")
         except Exception:
