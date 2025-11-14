@@ -130,7 +130,6 @@ class ConversationManager:
             self.voice_provider,
             self.voice_id,
             self.voice_mode,
-            realtime=realtime,
         )
 
         # renderer
@@ -139,7 +138,7 @@ class ConversationManager:
         # state - TODO: put the state into a dict or state class
         # access is as a propery with a lock, that is locked when an llm run
         # such that you can never modify state while the LLM is running (so actions do not break)
-        if not realtime:
+        if not self.call_manager.realtime:
             with open(Path(__file__).parent.resolve() / "prompts" / "v2.md") as f:
                 self.system_prompt = f.read()
         else:
@@ -148,7 +147,6 @@ class ConversationManager:
                 self.system_prompt = f.read()
 
         self.mode = "text"
-        self.realtime = realtime
         self.chat_history = []
         self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
@@ -214,7 +212,7 @@ class ConversationManager:
             include_email=self.assistant_email not in [None, ""],
             include_sms=self.assistant_number not in [None, ""],
             include_call=self.assistant_number not in [None, ""],
-            realtime=self.realtime,
+            realtime=self.call_manager.realtime,
         )
         response_model = dynamic_response_models[self.mode]
         out = await self.llm.run(
@@ -222,18 +220,18 @@ class ConversationManager:
             messages=self.chat_history + [input_message],
             # realtime model will handle the call so no need to stream anything to the call
             stream_to_call=self.mode in ["call", "unify_call", "gmeet"]
-            and not self.realtime,
+            and not self.call_manager.realtime,
             response_model=response_model,
             call_type=self.mode,
             before_stream_start=(
                 self.before_stream_start
-                if (self.mode in ["call", "unify_call", "gmeet"] and not self.realtime)
+                if (self.mode in ["call", "unify_call", "gmeet"] and not self.call_manager.realtime)
                 else None
             ),
         )
         parsed_out = json.loads(out)
         if "call" in self.mode:
-            if not self.realtime:
+            if not self.call_manager.realtime:
                 if self.mode == "unify_call":
                     topic = "app:comms:unify_call_utterance"
                     event = AssistantUnifyCallUtterance(
@@ -258,7 +256,7 @@ class ConversationManager:
         for action in actions:
             print("taking actions...")
             Action.take_action(
-                self, action.pop("action_name"), **action, realtime=self.realtime
+                self, action.pop("action_name"), **action, realtime=self.call_manager.realtime
             )
             print("done taking actions...")
         self.commit()
@@ -300,7 +298,7 @@ class ConversationManager:
                 self.last_activity_time = self.loop.time()
                 # process events
                 event = Event.from_json(msg["data"])
-                await EventHandler.handle_event(event, self, realtime=self.realtime)
+                await EventHandler.handle_event(event, self, realtime=self.call_manager.realtime)
 
     async def check_inactivity(self):
         """Monitor for inactivity and shut down gracefully after timeout"""
@@ -380,7 +378,7 @@ class ConversationManager:
         self.stop.set()
 
     async def run_filler_once(self):
-        if self.realtime or self.mode not in ["call", "unify_call", "gmeet"]:
+        if self.call_manager.realtime or self.mode not in ["call", "unify_call", "gmeet"]:
             return
 
         # record the running task so before_stream_start can coordinate

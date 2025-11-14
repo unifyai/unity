@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.debug_logger import log_job_startup
+from unity.conversation_manager.domains.call_manager import LivekitCallManager
 from unity.conversation_manager.new_events import *
 from unity.conversation_manager.domains import managers_utils
 
@@ -254,6 +255,13 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     print("recieved start up event")
     payload = event.to_dict()["payload"]
     cm.set_details(payload)
+    cm.call_manager = LivekitCallManager(
+        cm.assistant_id,
+        cm.assistant_number,
+        cm.voice_provider,
+        cm.voice_id,
+        cm.voice_mode,
+    )
     if not os.getenv("TEST"):
         kwargs = {
             "timestamp": payload["timestamp"],
