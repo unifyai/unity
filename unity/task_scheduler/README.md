@@ -12,7 +12,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 
 ### High‑level picture
 
-- `TaskScheduler` is the orchestrator. It composes read/write “tools” and runs LLM loops for `ask`, `update`, and `execute`. It guarantees invariants and a single active task at a time.
+- `TaskScheduler` is the orchestrator. It composes read/write “tools” and runs LLM loops for `ask` and `update`. It guarantees invariants and a single active task at a time. The `execute` path does not use an async tool loop; it returns an `ActiveQueue` handle directly.
 - Execution starts a task either by detaching it from the queue (isolation) or by chaining the queue. Detachment records a `ReintegrationPlan` so a deferred task can be reinstated exactly where it came from. The public execution handle is always an `ActiveQueue`.
 - All reads/writes go through `TasksStore` (Unify I/O) and `LocalTaskView` (cache of queue membership, head start_at, and ids). Queue edits use a single validated write funnel that enforces invariants and keeps neighbor pointers symmetric.
 - For reorders, a small `queue_engine` computes minimal, invariant‑preserving updates (no direct DB logic inside planning).
@@ -48,7 +48,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
   - `LocalTaskView`: best‑effort cache for queue membership, head timestamps, queue‑id allocation, and log‑id memoization; provides write helpers that keep caches coherent.
 
 - `prompt_builders.py`
-  - Builds dynamic system prompts for LLM loops (ask/update/execute) from the tools the scheduler actually exposes, with examples and safety guidance.
+  - Builds dynamic system prompts for LLM loops (ask/update) from the tools the scheduler actually exposes, with examples and safety guidance.
 
 - `simulated.py`
   - `SimulatedTaskScheduler`: drop‑in replacement for demos/tests. Mirrors the real surface but does not touch storage. `_SimulatedTaskScheduleHandle` is a minimal steerable handle for simulated ask/update.
@@ -70,7 +70,7 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
    - Exposes creation, deletion, cancellation, and queue manipulation tools, plus atomic materialization (`set_queue`) and bulk schedule edits. Enforces queue/schedule invariants via a single validated write funnel. Auto‑checkpoints queue edits for easy revert.
 
 3) Execute (run now)
-   - Guards single‑active. If given a numeric id, can run in isolation (detach, followers keep schedule) or as a chain (preserve links). Otherwise uses an outer loop with explicit queue planning tools. Always checkpoints at session start. Returns an `ActiveQueue` handle in all cases (singleton passthrough for isolated/single‑task).
+   - Guards single‑active. If given a numeric id, can run in isolation (detach, followers keep schedule) or as a chain (preserve links). This path does not use an async LLM tool loop or an execute system prompt; it returns an `ActiveQueue` handle (singleton passthrough for isolated/single‑task).
 
 
 ### Queue/schedule invariants (enforced centrally)
@@ -103,14 +103,14 @@ This package manages the creation, scheduling, execution, and re‑ordering of t
 
 ### Clarification and contacts
 
-- The ask/update/execute loops can expose a `request_clarification` tool (when queues are provided) to ask the human questions without mixing clarifications into normal replies.
+- The ask/update loops can expose a `request_clarification` tool (when queues are provided) to ask the human questions without mixing clarifications into normal replies.
 - The scheduler also exposes `ContactManager.ask` for cross‑domain context when tasks mention people/contact ids.
 
 
 ### Checkpoints & safety
 
 - Queue‑affecting operations create checkpoints (`checkpoint_queue_state`) and expose helpers (`revert_to_checkpoint`, `get_latest_checkpoint`) so multi‑step plans are reversible.
-- After any mutation (including execution start), the caller must refresh queue state before further edits (the execute prompt enforces this policy).
+- After any mutation (including execution start), the caller must refresh queue state before further edits.
 
 
 ### Common environment variables
