@@ -81,10 +81,11 @@ from .llm import new_llm_client
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
+from ..common.sentinels import _UnsetSentinel
 
 
 # Sentinel for optional-argument presence detection
-_UNSET = object()
+_UNSET = _UnsetSentinel()
 
 # ------------------------------------------------------------------ #
 #  Typed reintegration plan                                          #

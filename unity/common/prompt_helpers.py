@@ -57,9 +57,14 @@ def sig_dict(tools: Dict[str, Callable]) -> Dict[str, str]:
     Centralises the inspect.signature → string conversion so all prompts render
     a consistent tool signature block.
     """
-    import inspect
+    import inspect, re
 
-    return {name: str(inspect.signature(fn)) for name, fn in tools.items()}
+    def _stable(sig_str: str) -> str:
+        # Normalize process-specific object addresses printed by Python for
+        # sentinel defaults (e.g., "<object object at 0x...>") to a stable marker.
+        return re.sub(r"<object object at 0x[0-9a-fA-F]+>", "<UNSET>", sig_str)
+
+    return {name: _stable(str(inspect.signature(fn))) for name, fn in tools.items()}
 
 
 def now(time_only: bool = False) -> str:
