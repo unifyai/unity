@@ -2380,24 +2380,19 @@ class TaskScheduler(BaseTaskScheduler):
             self._write_log_entries(logs=to_write_ids, entries=to_write_entries)
 
         # Auto-checkpoint after successful edit (best-effort)
-        head_start = None
-        last_checkpoint_id = None
-        try:
-            cid = short_id(8)
-            snap = {"label": "auto:_reorder_queue", "queues": []}
-            head_start = self._head_start_at_from_rows(list(rows_by_id.values()))
-            snap["queues"].append(
-                {
-                    "queue_id": queue_id,
-                    "head_id": new_order[0] if new_order else None,
-                    "start_at": head_start,
-                    "order": list(new_order),
-                },
-            )
-            self._queue_checkpoints[cid] = snap
-            last_checkpoint_id = cid  # noqa: F841
-        except Exception:
-            pass
+        cid = short_id(8)
+        snap = {"label": "auto:_reorder_queue", "queues": []}
+        head_start = self._head_start_at_from_rows(list(rows_by_id.values()))
+        snap["queues"].append(
+            {
+                "queue_id": queue_id,
+                "head_id": new_order[0] if new_order else None,
+                "start_at": head_start,
+                "order": list(new_order),
+            },
+        )
+        self._queue_checkpoints[cid] = snap
+        last_checkpoint_id = cid  # noqa: F841
 
         # Best-effort: refresh LocalTaskView
         if queue_id_exists:
@@ -2765,16 +2760,14 @@ class TaskScheduler(BaseTaskScheduler):
 
             # Skip no-op writes when the current row already matches the desired state
             try:
-                cur_qid = task.queue_id
-                cur_status = task.status
                 same_sched = (
                     task.schedule_prev == sched["prev_task"]
                     and task.schedule_next == sched["next_task"]
                     and (task.schedule_start_at == sched.get("start_at"))
                 )
-                same_qid = cur_qid == target_qid
+                same_qid = task.queue_id == target_qid
                 if "status" in write_entries:
-                    same_status = cur_status == write_entries["status"]
+                    same_status = task.status == write_entries["status"]
                 else:
                     # When active, we never change status in this call
                     same_status = True
@@ -2791,27 +2784,23 @@ class TaskScheduler(BaseTaskScheduler):
         # No additional start_at write needed – applied on head above
 
         # Auto-checkpoint (avoid extra reads by using local state)
-        last_checkpoint_id = None
-        try:
-            cid = short_id(8)
-            snap = {"label": "auto:_set_queue", "queues": []}
-            order_now = list(order)
-            # Prefer explicit queue_start_at; else preserve the captured head start
-            head_start = (
-                queue_start_at if queue_start_at is not None else existing_head_start
-            )
-            snap["queues"].append(
-                {
-                    "queue_id": target_qid,
-                    "head_id": order_now[0] if order_now else None,
-                    "start_at": head_start,
-                    "order": order_now,
-                },
-            )
-            self._queue_checkpoints[cid] = snap
-            last_checkpoint_id = cid  # noqa: F841
-        except Exception:
-            pass
+        cid = short_id(8)
+        snap = {"label": "auto:_set_queue", "queues": []}
+        order_now = list(order)
+        # Prefer explicit queue_start_at; else preserve the captured head start
+        head_start = (
+            queue_start_at if queue_start_at is not None else existing_head_start
+        )
+        snap["queues"].append(
+            {
+                "queue_id": target_qid,
+                "head_id": order_now[0] if order_now else None,
+                "start_at": head_start,
+                "order": order_now,
+            },
+        )
+        self._queue_checkpoints[cid] = snap
+        last_checkpoint_id = cid  # noqa: F841
 
         # Best-effort: refresh LocalTaskView membership mapping
         try:
@@ -2879,7 +2868,7 @@ class TaskScheduler(BaseTaskScheduler):
         by_id: Dict[int, Dict[str, Any]] = {}
         for item in schedules:
             tid = int(item.get("task_id"))
-            sch = dict(item.get("schedule") or {})
+            sch = dict(item.get("schedule", {}))
             sch.pop("queue_id", None)
             by_id[tid] = sch
 
@@ -3181,37 +3170,31 @@ class TaskScheduler(BaseTaskScheduler):
 
         details = {"default_queue": first_list, "new_queues": created}
         # Auto-checkpoint after successful edit (best-effort): capture only touched queues to avoid extra reads
-        last_checkpoint_id = None
-        try:
-            cid = short_id(8)
-            snap = {"label": "auto:_partition_queue", "queues": []}
-            # Source queue snapshot (if any)
-            if first_list:
-                snap["queues"].append(
-                    {
-                        "queue_id": source_qid,
-                        "head_id": first_list[0] if first_list else None,
-                        "start_at": fstart,
-                        "order": list(first_list),
-                    },
-                )
-            # Newly created queues
-            for created_q in created:
-                _qid = created_q.get("queue_id")
-                _order = list(created_q.get("task_ids", []) or [])
-                _qstart = created_q.get("queue_start_at")
-                snap["queues"].append(
-                    {
-                        "queue_id": _qid,
-                        "head_id": _order[0] if _order else None,
-                        "start_at": _qstart,
-                        "order": _order,
-                    },
-                )
-            self._queue_checkpoints[cid] = snap
-            last_checkpoint_id = cid  # noqa: F841
-        except Exception:
-            pass
+        cid = short_id(8)
+        snap = {"label": "auto:_partition_queue", "queues": []}
+        # Source queue snapshot (if any)
+        if first_list:
+            snap["queues"].append(
+                {
+                    "queue_id": source_qid,
+                    "head_id": first_list[0] if first_list else None,
+                    "start_at": fstart,
+                    "order": list(first_list),
+                },
+            )
+        # Newly created queues
+        for created_q in created:
+            _order = list(created_q.get("task_ids", []))
+            snap["queues"].append(
+                {
+                    "queue_id": created_q.get("queue_id"),
+                    "head_id": _order[0] if _order else None,
+                    "start_at": created_q.get("queue_start_at"),
+                    "order": _order,
+                },
+            )
+        self._queue_checkpoints[cid] = snap
+        last_checkpoint_id = cid  # noqa: F841
 
         return {
             "outcome": "queue partitioned",
@@ -3315,6 +3298,7 @@ class TaskScheduler(BaseTaskScheduler):
             )
 
         # Cross-queue adjacency guard: when setting prev/next ensure neighbours share queue_id
+        prefetched = None
         if ("schedule" in entries and prospective_schedule is not None) and (
             not skip_cross_queue_guard
         ):
@@ -3362,7 +3346,7 @@ class TaskScheduler(BaseTaskScheduler):
                             f"followed by reorder_queue() to materialize chains within a single queue.",
                         )
                 # Store for neighbour symmetry reuse below
-                locals()["__prefetch_neighbours__"] = tasks_by_ids
+                prefetched = tasks_by_ids
             except Exception:
                 # Defensive: do not block writes on guard failure paths; the invariant validator will still run
                 pass
@@ -3385,10 +3369,6 @@ class TaskScheduler(BaseTaskScheduler):
 
         # Ensure neighbour symmetry whenever schedule changed (unless skipped by caller)
         if ("schedule" in entries) and (not skip_sync):
-            try:
-                prefetched = locals().get("__prefetch_neighbours__")
-            except Exception:
-                prefetched = None
             self._sync_adjacent_links(
                 task_id=task_id,
                 schedule=prospective_schedule,
@@ -3491,7 +3471,7 @@ class TaskScheduler(BaseTaskScheduler):
         self._ensure_not_active_task(task_ids)
 
         # Invariant checks for queue/schedule-sensitive statuses
-        if new_status in {Status.scheduled, Status.queued}:
+        if new_status in (Status.scheduled, Status.queued):
             tasks = self._filter_tasks(filter=f"task_id in {task_ids}")
             for task in tasks:
                 self._validate_scheduled_invariants(
@@ -3598,11 +3578,8 @@ class TaskScheduler(BaseTaskScheduler):
                     "Cannot set 'start_at' when the task has 'prev_task'. Move it to the queue head first.",
                 )
             # Coerce datetime to ISO-8601 string if needed
-            if not isinstance(start_at, str):
-                try:
-                    start_at = start_at.isoformat()  # type: ignore[assignment]
-                except Exception:
-                    pass
+            if isinstance(start_at, datetime):
+                start_at = start_at.isoformat()  # type: ignore[assignment]
             schedule_payload = {
                 "prev_task": task.schedule_prev,
                 "next_task": task.schedule_next,
@@ -3651,7 +3628,7 @@ class TaskScheduler(BaseTaskScheduler):
             # Normalise RepeatPattern objects to plain dicts
             norm_repeat: List[Dict[str, Any]] = []
             for r in repeat:
-                if hasattr(r, "model_dump"):
+                if isinstance(r, RepeatPattern):
                     norm_repeat.append(r.model_dump())  # type: ignore[assignment]
                 else:
                     norm_repeat.append(dict(r))  # type: ignore[arg-type]

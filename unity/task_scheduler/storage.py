@@ -729,8 +729,7 @@ class LocalTaskView:
             # Opportunistically memoize task_id -> log_id
             for lg in logs:
                 try:
-                    e = lg.entries
-                    tid = e.get("task_id")
+                    tid = lg.entries.get("task_id")
                     lid = lg.id
                     if tid is not None and lid is not None:
                         self.cache_log_id(task_id=tid, log_id=lid)
@@ -758,8 +757,7 @@ class LocalTaskView:
                 logs = []
             for lg in logs:
                 try:
-                    e = lg.entries
-                    tid = e.get("task_id")
+                    tid = lg.entries.get("task_id")
                     lid = lg.id
                     if tid is not None and lid is not None:
                         resolved_by_tid[tid] = lid
