@@ -1,6 +1,6 @@
 ## Run Python tests in parallel with tmux
 
-This helper script launches one tmux session per Python file it finds (or per targeted test when a node id is provided) and runs `pytest` in its own window. It searches recursively and can also be restricted to specific folders, files, or specific tests.
+This helper script launches one tmux session per Python file it finds (or per targeted test when a node id is provided, or when per-test mode is enabled) and runs `pytest` in its own window. It searches recursively and can also be restricted to specific folders, files, or specific tests.
 
 When a session starts, it executes roughly:
 
@@ -29,7 +29,7 @@ chmod +x .parallel_run.sh
 ## Requirements
 
 - **tmux** and **pytest** must be installed (e.g., `brew install tmux`).
-- **Virtualenv** is assumed to live at `~/unity/.unity/`. If yours differs, update the `source ~/unity/.unity/bin/activate` line inside the script.
+- **Virtualenv** is assumed to live at `~/unity/.venv/`. If yours differs, update the `source ~/unity/.venv/bin/activate` line inside the script.
 - Optional: create an `.env` file at the repository root (i.e., `~/unity/.env`). Both helper scripts will auto-load it if present via `tests/../.env`.
 
 ## Basic usage
@@ -72,6 +72,12 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Specific tests (pytest node ids)
 ./.parallel_run.sh tests/foo_test.py::TestClass::test_something tests/bar_test.py::test_case
 
+# Per-test mode (create a session per test for all inputs)
+./.parallel_run.sh -t                         # per-test across the whole repo
+./.parallel_run.sh -t tests                   # per-test across a folder
+./.parallel_run.sh -t tests/foo_test.py       # per-test across a single file
+./.parallel_run.sh -t tests tests/foo_test.py # mix folders and files, all per-test
+
 # Mix files and directories
 ./.parallel_run.sh tests/api tests/db/test_migrations.py
 ```
@@ -83,6 +89,7 @@ How it interprets arguments:
 - **Tests**: Pytest node ids like `path/to/test_file.py::TestClass::test_case` or `path/to/test_file.py::test_case` are run exactly as provided (one session per node id).
   - If you specify individual tests, only those tests are run (one session per test).
   - When you do not specify individual tests, the script creates one session per file.
+  - With `-t/--per-test`, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
 
 ## Defaults & conventions
 
