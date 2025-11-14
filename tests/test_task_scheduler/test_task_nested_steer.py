@@ -128,7 +128,7 @@ async def test_nested_steer_targets_actor_handle_and_applies_interject():
     tid = int(res["details"]["task_id"])
 
     # Start execution using natural language so the outer execute loop remains in play
-    h = await ts.execute(f"Please execute task id {tid} now.")
+    h = await ts.execute(tid)
 
     try:
         # Wait until the nested execute tool has been adopted with a live handle

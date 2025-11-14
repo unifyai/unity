@@ -186,7 +186,7 @@ async def test_recursive_snapshot_children_schema_taskscheduler_execute():
     res = ts.create_task(name="DemoNested", description="Nested snapshot demo.")
     tid = int(res["details"]["task_id"])
 
-    handle = await ts.execute(f"Please execute task id {tid} now.")
+    handle = await ts.execute(tid)
 
     # Wait until an execute_* child has been adopted
     async def _exec_child_adopted():

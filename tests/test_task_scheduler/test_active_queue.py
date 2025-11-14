@@ -77,7 +77,7 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
     tid1 = ts._create_task(name=name1, description=name1, queue_id=qid)["details"][
         "task_id"
     ]
-    handle = await ts.execute(text=str(tid1))
+    handle = await ts.execute(task_id=tid1)
 
     # 1) Passthrough path: queue length == 1 → inner receives direct asks
     await handle.ask("Q1: status?")
@@ -133,7 +133,7 @@ async def test_execute_queue_by_numeric_id_forwards_and_runs_followers(monkeypat
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
     # numeric fast path → queue handle adopted by default
-    h = await ts.execute(text=str(a))
+    h = await ts.execute(task_id=a)
     await h.result()
 
     rows_a = ts._filter_tasks(filter=f"task_id == {a}")
@@ -198,7 +198,7 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
     qid_c0 = rc0.queue_id
 
     # Execute starting at head (queue/chained semantics)
-    h = await ts.execute(text=str(a))
+    h = await ts.execute(task_id=a)
     await h.result()
 
     # Fetch final rows and compare schedules/queue_ids – they must be unchanged
@@ -276,7 +276,7 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
     )
 
     # Start queue from A
-    h = await ts.execute(text=str(a))
+    h = await ts.execute(task_id=a)
 
     # Deterministically complete A with one step (non-defer semantic)
     await h.interject("advance A now")
@@ -322,7 +322,7 @@ async def test_execute_queue_by_numeric_id_completes_all(monkeypatch):
 
     # Ensure the queue order, then start by id
     # queue already materialised by helper
-    h = await ts.execute(text=str(x))
+    h = await ts.execute(task_id=x)
     await h.result()
 
     rows_x = ts._filter_tasks(filter=f"task_id == {x}")
@@ -402,7 +402,7 @@ async def test_queue_pause_resume_and_completion(monkeypatch):
         raising=True,
     )
 
-    h = await ts.execute(text=str(a))
+    h = await ts.execute(task_id=a)
 
     # Wait deterministically until a task becomes active
     async def _wait_until_active(max_iters: int = 500):
@@ -531,7 +531,7 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
     monkeypatch.setattr("unify.AsyncUnify", _FakeRouterClient, raising=True)
 
     # Start queue at A and issue one multi-task interjection
-    h = await ts.execute(text=str(a_id))
+    h = await ts.execute(task_id=a_id)
     await h.interject(
         "Please route the following interjections strictly as described. "
         "These are NOT lifecycle controls and must NOT be treated as stop/cancel/defer: "
@@ -620,7 +620,7 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
 
     monkeypatch.setattr("unify.AsyncUnify", _FakeQueueClient, raising=True)
 
-    h = await ts.execute(text=str(a))
+    h = await ts.execute(task_id=a)
 
     # Wait deterministically until a task becomes active to ensure the scheduler state is populated
     async def _wait_until_active(max_iters: int = 500):
@@ -684,7 +684,7 @@ async def test_queue_result_summarises_all_completed_tasks(monkeypatch):
     ts = TaskScheduler()
     a, b, c = await _make_ordered_queue(ts, ["A_sum", "B_sum", "C_sum"])  # type: ignore[misc]
 
-    h = await ts.execute(text=str(a))
+    h = await ts.execute(task_id=a)
     res = await h.result()
 
     assert isinstance(res, str)
@@ -765,7 +765,7 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     )
 
     # Start queue at A
-    h = await ts.execute(text=str(a_id))
+    h = await ts.execute(task_id=a_id)
 
     # Complete A deterministically with pause/resume (each consumes a step)
     h.pause()
@@ -850,7 +850,7 @@ async def test_append_to_queue_singleton_adds_follower_and_runs(monkeypatch):
     # Create a standalone task B (not queued)
     b_id = ts._create_task(name="App_B", description="App_B")["details"]["task_id"]  # type: ignore[index]
 
-    h = await ts.execute(text=str(a_id))
+    h = await ts.execute(task_id=a_id)
 
     # Spy activation to detect when B becomes active later
     b_active_evt: asyncio.Event = asyncio.Event()
@@ -934,7 +934,7 @@ async def test_append_to_queue_emits_notification(monkeypatch):
     (a_id,) = tuple(await _make_ordered_queue(ts, ["N_app_A"]))  # type: ignore[misc]
     b_id = ts._create_task(name="N_app_B", description="N_app_B")["details"]["task_id"]  # type: ignore[index]
 
-    h = await ts.execute(text=str(a_id))
+    h = await ts.execute(task_id=a_id)
 
     # Wait until active before appending
     async def _wait_until_active(max_iters: int = 500):
@@ -990,7 +990,7 @@ async def test_active_task_done_aggregates_all_when_called_late(monkeypatch):
     a, b, c = await _make_ordered_queue(ts, ["A_done", "B_done", "C_done"])  # type: ignore[misc]
 
     # Run the entire queue to completion
-    h = await ts.execute(text=str(a))
+    h = await ts.execute(task_id=a)
     await h.result()
 
     # Access inner handle if wrapped
@@ -1061,7 +1061,7 @@ async def test_active_task_done_incremental(monkeypatch):
         raising=True,
     )
 
-    h = await ts.execute(text=str(a_id))
+    h = await ts.execute(task_id=a_id)
     inner = getattr(h, "_inner", h)
 
     # Complete A with a single step (pause triggers a step in simulated actor)
@@ -1121,7 +1121,7 @@ async def test_active_queue_interject_image_seen_by_simulation(monkeypatch):
     (solo_id,) = tuple(await _make_ordered_queue(ts, ["Rota"]))
 
     # Start execution by numeric id → ActiveQueue passthrough (singleton)
-    h = await ts.execute(text=str(solo_id))
+    h = await ts.execute(task_id=solo_id)
 
     # Wait deterministically until a task is active
     async def _wait_until_active(max_iters: int = 500):
@@ -1187,7 +1187,7 @@ async def test_execute_by_id_returns_active_queue_handle(monkeypatch):
     task_id = ts._create_task(name="ISO", description="ISO")["details"]["task_id"]  # type: ignore[index]
 
     # Execute by numeric id; we should receive an ActiveQueue handle
-    h = await ts.execute(text=str(task_id))
+    h = await ts.execute(task_id=task_id)
 
     # Import locally and tolerate logging wrapper by unwrapping the inner handle
     from unity.task_scheduler.active_queue import ActiveQueue
@@ -1259,7 +1259,7 @@ async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
     )
 
     # Start execution of the singleton queue
-    h = await ts.execute(text=str(solo_id))
+    h = await ts.execute(task_id=solo_id)
 
     # Wait until a task is active to avoid races
     async def _wait_until_active(max_iters: int = 500):
@@ -1327,7 +1327,7 @@ async def test_active_queue_emits_notifications(monkeypatch):
     a_name, b_name = "N_notif_A", "N_notif_B"
     a_id, b_id = await _make_ordered_queue(ts, [a_name, b_name])  # type: ignore[misc]
 
-    h = await ts.execute(text=str(a_id))
+    h = await ts.execute(task_id=a_id)
 
     # Collect notifications until we observe queue.completed.
     # Tolerate inert/empty dicts from inner handles and skip them.
@@ -1567,7 +1567,7 @@ async def test_inner_task_clarification_bubbles_up_to_outer(monkeypatch):
 
     # Execute by id, ensuring queues are wired through
     h = await ts.execute(
-        text=str(task_id),
+        task_id=task_id,
         _clarification_up_q=up_q,
         _clarification_down_q=down_q,
     )
@@ -1613,7 +1613,7 @@ async def test_active_queue_requests_clarification_at_queue_level(monkeypatch):
 
     # Start execution at first task with queues supplied
     h = await ts.execute(
-        text=str(a_id),
+        task_id=a_id,
         _clarification_up_q=up_q,
         _clarification_down_q=down_q,
     )

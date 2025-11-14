@@ -76,7 +76,7 @@ async def test_managermethod_events_for_execute():
     outcome = ts._create_task(name="Demo", description="Run a demo task")
     task_id = outcome["details"]["task_id"]
 
-    h = await ts.execute(text=str(task_id))
+    h = await ts.execute(task_id=task_id)
     await h.result()
     EVENT_BUS.join_published()
     ev = await _gather_events()

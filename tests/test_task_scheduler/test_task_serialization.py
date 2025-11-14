@@ -109,7 +109,7 @@ async def test_serialize_taskscheduler_execute_recursive():
     tid = int(res["details"]["task_id"])
 
     # Use natural language so the outer execute loop remains in play (avoids numeric fast-path)
-    h = await ts.execute(f"Please execute task id {tid} now.")
+    h = await ts.execute(tid)
 
     try:
         # Wait until the nested execute tool has been adopted with a live handle
