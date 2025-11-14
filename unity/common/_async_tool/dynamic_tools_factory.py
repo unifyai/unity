@@ -36,14 +36,31 @@ class DynamicToolFactory:
 
         Notes
         -----
-        - The 'self' parameter (if any) is stripped from annotations/signature.
+        - The 'self' parameter (if any) is stripped from both the signature and annotations.
         - If the source has a docstring, it is copied verbatim (stripped) onto the wrapper.
         - If the source method has no docstring, attempt to fall back to the first
           ancestor in the MRO that defines a docstring for a method with the same name.
         """
         try:
             src = getattr(from_callable, "__func__", from_callable)
-            to_wrapper.__signature__ = inspect.signature(src)
+            # Build a new signature that removes any leading 'self' parameter
+            _sig = inspect.signature(src)
+            try:
+                _params = list(_sig.parameters.values())
+            except Exception:
+                _params = []
+            try:
+                _filtered_params = [p for p in _params if p.name != "self"]
+            except Exception:
+                _filtered_params = _params
+            try:
+                to_wrapper.__signature__ = inspect.Signature(
+                    parameters=_filtered_params,
+                    return_annotation=_sig.return_annotation,
+                )
+            except Exception:
+                # Fallback: if building a filtered signature fails, at least set the original one
+                to_wrapper.__signature__ = _sig
             try:
                 ann = dict(getattr(src, "__annotations__", {}) or {})
                 ann.pop("self", None)
