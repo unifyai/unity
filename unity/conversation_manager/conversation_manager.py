@@ -70,6 +70,7 @@ class ConversationManager:
         user_email: str = None,
         voice_provider: str = "cartesia",
         voice_id: str = None,
+        voice_mode: str = "tts",
         past_events: list | None = None,
         conv_context_length: int = 50,
         project_name: str = "Assistants",
@@ -87,6 +88,8 @@ class ConversationManager:
         self.assistant_about = assistant_about
         self.voice_provider = voice_provider
         self.voice_id = voice_id
+        self.voice_mode = voice_mode
+
         # contact data
         self.assistant_number = assistant_number
         self.assistant_email = assistant_email
@@ -126,6 +129,7 @@ class ConversationManager:
             self.assistant_number,
             self.voice_provider,
             self.voice_id,
+            self.voice_mode,
             realtime=realtime,
         )
 

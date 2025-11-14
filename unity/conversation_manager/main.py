@@ -79,6 +79,7 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
         os.getenv("USER_EMAIL", ""),
         os.getenv("VOICE_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
+        os.getenv("VOICE_MODE", "tts"),
         project_name=project_name,
         stop=stop,
         user_turn_end_callback=None,
