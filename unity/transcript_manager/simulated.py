@@ -19,15 +19,22 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..common.simulated import mirror_transcript_manager_tools
+from ..common.simulated import (
+    mirror_transcript_manager_tools,
+    SimulatedLineage,
+    SimulatedLog,
+    simulated_llm_roundtrip,
+    SimulatedHandleMixin,
+)
 from .types.message import Message
 from ..common.llm_client import new_llm_client
+from ..constants import LOGGER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedTranscriptHandle(SteerableToolHandle):
+class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
     """
     A very small, LLM-backed handle used by SimulatedTranscriptManager.ask.
     """
@@ -72,6 +79,9 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         self._answer: Optional[str] = None
         self._msgs: List[Dict[str, Any]] = []
         self._paused = False
+        # Human-friendly log label derived from current lineage, mirroring other simulated managers:
+        # "<outer...>->SimulatedTranscriptManager.ask(abcd)"
+        self._log_label = SimulatedLineage.make_label("SimulatedTranscriptManager.ask")
 
     # ──  API expected by SteerableToolHandle  ──────────────────────────────
     async def result(self):
@@ -84,11 +94,35 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         if not self._done.is_set():
             # wait for clarification reply if requested
             if self._needs_clar:
+                try:
+                    LOGGER.info(
+                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                    )
+                except Exception:
+                    pass
                 clar_reply = await self._clar_down_q.get()
                 self._extra_user_msgs.append(f"Clarification: {clar_reply}")
+                try:
+                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                except Exception:
+                    pass
 
             prompt = "\n\n---\n\n".join([self._initial] + self._extra_user_msgs)
-            answer = await self._llm.generate(prompt)
+            # Unified simulated LLM roundtrip (with conditional response logging and optional dumps)
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            answer = await simulated_llm_roundtrip(
+                self._llm,
+                label=self._log_label,
+                prompt=prompt,
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
             self._answer = answer
             self._msgs = [
                 {"role": "user", "content": prompt},
@@ -103,10 +137,12 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
     def interject(self, message: str) -> str:
         if self._cancelled:
             return "Interaction has been stopped."
+        self._log_interject(message)
         self._extra_user_msgs.append(message)
         return "Acknowledged."
 
     def stop(self, reason: Optional[str] = None) -> str:
+        self._log_stop(reason)
         self._cancelled = True
         self._done.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
@@ -114,12 +150,14 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
     def pause(self) -> str:
         if self._paused:
             return "Already paused."
+        self._log_pause()
         self._paused = True
         return "Paused."
 
     def resume(self) -> str:
         if not self._paused:
             return "Already running."
+        self._log_resume()
         self._paused = False
         return "Resumed."
 
@@ -139,7 +177,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
             + [f"Question to answer (as a reminder!): {question}"],
         )
 
-        return _SimulatedTranscriptHandle(
+        handle = _SimulatedTranscriptHandle(
             self._llm,
             follow_up_prompt,
             _return_reasoning_steps=self._want_steps,
@@ -147,6 +185,17 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
         )
+        # Align with other simulated components: concise "Question(<parent_label>)" label
+        try:
+            handle._log_label = SimulatedLineage.question_label(self._log_label)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        # Emit a human-facing log for the nested ask
+        try:
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), question)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        return handle
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
@@ -263,6 +312,12 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
         )
+
+        # Emit a human-facing log for the initial ask so tests/consumers see immediate feedback
+        try:
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
+        except Exception:
+            pass
 
         if should_log and call_id is not None:
             handle = wrap_handle_with_logging(
