@@ -52,6 +52,60 @@ class ReintegrationManager:
             return False
         return rows[0].status not in self._s._TERMINAL_STATUSES
 
+    def _select_final_neighbours(
+        self,
+        *,
+        task_id: int,
+        was_head: bool,
+        original_prev: Optional[int],
+        original_next: Optional[int],
+        queue_ids: list[int],
+    ) -> tuple[Optional[int], Optional[int]]:
+        """
+        Decide (final_prev, final_next) for reinstatement using a minimal, deterministic
+        policy and no I/O.
+
+        Policy:
+        - If was_head: final_prev=None; final_next is original_next if viable, otherwise the
+        current head (first in queue_ids) if different from task_id, otherwise None.
+        - If middle: final_prev is original_prev if viable, else None; final_next is
+        original_next if viable and distinct from final_prev, else None.
+        - Avoid self-loops and identical prev/next; prefer keeping prev and dropping next.
+        """
+        current_head_id = queue_ids[0] if queue_ids else None
+
+        def _clean(tid: Optional[int]) -> Optional[int]:
+            return None if tid == task_id else tid
+
+        if was_head:
+            final_prev = None
+            if self._is_viable(original_next):
+                final_next = original_next
+            else:
+                final_next = (
+                    current_head_id
+                    if (current_head_id is not None and current_head_id != task_id)
+                    else None
+                )
+        else:
+            final_prev = original_prev if self._is_viable(original_prev) else None
+            final_next = (
+                original_next
+                if (self._is_viable(original_next) and original_next != final_prev)
+                else None
+            )
+
+        final_prev = _clean(final_prev)
+        final_next = _clean(final_next)
+        if (
+            final_prev is not None
+            and final_next is not None
+            and final_prev == final_next
+        ):
+            final_next = None
+
+        return final_prev, final_next
+
     def apply(self, *, task_id: int, allow_active: bool = False) -> ToolOutcome:
         # Locate plan (prefer non-terminal instance)
         tasks = self._s._filter_tasks(filter=f"task_id == {task_id}", limit=10)
@@ -103,13 +157,12 @@ class ReintegrationManager:
             queue_list = self._s._get_queue_for_task(task_id=tid)
         queue_ids = [t.task_id for t in queue_list]
 
-        final_prev, final_next = _select_final_neighbours(
+        final_prev, final_next = self._select_final_neighbours(
             task_id=tid,
             was_head=was_head,
             original_prev=prev_task_id,
             original_next=next_task_id,
             queue_ids=queue_ids,
-            is_viable=self._is_viable,
         )
 
         cur_sched = Schedule(
@@ -210,54 +263,3 @@ def _best_effort(func: Callable[[], Any]) -> None:
         func()
     except Exception:
         pass
-
-
-def _select_final_neighbours(
-    *,
-    task_id: int,
-    was_head: bool,
-    original_prev: Optional[int],
-    original_next: Optional[int],
-    queue_ids: list[int],
-    is_viable: Callable[[Optional[int]], bool],
-) -> tuple[Optional[int], Optional[int]]:
-    """
-    Decide (final_prev, final_next) for reinstatement using a minimal, deterministic
-    policy and no I/O.
-
-    Policy:
-    - If was_head: final_prev=None; final_next is original_next if viable, otherwise the
-      current head (first in queue_ids) if different from task_id, otherwise None.
-    - If middle: final_prev is original_prev if viable, else None; final_next is
-      original_next if viable and distinct from final_prev, else None.
-    - Avoid self-loops and identical prev/next; prefer keeping prev and dropping next.
-    """
-    current_head_id = queue_ids[0] if queue_ids else None
-
-    def _clean(tid: Optional[int]) -> Optional[int]:
-        return None if tid == task_id else tid
-
-    if was_head:
-        final_prev = None
-        if is_viable(original_next):
-            final_next = original_next
-        else:
-            final_next = (
-                current_head_id
-                if (current_head_id is not None and current_head_id != task_id)
-                else None
-            )
-    else:
-        final_prev = original_prev if is_viable(original_prev) else None
-        final_next = (
-            original_next
-            if (is_viable(original_next) and original_next != final_prev)
-            else None
-        )
-
-    final_prev = _clean(final_prev)
-    final_next = _clean(final_next)
-    if final_prev is not None and final_next is not None and final_prev == final_next:
-        final_next = None
-
-    return final_prev, final_next
