@@ -124,3 +124,48 @@ def test_task_scheduler_update_system_prompt_formatting():
         "TaskScheduler update system message passed formatting checks;\n"
         "The following system message resulted in no assertion errors:\n\n\n" + prompt,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stability: prompts should be identical across serial builder calls
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_task_scheduler_ask_prompt_is_stable_across_serial_builds():
+    ts = TaskScheduler()
+    tools = dict(ts.get_tools("ask"))
+
+    p1 = build_ask_prompt(
+        tools=tools,
+        num_tasks=ts._num_tasks(),
+        columns=ts._list_columns(),
+    )
+    p2 = build_ask_prompt(
+        tools=tools,
+        num_tasks=ts._num_tasks(),
+        columns=ts._list_columns(),
+    )
+
+    assert (
+        p1 == p2
+    ), f"TaskScheduler.ask system prompt changed between serial builds.\n\nFirst:\n\n{p1}\n\nSecond:\n\n{p2}"
+
+
+def test_task_scheduler_update_prompt_is_stable_across_serial_builds():
+    ts = TaskScheduler()
+    tools = dict(ts.get_tools("update"))
+
+    p1 = build_update_prompt(
+        tools=tools,
+        num_tasks=ts._num_tasks(),
+        columns=ts._list_columns(),
+    )
+    p2 = build_update_prompt(
+        tools=tools,
+        num_tasks=ts._num_tasks(),
+        columns=ts._list_columns(),
+    )
+
+    assert (
+        p1 == p2
+    ), f"TaskScheduler.update system prompt changed between serial builds.\n\nFirst:\n\n{p1}\n\nSecond:\n\n{p2}"
