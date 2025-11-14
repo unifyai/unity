@@ -1,8 +1,10 @@
 import asyncio
+import os
 from time import perf_counter
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
+from unity.conversation_manager.debug_logger import log_job_startup
 from unity.conversation_manager.new_events import *
 from unity.conversation_manager.domains import managers_utils
 
@@ -132,7 +134,11 @@ async def _(event: PhoneCallEnded, cm: "ConversationManager", *args, **kwargs):
                 else "assistant"
             ),
         )
-    if isinstance(event, PhoneUtterance):
+    # start filler only in non-realtime
+    if isinstance(event, (PhoneUtterance, UnifyCallUtterance)):
+        if not cm.realtime:
+            await cm.cancel_filler()
+            asyncio.create_task(cm.run_filler_once())
         await cm.run_llm(delay=0, cancel_running=True)
 
 
@@ -148,6 +154,8 @@ async def _(
     contact = cm.contact_index.get_contact(phone_number=event.contact)
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
     cm.call_manager.cleanup_call_proc()
+    await cm.cancel_filler()
+    await cm.run_llm(delay=0, cancel_running=True)
 
 
 @EventHandler.register(
@@ -246,6 +254,13 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     print("recieved start up event")
     payload = event.to_dict()["payload"]
     cm.set_details(payload)
+    if not os.getenv("TEST"):
+        kwargs = {
+            "timestamp": payload["timestamp"],
+            "medium": payload["medium"],
+            **cm.get_details(),
+        }
+        asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
 
 
 @EventHandler.register(GetContactsResponse)

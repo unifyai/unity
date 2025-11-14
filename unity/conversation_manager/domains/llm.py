@@ -3,6 +3,7 @@ import json
 from openai import AsyncOpenAI
 
 from pydantic_core import from_json
+from typing import Awaitable, Callable, Optional
 
 is_reasoning = lambda name: "gpt-5" in name
 
@@ -20,6 +21,7 @@ class LLM:
         response_model,
         stream_to_call: bool = False,
         call_type: str = None,
+        before_stream_start: Optional[Callable[[], Awaitable[None]]] = None,
     ):
         if not stream_to_call:
             return await self._run_non_stream(system_prompt, messages, response_model)
@@ -27,7 +29,7 @@ class LLM:
             if not call_type:
                 raise Exception("call type must be specified if using stream_to_call")
             return await self._run_stream(
-                system_prompt, messages, response_model, call_type
+                system_prompt, messages, response_model, call_type, before_stream_start
             )
 
     async def _run_non_stream(self, system_prompt, messages, response_model):
@@ -40,7 +42,14 @@ class LLM:
         out = out.output[0].content[0].text
         return out
 
-    async def _run_stream(self, system_prompt, messages, response_model, call_type):
+    async def _run_stream(
+        self,
+        system_prompt,
+        messages,
+        response_model,
+        call_type,
+        before_stream_start: Optional[Callable[[], Awaitable[None]]],
+    ):
         last_phone_utterance = ""
         out = ""
         async with self.client.responses.stream(
@@ -67,6 +76,8 @@ class LLM:
                             parsed_out["phone_utterance"],
                         ):
                             if not first_chunk:
+                                if before_stream_start:
+                                    await before_stream_start()
                                 await self.event_broker.publish(
                                     f"app:{call_type}:response_gen",
                                     json.dumps({"type": "start_gen"}),
