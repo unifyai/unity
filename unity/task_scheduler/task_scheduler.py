@@ -2299,27 +2299,10 @@ class TaskScheduler(BaseTaskScheduler):
         in_queue_tasks: list[Task] = []
         if not member_ids:
             # Single filtered read of runnable rows in this queue
+            filter_expr = "schedule is not None and status not in ('completed','cancelled','failed') "
             if queue_id_exists:
-                in_queue_tasks = [
-                    r
-                    for r in self._filter_tasks(
-                        filter=(
-                            "schedule is not None and "
-                            "status not in ('completed','cancelled','failed') and "
-                            f"queue_id == {queue_id}"
-                        ),
-                    )
-                ]
-            else:
-                # Rare path: non-numeric queue_id (e.g., None) → derive membership locally
-                all_tasks = self._filter_tasks()
-                in_queue_tasks = [
-                    t
-                    for t in all_tasks
-                    if t.schedule is not None
-                    and t.queue_id == queue_id
-                    and t.status not in self._TERMINAL_STATUSES
-                ]
+                filter_expr += f"and queue_id == {queue_id}"
+            in_queue_tasks = self._filter_tasks(filter=filter_expr)
             member_ids = [t.task_id for t in in_queue_tasks]
 
         # Validate permutation
