@@ -137,7 +137,7 @@ async def _(event: PhoneCallEnded, cm: "ConversationManager", *args, **kwargs):
         )
     # start filler only in non-realtime
     if isinstance(event, (PhoneUtterance, UnifyCallUtterance)):
-        if not cm.realtime:
+        if not cm.call_manager.realtime:
             await cm.cancel_filler()
             asyncio.create_task(cm.run_filler_once())
         await cm.run_llm(delay=0, cancel_running=True)
