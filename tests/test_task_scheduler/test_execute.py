@@ -247,46 +247,6 @@ async def test_execute_result_and_done():
 
 
 # --------------------------------------------------------------------------- #
-#  5. Free-form execute triggers internal ask                           #
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_execute_invokes_ask_when_id_missing(monkeypatch):
-    """Executing via *description only* should call TaskScheduler.ask exactly once."""
-
-    description = "prepare the monthly analytics dashboard."
-
-    # Keep the activated task in-flight so the queue does not advance before assertions.
-    actor = SimulatedActor(steps=1)
-    ts = TaskScheduler(actor=actor)
-
-    # Seed one queued task (the one we'll start)
-    _ = ts._create_task(name=description, description=description)
-
-    calls = {"ask": 0}
-
-    original_ask = TaskScheduler.ask
-
-    @functools.wraps(original_ask)
-    async def spy_ask(self, text: str, **kw):  # type: ignore[override]
-        calls["ask"] += 1
-        return await original_ask(self, text, **kw)
-
-    monkeypatch.setattr(TaskScheduler, "ask", spy_ask, raising=True)
-
-    # Execute via free-form prompt WITHOUT numeric id
-    handle = await ts.execute(text=description)
-
-    # Wait for completion
-    await handle.interject("please be quick")
-    await handle.result()
-
-    assert calls["ask"] == 1, "TaskScheduler.ask should be invoked exactly once"
-
-
-# --------------------------------------------------------------------------- #
 #  6.1. Logged wrapper exposes append_to_queue with correct metadata           #
 # --------------------------------------------------------------------------- #
 
@@ -452,10 +412,8 @@ async def test_isolated_execute_detaches_entirely(monkeypatch):
 
     # Execute B with an explicit isolation request (avoid pure-numeric fast path)
     handle = await ts.execute(
-        text=(
-            f"Please run task {b} in isolation. Detach it entirely from the queue, "
-            "do not keep any followers attached, and execute only this task now."
-        ),
+        task_id=b,
+        isolated=True,
     )
     await handle.result()
 

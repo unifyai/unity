@@ -65,7 +65,7 @@ async def test_summary_on_natural_completion(monkeypatch):
     task_id = task_info["details"]["task_id"]
     instance_id = task_info["details"].get("instance_id", 0)
 
-    handle = await ts.execute(text=str(task_id))
+    handle = await ts.execute(task_id=task_id)
     result_text = await handle.result()
 
     await asyncio.wait_for(summary_saved_event.wait(), timeout=5.0)
@@ -172,7 +172,7 @@ async def test_summary_on_stop_defer(monkeypatch):
     task_id = task_info["details"]["task_id"]
     instance_id = task_info["details"].get("instance_id", 0)
 
-    handle = await ts.execute(text=str(task_id))
+    handle = await ts.execute(task_id=task_id)
     await asyncio.sleep(0.1)
 
     stop_reason = "Stopping to defer"
@@ -281,7 +281,7 @@ async def test_summary_on_stop_cancel(monkeypatch):
     task_id = task_info["details"]["task_id"]
     instance_id = task_info["details"].get("instance_id", 0)  # Fetch instance_id
 
-    handle = await ts.execute(text=str(task_id))
+    handle = await ts.execute(task_id=task_id)
     await asyncio.sleep(0.1)
 
     # Stop the task (cancel) – triggers background summary saving
@@ -405,7 +405,7 @@ async def test_summary_on_execution_error(monkeypatch):
 
     monkeypatch.setattr(ActiveTask, "result", patched_result_for_error)
 
-    handle = await ts.execute(text=str(task_id))
+    handle = await ts.execute(task_id=task_id)
 
     # Await result, expecting the error text returned by patched_result_for_error
     result_text = await handle.result()
@@ -520,7 +520,7 @@ async def test_summary_targets_correct_instance_for_recurring(monkeypatch):
     task_id = task_create_outcome["details"]["task_id"]
 
     # Run instance 0
-    handle_0 = await ts.execute(text=str(task_id))
+    handle_0 = await ts.execute(task_id=task_id)
     instance_id_0 = getattr(
         handle_0,
         "_instance_id",
@@ -587,7 +587,7 @@ async def test_summary_targets_correct_instance_for_recurring(monkeypatch):
     EXPECTED_SUMMARY_1 = "Mock summary for run 1"
 
     # Run instance 1
-    handle_1 = await ts.execute(text=str(task_id))  # Should pick up instance 1 now
+    handle_1 = await ts.execute(task_id=task_id)  # Should pick up instance 1 now
     instance_id_1_run = getattr(
         handle_1,
         "_instance_id",
