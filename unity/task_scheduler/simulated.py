@@ -358,6 +358,13 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             clarification_down_q=self._clar_down_q,
         )
 
+        # Align with real async tool loop: use a concise "Question(<parent_label>)" log label
+        # and avoid lineage chaining arrows here.
+        try:
+            handle._log_label = f"Question({self._log_label})({token_hex(2)})"  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
         try:
             _preview = question if len(question) <= 120 else f"{question[:120]}…"
             LOGGER.info(f"❓ [{handle._log_label}] Ask requested: {_preview}")  # type: ignore[attr-defined]
