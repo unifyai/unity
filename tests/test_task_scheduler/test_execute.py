@@ -290,11 +290,10 @@ async def test_execute_invokes_ask_when_id_missing(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_returns_logged_handle_with_append_to_queue_introspection():
+async def test_execute_returns_handle_with_append_to_queue_introspection():
     """
-    The handle returned by TaskScheduler.execute is wrapped by a logging proxy
-    but must present itself as `ActiveQueue` and expose `append_to_queue` with
-    the correct signature and docstring via standard inspection.
+    The handle returned by TaskScheduler.execute should expose `append_to_queue`
+    with the correct signature and a meaningful docstring via standard inspection.
     """
 
     import inspect as _inspect  # local import for test isolation
@@ -309,28 +308,26 @@ async def test_execute_returns_logged_handle_with_append_to_queue_introspection(
     task_id = ts._create_task(name=desc, description=desc)["details"]["task_id"]  # type: ignore[index]
     handle = await ts.execute(text=str(task_id))
 
-    # From the caller's perspective, the proxy should present the same class
-    # as the inner handle: ActiveQueue. Avoid relying on implementation
-    # details like `_inner`.
-    from unity.task_scheduler.active_queue import ActiveQueue  # local import
+    # The outer execute surface now returns an ExecuteLoopHandle to preserve the
+    # outer tool loop while fast-pathing execution internally.
+    from unity.task_scheduler.execute_handle import ExecuteLoopHandle  # local import
 
-    assert handle.__class__ is ActiveQueue
-    assert handle.__class__.__name__ == "ActiveQueue"
+    assert handle.__class__ is ExecuteLoopHandle
+    assert handle.__class__.__name__ == "ExecuteLoopHandle"
 
     # The custom queue method must be directly accessible on the proxy
     assert hasattr(handle, "append_to_queue"), "append_to_queue not exposed on handle"
     proxied_method = getattr(handle, "append_to_queue")
     assert callable(proxied_method)
 
-    # Compare signature and docstring against the inner BOUND method to avoid
-    # bound vs unbound discrepancies (omit self in bound signatures).
-    inner_bound = getattr(getattr(handle, "__wrapped__", handle), "append_to_queue")
-    assert str(_inspect.signature(proxied_method)) == str(
-        _inspect.signature(inner_bound),
-    )
+    # The signature should accept exactly one required parameter: task_id
+    sig = _inspect.signature(proxied_method)
+    params = list(sig.parameters.values())
+    assert len(params) == 1 and params[0].name == "task_id"
 
-    # Docstrings should also match exactly (functools.wraps should preserve).
-    assert _inspect.getdoc(proxied_method) == _inspect.getdoc(inner_bound)
+    # Docstring should be present and describe appending to the live task queue
+    doc = _inspect.getdoc(proxied_method) or ""
+    assert "append" in doc.lower() and "task" in doc.lower()
 
     # Cleanup: ensure any background work is finalised quickly
     try:
