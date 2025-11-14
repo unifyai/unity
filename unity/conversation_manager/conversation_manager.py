@@ -7,9 +7,9 @@ import logging
 from jinja2 import Template
 import json
 from pathlib import Path
-from typing import Callable, Optional, TypedDict
+from typing import Callable, Optional
+import contextlib
 
-from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager.debug_logger import log_job_startup, mark_job_done
 from unity.conversation_manager.domains.call_manager import LivekitCallManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
@@ -162,6 +162,14 @@ class ConversationManager:
         self.is_summarizing = None
         self.max_messages = 30
 
+        # filler callback when user finishes speaking (phone/gmeet only)
+        self.user_turn_end_callback: Optional[Callable[[list[dict]], str]] = (
+            user_turn_end_callback
+        )
+        self._filler_task: asyncio.Task | None = None
+        self._filler_started: asyncio.Event = asyncio.Event()
+        self._filler_done: asyncio.Event = asyncio.Event()
+
     def snapshot(self):
         self._current_snapshot = datetime.now()
         return self._current_snapshot
@@ -213,6 +221,11 @@ class ConversationManager:
             and not self.realtime,
             response_model=response_model,
             call_type=self.mode,
+            before_stream_start=(
+                self.before_stream_start
+                if (self.mode in ["call", "unify_call", "gmeet"] and not self.realtime)
+                else None
+            ),
         )
         parsed_out = json.loads(out)
         if "call" in self.mode:
@@ -339,9 +352,67 @@ class ConversationManager:
         os.environ["VOICE_PROVIDER"] = self.voice_provider
         os.environ["VOICE_ID"] = self.voice_id
 
+    def get_details(self) -> dict:
+        return {
+            "job_name": self.job_name,
+            "user_id": self.user_id,
+            "assistant_id": self.assistant_id,
+            "user_name": self.user_name,
+            "assistant_name": self.assistant_name,
+            "user_number": self.user_number,
+            "user_whatsapp_number": self.user_whatsapp_number,
+            "assistant_number": self.assistant_number,
+            "user_email": self.user_email,
+            "assistant_email": self.assistant_email,
+        }
+
     def cleanup(self):
         """Clean up any running call processes"""
         print(f"Marking job {self.job_name} done")
         mark_job_done(self.job_name)
         self.call_manager.cleanup_call_proc()
         self.stop.set()
+
+    async def run_filler_once(self):
+        if self.realtime or self.mode not in ["call", "unify_call", "gmeet"]:
+            return
+
+        # record the running task so before_stream_start can coordinate
+        self._filler_task = asyncio.current_task()
+        self._filler_started = asyncio.Event()
+        self._filler_done = asyncio.Event()
+        if not self.user_turn_end_callback:
+            self._filler_task = None
+            return
+
+        # pre-compute filler so streaming isn't blocked after start
+        try:
+            filler_text = self.user_turn_end_callback(self.chat_history) or ""
+        except Exception:
+            filler_text = ""
+        self._filler_started.set()
+        channel = f"app:{self.mode}:response_gen"
+        await self.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
+        if filler_text:
+            await self.event_broker.publish(
+                channel, json.dumps({"type": "gen_chunk", "chunk": filler_text})
+            )
+        await self.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
+        self._filler_done.set()
+        self._filler_task = None
+
+    async def cancel_filler(self):
+        # cancel the running filler task
+        if self._filler_task and not self._filler_task.done():
+            self._filler_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._filler_task
+            self._filler_task = None
+
+    async def before_stream_start(self):
+        # called just before the LLM streaming emits first start_gen
+        if self._filler_task and not self._filler_task.done():
+            if not self._filler_started.is_set():
+                await self.cancel_filler()
+            else:
+                await self._filler_done.wait()
