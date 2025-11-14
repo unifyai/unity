@@ -216,13 +216,25 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
 
             answer = await self._llm.generate(user_block)
             dt_ms = int((_t.perf_counter() - t0) * 1000)
+            # Show reply body only when there's no outer async tool loop; otherwise the outer loop
+            # will record the tool result and duplication is noisy.
             try:
-                _ans_preview = str(answer)
-                if len(_ans_preview) > 800:
-                    _ans_preview = _ans_preview[:800] + "…"
-                LOGGER.info(
-                    f"✅ [{self._log_label}] LLM replied in {dt_ms} ms:\n{_ans_preview}",
-                )
+                try:
+                    parent_lineage = TOOL_LOOP_LINEAGE.get([])
+                    has_outer = (
+                        isinstance(parent_lineage, list) and len(parent_lineage) > 0
+                    )
+                except Exception:
+                    has_outer = False
+                if has_outer:
+                    LOGGER.info(f"✅ [{self._log_label}] LLM replied in {dt_ms} ms")
+                else:
+                    _ans_preview = str(answer)
+                    if len(_ans_preview) > 800:
+                        _ans_preview = _ans_preview[:800] + "…"
+                    LOGGER.info(
+                        f"✅ [{self._log_label}] LLM replied in {dt_ms} ms:\n{_ans_preview}",
+                    )
             except Exception:
                 pass
 
