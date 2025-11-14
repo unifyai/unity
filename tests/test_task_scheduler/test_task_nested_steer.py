@@ -15,7 +15,10 @@ async def test_task_nested_steer_interject_reaches_inner_ask():
     an update→ask nested configuration and that an interjection is delivered to
     the inner loop (bypassing the outer update loop).
     """
-    ts = TaskScheduler()
+    # Keep the inner actor alive long enough for nested steering
+    from unity.actor.simulated import SimulatedActor  # local import for test isolation
+
+    ts = TaskScheduler(actor=SimulatedActor(steps=3, duration=None))
 
     # Start an update flow that will run an inner ask on the first turn
     h = await ts.update(
@@ -127,75 +130,31 @@ async def test_nested_steer_targets_actor_handle_and_applies_interject():
     res = ts.create_task(name="Demo", description="Run a demo task.")
     tid = int(res["details"]["task_id"])
 
-    # Start execution using natural language so the outer execute loop remains in play
+    # Start execution by id; returns an ActiveQueue handle
     h = await ts.execute(tid)
 
     try:
-        # Wait until the nested execute tool has been adopted with a live handle
-        async def _exec_child_adopted():
-            try:
-                ti = getattr(h, "_task", None)  # type: ignore[attr-defined]
-                task_info = getattr(ti, "task_info", {}) if ti is not None else {}
-                if isinstance(task_info, dict):
-                    for meta in task_info.values():
-                        nm = getattr(meta, "name", None)
-                        hd = getattr(meta, "handle", None)
-                        if (
-                            nm in ("execute_by_id", "execute_isolated_by_id")
-                            and hd is not None
-                        ):
-                            return True
-                return False
-            except Exception:
-                return False
-
-        await _wait_for_condition(_exec_child_adopted, poll=0.02, timeout=60.0)
-
-        # Capture the adopted ActiveQueue handle immediately to avoid races with completion
-        def _get_adopted_queue_handle():
-            try:
-                ti = getattr(h, "_task", None)  # type: ignore[attr-defined]
-                task_info = getattr(ti, "task_info", {}) if ti is not None else {}
-                if isinstance(task_info, dict):
-                    for meta in task_info.values():
-                        nm = getattr(meta, "name", None)
-                        hd = getattr(meta, "handle", None)
-                        if (
-                            nm in ("execute_by_id", "execute_isolated_by_id")
-                            and hd is not None
-                        ):
-                            return hd
-                return None
-            except Exception:
-                return None
-
-        aq_handle = _get_adopted_queue_handle()
-        assert (
-            aq_handle is not None
-        ), "Expected ActiveQueue handle to be adopted after execute start"
+        # The returned handle is already the ActiveQueue
+        aq_handle = h
 
         # Send an interjection directly to the inner ActorHandle via nested_steer
         msg = "actor-level interjection from nested_steer"
         spec = {
             "children": [
                 {
-                    "handle": "ActiveQueue",
+                    "handle": "ActiveTask",
                     "children": [
                         {
-                            "handle": "ActiveTask",
-                            "children": [
-                                {
-                                    "handle": "ActorHandle",
-                                    "steps": [{"method": "interject", "args": msg}],
-                                },
-                            ],
+                            "handle": "ActorHandle",
+                            "steps": [{"method": "interject", "args": msg}],
                         },
                     ],
                 },
             ],
         }
 
-        await h.nested_steer(spec)  # type: ignore[attr-defined]
+        # ActiveQueue exposes nested_steer for structural steering
+        await aq_handle.nested_steer(spec)  # type: ignore[attr-defined]
 
         # Walk wrappers to find the inner ActorHandle (SimulatedActorHandle)
         def _find_actor_handle(root):
