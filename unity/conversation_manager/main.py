@@ -40,7 +40,7 @@ def signal_handler(signum, frame):
         stop.set()
 
 
-async def main(use_realtime=False, project_name: str = "Assistants"):
+async def main(project_name: str = "Assistants"):
     global conversation_manager, managers_worker, stop
 
     # Set up signal handlers
@@ -79,7 +79,7 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
         os.getenv("USER_EMAIL", ""),
         os.getenv("VOICE_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
-        os.getenv("VOICE_MODE", "tts" if not use_realtime else "sts"),
+        os.getenv("VOICE_MODE", "tts"),
         project_name=project_name,
         stop=stop,
         user_turn_end_callback=None,
@@ -106,7 +106,4 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
 
 
 if __name__ == "__main__":
-    import sys
-
-    use_realtime = "--realtime" in sys.argv
-    asyncio.run(main(use_realtime=use_realtime))
+    asyncio.run(main())
