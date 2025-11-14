@@ -100,7 +100,8 @@ async def test_serialize_flat_taskscheduler_ask():
 @_handle_project
 async def test_serialize_taskscheduler_execute_recursive():
     """
-    Verify a recursive snapshot for TaskScheduler.execute after adopting the inner execute handle.
+    Verify structure for TaskScheduler.execute now that it returns an ActiveQueue directly
+    (no outer async tool loop or recursive serialization).
     """
     ts = TaskScheduler()
 
@@ -108,56 +109,26 @@ async def test_serialize_taskscheduler_execute_recursive():
     res = ts.create_task(name="Demo", description="Run a demo task.")
     tid = int(res["details"]["task_id"])
 
-    # Use natural language so the outer execute loop remains in play (avoids numeric fast-path)
     h = await ts.execute(tid)
 
     try:
-        # Wait until the nested execute tool has been adopted with a live handle
-        async def _exec_child_adopted():
-            try:
-                task_info = getattr(getattr(h, "_task", None), "task_info", {})  # type: ignore[attr-defined]
-                if isinstance(task_info, dict):
-                    for meta in task_info.values():
-                        nm = getattr(meta, "name", None)
-                        hd = getattr(meta, "handle", None)
-                        if (
-                            nm in ("execute_by_id", "execute_isolated_by_id")
-                            and hd is not None
-                        ):
-                            return True
-                return False
-            except Exception:
-                return False
-
-        await _wait_for_condition(_exec_child_adopted, poll=0.02, timeout=60.0)
-
-        snap = h.serialize(recursive=True)  # type: ignore[attr-defined]
-
-        # Overview: root identify + presence of an ActiveQueue child (readable)
-        expected_overview = {
-            "version": 1,
-            "root": {
-                "tool": "TaskScheduler.execute",
-                "handle": "AsyncToolLoopHandle",
-            },
+        # Direct structure check (mirrors nested_structure execute test)
+        structure = await h.nested_structure()  # type: ignore[attr-defined]
+        expected = {
+            "handle": "ActiveQueue(SteerableToolHandle)",
             "children": [
                 {
-                    "handle": "ActiveQueue(SteerableToolHandle)",
+                    "handle": "ActiveTask(SteerableToolHandle)",
+                    "children": [
+                        {
+                            "handle": "ActorHandle(SteerableToolHandle)",
+                            "children": [],
+                        },
+                    ],
                 },
             ],
         }
-        _assert_dict_subset(expected_overview, snap)
-        assert snap.get("loop_id", "").startswith("TaskScheduler.execute")
-        assert isinstance(snap.get("assistant"), list)
-        assert isinstance(snap.get("tools"), list)
-        # Children schema: at least one child should be ActiveQueue
-        children = snap.get("children") or []
-        assert isinstance(children, list) and len(children) >= 1
-        has_active_queue = any(
-            (isinstance(ch, dict) and str(ch.get("handle")).startswith("ActiveQueue("))
-            for ch in children
-        )
-        assert has_active_queue, "Expected an ActiveQueue child in recursive snapshot"
+        assert structure == expected
     finally:
         try:
             h.stop("cleanup")  # type: ignore[attr-defined]
@@ -440,26 +411,3 @@ async def test_deserialize_and_continue_taskscheduler_update_then_ask_nested_wit
         and interjection_text in str(m.get("content", ""))
     ]
     assert len(seen) == 1
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_deserialize_and_continue_taskscheduler_execute_with_interjection():
-    """
-    Start from a flat execute snapshot, resume, add an interjection, and verify continuation.
-    """
-    snap = {
-        "version": 1,
-        "loop_id": "TaskScheduler.execute(static)",
-        "root": {"tool": "TaskScheduler.execute", "handle": "AsyncToolLoopHandle"},
-        "system_message": "You are helpful.",
-        "initial_user_message": "Please execute a demo task now.",
-        "assistant": [],
-        "tools": [],
-    }
-
-    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
-    interjection_text = "Use safe defaults"
-    await resumed.interject(interjection_text)  # type: ignore[attr-defined]
-    out = await asyncio.wait_for(resumed.result(), timeout=300)  # type: ignore[attr-defined]
-    assert isinstance(out, str) and len(out) > 0
