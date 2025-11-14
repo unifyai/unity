@@ -79,12 +79,10 @@ async def main(use_realtime=False, project_name: str = "Assistants"):
         os.getenv("USER_EMAIL", ""),
         os.getenv("VOICE_PROVIDER", "cartesia"),
         os.getenv("VOICE_ID", None),
-        os.getenv("VOICE_MODE", "tts"),
+        os.getenv("VOICE_MODE", "tts" if not use_realtime else "sts"),
         project_name=project_name,
         stop=stop,
         user_turn_end_callback=None,
-        # whether to use realtime settings or not
-        realtime=use_realtime,
     )
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker

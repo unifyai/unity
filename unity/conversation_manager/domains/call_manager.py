@@ -21,8 +21,7 @@ class LivekitCallManager:
         self.assistant_number = assistant_number
         self.voice_provider = voice_provider
         self.voice_id = voice_id
-        self.voice_mode = voice_mode
-        self.realtime = realtime
+        self.realtime = voice_mode == "sts"
         self.call_proc = None
 
         self.call_exchange_id = UNASSIGNED
@@ -33,10 +32,10 @@ class LivekitCallManager:
     def start_call(self, contact_phone_number):
         # start the process here
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
-        if self.voice_mode == "tts":
-            target_path = target_path / "call.py"
-        else:
+        if self.realtime:
             target_path = target_path / "realtime_call.py"
+        else:
+            target_path = target_path / "call.py"
         args = [
             contact_phone_number,
             self.assistant_number,
