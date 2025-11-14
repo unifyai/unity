@@ -17,7 +17,8 @@ import os
 import unify
 
 from unity.task_scheduler.types.queue_summary import QueueSummary
-
+import datetime
+from pydantic import BaseModel
 from .types.task import Task
 from .types.status import Status
 
@@ -199,6 +200,23 @@ class TasksStore:
 
         return logs
 
+    @staticmethod
+    def _norm(v: Any) -> Any:
+        # Normalize enums to their underlying values
+        if isinstance(v, Enum):
+            return v.value
+        # Datetime family → ISO-8601 strings
+        if isinstance(v, (datetime.datetime, datetime.date, datetime.time)):
+            return v.isoformat()
+        # Pydantic models → plain dict (JSON mode for consistent strings)
+        if isinstance(v, BaseModel):
+            return TasksStore._norm(v.model_dump(mode="json"))
+        if isinstance(v, dict):
+            return {k: TasksStore._norm(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [TasksStore._norm(x) for x in v]
+        return v
+
     # ------------------------------- Writes --------------------------------
     def update(
         self,
@@ -206,39 +224,6 @@ class TasksStore:
         logs: Union[int, unify.Log, List[Union[int, unify.Log]]],
         entries: Union[Dict[str, Any], List[Dict[str, Any]]],
     ) -> Dict[str, str]:
-        def _norm(v: Any) -> Any:
-            # Normalize enums to their underlying values
-            if isinstance(v, Enum):
-                try:
-                    from enum import StrEnum  # py311+
-
-                    if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return v.value
-                except Exception:
-                    pass
-                return v.value
-            # Datetime family → ISO-8601 strings
-            try:
-                import datetime as _dt
-
-                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
-                    return v.isoformat()
-            except Exception:
-                pass
-            # Pydantic models → plain dict (JSON mode for consistent strings)
-            try:
-                from pydantic import BaseModel as _BM  # type: ignore
-
-                if isinstance(v, _BM):
-                    return _norm(v.model_dump(mode="json"))
-            except Exception:
-                pass
-            if isinstance(v, dict):
-                return {k: _norm(x) for k, x in v.items()}
-            if isinstance(v, list):
-                return [_norm(x) for x in v]
-            return v
-
         def _strip_nones(value: Any, *, top_level: bool) -> Any:
             """
             Remove None values from nested structures so we don't accidentally
@@ -267,7 +252,7 @@ class TasksStore:
                 ]
             return value
 
-        norm_entries = _strip_nones(_norm(entries), top_level=True)
+        norm_entries = _strip_nones(TasksStore._norm(entries), top_level=True)
         return unify.update_logs(
             logs=logs,
             context=self._ctx,
@@ -276,40 +261,7 @@ class TasksStore:
         )
 
     def log(self, *, entries: Dict[str, Any], new: bool = True) -> unify.Log:
-        def _norm(v: Any) -> Any:
-            # Normalize enums to their underlying values
-            if isinstance(v, Enum):
-                try:
-                    from enum import StrEnum  # py311+
-
-                    if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return v.value
-                except Exception:
-                    pass
-                return v.value
-            # Datetime family → ISO-8601 strings
-            try:
-                import datetime as _dt
-
-                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
-                    return v.isoformat()
-            except Exception:
-                pass
-            # Pydantic models → plain dict (JSON mode for consistent strings)
-            try:
-                from pydantic import BaseModel as _BM  # type: ignore
-
-                if isinstance(v, _BM):
-                    return _norm(v.model_dump(mode="json"))
-            except Exception:
-                pass
-            if isinstance(v, dict):
-                return {k: _norm(x) for k, x in v.items()}
-            if isinstance(v, list):
-                return [_norm(x) for x in v]
-            return v
-
-        norm_entries = _norm(entries)
+        norm_entries = TasksStore._norm(entries)
         # Create with expanded fields so auto-counting applies when ids are omitted
         return unify.log(context=self._ctx, new=new, **norm_entries)
 
@@ -322,38 +274,7 @@ class TasksStore:
         with auto-incremented row identifiers.
         """
 
-        # Normalise all payloads consistently with the single-log path
-        def _norm(v: Any) -> Any:
-            if isinstance(v, Enum):
-                try:
-                    from enum import StrEnum  # py311+
-
-                    if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return v.value
-                except Exception:
-                    pass
-                return v.value
-            try:
-                import datetime as _dt
-
-                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
-                    return v.isoformat()
-            except Exception:
-                pass
-            try:
-                from pydantic import BaseModel as _BM  # type: ignore
-
-                if isinstance(v, _BM):
-                    return _norm(v.model_dump(mode="json"))
-            except Exception:
-                pass
-            if isinstance(v, dict):
-                return {k: _norm(x) for k, x in v.items()}
-            if isinstance(v, list):
-                return [_norm(x) for x in v]
-            return v
-
-        normalised = [{**_norm(e)} for e in entries_list]
+        normalised = [{**TasksStore._norm(e)} for e in entries_list]
         try:
             return unify.create_logs(context=self._ctx, entries=normalised)
         except Exception:
