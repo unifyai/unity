@@ -551,25 +551,31 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         for _t, _inf in task_info.items():
             h = _inf.handle
-            if h is None or not isinstance(h, SteerableToolHandle):
+            # Only consider live passthrough child handles for recursive ask tools
+            is_passthrough = False
+            try:
+                is_passthrough = bool(getattr(_inf, "is_passthrough", False))
+            except Exception:
+                is_passthrough = False
+            if (
+                h is None
+                or not isinstance(h, SteerableToolHandle)
+                or not is_passthrough
+            ):
                 continue
 
             async def _proxy(
                 _q: str,
                 images: dict | list | None = None,
                 _h=h,  # capture now
-            ) -> str:
-                # Robust forward with kwargs normalisation; tolerate older signatures
-                nested = await forward_handle_call(
+            ):
+                # Robust forward; return the downstream ask handle so the inspection loop can adopt it
+                return await forward_handle_call(
                     _h,
                     "ask",
                     {"question": _q, "images": images},
                     fallback_positional_keys=("question", "content"),
                 )
-                try:
-                    return await nested.result()  # type: ignore[union-attr]
-                except Exception:
-                    return ""
 
             # tool name encodes the call-id so collisions are impossible
             _cid = None
@@ -607,9 +613,43 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         else:
             _ask_message = question
 
+        # If passthrough children are present, seed assistant tool_calls to invoke ask_* immediately.
+        seeded_batch = None
+        try:
+            if isinstance(recursive_tools, dict) and recursive_tools:
+                tool_calls = []
+                import json as _json  # local alias to avoid top-level pollution
+
+                for _name in list(recursive_tools.keys()):
+                    try:
+                        tool_calls.append(
+                            {
+                                "id": f"seed_{_name}",
+                                "type": "function",
+                                "function": {
+                                    "name": _name,
+                                    "arguments": _json.dumps({"question": question}),
+                                },
+                            },
+                        )
+                    except Exception:
+                        continue
+                if tool_calls:
+                    # Build a normalized user message dict
+                    if isinstance(_ask_message, dict):
+                        _user_msg = _ask_message
+                    else:
+                        _user_msg = {"role": "user", "content": _ask_message}
+                    seeded_batch = [
+                        _user_msg,
+                        {"role": "assistant", "content": "", "tool_calls": tool_calls},
+                    ]
+        except Exception:
+            seeded_batch = None
+
         helper_handle = start_async_tool_loop(
             inspection_client,
-            _ask_message,
+            seeded_batch if seeded_batch is not None else _ask_message,
             recursive_tools,  # may be empty
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
@@ -618,9 +658,13 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
-            timeout=60,
+            timeout=300,
             images=images,
         )
+
+        # Grant the inspection loop an immediate LLM turn (without adding a new message)
+        with suppress(Exception):
+            await helper_handle._queue.put({"_replay": True})  # type: ignore[attr-defined]
 
         # Monkey-patch result() to record the assistant answer when available
         if not _return_reasoning_steps:

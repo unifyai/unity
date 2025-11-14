@@ -1703,6 +1703,7 @@ async def async_tool_loop_inner(
                     if isinstance(extra, dict) and extra.get("_replay"):
                         # Do not append any message; just grant the next LLM turn
                         # and proceed. This preserves transcript fidelity after resume.
+                        llm_turn_required = True
                         continue
                 except Exception:
                     pass
