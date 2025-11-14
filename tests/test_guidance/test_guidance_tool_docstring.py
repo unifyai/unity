@@ -2,9 +2,10 @@ from __future__ import annotations
 
 
 from unity.guidance_manager.guidance_manager import GuidanceManager
-from unity.common.llm_helpers import method_to_schema
-import json
 from tests.assertion_helpers import first_diff_block
+import sys
+import subprocess
+import textwrap
 
 
 def _unwrap_callable(tool):
@@ -27,38 +28,38 @@ def test_all_ask_tools_have_sufficient_docstrings():
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
 
 
-def test_ask_tool_schemas_are_stable_across_serial_calls():
+def _build_tools_schema_in_subprocess(method: str) -> str:
     """
-    The fully unpacked tool schemas (as seen by the LLM in the async tool loop)
-    should be identical across serial calls to the representation function.
+    Build tools→schema JSON in a fresh Python process to catch cross-session drift.
     """
-    gm = GuidanceManager()
-    tools = gm.get_tools("ask")
-    assert tools, "GuidanceManager.ask should expose at least one tool"
-
-    first = {
-        name: method_to_schema(_unwrap_callable(value), name)
-        for name, value in tools.items()
-    }
-    second = {
-        name: method_to_schema(_unwrap_callable(value), name)
-        for name, value in tools.items()
-    }
-
-    # Compare stable JSON render and surface first differing line with context
-    f_dump = json.dumps(first, sort_keys=True, indent=2)
-    s_dump = json.dumps(second, sort_keys=True, indent=2)
-    if f_dump != s_dump:
-        snippet = first_diff_block(
-            f_dump,
-            s_dump,
-            context=3,
-            label_a="First JSON",
-            label_b="Second JSON",
-        )
-        raise AssertionError(
-            "Tool schemas for ask-tools changed between serial calls.\n\n" + snippet,
-        )
+    assert method in {"ask", "update"}
+    code = textwrap.dedent(
+        f"""
+		import os, sys, json
+		sys.path.insert(0, os.getcwd())
+		from unity.common.llm_helpers import method_to_schema
+		def _unwrap_callable(tool):
+			return getattr(tool, "fn", tool)
+		from unity.guidance_manager.guidance_manager import GuidanceManager
+		gm = GuidanceManager()
+		tools = gm.get_tools("{method}")
+		if not tools:
+			raise AssertionError("GuidanceManager.{method} should expose at least one tool")
+		mapping = {{
+			name: method_to_schema(_unwrap_callable(value), name)
+			for name, value in tools.items()
+		}}
+		sys.stdout.write(json.dumps(mapping, sort_keys=True, indent=2))
+		""",
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+    return proc.stdout
 
 
 def test_all_update_tools_have_sufficient_docstrings():
@@ -76,35 +77,35 @@ def test_all_update_tools_have_sufficient_docstrings():
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
 
 
-def test_update_tool_schemas_are_stable_across_serial_calls():
-    """
-    The fully unpacked tool schemas (as seen by the LLM in the async tool loop)
-    should be identical across serial calls to the representation function.
-    """
-    gm = GuidanceManager()
-    tools = gm.get_tools("update")
-    assert tools, "GuidanceManager.update should expose at least one tool"
-
-    first = {
-        name: method_to_schema(_unwrap_callable(value), name)
-        for name, value in tools.items()
-    }
-    second = {
-        name: method_to_schema(_unwrap_callable(value), name)
-        for name, value in tools.items()
-    }
-
-    # Compare stable JSON render and surface first differing line with context
-    f_dump = json.dumps(first, sort_keys=True, indent=2)
-    s_dump = json.dumps(second, sort_keys=True, indent=2)
-    if f_dump != s_dump:
+def test_ask_tool_schemas_are_stable_across_python_sessions():
+    p1 = _build_tools_schema_in_subprocess("ask")
+    p2 = _build_tools_schema_in_subprocess("ask")
+    if p1 != p2:
         snippet = first_diff_block(
-            f_dump,
-            s_dump,
+            p1,
+            p2,
             context=3,
             label_a="First JSON",
             label_b="Second JSON",
         )
         raise AssertionError(
-            "Tool schemas for update-tools changed between serial calls.\n\n" + snippet,
+            "Tool schemas for ask-tools changed between separate Python sessions.\n\n"
+            + snippet,
+        )
+
+
+def test_update_tool_schemas_are_stable_across_python_sessions():
+    p1 = _build_tools_schema_in_subprocess("update")
+    p2 = _build_tools_schema_in_subprocess("update")
+    if p1 != p2:
+        snippet = first_diff_block(
+            p1,
+            p2,
+            context=3,
+            label_a="First JSON",
+            label_b="Second JSON",
+        )
+        raise AssertionError(
+            "Tool schemas for update-tools changed between separate Python sessions.\n\n"
+            + snippet,
         )
