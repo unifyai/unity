@@ -330,6 +330,10 @@ class _QueueSnapshot:
 
 
 class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abstract-method]
+    # Mark queue handles as passthrough so outer ExecuteLoopHandle adopts and forwards
+    # steering (ask/interject/pause/resume/stop) automatically.
+    __passthrough__ = True
+
     def __init__(
         self,
         scheduler: "TaskScheduler",
