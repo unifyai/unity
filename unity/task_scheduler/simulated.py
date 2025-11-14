@@ -16,6 +16,8 @@ from typing import List, Optional, Callable, Any
 import unify
 
 from ..common.async_tool_loop import SteerableToolHandle
+from ..constants import LOGGER
+from ..common.llm_helpers import short_id
 from .base import BaseTaskScheduler
 from .prompt_builders import (
     build_ask_prompt,
@@ -58,6 +60,9 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             )
         self._needs_clar = _requests_clarification
 
+        # Human-friendly log label mirroring async loop style
+        self._log_label = f"SimulatedTaskScheduler.{self._mode}({short_id()})"
+
         # ── fire the clarification request right away ──────────────────
         self._clar_requested = False
         if self._needs_clar:
@@ -66,6 +71,10 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
                     "Could you please clarify exactly what you want?",
                 )
                 self._clar_requested = True
+                try:
+                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                except Exception:
+                    pass
             except asyncio.QueueFull:
                 pass
 
@@ -91,13 +100,41 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         if not self._done_event.is_set():
             # Wait for clarification answer if required
             if self._needs_clar:
+                try:
+                    LOGGER.info(
+                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                    )
+                except Exception:
+                    pass
                 clar_reply = await self._clar_down_q.get()
                 self._interjections.append(f"Clarification: {clar_reply}")
+                try:
+                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                except Exception:
+                    pass
 
             prompt_parts = [self._initial_text] + self._interjections
             user_block = "\n\n---\n\n".join(prompt_parts)
 
+            # LLM step – simulated thinking with timing
+            import time as _t
+
+            t0 = _t.perf_counter()
+            try:
+                LOGGER.info(f"🔄 [{self._log_label}] LLM simulating…")
+            except Exception:
+                pass
             answer = await self._llm.generate(user_block)
+            dt_ms = int((_t.perf_counter() - t0) * 1000)
+            try:
+                _ans_preview = str(answer)
+                if len(_ans_preview) > 800:
+                    _ans_preview = _ans_preview[:800] + "…"
+                LOGGER.info(
+                    f"✅ [{self._log_label}] LLM replied in {dt_ms} ms:\n{_ans_preview}",
+                )
+            except Exception:
+                pass
 
             self._answer = answer
             # very small, synthetic trace of "reasoning"
@@ -115,6 +152,11 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         """Append a follow-up message that will be folded into the prompt."""
         if self._cancelled:
             return "Interaction already stopped."
+        try:
+            _preview = message if len(message) <= 120 else f"{message[:120]}…"
+            LOGGER.info(f"💬 [{self._log_label}] Interject requested: {_preview}")
+        except Exception:
+            pass
         self._interjections.append(message)
         return "Noted."
 
@@ -124,6 +166,11 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         The `cancel` flag is required but ignored; the interaction is always
         cancelled.
         """
+        try:
+            suffix = f" – reason: {reason}" if reason else ""
+            LOGGER.info(f"🛑 [{self._log_label}] Stop requested{suffix}")
+        except Exception:
+            pass
         self._cancelled = True
         self._done_event.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
@@ -131,12 +178,20 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
     def pause(self) -> str:
         if self._paused:
             return "Already paused."
+        try:
+            LOGGER.info(f"⏸️ [{self._log_label}] Pause requested")
+        except Exception:
+            pass
         self._paused = True
         return "Paused."
 
     def resume(self) -> str:
         if not self._paused:
             return "Already running."
+        try:
+            LOGGER.info(f"▶️ [{self._log_label}] Resume requested")
+        except Exception:
+            pass
         self._paused = False
         return "Resumed."
 
@@ -181,7 +236,8 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             + [f"Question to answer (as a reminder!): {question}"],
         )
 
-        return _SimulatedTaskScheduleHandle(
+        # Create the new helper handle first so we can log using its stable label
+        handle = _SimulatedTaskScheduleHandle(
             self._llm,
             follow_up_prompt,
             mode=self._mode,
@@ -192,6 +248,14 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
         )
+
+        try:
+            _preview = question if len(question) <= 120 else f"{question[:120]}…"
+            LOGGER.info(f"❓ [{handle._log_label}] Ask requested: {_preview}")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        return handle
 
 
 class SimulatedTaskScheduler(BaseTaskScheduler):
@@ -351,6 +415,13 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_down_q=_clarification_down_q,
         )
 
+        # Emit a human-facing log for the initial ask so tests see immediate feedback
+        try:
+            _preview = text if len(text) <= 120 else f"{text[:120]}…"
+            LOGGER.info(f"❓ [{handle._log_label}] Ask requested: {_preview}")  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
         if should_log and call_id is not None:
             handle = wrap_handle_with_logging(
                 handle,
@@ -405,6 +476,13 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
         )
+
+        # Emit a human-facing log for the initial update so tests see immediate feedback
+        try:
+            _preview = text if len(text) <= 120 else f"{text[:120]}…"
+            LOGGER.info(f"📝 [{handle._log_label}] Update requested: {_preview}")  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         if should_log and call_id is not None:
             handle = wrap_handle_with_logging(
@@ -464,6 +542,14 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         }
         # Drop None values so defaults are not forced
         actor_kwargs = {k: v for k, v in actor_kwargs.items() if v is not None}
+
+        # Emit a scheduler-level execute log with a stable label
+        try:
+            _exec_label = f"SimulatedTaskScheduler.execute({short_id()})"
+            _preview = text if len(text) <= 120 else f"{text[:120]}…"
+            LOGGER.info(f"🎬 [{_exec_label}] Execute requested: {_preview}")
+        except Exception:
+            pass
 
         if self._actor_factory is not None:
             actor = self._actor_factory(**actor_kwargs)
