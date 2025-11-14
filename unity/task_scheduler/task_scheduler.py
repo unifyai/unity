@@ -3867,10 +3867,10 @@ class TaskScheduler(BaseTaskScheduler):
         """Create a session-scoped checkpoint snapshot of all runnable queues."""
         snapshot: Dict[str, Any] = {"label": label, "queues": []}
         try:
-            all_q = self._list_queues()
+            all_queues = self._list_queues()
         except Exception:
-            all_q = []
-        for q in all_q:
+            all_queues = []
+        for q in all_queues:
             qid = q.get("queue_id")
             start_at = q.get("start_at")
             try:
