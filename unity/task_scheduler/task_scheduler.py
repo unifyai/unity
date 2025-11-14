@@ -636,23 +636,55 @@ class TaskScheduler(BaseTaskScheduler):
         stripped = freeform_text.strip()
         if stripped.isdigit():
             try:
-                # Honor explicit override when provided; default is chained
-                if isolated is True:
-                    return await self._execute_queue_internal(
-                        task_id=int(stripped),
-                        parent_chat_context=_parent_chat_context,
-                        clarification_up_q=_clarification_up_q,
-                        clarification_down_q=_clarification_down_q,
-                        detach=True,
-                    )
-                else:
-                    return await self._execute_queue_internal(
-                        task_id=int(stripped),
-                        parent_chat_context=_parent_chat_context,
-                        clarification_up_q=_clarification_up_q,
-                        clarification_down_q=_clarification_down_q,
-                        detach=False,
-                    )
+                # Honor explicit override when provided; default is chained.
+                # Instead of returning the ActiveQueue handle directly, seed the outer
+                # execute loop with a pre-decided assistant tool_call so the inner loop
+                # schedules the execution immediately (no initial LLM turn).
+                task_id_int = int(stripped)
+                # Resolve the canonical tool name exposed on the execute surface
+                tool_name = (
+                    "execute_isolated_by_id" if isolated is True else "execute_by_id"
+                )
+                # Build a minimal seeded transcript: user turn + assistant tool_call
+                try:
+                    import json as _json  # local import
+                except Exception:
+                    _json = None  # type: ignore
+                try:
+                    from ..common.llm_helpers import (
+                        short_id as _short_id,
+                    )  # local import
+                except Exception:
+                    _short_id = lambda n=8: "x" * (n or 8)  # type: ignore
+                call_id = f"tc_{_short_id(8)}"
+                seeded_messages = [
+                    {"role": "user", "content": freeform_text},
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": (
+                                        _json.dumps({"task_id": task_id_int})
+                                        if _json is not None
+                                        else str({"task_id": task_id_int})
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                ]
+                return self._start_execute_loop(
+                    freeform_text=seeded_messages,  # list is supported by the loop
+                    parent_chat_context=_parent_chat_context,
+                    clarification_up_q=_clarification_up_q,
+                    clarification_down_q=_clarification_down_q,
+                    images=images,
+                )
             except (ValueError, RuntimeError):
                 # Fall back to the outer loop (will ask/clarify/create)
                 pass
