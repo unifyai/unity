@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-import os
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor
 from unity.actor.simulated import SimulatedActorHandle
@@ -43,7 +42,7 @@ async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     task_id = scheduler._create_task(name=description, description=description)[
         "details"
     ]["task_id"]
-    handle = await scheduler.execute(text=str(task_id))
+    handle = await scheduler.execute(task_id=task_id)
     return scheduler, handle
 
 
@@ -96,57 +95,12 @@ async def test_execute_ask(monkeypatch):
 
     _scheduler, task = await _make_scheduler_with_task(
         "Analyse new product launch performance.",
-        steps=3,  # keep inner handle alive long enough to be adopted
+        steps=3,
     )
 
-    # Patch schema for seeded ask_* helper so its images array has 'items'.
-    import unity.common._async_tool.loop as _loop
-
-    _orig_schema = _loop.method_to_schema
-
-    def _schema_with_images_items(fn, name, *a, **kw):
-        schema = _orig_schema(fn, name, *a, **kw)
-        if isinstance(name, str) and name.startswith("ask_"):
-            try:
-                imgs = schema["function"]["parameters"]["properties"]["images"]
-                any_of = imgs.get("anyOf", [])
-                for opt in any_of:
-                    if (
-                        isinstance(opt, dict)
-                        and opt.get("type") == "array"
-                        and "items" not in opt
-                    ):
-                        opt["items"] = {"type": "object"}
-            except Exception:
-                pass
-        return schema
-
-    monkeypatch.setattr(
-        _loop,
-        "method_to_schema",
-        _schema_with_images_items,
-        raising=True,
-    )
-
-    # Wait until a passthrough child is live (adopted by the outer loop)
-    async def _wait_for_child(handle, timeout_s: float = 10.0) -> None:
-        deadline = asyncio.get_event_loop().time() + timeout_s
-        while asyncio.get_event_loop().time() < deadline:
-            try:
-                tree = await handle.nested_structure()
-                if isinstance(tree, dict) and tree.get("children"):
-                    return
-            except Exception:
-                pass
-            await asyncio.sleep(0.05)
-        raise TimeoutError("Timed out waiting for passthrough child adoption")
-
-    await _wait_for_child(task)
-
-    # Now perform a read-only ask while the child is live – the outer loop should delegate once
-    ask_handle = await task.ask("Do we have any early metrics?")
-    # Await the inspection answer so the delegated inner ask has time to execute
-    await ask_handle.result()
+    # Perform a read-only ask on the returned handle – should delegate once
+    ask_h = await task.ask("Do we have any early metrics?")
+    await ask_h.result()
 
     # Let the outer execute loop finish naturally (best‑effort).
     with contextlib.suppress(Exception):
@@ -355,14 +309,13 @@ async def test_execute_returns_handle_with_append_to_queue_introspection():
     # Create a single runnable task and start it by id
     desc = "Introspection target"
     task_id = ts._create_task(name=desc, description=desc)["details"]["task_id"]  # type: ignore[index]
-    handle = await ts.execute(text=str(task_id))
+    handle = await ts.execute(task_id=task_id)
 
-    # The outer execute surface now returns an ExecuteLoopHandle to preserve the
-    # outer tool loop while fast-pathing execution internally.
-    from unity.task_scheduler.execute_handle import ExecuteLoopHandle  # local import
+    # The execute surface returns an ActiveQueue handle
+    from unity.task_scheduler.active_queue import ActiveQueue  # local import
 
-    assert handle.__class__ is ExecuteLoopHandle
-    assert handle.__class__.__name__ == "ExecuteLoopHandle"
+    assert handle.__class__ is ActiveQueue
+    assert handle.__class__.__name__ == "ActiveQueue"
 
     # The custom queue method must be directly accessible on the proxy
     assert hasattr(handle, "append_to_queue"), "append_to_queue not exposed on handle"
@@ -386,149 +339,8 @@ async def test_execute_returns_handle_with_append_to_queue_introspection():
 
 
 # --------------------------------------------------------------------------- #
-#  6. New task creation & execution                                           #
+#  6.2. (removed: dynamic helper append_to_queue end-to-end via outer loop)   #
 # --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_execute_creates_new_task_and_executes(monkeypatch):
-    """When the task clearly does not exist the scheduler should create it via
-    `update` and then start it – `TaskScheduler.update` must therefore be
-    invoked exactly once (or more, in very unlikely multi-step flows)."""
-
-    description = "Organise annual security audit report."
-
-    # Use a short duration so activation doesn't immediately advance the queue
-    # before we can assert on linkage semantics.
-    actor = SimulatedActor(duration=0.5)
-    ts = TaskScheduler(actor=actor)
-
-    # ---- spy on _create_task -----------------------------------------------
-    calls: Dict[str, int] = {"_create_task": 0}
-
-    original_create = TaskScheduler._create_task
-
-    @functools.wraps(original_create)
-    def spy_create(self, *, name: str, description: str, **kw):  # type: ignore[override]
-        calls["_create_task"] += 1
-        return original_create(self, name=name, description=description, **kw)
-
-    monkeypatch.setattr(TaskScheduler, "_create_task", spy_create, raising=True)
-
-    # ---- execute (no prior task with that description exists) -------------
-    handle = await ts.execute(text=description)
-
-    # Get the final result.
-    await handle.result()
-
-    # ---- assertions --------------------------------------------------------
-    assert (
-        calls["_create_task"] >= 1
-    ), "Expected at least one call to TaskScheduler._create_task"
-
-    # Verify that a task with the expected description now exists
-    # Description may be normalised (e.g. trailing period removed).  Accept any
-    # task whose *name* or *description* contains our original phrase without
-    # the trailing period.
-    created_tasks = ts._filter_tasks()
-    phrase = description.rstrip(".").casefold()
-    assert any(
-        phrase in t.name.casefold() or phrase in t.description.casefold()
-        for t in created_tasks
-    ), "A new task with the provided description should have been created"
-
-
-# --------------------------------------------------------------------------- #
-#  6.2. Dynamic helper append_to_queue – end-to-end via async tool loop       #
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_execute_dynamic_helper_append_to_queue_end_to_end():
-    """
-    End-to-end: start a tool loop that returns an ActiveQueue handle created
-    by TaskScheduler.execute, then instruct the LLM to call the dynamic
-    `append_to_queue` helper with an explicit task_id. Verify the helper is
-    called and the queue membership reflects the append.
-    """
-    import unify
-    from unity.common.async_tool_loop import start_async_tool_loop
-    from tests.test_async_tool_loop.async_helpers import (
-        _wait_for_tool_request,
-        _wait_for_assistant_call_prefix,
-        _wait_for_tool_message_prefix,
-    )
-    from tests.helpers import SETTINGS
-
-    # Build a scheduler with a singleton queue (A) and a standalone task (B).
-    # Use a short, step-based simulated actor so the inner handle stays alive.
-    actor = SimulatedActor(steps=3, duration=None)
-    ts = TaskScheduler(actor=actor)
-
-    # Create a singleton queue head A
-    qid = ts._allocate_new_queue_id()
-    a_id = ts._create_task(name="E2E_A", description="E2E_A", queue_id=qid)["details"][
-        "task_id"
-    ]  # type: ignore[index]
-    ts._set_queue(queue_id=qid, order=[a_id])
-
-    # Create a standalone follower candidate B (not queued yet)
-    b_id = ts._create_task(name="E2E_B", description="E2E_B")["details"]["task_id"]  # type: ignore[index]
-
-    # Tool that returns an ActiveQueue handle by executing A via numeric fast-path.
-    @unify.traced
-    async def start_queue_handle():
-        return await ts.execute(text=str(a_id))
-
-    # Start the async tool loop with a simple instruction to call our start tool.
-    client = unify.AsyncUnify(
-        os.getenv("UNIFY_MODEL", "gpt-5@openai"),
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-        reasoning_effort="high",
-        service_tier="priority",
-    )
-    client.set_system_message(
-        "Call `start_queue_handle` to start a task, then wait for further instructions.",
-    )
-
-    outer = start_async_tool_loop(
-        client,
-        message="start",
-        tools={"start_queue_handle": start_queue_handle},
-        timeout=120,
-        max_steps=30,
-    )
-
-    # Ensure the start tool has been requested so the dynamic helpers are exposed.
-    await _wait_for_tool_request(client, "start_queue_handle")
-
-    # Now ask the model to call the dynamic append_to_queue helper explicitly.
-    await outer.interject(f"Now call append_to_queue(task_id={int(b_id)}).")
-
-    # Wait until the assistant requests a helper whose name starts with 'append_to_queue_'.
-    await _wait_for_assistant_call_prefix(client, "append_to_queue_")
-    # And wait for the corresponding tool message to appear.
-    await _wait_for_tool_message_prefix(client, "append_to_queue_")
-
-    # Immediately verify the live queue now contains A followed by the newly appended B.
-    # We assert right after the tool completed to avoid later lifecycle operations (e.g., defer)
-    # altering the queue snapshot.
-    live = ts._get_queue_for_task(task_id=a_id)
-    ids = [getattr(r, "task_id", None) for r in (live or [])]
-    assert ids and ids[0] == a_id and b_id in ids and ids.index(b_id) == len(ids) - 1
-
-    # Instruct the model to stop the running queue so no background tasks linger,
-    # then reply only with "done" for determinism.
-    await outer.interject("Now call stop(cancel=false). Then reply only with: done")
-    await _wait_for_assistant_call_prefix(client, "stop_")
-
-    # Final assistant answer should be 'done' (case-insensitive) after stop; queue
-    # membership was already asserted immediately after append.
-    final = await outer.result()
-    assert isinstance(final, str) and "done" in final.strip().lower()
 
 
 # --------------------------------------------------------------------------- #
@@ -536,40 +348,11 @@ async def test_execute_dynamic_helper_append_to_queue_end_to_end():
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.asyncio
-@_handle_project
-async def test_execute_requests_clarification_for_unknown_id(monkeypatch):
-    """Supplying a numeric task_id that does *not* exist should trigger the
-    internal `request_clarification` helper (i.e. push a question onto the
-    clarification_up_q)."""
-
-    actor = SimulatedActor(steps=1)
-    ts = TaskScheduler(actor=actor)
-
-    # Provide queues so the tool can ask for clarification.
-    clarification_up_q: asyncio.Queue[str] = asyncio.Queue()
-    clarification_down_q: asyncio.Queue[str] = asyncio.Queue()
-
-    nonexistent_id = 424242  # arbitrary id that will not exist in a fresh context
-
-    handle = await ts.execute(
-        text=str(nonexistent_id),
-        _clarification_up_q=clarification_up_q,
-        _clarification_down_q=clarification_down_q,
-    )
-
-    # Wait for the assistant to push a clarification question.
-    question = await clarification_up_q.get()
-
-    assert question, "A clarification question should have been requested"
-
-    # Respond so the loop can terminate quickly.
-    await clarification_down_q.put(
-        "Oh sorry, my mistake. Let's not execute any task in that case then.",
-    )
-
-    # Gracefully stop the loop – we're only interested in the clarification behaviour.
-    await handle.result()
+@pytest.mark.skip(
+    reason="Clarification via free‑form execute removed; execute(task_id: int) only.",
+)
+def test_execute_requests_clarification_for_unknown_id():  # pragma: no cover
+    pass
 
 
 # --------------------------------------------------------------------------- #
@@ -590,7 +373,7 @@ async def test_execute_sets_activated_by_explicit():
     task_id = ts._create_task(name=name, description=name)["details"]["task_id"]
 
     # Start by id (fast-path)
-    handle = await ts.execute(text=str(task_id))
+    handle = await ts.execute(task_id=task_id)
     await handle.result()
 
     # Verify activated_by on the activated instance (may already be completed)
@@ -708,12 +491,7 @@ async def test_isolated_execute_start_at_to_second_when_head_moves(monkeypatch):
     x, y = await _make_ordered_queue(ts, ["X", "Y"])  # type: ignore[misc]
 
     # Execute X (head) with an explicit isolation request (avoid pure-numeric fast path)
-    handle = await ts.execute(
-        text=(
-            f"Please run task {x} in isolation. Detach it entirely from the queue, "
-            "do not keep any followers attached, and execute only this task now."
-        ),
-    )
+    handle = await ts.execute(task_id=x, isolated=True)
     await handle.result()
 
     rows_x = ts._filter_tasks(filter=f"task_id == {x}")
@@ -744,7 +522,7 @@ async def test_execute_default_keeps_followers():
 
     a, b, c = await _make_ordered_queue(ts, ["A2", "B2", "C2"])  # type: ignore[misc]
 
-    handle = await ts.execute(text=str(b))
+    handle = await ts.execute(task_id=b)
 
     # Yield once to allow activation-side linkage writes to settle without advancing the queue
     await asyncio.sleep(0)
