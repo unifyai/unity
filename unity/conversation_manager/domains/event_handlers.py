@@ -283,6 +283,52 @@ async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
     await cm.run_llm()
 
 
+@EventHandler.register((ConductorPauseActor, ConductorResumeActor))
+async def _(
+    event: ConductorPauseActor | ConductorResumeActor,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
+):
+    print("recieved conductor pause/resume event", event.to_dict())
+    action = "pause" if isinstance(event, ConductorPauseActor) else "resume"
+    reason = getattr(event, "reason", "")
+    affected: list[int] = []
+    for hid, data in list(cm.conductor_handles.items()):
+        # get conductor request handle
+        handle = data.get("handle")
+        if handle is None:
+            continue
+
+        # pause or resume handle
+        try:
+            if action == "pause" and hasattr(handle, "pause_actor"):
+                await handle.pause_actor(reason)
+            elif action == "resume" and hasattr(handle, "resume_actor"):
+                await handle.resume_actor(reason)
+            else:
+                print(f"Handle {hid} does not have {action} method")
+                continue
+            affected.append(int(hid))
+        except Exception as e:
+            print(f"Failed to {action} handle {hid}: {e}")
+
+    # notify per handle without triggering LLM runs
+    for hid in affected:
+        try:
+            await cm.event_broker.publish(
+                "app:conductor:notification",
+                ConductorNotification(
+                    handle_id=int(hid),
+                    response=f"Actor {action}d: {reason}",
+                ).to_json(),
+            )
+        except Exception as e:
+            print(
+                f"Failed to publish {action} notification for {hid}: {e}",
+            )
+
+
 @EventHandler.register(LogMessageResponse)
 async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwargs):
     # ToDo: Get this working for email and whatsapp as well
