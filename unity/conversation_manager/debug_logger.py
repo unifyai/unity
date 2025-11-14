@@ -116,8 +116,11 @@ def mark_job_done(job_name: str):
             f"{comms_url}/infra/job/service",
             data={"service_name": svc},
             headers={"Authorization": f"Bearer {admin_key}"},
+            timeout=3,
         )
         print(f"Job service deleted: {response.text}")
+    except requests.exceptions.Timeout:
+        print("Job service deletion (timed out)")
     except Exception as e:
         print(f"Error deleting job service: {e}")
         traceback.print_exc()
