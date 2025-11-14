@@ -15,7 +15,7 @@ EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .i
 
 # Build the command to run in each tmux session
 run_cmd() {
-  local target="$1"   # file path (relative or absolute)
+  local target="$1"   # pytest target (file path or node id)
   # Run pytest; then change ONLY the leading status prefix on the current tmux session:
   printf "bash -lc 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.venv/bin/activate && pytest %q; status=\$?; sname=\$(tmux display-message -p -t \"\$TMUX_PANE\" \"#{session_name}\"); base=\"\$sname\"; case \"\$sname\" in \"o ✅ \"*) base=\"\${sname#o ✅ }\" ;; \"x ❌ \"*) base=\"\${sname#x ❌ }\" ;; \"? ⏳ \"*) base=\"\${sname#? ⏳ }\" ;; \"✅ \"*) base=\"\${sname#✅ }\" ;; \"❌ \"*) base=\"\${sname#❌ }\" ;; \"⏳ \"*) base=\"\${sname#⏳ }\" ;; esac; if [ \$status -eq 0 ]; then pfx=\"o ✅\"; else pfx=\"x ❌\"; fi; tmux rename-session -t \"\$sname\" \"\$pfx \$base\"; if [ \$status -eq 0 ]; then sid=\$(tmux display-message -p -t \"\$TMUX_PANE\" \"#{session_id}\"); (sleep 10; tmux kill-session -t \"\$sid\") >/dev/null 2>&1 & disown; echo \"All tests passed. This tmux session will close in 10s...\"; fi; echo; echo \"pytest exited with code: \$status\"; echo \"(You are now in a shell. Press Ctrl-D to close this window.)\"; exec bash -l'" "$target"
 }
@@ -29,22 +29,52 @@ unique_session_name() {
   printf "%s" "$name"
 }
 
-# Turn a file path into a session base name
-#   ./animals/dogs/test_bark.py  -> animals-dogs-test_bark
+# Turn a file path (or pytest node id) into a session base name
+#   ./animals/dogs/test_bark.py               -> animals-dogs-test_bark
+#   ./animals/dogs/test_bark.py::test_woof    -> animals-dogs-test_bark--test_woof
 session_basename_for() {
-  local p="$1"
+  local original="$1"
+  local p
+  local node_suffix=""
+
+  # If a pytest node id is provided, split off the suffix after "::"
+  if [[ "$original" == *"::"* ]]; then
+    local base="${original%%::*}"
+    node_suffix="${original#${base}::}"
+    p="$base"
+  else
+    p="$original"
+  fi
+
   # normalize to a relative-looking path for naming
   [[ "$p" = /* ]] || p="./${p#./}"
   p="${p%.py}"
   p="${p#./}"
   p="${p//\//-}"
-  # Shorter name: drop the "pytest-" prefix
+
+  # If we have a node suffix, sanitize it and append
+  if [[ -n "$node_suffix" ]]; then
+    local ns="$node_suffix"
+    ns="${ns//::/-}"
+    ns="${ns// /-}"
+    ns="${ns//[/}"
+    ns="${ns//]/}"
+    ns="${ns//(/}"
+    ns="${ns//)/}"
+    ns="${ns//,/}"
+    ns="${ns//:/-}"
+    ns="${ns//=/-}"
+    ns="${ns//./-}"
+    p="${p}--${ns}"
+  fi
+
   printf "%s" "$p"
 }
 
 # Collect args: files and/or directories to search
 declare -a roots=()
 declare -a direct_files=()
+declare -a direct_nodes=()
 
 if (( $# == 0 )); then
   roots=( "." )
@@ -55,14 +85,26 @@ else
       if [[ "${arg##*/}" == test_*.py ]]; then
         direct_files+=( "$arg" )
       fi
+    elif [[ "$arg" == *"::"* ]]; then
+      # pytest node id: extract base file and validate it exists and is a test file
+      base="${arg%%::*}"
+      if [[ -f "$base" ]]; then
+        if [[ "${base##*/}" == test_*.py ]]; then
+          direct_nodes+=( "$arg" )
+        else
+          echo "Warning: Skipping node not under a test_*.py file: $arg" >&2
+        fi
+      else
+        echo "Warning: Skipping non-existent test node (file missing): $arg" >&2
+      fi
     elif [[ -d "$arg" ]]; then
       roots+=( "$arg" )
     else
       echo "Warning: Skipping non-existent path: $arg" >&2
     fi
   done
-  if (( ${#roots[@]} == 0 && ${#direct_files[@]} == 0 )); then
-    echo "No valid directories or .py files provided." >&2
+  if (( ${#roots[@]} == 0 && ${#direct_files[@]} == 0 && ${#direct_nodes[@]} == 0 )); then
+    echo "No valid directories, files, or tests provided." >&2
     exit 1
   fi
 fi
@@ -110,6 +152,9 @@ fi
 if (( ${#found_files[@]} )); then
   printf '%s\0' "${found_files[@]}" >> "$tmp"
 fi
+if (( ${#direct_nodes[@]} )); then
+  printf '%s\0' "${direct_nodes[@]}" >> "$tmp"
+fi
 
 files=()
 while IFS= read -r -d '' f; do
@@ -117,7 +162,7 @@ while IFS= read -r -d '' f; do
 done < <(tr '\0' '\n' < "$tmp" | LC_ALL=C sort | tr '\n' '\0')
 
 if (( ${#files[@]} == 0 )); then
-  echo "No test_*.py files found."
+  echo "No tests found."
   exit 0
 fi
 

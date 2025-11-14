@@ -1,14 +1,14 @@
 ## Run Python tests in parallel with tmux
 
-This helper script launches one tmux session per Python file it finds and runs `pytest` for each file in its own window. It searches recursively and can also be restricted to specific folders or files.
+This helper script launches one tmux session per Python file it finds (or per targeted test when a node id is provided) and runs `pytest` in its own window. It searches recursively and can also be restricted to specific folders, files, or specific tests.
 
 When a session starts, it executes roughly:
 
 ```bash
 export UNIFY_TESTS_RAND_PROJ=True
 export UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True
-source ~/unity/.unity/bin/activate
-pytest <that_file.py>
+source ~/unity/.venv/bin/activate
+pytest <target>
 ```
 
 ## Live status and auto-close
@@ -55,7 +55,7 @@ tmux attach -t <session-name>          # attach to a session
 tmux switch-client -t <session-name>   # switch sessions (when already inside tmux)
 ```
 
-## Targeting specific folders/files
+## Targeting specific folders/files/tests
 
 Limit the search by passing directories and/or `.py` files. Examples:
 
@@ -69,6 +69,9 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Specific files
 ./.parallel_run.sh tests/foo_test.py tests/bar_test.py
 
+# Specific tests (pytest node ids)
+./.parallel_run.sh tests/foo_test.py::TestClass::test_something tests/bar_test.py::test_case
+
 # Mix files and directories
 ./.parallel_run.sh tests/api tests/db/test_migrations.py
 ```
@@ -77,13 +80,16 @@ How it interprets arguments:
 
 - **Directories**: Recursed (respecting excludes) to find `*.py`.
 - **Files**: Run exactly as provided (no recursion).
+- **Tests**: Pytest node ids like `path/to/test_file.py::TestClass::test_case` or `path/to/test_file.py::test_case` are run exactly as provided (one session per node id).
+  - If you specify individual tests, only those tests are run (one session per test).
+  - When you do not specify individual tests, the script creates one session per file.
 
 ## Defaults & conventions
 
 - **Environment**:
   - If `../.env` exists relative to the `tests` directory (i.e., `~/unity/.env`), it will be sourced automatically so you can define `UNIFY_KEY`, `UNIFY_BASE_URL`, or other variables once.
   - Exports `UNIFY_TESTS_RAND_PROJ=True` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True` inside each session so it works whether or not a tmux server is already running.
-- **Virtualenv**: Assumes `~/unity/.unity/bin/activate`.
+- **Virtualenv**: Assumes `~/unity/.venv/bin/activate`.
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
 - **Names**:
