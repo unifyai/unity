@@ -93,3 +93,47 @@ def test_transcript_manager_ask_system_prompt_formatting():
         "TranscriptManager ask system message passed formatting checks;\n"
         "The following system message resulted in no assertion errors:\n\n\n" + prompt,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stability: prompts should be identical across serial builder calls
+# ─────────────────────────────────────────────────────────────────────────────
+def _normalize_prompt_for_stability(prompt: str) -> str:
+    """
+    Remove/normalize inherently dynamic parts from a system prompt to enable
+    stable equality checks across serial builds.
+    """
+    # Normalize dynamic time footer
+    prompt = re.sub(
+        r"Current UTC time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\.\Z",
+        "Current UTC time is <TIMESTAMP>.",
+        prompt.strip(),
+        flags=re.M,
+    )
+    # Normalize any hex memory addresses that may appear in repr()s
+    prompt = re.sub(r"0x[0-9a-fA-F]+", "0xADDR", prompt)
+    return prompt
+
+
+def test_transcript_manager_ask_prompt_is_stable_across_serial_builds():
+    tm = TranscriptManager()
+    tools = dict(tm.get_tools("ask"))
+
+    p1 = build_ask_prompt(
+        tools=tools,
+        num_messages=tm._num_messages(),
+        transcript_columns=tm._list_columns(),
+        contact_columns=tm._contact_manager._list_columns(),
+    )
+    p2 = build_ask_prompt(
+        tools=tools,
+        num_messages=tm._num_messages(),
+        transcript_columns=tm._list_columns(),
+        contact_columns=tm._contact_manager._list_columns(),
+    )
+
+    n1 = _normalize_prompt_for_stability(p1)
+    n2 = _normalize_prompt_for_stability(p2)
+    assert (
+        n1 == n2
+    ), f"TranscriptManager.ask system prompt changed between serial builds.\n\nFirst:\n\n{p1}\n\nSecond:\n\n{p2}"
