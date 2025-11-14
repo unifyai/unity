@@ -88,6 +88,10 @@ class SendEmail(BaseModel):
         ...,
         description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
+    email_address: str = Field(
+        ...,
+        description="the email address to send the email to",
+    )
     subject: str = Field(
         ...,
         description="the subject of the email, should be the same as the subject of the received email without any prefix.",

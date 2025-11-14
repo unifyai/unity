@@ -225,7 +225,10 @@ class ConversationManager:
             call_type=self.mode,
             before_stream_start=(
                 self.before_stream_start
-                if (self.mode in ["call", "unify_call", "gmeet"] and not self.call_manager.realtime)
+                if (
+                    self.mode in ["call", "unify_call", "gmeet"]
+                    and not self.call_manager.realtime
+                )
                 else None
             ),
         )
@@ -256,7 +259,10 @@ class ConversationManager:
         for action in actions:
             print("taking actions...")
             Action.take_action(
-                self, action.pop("action_name"), **action, realtime=self.call_manager.realtime
+                self,
+                action.pop("action_name"),
+                **action,
+                realtime=self.call_manager.realtime,
             )
             print("done taking actions...")
         self.commit()
@@ -298,7 +304,9 @@ class ConversationManager:
                 self.last_activity_time = self.loop.time()
                 # process events
                 event = Event.from_json(msg["data"])
-                await EventHandler.handle_event(event, self, realtime=self.call_manager.realtime)
+                await EventHandler.handle_event(
+                    event, self, realtime=self.call_manager.realtime
+                )
 
     async def check_inactivity(self):
         """Monitor for inactivity and shut down gracefully after timeout"""
@@ -378,7 +386,11 @@ class ConversationManager:
         self.stop.set()
 
     async def run_filler_once(self):
-        if self.call_manager.realtime or self.mode not in ["call", "unify_call", "gmeet"]:
+        if self.call_manager.realtime or self.mode not in [
+            "call",
+            "unify_call",
+            "gmeet",
+        ]:
             return
 
         # record the running task so before_stream_start can coordinate

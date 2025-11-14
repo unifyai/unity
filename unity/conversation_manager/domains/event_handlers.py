@@ -231,7 +231,6 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             notif_content = f"Unify message from {contact['first_name']}"
             role = "user"
 
-    message_content = event.content
     cm.contact_index.push_message(
         event.contact,
         thread,
