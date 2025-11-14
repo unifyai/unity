@@ -914,8 +914,6 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=None,
             detach=False,
         )
-        # Signal to the outer loop that this handle should be adopted directly
-        setattr(handle, "__passthrough__", True)
         return handle
 
     async def _execute_isolated_by_id(self, *, task_id: int) -> SteerableToolHandle:
@@ -940,7 +938,6 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=None,
             detach=True,
         )
-        setattr(handle, "__passthrough__", True)
         return handle
 
     def create_task(self, *, name: str, description: str) -> ToolOutcome:
