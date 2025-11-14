@@ -398,17 +398,11 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                 summary = summary.replace("<UNKNOWN>", final_status)
 
                 # Update the task instance with the generated summary
-                update_kwargs: Dict[str, Any] = {
-                    "task_id": self._task_id,
-                    "instance_id": self._instance_id,
-                    "info": summary,
-                }
-                # Map 'stopped' to a no-op status update (only write info)
-                if final_status != "stopped":
-                    update_kwargs["status"] = final_status
-
+                # Write the human-readable summary to the 'info' field (status is finalized in result())
                 self._scheduler._update_task_instance(  # type: ignore[attr-defined]
-                    **update_kwargs,
+                    task_id=self._task_id,
+                    instance_id=self._instance_id,
+                    info=summary,
                 )
 
             except Exception as e:
@@ -454,16 +448,27 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
                 and self._task_id is not None
                 and self._instance_id is not None
             ):
-                try:
-                    logger.info(
-                        "--- Scheduling save_final_summary for %s.%s with status: %s ---",
-                        self._task_id,
-                        self._instance_id,
-                        final_status,
-                    )
-                    asyncio.create_task(self._save_final_summary(final_status))
-                except Exception as summary_e:
-                    logger.error("Error creating summary task: %s", summary_e)
+                # Finalize terminal status synchronously so callers observe a non-active row
+                # and the reintegration plan is cleared immediately after result() returns.
+                self._scheduler._update_task_status_instance(  # type: ignore[attr-defined]
+                    task_id=self._task_id,
+                    instance_id=self._instance_id,
+                    new_status=final_status,
+                )
+
+                # Idempotently schedule generation of the human-readable summary
+                if not getattr(self, "_summary_scheduled", False):
+                    try:
+                        logger.info(
+                            "--- Scheduling save_final_summary for %s.%s with status: %s ---",
+                            self._task_id,
+                            self._instance_id,
+                            final_status,
+                        )
+                        asyncio.create_task(self._save_final_summary(final_status))
+                        self._summary_scheduled = True  # type: ignore[attr-defined]
+                    except Exception as summary_e:
+                        logger.error("Error creating summary task: %s", summary_e)
 
             # Clear the scheduler's active pointer if the task reached a terminal state
             # (completed/failed) OR if it was stopped externally (_was_stopped).

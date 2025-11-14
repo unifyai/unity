@@ -36,7 +36,7 @@ def terminate_process(proc: subprocess.Popen) -> None:
 
         # Wait for process to terminate
         try:
-            proc.wait(timeout=6)
+            proc.wait(timeout=20)
             print("Process terminated gracefully")
         except subprocess.TimeoutExpired:
             # If process doesn't terminate gracefully, force kill
@@ -123,7 +123,6 @@ def wait_for_service_ready(timeout: int = 30) -> bool:
 
 
 def start(
-    use_realtime: bool = False,
     start_local: bool = False,
     enabled_tools: list | str | None = "conductor",
     project_name: str = "Assistants",
@@ -148,8 +147,6 @@ def start(
         print(f"Starting Unity service (main.py) for assistant {assistant_id}")
 
         cmd = [sys.executable, "unity/conversation_manager/main.py"]
-        if use_realtime:
-            cmd.append("--realtime")
         cmd.append("--project-name")
         cmd.append(project_name)
 

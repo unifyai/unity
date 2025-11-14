@@ -11,10 +11,8 @@ from tests.assertion_helpers import (
 from unity.task_scheduler.prompt_builders import (
     build_ask_prompt,
     build_update_prompt,
-    build_execute_prompt,
 )
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.common.llm_helpers import methods_to_tool_dict
 
 
 def test_task_scheduler_ask_system_prompt_formatting():
@@ -124,54 +122,5 @@ def test_task_scheduler_update_system_prompt_formatting():
     assert_time_footer(prompt, "Current UTC time is ")
     print(
         "TaskScheduler update system message passed formatting checks;\n"
-        "The following system message resulted in no assertion errors:\n\n\n" + prompt,
-    )
-
-
-def test_task_scheduler_execute_system_prompt_formatting():
-    ts = TaskScheduler()
-    # Build a tools dict that mirrors TaskScheduler.execute()
-    tools = methods_to_tool_dict(
-        # Read-only helpers
-        ts.ask,
-        ts._list_queues,
-        ts._get_queue,
-        # Start execution (public by-id helper)
-        ts.execute_by_id,
-        # Creation (name + description only)
-        ts._create_task,
-        include_class_name=False,
-    )
-    prompt = build_execute_prompt(tools=tools)
-
-    # Standardized blocks
-    tools_json = extract_tools_dict(prompt)
-    assert set(tools_json.keys()) == set(tools.keys())
-    assert "Decision policy (isolation vs chain)" in prompt
-    assert "CLARIFICATION POLICY (always prefer tool over prose)" in prompt
-    assert "Reporting" in prompt
-    assert "Images forwarding to nested tools" in prompt
-    # Not included for execute
-    assert "Parallelism and single" not in prompt
-    assert "Images policy (when images are present)" not in prompt
-
-    # Ordering checks
-    assert_in_order(
-        prompt,
-        [
-            "Do not ask the user questions in your final response",
-            "Decision policy (isolation vs chain)",
-            "CLARIFICATION POLICY (always prefer tool over prose)",
-            "Tools (name",
-            "A. If the request contains a *numeric task_id*:",
-            "Images forwarding to nested tools",
-            "Current UTC time is ",
-        ],
-    )
-
-    assert_section_spacing(prompt)
-    assert_time_footer(prompt, "Current UTC time is ")
-    print(
-        "TaskScheduler execute system message passed formatting checks;\n"
         "The following system message resulted in no assertion errors:\n\n\n" + prompt,
     )

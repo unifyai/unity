@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass
 class Assistant:
     job_name: str

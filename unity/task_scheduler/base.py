@@ -237,7 +237,7 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
     @abstractmethod
     async def execute(
         self,
-        text: str,
+        task_id: int,
         *,
         isolated: Optional[bool] = None,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
@@ -245,75 +245,37 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
     ) -> SteerableToolHandle:
         """
-        Start a **task** given a *free-form* textual instruction (*text*).
-
-        Do *not* request *how* the task should be executed; state what you
-        want to run in natural language and allow the `execute` method to
-        determine the best method and steps.
-
-        Mandatory execution rule
-        ------------------------
-        Requests to "run", "start", "execute", "begin", or "launch" a task
-        MUST be fulfilled via this `execute` method (exactly once). Do not use
-        `update` as a substitute for starting tasks. If fields need adjusting
-        prior to execution, perform the minimal `update` first and then call
-        `execute` to actually start the task.
-
-        Notes on scope
-        --------------
-        The above rule applies to activities that are clearly Tasks (durable,
-        tracked units of work). This surface is not intended for live, ad‑hoc
-        conversational sessions that happen inside the current chat.
-
-        The assistant should interpret *text* to figure out which task the user
-        wants to run. A typical approach is:
-
-        1. Identify the intended task (by id or unambiguous name) using read‑only
-           inspection when needed (e.g., via this manager's `ask` surface).
-        2. Inspect current queue membership and order; explicitly reorder to place
-           the intended scope at the head (e.g., "just X", "first two now", or
-           "all") without changing scheduling fields.
-        3. Start the task at the head and return a live steerable handle.
-
-        Do not rewrite a task's `start_at` purely to begin execution, and do not
-        write lifecycle `status` fields directly during orchestration.
+        Start a runnable task by its identifier and return a live steerable handle.
 
         Implementations MUST return a *live* steerable handle whose public
         methods (pause, resume, interject, stop, result, …) continue to work
         throughout execution.
 
-        Visual inputs policy
-        --------------------
-        • When relevant images are available, pass them via the ``images`` argument.
-        • When this method calls other tools that declare an ``images`` parameter (e.g., a read‑only ask),
-          forward the relevant images and rewrite/augment their annotations so they align with the delegated
-          question or action. Prefer AnnotatedImageRefs; preserve user‑referenced ordering when it matters.
-
         Parameters
         ----------
+        task_id : int
+            Identifier of the task to start. Must reference a single, non‑terminal,
+            non‑active instance.
         isolated : bool | None, default ``None``
-            Optional override for routing semantics when a numeric task id is
-            supplied directly. When ``True``, the scheduler should execute the
-            task in isolation (detached from the queue). When ``False``, the
-            scheduler should use queue/chained semantics. When ``None``, routing
-            is left to the implementation (e.g., LLM decides for free‑form text;
-            numeric fast‑path may default to chained semantics).
+            When ``True``, execute the task in isolation (detach from any queue).
+            When ``False`` or ``None``, preserve queue/chained semantics.
 
         _parent_chat_context, _clarification_up_q, _clarification_down_q
-            Same purpose and semantics as in :pymeth:`ask`.
+            Optional execution context and clarification channels propagated to the
+            underlying actor/plan.
 
         Returns
         -------
         SteerableToolHandle
-            Handle that ultimately yields the *task-specific* assistant
-            dialogue.
+            Handle for the running task or queue head that supports pause, resume,
+            interject, stop and result().
 
         Raises
         ------
         RuntimeError
             If another task is already active.
         ValueError
-            When no matching task could be identified.
+            When ``task_id`` cannot be found or is not runnable.
         """
 
     @abstractmethod

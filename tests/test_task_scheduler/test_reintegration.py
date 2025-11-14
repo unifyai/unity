@@ -98,7 +98,7 @@ async def test_starting_head_promotes_next_to_scheduled_with_start_at():
     assert original_start is not None
 
     # Start head explicitly (fast-path by id) in isolation
-    handle = await ts.execute(text=str(a), isolated=True)
+    handle = await ts.execute(task_id=a, isolated=True)
 
     # After detachment, B becomes the new head and should inherit start_at and be scheduled
     row_b2 = ts._filter_tasks(filter=f"task_id == {b}")[0]
@@ -165,7 +165,7 @@ async def test_starting_middle_detaches_and_links_neighbors():
     assert original_start is not None
 
     # Start the middle task explicitly (fast-path by id) in isolation
-    handle = await ts.execute(text=str(b), isolated=True)
+    handle = await ts.execute(task_id=b, isolated=True)
 
     # After detachment of B, A and C should be directly linked; B should have no schedule
     row_a2 = ts._filter_tasks(filter=f"task_id == {a}")[0]
@@ -233,7 +233,7 @@ async def test_reinstate_head_restores_head_and_start_at():
     head_id, next_id = await _make_ordered_queue(ts, ["H", "N"])  # type: ignore[misc]
 
     # Activate head in isolation and then cancel
-    handle = await ts.execute(text=str(head_id), isolated=True)
+    handle = await ts.execute(task_id=head_id, isolated=True)
     handle.stop(cancel=True)
     await handle.result()
 
@@ -263,7 +263,7 @@ async def test_reinstate_middle_restores_links():
     a, b, c = await _make_ordered_queue(ts, ["A", "B", "C"])  # type: ignore[misc]
 
     # Activate middle task (B) in isolation and cancel it
-    handle = await ts.execute(text=str(b), isolated=True)
+    handle = await ts.execute(task_id=b, isolated=True)
     handle.stop(cancel=True)
     await handle.result()
 
@@ -293,7 +293,7 @@ async def test_reinstate_with_deleted_next_fallback():
     head_id, next_id, tail_id = await _make_ordered_queue(ts, ["X", "Y", "Z"])  # type: ignore[misc]
 
     # Activate head in isolation and cancel
-    handle = await ts.execute(text=str(head_id), isolated=True)
+    handle = await ts.execute(task_id=head_id, isolated=True)
     handle.stop(cancel=True)
     await handle.result()
 
@@ -314,15 +314,14 @@ async def test_reinstate_refuses_when_trigger_present():
     ts = TaskScheduler()
     head_id, _ = await _make_ordered_queue(ts, ["TH", "TN"])  # type: ignore[misc]
 
-    handle = await ts.execute(text=str(head_id), isolated=True)
+    handle = await ts.execute(task_id=head_id, isolated=True)
     handle.stop()
     await handle.result()
 
-    # Add a trigger to the task → schedule restoration should be refused
-    ts._update_task(task_id=head_id, trigger=Trigger(medium=Medium.EMAIL))
-
+    # Auto‑reinstatement occurs on defer (cancel=False), so the head has a schedule again.
+    # Adding a trigger while a schedule exists must now be refused immediately.
     with pytest.raises(ValueError):
-        ts._reinstate_task_to_previous_queue(task_id=head_id)
+        ts._update_task(task_id=head_id, trigger=Trigger(medium=Medium.EMAIL))
 
 
 @pytest.mark.asyncio
@@ -332,8 +331,8 @@ async def test_reinstate_head_with_all_neighbors_deleted_fallback():
     head_id, next_id, tail_id = await _make_ordered_queue(ts, ["H2", "N2", "T2"])  # type: ignore[misc]
 
     # Activate head and cancel to record reintegration plan (captures original start_at)
-    handle = await ts.execute(text=str(head_id), isolated=True)
-    handle.stop()
+    handle = await ts.execute(task_id=head_id, isolated=True)
+    handle.stop(cancel=True)
     await handle.result()
 
     # Delete both original neighbors before reinstatement (drift)
@@ -358,7 +357,7 @@ async def test_reinstate_refuses_while_active():
     ts = TaskScheduler()
     head_id, _ = await _make_ordered_queue(ts, ["AH", "AN"])  # type: ignore[misc]
 
-    handle = await ts.execute(text=str(head_id))
+    handle = await ts.execute(task_id=head_id)
 
     # Attempt reinstatement before cancelling → must raise
     with pytest.raises(RuntimeError):
@@ -388,8 +387,8 @@ async def test_reinstate_primed_conflict_downgrades_to_queued():
     assert head_row.status == Status.primed
 
     # Activate head and cancel
-    handle = await ts.execute(text=str(h_id))
-    handle.stop()
+    handle = await ts.execute(task_id=h_id)
+    handle.stop(cancel=True)
     await handle.result()
 
     # Create a new task now – with no active and no primed, this becomes the new 'primed'
@@ -410,7 +409,7 @@ async def test_reintegration_plan_clears_on_completion():
     head_id, next_id = await _make_ordered_queue(ts, ["HC", "NC"])  # type: ignore[misc]
 
     # Start head in isolation and allow it to complete naturally
-    handle = await ts.execute(text=str(head_id), isolated=True)
+    handle = await ts.execute(task_id=head_id, isolated=True)
     # Awaiting result will mark the instance as completed internally
     await handle.result()
 
@@ -454,7 +453,7 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
     assert original_start is not None
 
     # Start the head in chain mode but only allow the head to complete
-    handle = await ts.execute(text=str(head_id))
+    handle = await ts.execute(task_id=head_id)
     # Wait for just the head to finish
     await handle.active_task_done()
 

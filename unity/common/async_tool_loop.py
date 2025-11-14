@@ -423,6 +423,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         parent_chat_context_cont: list[dict] | None = None,
         images: list | dict | None = None,
         _return_reasoning_steps: bool = False,
+        **kwargs,
     ) -> "SteerableToolHandle":
         """
         Answers *question* about this *pending* tool, associated with this handle.
@@ -450,6 +451,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "question": question,
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
+                **(kwargs or {}),
             },
             had_passthrough=False,
             forwarded_to=[],
@@ -549,25 +551,37 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         for _t, _inf in task_info.items():
             h = _inf.handle
-            if h is None or not isinstance(h, SteerableToolHandle):
+            # Only consider live passthrough child handles for recursive ask tools
+            is_passthrough = False
+            try:
+                is_passthrough = bool(getattr(_inf, "is_passthrough", False))
+            except Exception:
+                is_passthrough = False
+            if (
+                h is None
+                or not isinstance(h, SteerableToolHandle)
+                or not is_passthrough
+            ):
                 continue
 
             async def _proxy(
-                _q: str,
+                question: str | None = None,
                 images: dict | list | None = None,
                 _h=h,  # capture now
-            ) -> str:
-                # Robust forward with kwargs normalisation; tolerate older signatures
-                nested = await forward_handle_call(
+                _seed_images=images,  # capture outer ask() images to use by default
+            ):
+                # Robust forward; return the downstream ask handle so the inspection loop can adopt it
+                try:
+                    if images is None:
+                        images = _seed_images
+                except Exception:
+                    pass
+                return await forward_handle_call(
                     _h,
                     "ask",
-                    {"question": _q, "images": images},
+                    {"question": question, "images": images},
                     fallback_positional_keys=("question", "content"),
                 )
-                try:
-                    return await nested.result()  # type: ignore[union-attr]
-                except Exception:
-                    return ""
 
             # tool name encodes the call-id so collisions are impossible
             _cid = None
@@ -605,9 +619,43 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         else:
             _ask_message = question
 
+        # If passthrough children are present, seed assistant tool_calls to invoke ask_* immediately.
+        seeded_batch = None
+        try:
+            if isinstance(recursive_tools, dict) and recursive_tools:
+                tool_calls = []
+                import json as _json  # local alias to avoid top-level pollution
+
+                for _name in list(recursive_tools.keys()):
+                    try:
+                        tool_calls.append(
+                            {
+                                "id": f"seed_{_name}",
+                                "type": "function",
+                                "function": {
+                                    "name": _name,
+                                    "arguments": _json.dumps({"question": question}),
+                                },
+                            },
+                        )
+                    except Exception:
+                        continue
+                if tool_calls:
+                    # Build a normalized user message dict
+                    if isinstance(_ask_message, dict):
+                        _user_msg = _ask_message
+                    else:
+                        _user_msg = {"role": "user", "content": _ask_message}
+                    seeded_batch = [
+                        _user_msg,
+                        {"role": "assistant", "content": "", "tool_calls": tool_calls},
+                    ]
+        except Exception:
+            seeded_batch = None
+
         helper_handle = start_async_tool_loop(
             inspection_client,
-            _ask_message,
+            seeded_batch if seeded_batch is not None else _ask_message,
             recursive_tools,  # may be empty
             loop_id=loop_id_label,
             parent_lineage=[],  # keep label concise (do not prepend outer lineage)
@@ -616,7 +664,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             prune_tool_duplicates=False,
             interrupt_llm_with_interjections=False,
             max_consecutive_failures=1,
-            timeout=60,
+            timeout=300,
             images=images,
         )
 
@@ -636,7 +684,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     {
                         "_mirror": {
                             "method": "ask",
-                            "kwargs": {"question": question, "images": images},
+                            "kwargs": {
+                                "question": question,
+                                "images": images,
+                                **(kwargs or {}),
+                            },
                         },
                     },
                 )
@@ -656,7 +708,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 {
                     "_mirror": {
                         "method": "ask",
-                        "kwargs": {"question": question, "images": images},
+                        "kwargs": {
+                            "question": question,
+                            "images": images,
+                            **(kwargs or {}),
+                        },
                     },
                 },
             )
@@ -673,6 +729,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         parent_chat_context_cont: list[dict] | None = None,
         images: list | None = None,
         trigger_immediate_llm_turn: bool = True,
+        **kwargs,
     ) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.debug(f"💬 [{_label}] Interject requested: {message}")
@@ -687,6 +744,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 "parent_chat_context_cont": parent_chat_context_cont,
                 "images": images,
                 "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
+                **(kwargs or {}),
             },
             fallback=("content", "message"),
             had_passthrough=False,
@@ -710,6 +768,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                         "kwargs": {
                             "message": message,
                             "images": images,
+                            **(kwargs or {}),
                         },
                     },
                 },
@@ -723,13 +782,11 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         reason: Optional[str] = None,
         *,
         parent_chat_context_cont: list[dict] | None = None,
+        **kwargs,
     ) -> None:
         # Idempotent guard: if already stopping, do nothing and DO NOT log again
         if self._cancel_event.is_set():
             return
-
-        # Flip the cancel event first so concurrent callers see we are stopping
-        self._cancel_event.set()
 
         # Only the root/top-level handle logs the stop request
         if getattr(self, "_is_root_handle", False):
@@ -739,38 +796,38 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 + (f" – reason: {reason}" if reason else ""),
             )
 
-        # Expedite shutdown of the outer task and signal stop_event for any waiters
-        with suppress(Exception):
-            self._task.cancel()
-        with suppress(Exception):
-            self._stop_event.set()
         # Record steer event (best-effort). Functional forwarding happens via mirror path.
         try:
             asyncio.create_task(
                 self._record_and_forward(
                     "stop",
-                    kwargs={"reason": reason},
+                    kwargs={"reason": reason, **(kwargs or {})},
                     had_passthrough=False,
                     forwarded_to=[],
                 ),
             )
         except Exception:
             pass
-        # Mirror as synthetic helper tool_call (no LLM step)
+        # Mirror as synthetic helper tool_call (no LLM step) before signalling cancel/stop
         try:
             self._queue.put_nowait(
                 {
                     "_mirror": {
                         "method": "stop",
-                        "kwargs": {"reason": reason},
+                        "kwargs": {"reason": reason, **(kwargs or {})},
                     },
                 },
             )
         except Exception:
             pass
+        # Now signal cancellation and stop for any waiters; inner loop will exit after processing mirror
+        with suppress(Exception):
+            self._cancel_event.set()
+        with suppress(Exception):
+            self._stop_event.set()
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
-    def pause(self) -> None:
+    def pause(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
 
@@ -780,7 +837,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             asyncio.create_task(
                 self._record_and_forward(
                     "pause",
-                    kwargs={},
+                    kwargs=dict(kwargs or {}),
                     had_passthrough=False,
                     forwarded_to=[],
                 ),
@@ -793,7 +850,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 {
                     "_mirror": {
                         "method": "pause",
-                        "kwargs": {},
+                        "kwargs": dict(kwargs or {}),
                     },
                 },
             )
@@ -801,7 +858,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             pass
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
-    def resume(self) -> None:
+    def resume(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
         # Auto-resume base tools that were started in paused state while the outer loop was paused
@@ -822,7 +879,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             asyncio.create_task(
                 self._record_and_forward(
                     "resume",
-                    kwargs={},
+                    kwargs=dict(kwargs or {}),
                     had_passthrough=False,
                     forwarded_to=[],
                 ),
@@ -835,7 +892,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 {
                     "_mirror": {
                         "method": "resume",
-                        "kwargs": {},
+                        "kwargs": dict(kwargs or {}),
                     },
                 },
             )

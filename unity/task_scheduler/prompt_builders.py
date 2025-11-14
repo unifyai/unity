@@ -1,8 +1,8 @@
 """
 Prompt builders for the Task Scheduler.
 
-This module constructs system prompts for the scheduler's ask, update, and
-execute methods, plus a helper for the simulated scheduler. Each builder
+This module constructs system prompts for the scheduler's ask and update
+methods, plus a helper for the simulated scheduler. Each builder
 derives tool names dynamically from the provided tool dictionary, validates the
 required tools, and composes guidance and examples that reflect current
 behavior.
@@ -26,7 +26,6 @@ from ..common.prompt_helpers import (
     PromptSpec,
     compose_system_prompt,
     images_first_ask_for_tasks,
-    task_execute_decision_policy_block,
 )
 
 
@@ -444,112 +443,6 @@ def build_update_prompt(
         images_extras_block=None,
         include_parallelism=True,
         schemas=[("Task schema", Task.model_json_schema())],
-        special_blocks=[],
-        include_clarification_footer=True,
-        include_time_footer=True,
-    )
-
-    return compose_system_prompt(spec)
-
-
-def build_execute_prompt(
-    tools: Dict[str, Callable],
-) -> str:
-    """
-    Build the **system** prompt for the `execute` method using the shared composer.
-    """
-    sig_json = json.dumps(sig_dict(tools), indent=4)
-
-    # Resolve names dynamically
-    ask_fname = tool_name(tools, "ask")
-    execute_by_id_fname = tool_name(tools, "execute_by_id")
-    execute_isolated_by_id_fname = tool_name(tools, "execute_isolated_by_id")
-    create_task_fname = tool_name(tools, "create_task")
-    request_clar_fname = tool_name(tools, "request_clarification")
-    # Read-only queue helpers (no mutation in execute)
-    list_queues_fname = tool_name(tools, "list_queues")
-    get_queue_fname = tool_name(tools, "get_queue")
-
-    # Require the core tools needed for execution
-    require_tools(
-        {
-            "ask": ask_fname,
-            "execute_by_id": execute_by_id_fname,
-            "create_task": create_task_fname,
-        },
-        tools,
-    )
-
-    # Decision policy block
-    decision_block = task_execute_decision_policy_block(
-        execute_by_id_fname=execute_by_id_fname,
-        execute_isolated_by_id_fname=execute_isolated_by_id_fname,
-        list_queues_fname=list_queues_fname,
-        get_queue_fname=get_queue_fname,
-    )
-
-    # Clarification policy block (detailed header)
-    if request_clar_fname:
-        clar_policy_block = "\n".join(
-            [
-                "CLARIFICATION POLICY (always prefer tool over prose)",
-                "----------------------------------------------------",
-                f"• Whenever you need information from the human (e.g., an unknown or ambiguous reference), and `{request_clar_fname}` is available, you must call `{request_clar_fname}` with a concise question. Do not propose options in a plain assistant message when this tool is available.",
-            ],
-        )
-    else:
-        clar_policy_block = "\n".join(
-            [
-                "CLARIFICATION POLICY (always prefer tool over prose)",
-                "----------------------------------------------------",
-                "• If no clarification tool is available, do not ask questions in your final response; proceed using sensible defaults/best‑guess values and state assumptions explicitly.",
-            ],
-        )
-
-    # Numeric vs non-numeric guidance + reporting
-    numeric_non_numeric_block = "\n".join(
-        [
-            "A. If the request contains a *numeric task_id*:",
-            "   • Isolation is preferred when the user intent is 'start now'.",
-            (
-                f"   • Use `{execute_isolated_by_id_fname}(task_id=<id>)` for single‑task‑now, or `{execute_by_id_fname}(task_id=<id>)` when explicitly running the sequence."
-                if execute_isolated_by_id_fname
-                else f"   • Use `{execute_by_id_fname}(task_id=<id>)`."
-            ),
-            "",
-            "B. If the request does not include a numeric task_id:",
-            f"   • Use `{ask_fname}(text=...)` to identify the correct `task_id` when referring to an existing task.",
-            f"   • If no matching task exists, create it via `{create_task_fname}(name=..., description=...)`, then execute using the policy above.",
-            "",
-            "Reporting",
-            "---------",
-            "• Execution returns an live steerable handle. Include the executed task id(s) in your final response.",
-        ],
-    )
-
-    # Compose with standardized spec
-    spec = PromptSpec(
-        manager="TaskScheduler",
-        method="execute",
-        tools=tools,
-        role_line="You are an assistant that **starts tasks on demand**.",
-        global_directives=[
-            "The task referred to in the user's request may or may not already exist in the task list.",
-            "Disregard any explicit instructions about *how* you should execute the task or which tools to call; decide the best method yourself.",
-        ],
-        include_read_only_guard=False,
-        positioning_lines=[decision_block, clar_policy_block],
-        counts_entity_plural=None,
-        counts_value=None,
-        columns_payload=None,
-        include_tools_block=True,
-        usage_examples=numeric_non_numeric_block,
-        clarification_examples_block=None,
-        include_images_policy=False,
-        include_images_forwarding=True,
-        images_extras_block=None,
-        include_parallelism=False,
-        schemas=[],
         special_blocks=[],
         include_clarification_footer=True,
         include_time_footer=True,

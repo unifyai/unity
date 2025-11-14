@@ -117,6 +117,7 @@ class CommsManager:
                     "user_email": event["user_email"],
                     "voice_provider": event["voice_provider"],
                     "voice_id": event["voice_id"],
+                    "voice_mode": event["voice_mode"],
                 }
                 task = asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
@@ -205,7 +206,7 @@ class CommsManager:
 
                 elif thread == "unify_message":
                     # No phone/email; boss contact id is always "1"
-                    contact = next(c for c in contacts if c["id"] == 1)
+                    contact = next(c for c in contacts if c["contact_id"] == 1)
                     task = asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:{thread}_message",
@@ -245,14 +246,6 @@ class CommsManager:
                     assistant_id = event.get("assistant_id", "")
                     body = event.get("body", []) or []
 
-                    def _map_sender_id(val):
-                        if isinstance(val, int):
-                            return max(0, val)
-                        if isinstance(val, str):
-                            v = val.lower().strip()
-                            return 0 if v in ("assistant", "system", "bot", "ai") else 1
-                        return 1
-
                     published = 0
                     for item in body:
                         try:
@@ -261,17 +254,10 @@ class CommsManager:
                             if not isinstance(msg_content, str):
                                 msg_content = str(msg_content)
 
-                            sender_id = _map_sender_id(role)
-                            receiver_ids = [1] if sender_id == 0 else [0]
-
-                            payload = LogMessageRequest(
-                                medium="unify_message",
-                                sender_id=sender_id,
-                                receiver_ids=receiver_ids,
+                            payload = PreHireMessage(
                                 content=msg_content,
+                                role=role,
                                 exchange_id=0,
-                                call_utterance_timestamp="",
-                                call_url="",
                                 metadata={
                                     "source": "pre_hire",
                                     "assistant_id": assistant_id,
@@ -317,13 +303,12 @@ class CommsManager:
                         )
                         topic = "app:comms:unify_call_received"
                     else:
-                        number = event.get(
-                                "caller_number", event.get("user_number")
-                            )
-                        contact = next(c for c in contacts if c["phone_number"] == number)
+                        number = event.get("caller_number", event.get("user_number"))
+                        contact = next(
+                            c for c in contacts if c["phone_number"] == number
+                        )
                         event = PhoneCallReceived(
                             contact=contact,
-
                             conference_name=event.get("conference_name", ""),
                         )
                         topic = "app:comms:call_recieved"

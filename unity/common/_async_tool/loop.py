@@ -57,7 +57,6 @@ from .timeout_timer import TimeoutTimer
 from .messages import (
     insert_tool_message_after_assistant,
     ensure_placeholders_for_pending,
-    propagate_stop_once,
     forward_handle_call,
     schedule_missing_for_message,
     build_helper_ack_content,
@@ -687,10 +686,6 @@ async def async_tool_loop_inner(
 
     # (Initial live-images overview already injected directly when seeding messages.)
 
-    # Ensure we forward stop to nested handles at most once, even if multiple
-    # branches detect cancellation/stop around the same time.
-    _stop_forwarded_once: bool = False
-
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
         # If resuming with children, do not re-schedule those call_ids; they'll be adopted below
@@ -1023,18 +1018,18 @@ async def async_tool_loop_inner(
             return
         # ask
         if base == "ask":
-            if h is not None:
-                await forward_handle_call(  # type: ignore[name-defined]
-                    h,
-                    "ask",
-                    args if isinstance(args, dict) else {},
-                    fallback_positional_keys=["question", "content"],
-                )
+            # Do not forward ask here. The outer ask() starts a dedicated inspection
+            # loop and symbolically injects ask_* tool calls which adopt and run
+            # nested ask handles. Forwarding here would duplicate those calls.
             return
         # pause
         if base == "pause":
             if h is not None and hasattr(h, "pause"):
-                await maybe_await(h.pause())  # type: ignore[func-returns-value]
+                await forward_handle_call(  # type: ignore[name-defined]
+                    h,
+                    "pause",
+                    args if isinstance(args, dict) else {},
+                )
                 return
             ev = getattr(inf, "pause_event", None)
             if ev is not None:
@@ -1043,7 +1038,11 @@ async def async_tool_loop_inner(
         # resume
         if base == "resume":
             if h is not None and hasattr(h, "resume"):
-                await maybe_await(h.resume())  # type: ignore[func-returns-value]
+                await forward_handle_call(  # type: ignore[name-defined]
+                    h,
+                    "resume",
+                    args if isinstance(args, dict) else {},
+                )
                 return
             ev = getattr(inf, "pause_event", None)
             if ev is not None:
@@ -1143,50 +1142,38 @@ async def async_tool_loop_inner(
             try:
                 base = str(method or "").lower().strip()
                 helper_name = f"{base}_{inf.name}_{str(inf.call_id)[-6:]}"
-                # Normalise arguments per helper convention
-                args: dict[str, Any] = {}
+                # Build full forward kwargs for dispatch (strip control keys)
+                try:
+                    forward_args = dict(payload or {})
+                except Exception:
+                    forward_args = {}
+                for _k in ("_custom", "_aliases", "_fallback"):
+                    try:
+                        forward_args.pop(_k, None)
+                    except Exception:
+                        pass
+
+                # Minimal helper args for transcript readability
                 args_json: dict[str, Any] = {}
                 if base == "interject":
                     msg = payload.get("message") or payload.get("content")
                     if msg is not None:
-                        args["content"] = msg
                         args_json["content"] = msg
                     if "images" in payload:
-                        # Do not embed non-JSON-serializable objects in the helper call
-                        args["images"] = payload.get("images")
                         args_json["images_present"] = True
                 elif base == "ask":
                     q = payload.get("question")
                     if q is not None:
-                        args["question"] = q
                         args_json["question"] = q
                     if "images" in payload:
-                        # Preserve full object for dispatch; only log presence in helper args
-                        args["images"] = payload.get("images")
                         args_json["images_present"] = True
                 elif base == "stop":
                     if "reason" in payload:
-                        args["reason"] = payload.get("reason")
                         args_json["reason"] = payload.get("reason")
                 elif base == "clarify":
                     if "answer" in payload:
-                        args["answer"] = payload.get("answer")
                         args_json["answer"] = payload.get("answer")
-                else:
-                    # Custom steering: forward original payload (minus control keys) to dispatch,
-                    # but keep helper tool_call arguments minimal to avoid transcript bloat.
-                    try:
-                        forward_args = dict(payload or {})
-                    except Exception:
-                        forward_args = {}
-                    # Strip control keys
-                    for _k in ("_custom", "_aliases", "_fallback"):
-                        try:
-                            forward_args.pop(_k, None)
-                        except Exception:
-                            pass
-                    args = forward_args
-                # pause/resume carry no args
+                # pause/resume carry no helper args
                 call_id = f"mirror_{short_id(6)}"
                 tool_calls.append(
                     {
@@ -1198,7 +1185,8 @@ async def async_tool_loop_inner(
                         },
                     },
                 )
-                args_by_id[call_id] = (helper_name, args, inf)
+                # Use full forward kwargs for dispatch
+                args_by_id[call_id] = (helper_name, forward_args, inf)
             except Exception:
                 continue
 
@@ -1549,13 +1537,8 @@ async def async_tool_loop_inner(
                             msg_dispatcher=_msg_dispatcher,
                         )
                     if cancel_event.is_set():
-                        # Forward stop to any nested handles before aborting
-                        with suppress(Exception):
-                            _stop_forwarded_once = await propagate_stop_once(
-                                tools_data.info,
-                                _stop_forwarded_once,
-                                "outer-loop cancelled",
-                            )
+                        # Cancellation requested – rely on mirrored stop to have
+                        # already reached children; abort loop gracefully.
                         raise asyncio.CancelledError
                     # No graceful stop path
                     continue  # remain paused: do not allow the LLM to speak while paused
@@ -1605,12 +1588,8 @@ async def async_tool_loop_inner(
 
                     # cancelled?
                     if cancel_event.is_set():
-                        with suppress(Exception):
-                            _stop_forwarded_once = await propagate_stop_once(
-                                tools_data.info,
-                                _stop_forwarded_once,
-                                "outer-loop cancelled",
-                            )
+                        # Cancellation requested – rely on mirrored stop to have
+                        # already reached children; abort loop gracefully.
                         raise asyncio.CancelledError
                     # remain paused
                     continue  # top-of-loop, still paused
@@ -1706,6 +1685,7 @@ async def async_tool_loop_inner(
                     if isinstance(extra, dict) and extra.get("_replay"):
                         # Do not append any message; just grant the next LLM turn
                         # and proceed. This preserves transcript fidelity after resume.
+                        llm_turn_required = True
                         continue
                 except Exception:
                     pass
@@ -1917,12 +1897,7 @@ async def async_tool_loop_inner(
                     continue  # → loop, will be processed in 0.
 
                 if cancel_waiter in done:
-                    with suppress(Exception):
-                        _stop_forwarded_once = await propagate_stop_once(
-                            tools_data.info,
-                            _stop_forwarded_once,
-                            "outer-loop cancelled",
-                        )
+                    # Cancellation wins; mirrored stop is the only propagation path.
                     raise asyncio.CancelledError  # cancellation wins
                 # No graceful stop path
 
@@ -2780,52 +2755,7 @@ async def async_tool_loop_inner(
                             )
                             continue  # handled interject helper for live target
 
-                    elif lname_cf.startswith("ask_"):
-                        # Forward 'ask' helper to the specific child
-                        with suppress(Exception):
-                            payload = json.loads(call["function"]["arguments"]) or {}
-                            question = payload.get("question") or payload.get("content")
-                            if question is None:
-                                question = ""
-                        if "payload" not in locals():
-                            payload = {}
-                            question = "<unparsable>"
-
-                        call_id_suffix = name.split("_")[-1]
-                        tgt_task = next(
-                            (
-                                t
-                                for t, inf in tools_data.info.items()
-                                if str(inf.call_id).endswith(call_id_suffix)
-                            ),
-                            None,
-                        )
-                        pretty_name = (
-                            f"ask {tools_data.info[tgt_task].name}({question})"
-                            if tgt_task
-                            else name
-                        )
-                        if tgt_task:
-                            with suppress(Exception):
-                                await _dispatch_steering_to_child(
-                                    "ask",
-                                    payload,
-                                    tools_data.info[tgt_task],
-                                )
-                            tool_msg = create_tool_call_message(
-                                name=pretty_name,
-                                call_id=call["id"],
-                                content=f'Question "{question}" forwarded to the running tool.',
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                msg,
-                                tool_msg,
-                                client,
-                                _msg_dispatcher,
-                            )
-                            continue
-                        # No matching target child – treat as a BASE tool call (do not continue)
+                    # (ask_* helpers are treated as base dynamic tools; no special-case here)
 
                     # Respect hidden per-tool total-call quotas (pre-pruned); guard
                     if tools_data.has_exceeded_quota_for_tool(name):
@@ -3025,12 +2955,6 @@ async def async_tool_loop_inner(
         # resources cleanly.  Only after every task has finished/aborted do
         # we re-raise the same `CancelledError`, preserving expected asyncio
         # semantics for upstream callers.
-        with suppress(Exception):
-            _stop_forwarded_once = await propagate_stop_once(
-                tools_data.info,
-                _stop_forwarded_once,
-                "outer-loop cancelled",
-            )
         await tools_data.cancel_pending_tasks()
         raise
     finally:

@@ -16,7 +16,7 @@ async def test_defer_reinstate_failure_fallback_downgrades_status(monkeypatch):
 
     # Create a queued task and start it
     tid = ts._create_task(name="T", description="T")["details"]["task_id"]
-    handle = await ts.execute(text=str(tid))
+    handle = await ts.execute(task_id=tid)
 
     # Ensure a reintegration plan exists to carry original_status
     # Now sabotage reinstate to force fallback
@@ -51,13 +51,13 @@ async def test_orphan_active_guard_prevents_new_execution(monkeypatch):
     tid = ts._create_task(name="A", description="A")["details"]["task_id"]
 
     # Promote to active through normal execute
-    h = await ts.execute(text=str(tid))
+    h = await ts.execute(task_id=tid)
     # Immediately clear the pointer to simulate crash-after-activation
     ts._active_task = None  # type: ignore[attr-defined]
 
     # Now, attempt to start another task should be rejected
     with pytest.raises(RuntimeError):
-        await ts.execute(text=str(tid))
+        await ts.execute(task_id=tid)
 
 
 @pytest.mark.asyncio
@@ -69,7 +69,7 @@ async def test_disallow_internal_status_edits_on_active_task(monkeypatch):
     ts = TaskScheduler(actor=actor)
 
     tid = ts._create_task(name="B", description="B")["details"]["task_id"]
-    h = await ts.execute(text=str(tid))
+    h = await ts.execute(task_id=tid)
 
     # Attempt to change status away from active via update API should raise
     with pytest.raises(RuntimeError):

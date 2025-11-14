@@ -54,7 +54,6 @@ from ..common.model_to_fields import model_to_fields
 from .prompt_builders import (
     build_ask_prompt,
     build_update_prompt,
-    build_execute_prompt,
 )
 from .base import BaseTaskScheduler
 from ..actor.base import BaseActor
@@ -227,23 +226,6 @@ class TaskScheduler(BaseTaskScheduler):
             ),
         }
         self.add_tools("update", update_tools)
-
-        # Execute helpers – read-only inspection + safe execution entrypoints
-        execute_tools = {
-            **methods_to_tool_dict(
-                # Read-only helpers that the execute loop may call
-                self.ask,
-                self._list_queues,
-                self._get_queue,
-                # Start execution (queue semantics vs isolated)
-                self._execute_by_id,
-                self._execute_isolated_by_id,
-                # Minimal creator for missing tasks (name + description only)
-                self.create_task,
-                include_class_name=False,
-            ),
-        }
-        self.add_tools("execute", execute_tools)
 
         # active task
         if actor is None:
@@ -593,16 +575,16 @@ class TaskScheduler(BaseTaskScheduler):
     @_log_manager_call.__func__("execute", "request")
     async def execute(
         self,
-        text: str,
+        task_id: int,
         *,
         isolated: Optional[bool] = None,
         _parent_chat_context: list[dict] | None = None,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
+        images: Optional[
+            ImageRefs | list[RawImageRef | AnnotatedImageRef]
+        ] = None,  # kept for signature parity; unused here
     ) -> SteerableToolHandle:
-        freeform_text: str = text
-
         # Refuse execution when a task is already active.
         if self._active_task is not None:
             raise RuntimeError("Another task is already running – stop it first.")
@@ -620,52 +602,15 @@ class TaskScheduler(BaseTaskScheduler):
                 "A task is marked as active, but no active handle is present – reconcile state before starting another task.",
             )
 
-        # Fast path: numeric task_id provided → start at that id
-        stripped = freeform_text.strip()
-        if stripped.isdigit():
-            try:
-                # Honor explicit override when provided; default is chained
-                if isolated is True:
-                    return await self._execute_queue_internal(
-                        task_id=int(stripped),
-                        parent_chat_context=_parent_chat_context,
-                        clarification_up_q=_clarification_up_q,
-                        clarification_down_q=_clarification_down_q,
-                        detach=True,
-                    )
-                else:
-                    return await self._execute_queue_internal(
-                        task_id=int(stripped),
-                        parent_chat_context=_parent_chat_context,
-                        clarification_up_q=_clarification_up_q,
-                        clarification_down_q=_clarification_down_q,
-                        detach=False,
-                    )
-            except (ValueError, RuntimeError):
-                # Fall back to the outer loop (will ask/clarify/create)
-                pass
-
-        # Start LLM-driven outer loop which will resolve the task id and adopt the queue handle.
-        # When an explicit isolation preference is provided, append a short guiding sentence
-        # so the outer loop can route to the appropriate execution tool.
-        if isolated is True:
-            try:
-                freeform_text = f"{freeform_text}\n\nExecution preference: run this task in isolation (detach it from any queue)."
-            except Exception:
-                pass
-        elif isolated is False:
-            try:
-                freeform_text = f"{freeform_text}\n\nExecution preference: if this task is part of a queue, preserve the task queue and do not detach the task."
-            except Exception:
-                pass
-
-        return self._start_execute_loop(
-            freeform_text=freeform_text,
+        # Execute strictly by id; choose isolation semantics based on flag
+        handle = await self._execute_queue_internal(
+            task_id=task_id,
             parent_chat_context=_parent_chat_context,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
-            images=images,
+            detach=bool(isolated),
         )
+        return handle
 
     # ------------------------------------------------------------------ #
     #  Internal helper – run existing *by-id* logic without event logging   #
@@ -863,8 +808,6 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=None,
             detach=False,
         )
-        # Signal to the outer loop that this handle should be adopted directly
-        setattr(handle, "__passthrough__", True)
         return handle
 
     async def _execute_isolated_by_id(self, *, task_id: int) -> SteerableToolHandle:
@@ -889,7 +832,6 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=None,
             detach=True,
         )
-        setattr(handle, "__passthrough__", True)
         return handle
 
     def create_task(self, *, name: str, description: str) -> ToolOutcome:
@@ -913,56 +855,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         return self._create_task(name=name, description=description)
 
-    # ------------------------------------------------------------------ #
-    #  Helper – build and start the execute outer tool-use loop      #
-    # ------------------------------------------------------------------ #
-    def _start_execute_loop(
-        self,
-        *,
-        freeform_text: str,
-        parent_chat_context: Optional[List[Dict[str, Any]]] = None,
-        clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
-    ) -> SteerableToolHandle:
-        """Compose tools and prompt, then start the execute reasoning loop."""
-        client = new_llm_client("gpt-5@openai")
-
-        # Create an initial checkpoint at the start of execute to guarantee a known revert point
-        try:
-            self.checkpoint_queue_state(label="pre-execute")
-        except Exception:
-            pass
-
-        # Compose toolset from registered execute tools
-        tools = dict(self.get_tools("execute"))
-        # Only expose clarification tool when both queues are available
-        self._maybe_add_clarification_tool(
-            tools,
-            clarification_up_q,
-            clarification_down_q,
-        )
-
-        # ── dynamic system prompt ───────────────────────────────────────────
-        client.set_system_message(
-            build_execute_prompt(tools),
-        )
-
-        # Use a specialized outer handle so stop(cancel=...) is supported for execute
-        from .execute_handle import ExecuteLoopHandle  # local import to avoid cycles
-
-        outer_handle = start_async_tool_loop(
-            client,
-            freeform_text,
-            tools,
-            loop_id=f"{self.__class__.__name__}.execute",
-            parent_chat_context=parent_chat_context,
-            log_steps=True,
-            handle_cls=ExecuteLoopHandle,
-            images=images,
-        )
-
-        return outer_handle
+    # (Removed LLM-driven outer loop – execution is strictly by id)
 
     # ------------------------------------------------------------------ #
     #  Scope classification helper (LLM-routed)                           #

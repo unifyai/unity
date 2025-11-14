@@ -320,6 +320,10 @@ class _QueueSnapshot:
 
 
 class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abstract-method]
+    # Mark queue handles as passthrough so outer ExecuteLoopHandle adopts and forwards
+    # steering (ask/interject/pause/resume/stop) automatically.
+    __passthrough__ = True
+
     def __init__(
         self,
         scheduler: "TaskScheduler",
@@ -1238,3 +1242,18 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             pass
 
         return f"Appended task {append_tid} to queue {q_emit}."
+
+    # ----------------------------
+    # Introspection helper (tests)
+    # ----------------------------
+    async def nested_structure(self) -> dict:  # type: ignore[override]
+        """
+        Return the minimal nested structure for this ActiveQueue, matching the
+        shape produced by AsyncToolLoopHandle.nested_structure, so tests can
+        introspect the queue → task → actor handle chain directly.
+        """
+        from ..common.async_tool_loop import (  # local import to avoid cycles
+            _nested_structure_on as _ns,
+        )
+
+        return await _ns(self)

@@ -132,7 +132,7 @@ def run_script(
         return proc
 
 
-def terminate_process(proc: subprocess.Popen) -> None:
+def terminate_process(proc: subprocess.Popen, timeout: int = 5) -> None:
     """
     Terminate a subprocess gracefully, falling back to force kill if needed.
     Handles both Windows and Unix-like systems.
@@ -149,7 +149,7 @@ def terminate_process(proc: subprocess.Popen) -> None:
 
         # Wait for process to terminate
         try:
-            proc.wait(timeout=5)
+            proc.wait(timeout=timeout)
             print("Process terminated gracefully")
         except subprocess.TimeoutExpired:
             # If process doesn't terminate gracefully, force kill
