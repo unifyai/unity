@@ -22,7 +22,14 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..common.simulated import mirror_contact_manager_tools
+from ..common.simulated import (
+    mirror_contact_manager_tools,
+    SimulatedLineage,
+    SimulatedLog,
+    simulated_llm_roundtrip,
+    SimulatedHandleMixin,
+)
+from ..constants import LOGGER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -182,7 +189,7 @@ _MergeOutcomeStrict.model_rebuild()
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal handle
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedContactHandle(SteerableToolHandle):
+class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
     """
     Minimal LLM-backed handle used by SimulatedContactManager.ask / update.
     """
@@ -192,6 +199,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
         llm: unify.Unify,
         initial_text: str,
         *,
+        mode: str,
         _return_reasoning_steps: bool,
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
@@ -202,6 +210,7 @@ class _SimulatedContactHandle(SteerableToolHandle):
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
+        self._mode = str(mode or "ask")
         if _requests_clarification and (
             not clarification_up_q or not clarification_down_q
         ):
@@ -210,11 +219,21 @@ class _SimulatedContactHandle(SteerableToolHandle):
             )
         self._needs_clar = _requests_clarification
 
+        # Human-friendly log label derived from current lineage, mirroring other simulated managers:
+        # "<outer...>->SimulatedContactManager.<mode>(abcd)"
+        self._log_label = SimulatedLineage.make_label(
+            f"SimulatedContactManager.{self._mode}",
+        )
+
         if self._needs_clar:
             try:
                 self._clar_up_q.put_nowait(
                     "Could you clarify your request about contacts?",
                 )
+                try:
+                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                except Exception:
+                    pass
             except asyncio.QueueFull:
                 pass
 
@@ -238,12 +257,36 @@ class _SimulatedContactHandle(SteerableToolHandle):
 
         if not self._done.is_set():
             if self._needs_clar:
+                try:
+                    LOGGER.info(
+                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                    )
+                except Exception:
+                    pass
                 clar = await self._clar_down_q.get()
                 self._extra_msgs.append(f"Clarification: {clar}")
+                try:
+                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                except Exception:
+                    pass
 
             prompt = "\n\n---\n\n".join([self._initial] + self._extra_msgs)
 
-            answer = await self._llm.generate(prompt)
+            # Unified simulated LLM roundtrip with lineage-aware logging and gated response preview
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            answer = await simulated_llm_roundtrip(
+                self._llm,
+                label=self._log_label,
+                prompt=prompt,
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
             self._answer = answer
             self._messages = [
                 {"role": "user", "content": prompt},
@@ -258,10 +301,12 @@ class _SimulatedContactHandle(SteerableToolHandle):
     def interject(self, message: str) -> str:
         if self._cancelled:
             return "Interaction stopped."
+        self._log_interject(message)
         self._extra_msgs.append(message)
         return "Acknowledged."
 
     def stop(self, reason: str | None = None) -> str:
+        self._log_stop(reason)
         self._cancelled = True
         self._done.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
@@ -269,12 +314,14 @@ class _SimulatedContactHandle(SteerableToolHandle):
     def pause(self) -> str:
         if self._paused:
             return "Already paused."
+        self._log_pause()
         self._paused = True
         return "Paused."
 
     def resume(self) -> str:
         if not self._paused:
             return "Already running."
+        self._log_resume()
         self._paused = False
         return "Resumed."
 
@@ -293,14 +340,28 @@ class _SimulatedContactHandle(SteerableToolHandle):
             + self._extra_msgs
             + [f"Question to answer (as a reminder!): {question}"],
         )
-        return _SimulatedContactHandle(
+        # Create a nested helper handle so we can log using its stable label, mirroring TaskScheduler/Actor
+        handle = _SimulatedContactHandle(
             self._llm,
             follow_up_prompt,
+            mode=self._mode,
             _return_reasoning_steps=self._want_steps,
             _requests_clarification=False,
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
         )
+        # Align with other simulated components: concise "Question(<parent>)" label
+        try:
+            handle._log_label = SimulatedLineage.question_label(  # type: ignore[attr-defined]
+                self._log_label,
+            )
+        except Exception:
+            pass
+        try:
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), question)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        return handle
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
@@ -419,11 +480,18 @@ class SimulatedContactManager(BaseContactManager):
         handle = _SimulatedContactHandle(
             self._llm,
             instruction,
+            mode="ask",
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
         )
+
+        # Emit a human-facing log for the initial ask so tests and users see immediate feedback
+        try:
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
+        except Exception:
+            pass
 
         if should_log and call_id is not None:
             handle = wrap_handle_with_logging(
@@ -471,11 +539,18 @@ class SimulatedContactManager(BaseContactManager):
         handle = _SimulatedContactHandle(
             self._llm,
             instruction,
+            mode="update",
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
         )
+
+        # Emit a human-facing log for the initial update so tests and users see immediate feedback
+        try:
+            SimulatedLog.log_request("update", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
+        except Exception:
+            pass
 
         if should_log and call_id is not None:
             handle = wrap_handle_with_logging(
