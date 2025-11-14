@@ -9,13 +9,16 @@ from .base import BaseActor
 from typing import Optional
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.function_manager.function_manager import FunctionManager
-from unity.constants import LOGGER, LLM_IO_DEBUG, SESSION_ID
-from unity.common._async_tool.loop_config import TOOL_LOOP_LINEAGE
-from secrets import token_hex
-from pathlib import Path
+from unity.constants import LOGGER
+from unity.common.simulated import (
+    SimulatedLineage,
+    SimulatedLog,
+    simulated_llm_roundtrip,
+    SimulatedHandleMixin,
+)
 
 
-class SimulatedActorHandle(SteerableToolHandle):
+class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
     """
     A lightweight, actor-scoped handle for simulating execution of a series of actions.
 
@@ -79,14 +82,7 @@ class SimulatedActorHandle(SteerableToolHandle):
 
         # Human-friendly log label derived from current lineage, mirroring simulated TaskScheduler:
         # "<outer...>->SimulatedActor.act(abcd)"
-        try:
-            parent_lineage = TOOL_LOOP_LINEAGE.get([])
-            parts = list(parent_lineage) if isinstance(parent_lineage, list) else []
-        except Exception:
-            parts = []
-        segment = "SimulatedActor.act"
-        base = "->".join([*parts, segment]) if parts else segment
-        self._log_label = f"{base}({token_hex(2)})"
+        self._log_label = SimulatedLineage.make_label("SimulatedActor.act")
 
         self._start()
 
@@ -250,11 +246,7 @@ class SimulatedActorHandle(SteerableToolHandle):
         self.simulate_step()
 
         # Human-facing interject log (lineage-aligned)
-        try:
-            _preview = message if len(message) <= 120 else f"{message[:120]}…"
-            LOGGER.info(f"💬 [{self._log_label}] Interject requested: {_preview}")
-        except Exception:
-            pass
+        self._log_interject(message)
 
         # Build a content list for a user message that includes the instruction and any attached images.
         # Images are resolved to handles and added as image_url blocks (data URLs or signed URLs where available).
@@ -427,83 +419,7 @@ class SimulatedActorHandle(SteerableToolHandle):
         except Exception:
             pass
 
-        # Preserve prior behavior: kick the LLM once to acknowledge the interjection and advance the simulation.
-        # Align logging with simulated scheduler ("LLM simulating…")
-        import time as _t
-        import json as _json
-
-        try:
-            LOGGER.info(f"🔄 [{self._log_label}] LLM simulating…")
-        except Exception:
-            pass
-        t0 = _t.perf_counter()
-
-        # Optional: write request payload (LLM_IO_DEBUG)
-        if bool(LLM_IO_DEBUG):
-            try:
-                # Lazily initialise per-run directory
-                if SimulatedActorHandle._SIM_ACT_LLM_IO_DIR is None:
-                    logs_dir = Path(".llm_io_debug")
-                    logs_dir.mkdir(parents=True, exist_ok=True)
-                    SimulatedActorHandle._SIM_ACT_LLM_IO_DIR = str(
-                        logs_dir / f"{SESSION_ID.replace(':', '-').replace('/', '-')}",
-                    )
-                    Path(SimulatedActorHandle._SIM_ACT_LLM_IO_DIR).mkdir(
-                        parents=True,
-                        exist_ok=True,
-                    )
-            except Exception:
-                SimulatedActorHandle._SIM_ACT_LLM_IO_DIR = None
-
-            def _io_write(header: str, body: str) -> None:
-                if (
-                    not bool(LLM_IO_DEBUG)
-                    or SimulatedActorHandle._SIM_ACT_LLM_IO_DIR is None
-                ):
-                    return
-                try:
-                    from datetime import datetime as _dt, timezone as _tz
-                    import time as _time
-
-                    d = Path(SimulatedActorHandle._SIM_ACT_LLM_IO_DIR)
-                    now = _dt.now(_tz.utc)
-                    hhmmss = now.strftime("%H%M%S")
-                    ns = _time.time_ns() % 1_000_000_000
-                    base = f"{hhmmss}_{ns:09d}"
-                    path = d / f"{base}.txt"
-                    if path.exists():
-                        i = 1
-                        while True:
-                            cand = d / f"{base}_{i}.txt"
-                            if not cand.exists():
-                                path = cand
-                                break
-                            i += 1
-                    with open(path, "w", encoding="utf-8") as f:
-                        f.write(f"🔄 [{self._log_label}] {header}\n")
-                        f.write(body.rstrip())
-                        f.write("\n")
-                    try:
-                        kind = "request" if "request" in header.lower() else "response"
-                        LOGGER.info(f"📝 LLM {kind} written to {path}")
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-
-            try:
-                _sys = getattr(self._llm, "system_message", None)
-            except Exception:
-                _sys = None
-            req_payload = {
-                "model": getattr(self._llm, "model", None),
-                "messages": [{"role": "user", "content": content_blocks}],
-            }
-            sys_block = f"System message:\n{_sys}\n\n" if _sys else ""
-            _io_write(
-                "LLM request ➡️:",
-                f"{sys_block}{_json.dumps(req_payload, indent=4)}",
-            )
+        # Compose prompt (kept consistent with previous behaviour)
         if self._entrypoint_info:
             fn = self._entrypoint_info
             prompt = (
@@ -518,32 +434,21 @@ class SimulatedActorHandle(SteerableToolHandle):
                 f"Current simulated actions:\n{self._description}\n\n"
                 "Use any images attached in the most recent user message as ground truth for visual details."
             )
-        answer = await self._llm.generate(prompt)
-        dt_ms = int((_t.perf_counter() - t0) * 1000)
+        # Unified LLM roundtrip (includes timing, gated body, and optional dumps)
         try:
-            # Mirror SimulatedTaskScheduler: print body only when no outer loop
-            try:
-                parent_lineage = TOOL_LOOP_LINEAGE.get([])
-                has_outer = isinstance(parent_lineage, list) and len(parent_lineage) > 0
-            except Exception:
-                has_outer = False
-            if has_outer:
-                LOGGER.info(f"✅ [{self._log_label}] LLM replied in {dt_ms} ms")
-            else:
-                _ans_preview = str(answer)
-                if len(_ans_preview) > 800:
-                    _ans_preview = _ans_preview[:800] + "…"
-                LOGGER.info(
-                    f"✅ [{self._log_label}] LLM replied in {dt_ms} ms:\n{_ans_preview}",
-                )
+            _sys = getattr(self._llm, "system_message", None)
         except Exception:
-            pass
-        # Optional: write response payload
-        if bool(LLM_IO_DEBUG):
-            try:
-                _io_write("LLM response ⬅️:", str(answer))  # type: ignore[name-defined]
-            except Exception:
-                pass
+            _sys = None
+        answer = await simulated_llm_roundtrip(
+            self._llm,
+            label=self._log_label,
+            prompt=prompt,
+            sys_for_dump=_sys,
+            request_dump_body={
+                "model": getattr(self._llm, "model", None),
+                "messages": [{"role": "user", "content": content_blocks}],
+            },
+        )
 
     def pause(self) -> str:
         if not self._description:
@@ -558,10 +463,7 @@ class SimulatedActorHandle(SteerableToolHandle):
             self._remaining_duration = max(0.0, self._remaining_duration - elapsed)
             self._last_started_at = None
         self.simulate_step()
-        try:
-            LOGGER.info(f"⏸️ [{self._log_label}] Pause requested")
-        except Exception:
-            pass
+        self._log_pause()
         return f"Paused '{self._description}'."
 
     def resume(self) -> str:
@@ -575,10 +477,7 @@ class SimulatedActorHandle(SteerableToolHandle):
         if self._remaining_duration is not None:
             self._last_started_at = time.monotonic()
         self.simulate_step()
-        try:
-            LOGGER.info(f"▶️ [{self._log_label}] Resume requested")
-        except Exception:
-            pass
+        self._log_resume()
         return f"Resumed '{self._description}'."
 
     async def ask(self, question: str) -> str:
@@ -587,89 +486,14 @@ class SimulatedActorHandle(SteerableToolHandle):
         self.simulate_step()
         # Build a concise child label consistent with simulated scheduler
         try:
-            q_label = f"Question({self._log_label})({token_hex(2)})"
+            q_label = SimulatedLineage.question_label(self._log_label)
         except Exception:
             q_label = f"Question({getattr(self, '_log_label', 'SimulatedActor.act')})"
         try:
-            _preview = question if len(question) <= 120 else f"{question[:120]}…"
-            LOGGER.info(f"❓ [{q_label}] Ask requested: {_preview}")
+            SimulatedLog.log_request("ask", q_label, question)
         except Exception:
             pass
 
-        # Log LLM simulating and capture timing; optionally write LLM I/O payloads
-        import time as _t
-        import json as _json
-
-        try:
-            LOGGER.info(f"🔄 [{q_label}] LLM simulating…")
-        except Exception:
-            pass
-        t0 = _t.perf_counter()
-
-        if bool(LLM_IO_DEBUG):
-            try:
-                if SimulatedActorHandle._SIM_ACT_LLM_IO_DIR is None:
-                    logs_dir = Path(".llm_io_debug")
-                    logs_dir.mkdir(parents=True, exist_ok=True)
-                    SimulatedActorHandle._SIM_ACT_LLM_IO_DIR = str(
-                        logs_dir / f"{SESSION_ID.replace(':', '-').replace('/', '-')}",
-                    )
-                    Path(SimulatedActorHandle._SIM_ACT_LLM_IO_DIR).mkdir(
-                        parents=True,
-                        exist_ok=True,
-                    )
-            except Exception:
-                SimulatedActorHandle._SIM_ACT_LLM_IO_DIR = None
-
-            def _io_write_q(header: str, body: str) -> None:
-                if (
-                    not bool(LLM_IO_DEBUG)
-                    or SimulatedActorHandle._SIM_ACT_LLM_IO_DIR is None
-                ):
-                    return
-                try:
-                    from datetime import datetime as _dt, timezone as _tz
-                    import time as _time
-
-                    d = Path(SimulatedActorHandle._SIM_ACT_LLM_IO_DIR)
-                    now = _dt.now(_tz.utc)
-                    hhmmss = now.strftime("%H%M%S")
-                    ns = _time.time_ns() % 1_000_000_000
-                    base = f"{hhmmss}_{ns:09d}"
-                    path = d / f"{base}.txt"
-                    if path.exists():
-                        i = 1
-                        while True:
-                            cand = d / f"{base}_{i}.txt"
-                            if not cand.exists():
-                                path = cand
-                                break
-                            i += 1
-                    with open(path, "w", encoding="utf-8") as f:
-                        f.write(f"🔄 [{q_label}] {header}\n")
-                        f.write(body.rstrip())
-                        f.write("\n")
-                    try:
-                        kind = "request" if "request" in header.lower() else "response"
-                        LOGGER.info(f"📝 LLM {kind} written to {path}")
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-
-            try:
-                _sys = getattr(self._llm, "system_message", None)
-            except Exception:
-                _sys = None
-            req_payload = {
-                "model": getattr(self._llm, "model", None),
-                "messages": [{"role": "user", "content": question}],
-            }
-            sys_block = f"System message:\n{_sys}\n\n" if _sys else ""
-            _io_write_q(
-                "LLM request ➡️:",
-                f"{sys_block}{_json.dumps(req_payload, indent=4)}",
-            )
         if self._entrypoint_info:
             fn = self._entrypoint_info
             prompt = (
@@ -684,31 +508,20 @@ class SimulatedActorHandle(SteerableToolHandle):
                 f"You are working on simulating these actions:\n{self._description}\n\n"
                 f"User asks: {question}"
             )
-        answer = await self._llm.generate(prompt)
-        dt_ms = int((_t.perf_counter() - t0) * 1000)
         try:
-            # Mirror SimulatedTaskScheduler: print body only when no outer loop
-            try:
-                parent_lineage = TOOL_LOOP_LINEAGE.get([])
-                has_outer = isinstance(parent_lineage, list) and len(parent_lineage) > 0
-            except Exception:
-                has_outer = False
-            if has_outer:
-                LOGGER.info(f"✅ [{q_label}] LLM replied in {dt_ms} ms")
-            else:
-                _ans_preview = str(answer)
-                if len(_ans_preview) > 800:
-                    _ans_preview = _ans_preview[:800] + "…"
-                LOGGER.info(
-                    f"✅ [{q_label}] LLM replied in {dt_ms} ms:\n{_ans_preview}",
-                )
+            _sys = getattr(self._llm, "system_message", None)
         except Exception:
-            pass
-        if bool(LLM_IO_DEBUG):
-            try:
-                _io_write_q("LLM response ⬅️:", str(answer))
-            except Exception:
-                pass
+            _sys = None
+        answer = await simulated_llm_roundtrip(
+            self._llm,
+            label=q_label,
+            prompt=prompt,
+            sys_for_dump=_sys,
+            request_dump_body={
+                "model": getattr(self._llm, "model", None),
+                "messages": [{"role": "user", "content": question}],
+            },
+        )
         return answer
 
     def done(self) -> bool:
@@ -871,18 +684,12 @@ class SimulatedActor(BaseActor):
     ) -> SimulatedActorHandle:
         # Emit a scheduler-like nested log for starting an action
         try:
-            parent_lineage = TOOL_LOOP_LINEAGE.get([])
-            parts = list(parent_lineage) if isinstance(parent_lineage, list) else []
+            parts = SimulatedLineage.parent_lineage()
         except Exception:
             parts = []
-        segment = "SimulatedActor.act"
-        base = "->".join([*parts, segment]) if parts else segment
-        _act_label = f"{base}({token_hex(2)})"
         try:
-            _preview = (
-                description if len(description) <= 120 else f"{description[:120]}…"
-            )
-            LOGGER.info(f"🎬 [{_act_label}] Act requested: {_preview}")
+            _act_label = SimulatedLineage.make_label("SimulatedActor.act")
+            SimulatedLog.log_request("act", _act_label, description)
         except Exception:
             pass
 

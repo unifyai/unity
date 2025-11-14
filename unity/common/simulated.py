@@ -10,6 +10,292 @@ from typing import Any, Dict, List, Tuple
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class SimulatedLineage:
+    """Helpers for building nested labels and previews for simulated flows."""
+
+    PREVIEW_LIMIT = 120
+
+    @staticmethod
+    def parent_lineage() -> List[str]:
+        try:
+            # Local import to avoid import cycles at module import time
+            from unity.common._async_tool.loop_config import (
+                TOOL_LOOP_LINEAGE,
+            )  # noqa: WPS433
+        except Exception:
+            return []
+        try:
+            val = TOOL_LOOP_LINEAGE.get([])
+            return list(val) if isinstance(val, list) else []
+        except Exception:
+            return []
+
+    @staticmethod
+    def has_outer() -> bool:
+        try:
+            return bool(SimulatedLineage.parent_lineage())
+        except Exception:
+            return False
+
+    @staticmethod
+    def make_label(segment: str) -> str:
+        """Compose a nested label like '<outer...>->Segment(abcd)'."""
+        from secrets import token_hex  # noqa: WPS433
+
+        try:
+            parts = SimulatedLineage.parent_lineage()
+            base = "->".join([*parts, segment]) if parts else segment
+        except Exception:
+            base = segment
+        return f"{base}({token_hex(2)})"
+
+    @staticmethod
+    def question_label(parent_label: str) -> str:
+        """Build a concise child label 'Question(<parent>)(abcd)'."""
+        from secrets import token_hex  # noqa: WPS433
+
+        return f"Question({parent_label})({token_hex(2)})"
+
+    @staticmethod
+    def preview(text: str, limit: int = PREVIEW_LIMIT) -> str:
+        s = str(text or "")
+        return s if len(s) <= int(limit) else f"{s[:int(limit)]}…"
+
+
+class SimulatedLog:
+    """Small wrapper for consistent iconised request/steering logs."""
+
+    _ICONS = {
+        "ask": "❓",
+        "update": "📝",
+        "execute": "🎬",
+        "act": "🎬",
+        "interject": "💬",
+        "pause": "⏸️",
+        "resume": "▶️",
+        "stop": "🛑",
+    }
+    _VERBS = {
+        "ask": "Ask requested",
+        "update": "Update requested",
+        "execute": "Execute requested",
+        "act": "Act requested",
+        "interject": "Interject requested",
+        "pause": "Pause requested",
+        "resume": "Resume requested",
+        "stop": "Stop requested",
+    }
+
+    @staticmethod
+    def log_request(kind: str, label: str, text: str = "") -> None:
+        try:
+            from unity.constants import LOGGER  # noqa: WPS433
+        except Exception:
+            return
+        try:
+            icon = SimulatedLog._ICONS.get(kind, "ℹ️")
+            verb = SimulatedLog._VERBS.get(kind, "Requested")
+            suffix = ""
+            if kind in {"ask", "update", "act", "interject"}:
+                prev = SimulatedLineage.preview(text)
+                if prev:
+                    suffix = f": {prev}"
+            LOGGER.info(f"{icon} [{label}] {verb}{suffix}")
+        except Exception:
+            # Never let logging break control flow
+            pass
+
+
+class SimulatedLLMIO:
+    """Shared file writer for LLM request/response debugging."""
+
+    _DIR: "str | None" = None
+
+    @staticmethod
+    def ensure_dir() -> "str | None":
+        from pathlib import Path  # noqa: WPS433
+
+        try:
+            from unity.constants import SESSION_ID  # noqa: WPS433
+        except Exception:
+            return None
+        try:
+            if SimulatedLLMIO._DIR is None:
+                root = Path(".llm_io_debug")
+                root.mkdir(parents=True, exist_ok=True)
+                safe = str(SESSION_ID).replace(":", "-").replace("/", "-")
+                d = root / safe
+                d.mkdir(parents=True, exist_ok=True)
+                SimulatedLLMIO._DIR = str(d)
+        except Exception:
+            SimulatedLLMIO._DIR = None
+        return SimulatedLLMIO._DIR
+
+    @staticmethod
+    def write(label: str, header: str, body: Any) -> None:
+        """Best-effort write of a single debug artifact to the per-run folder."""
+        try:
+            from unity.constants import LLM_IO_DEBUG  # noqa: WPS433
+        except Exception:
+            return
+        if not bool(LLM_IO_DEBUG):
+            return
+
+        from datetime import datetime, timezone  # noqa: WPS433
+        from pathlib import Path  # noqa: WPS433
+        import time as _time  # noqa: WPS433
+
+        d = SimulatedLLMIO.ensure_dir()
+        if d is None:
+            return
+        try:
+            now = datetime.now(timezone.utc)
+            base = f"{now.strftime('%H%M%S')}_{_time.time_ns() % 1_000_000_000:09d}"
+            path = Path(d) / f"{base}.txt"
+            i = 1
+            while path.exists():
+                cand = Path(d) / f"{base}_{i}.txt"
+                if not cand.exists():
+                    path = cand
+                    break
+                i += 1
+            # Normalise body to string
+            if not isinstance(body, str):
+                try:
+                    import json as _json  # noqa: WPS433
+
+                    body = _json.dumps(body, indent=4)
+                except Exception:
+                    body = str(body)
+            with path.open("w", encoding="utf-8") as f:
+                f.write(f"🔄 [{label}] {header}\n")
+                f.write(body.rstrip())
+                f.write("\n")
+            try:
+                from unity.constants import LOGGER  # noqa: WPS433
+
+                kind = "request" if "request" in header.lower() else "response"
+                LOGGER.info(f"📝 LLM {kind} written to {path}")
+            except Exception:
+                pass
+        except Exception:
+            # Silent best-effort
+            pass
+
+
+async def simulated_llm_roundtrip(
+    llm: Any,
+    *,
+    label: str,
+    prompt: str,
+    sys_for_dump: "str | None" = None,
+    request_dump_body: Any | None = None,
+) -> str:
+    """Unified 'LLM simulating' roundtrip with gated response logging and optional dumps."""
+    try:
+        from unity.constants import LOGGER  # noqa: WPS433
+    except Exception:
+        LOGGER = None  # type: ignore
+
+    import time as _time  # noqa: WPS433
+
+    try:
+        if LOGGER is not None:
+            LOGGER.info(f"🔄 [{label}] LLM simulating…")
+    except Exception:
+        pass
+    t0 = _time.perf_counter()
+
+    # Optional request dump
+    try:
+        if sys_for_dump is None:
+            try:
+                sys_for_dump = getattr(llm, "system_message", None)
+            except Exception:
+                sys_for_dump = None
+        if request_dump_body is None:
+            request_dump_body = {
+                "model": getattr(llm, "model", None),
+                "messages": [{"role": "user", "content": prompt}],
+            }
+        if sys_for_dump:
+            request_dump_body = {
+                "system_message": sys_for_dump,
+                **(
+                    request_dump_body
+                    if isinstance(request_dump_body, dict)
+                    else {"request": request_dump_body}
+                ),
+            }
+        SimulatedLLMIO.write(label, "LLM request ➡️:", request_dump_body)
+    except Exception:
+        pass
+
+    answer = await llm.generate(prompt)
+    dt_ms = int((_time.perf_counter() - t0) * 1000)
+
+    try:
+        if LOGGER is not None:
+            if SimulatedLineage.has_outer():
+                LOGGER.info(f"✅ [{label}] LLM replied in {dt_ms} ms")
+            else:
+                _ans_preview = str(answer)
+                if len(_ans_preview) > 800:
+                    _ans_preview = _ans_preview[:800] + "…"
+                LOGGER.info(f"✅ [{label}] LLM replied in {dt_ms} ms:\n{_ans_preview}")
+    except Exception:
+        pass
+
+    # Optional response dump
+    try:
+        SimulatedLLMIO.write(label, "LLM response ⬅️:", str(answer))
+    except Exception:
+        pass
+
+    return answer  # type: ignore[return-value]
+
+
+class SimulatedHandleMixin:
+    """Lightweight mixin to standardise steering logs for simulated handles."""
+
+    # Derived classes are expected to set: self._log_label : str
+
+    def _log_interject(self, message: str) -> None:
+        try:
+            SimulatedLog.log_request(
+                "interject",
+                getattr(self, "_log_label", "handle"),
+                str(message),
+            )
+        except Exception:
+            pass
+
+    def _log_pause(self) -> None:
+        try:
+            SimulatedLog.log_request("pause", getattr(self, "_log_label", "handle"))
+        except Exception:
+            pass
+
+    def _log_resume(self) -> None:
+        try:
+            SimulatedLog.log_request("resume", getattr(self, "_log_label", "handle"))
+        except Exception:
+            pass
+
+    def _log_stop(self, reason: str | None) -> None:
+        try:
+            from unity.constants import LOGGER  # noqa: WPS433
+        except Exception:
+            return
+        try:
+            suffix = f" – reason: {reason}" if reason else ""
+            LOGGER.info(
+                f"🛑 [{getattr(self, '_log_label', 'handle')}] Stop requested{suffix}",
+            )
+        except Exception:
+            pass
+
+
 def _extract_owner_method_pairs(
     cls: Any,
     target_attr: str,
