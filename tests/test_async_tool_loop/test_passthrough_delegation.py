@@ -379,9 +379,9 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
 
     await _wait_for_passthrough_handles()
 
-    # Ask the outer handle; forwarding to both passthrough handles is now performed
+    # Ask the outer handle; forwarding to both passthrough handles is performed
     # asynchronously via the mirrored steering path inside the inner loop.
-    await outer.ask("STATUS?")
+    ask_handle = await outer.ask("STATUS?")
 
     # Wait until both inner passthrough handles observed ask()
     from tests.test_async_tool_loop.async_helpers import _wait_for_condition
@@ -392,6 +392,12 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
     await _wait_for_condition(_both_asked, poll=0.01, timeout=60.0)
 
     assert h1.ask_count == 1 and h2.ask_count == 1, "ask() was not multicasted"
+    # Cleanup the spawned inspection loop
+    try:
+        ask_handle.stop("done")
+        await ask_handle.result()
+    except Exception:
+        pass
 
 
 @pytest.mark.asyncio
@@ -1079,7 +1085,7 @@ async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch
 
     imgs = ImageRefs([RawImageRef(image_id=123)])
     # Forward ask with images – multicasts to all passthrough handles
-    await outer.ask("STATUS?", images=imgs)
+    ask_handle = await outer.ask("STATUS?", images=imgs)
 
     async def _both_received():
         return len(h1.ask_payloads) >= 1 and len(h2.ask_payloads) >= 1
@@ -1088,6 +1094,12 @@ async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch
 
     assert len(h1.ask_payloads) == 1 and len(h2.ask_payloads) == 1
     assert h1.ask_payloads[0] is not None and h2.ask_payloads[0] is not None
+    # Cleanup the spawned inspection loop
+    try:
+        ask_handle.stop("done")
+        await ask_handle.result()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -1176,7 +1188,7 @@ async def test_early_ask_forwarded_on_adoption(monkeypatch):
     await _wait_for_tool_scheduled(outer, "spawn", timeout=30.0, poll=0.01)
 
     # EARLY steering: programmatic ask before adoption
-    await outer.ask("EARLY_STATUS?")
+    ask_handle = await outer.ask("EARLY_STATUS?")
 
     # Now allow adoption
     gate.set()
@@ -1189,6 +1201,12 @@ async def test_early_ask_forwarded_on_adoption(monkeypatch):
 
     await _wait_for_condition(_asked_once, poll=0.01, timeout=60.0)
     assert inner.ask_count >= 1, "early ask() was not replayed to the adopted handle"
+    # Cleanup the spawned inspection loop
+    try:
+        ask_handle.stop("done")
+        await ask_handle.result()
+    except Exception:
+        pass
 
 
 @pytest.mark.asyncio
@@ -1634,7 +1652,7 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
     await _wait_adopted()
 
     # Programmatic ask should be forwarded promptly via mirror; wait for it
-    await outer.ask("STATUS?")
+    ask_handle = await outer.ask("STATUS?")
 
     async def _asked():
         return inner.ask_count >= 1
@@ -1675,6 +1693,12 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
     ack_seen = await _ask_ack_present()
     assert helper_seen, "expected assistant helper tool_call ask_* in transcript"
     assert ack_seen, "expected ack tool message ask_* in transcript"
+    # Cleanup the spawned inspection loop
+    try:
+        ask_handle.stop("done")
+        await ask_handle.result()
+    except Exception:
+        pass
 
 
 @pytest.mark.asyncio
