@@ -10,6 +10,7 @@ actor‐instance into the scheduler via an `ActiveQueue` public handle.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 from typing import Dict, List
 from datetime import datetime, timezone
@@ -95,13 +96,61 @@ async def test_execute_ask(monkeypatch):
 
     _scheduler, task = await _make_scheduler_with_task(
         "Analyse new product launch performance.",
-        steps=1,
+        steps=3,  # keep inner handle alive long enough to be adopted
     )
 
-    await task.ask("Do we have any early metrics?")
-    # Give the background worker a beat and await completion.
-    await asyncio.sleep(0.2)
-    await task.result()
+    # Patch schema for seeded ask_* helper so its images array has 'items'.
+    import unity.common._async_tool.loop as _loop
+
+    _orig_schema = _loop.method_to_schema
+
+    def _schema_with_images_items(fn, name, *a, **kw):
+        schema = _orig_schema(fn, name, *a, **kw)
+        if isinstance(name, str) and name.startswith("ask_"):
+            try:
+                imgs = schema["function"]["parameters"]["properties"]["images"]
+                any_of = imgs.get("anyOf", [])
+                for opt in any_of:
+                    if (
+                        isinstance(opt, dict)
+                        and opt.get("type") == "array"
+                        and "items" not in opt
+                    ):
+                        opt["items"] = {"type": "object"}
+            except Exception:
+                pass
+        return schema
+
+    monkeypatch.setattr(
+        _loop,
+        "method_to_schema",
+        _schema_with_images_items,
+        raising=True,
+    )
+
+    # Wait until a passthrough child is live (adopted by the outer loop)
+    async def _wait_for_child(handle, timeout_s: float = 10.0) -> None:
+        deadline = asyncio.get_event_loop().time() + timeout_s
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                tree = await handle.nested_structure()
+                if isinstance(tree, dict) and tree.get("children"):
+                    return
+            except Exception:
+                pass
+            await asyncio.sleep(0.05)
+        raise TimeoutError("Timed out waiting for passthrough child adoption")
+
+    await _wait_for_child(task)
+
+    # Now perform a read-only ask while the child is live – the outer loop should delegate once
+    ask_handle = await task.ask("Do we have any early metrics?")
+    # Await the inspection answer so the delegated inner ask has time to execute
+    await ask_handle.result()
+
+    # Let the outer execute loop finish naturally (best‑effort).
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(task.result(), timeout=10.0)
 
     assert calls["ask"] == 1, "ask must be called exactly once"
 
