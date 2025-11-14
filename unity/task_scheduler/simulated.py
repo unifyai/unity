@@ -16,7 +16,7 @@ from typing import List, Optional, Callable, Any
 import unify
 
 from ..common.async_tool_loop import SteerableToolHandle
-from ..constants import LOGGER
+from ..constants import LOGGER, LLM_IO_DEBUG, SESSION_ID
 from ..common.llm_helpers import short_id
 from .base import BaseTaskScheduler
 from .prompt_builders import (
@@ -30,6 +30,9 @@ from ..events.manager_event_logging import (
     wrap_handle_with_logging,
 )
 from ..common.simulated import mirror_task_scheduler_tools
+
+# Per-run file sink for simulated LLM I/O logs (request/response)
+_SIM_TS_LLM_IO_DIR: str | None = None
 
 
 class _SimulatedTaskScheduleHandle(SteerableToolHandle):
@@ -118,12 +121,91 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
 
             # LLM step – simulated thinking with timing
             import time as _t
+            import os as _os
+            import re as _re
+            from pathlib import Path as _Path
+            import json as _json
 
             t0 = _t.perf_counter()
             try:
                 LOGGER.info(f"🔄 [{self._log_label}] LLM simulating…")
             except Exception:
                 pass
+
+            # LLM_IO_DEBUG: write request payload
+            _llm_io_debug = bool(LLM_IO_DEBUG)
+            _dir: str | None = None
+            if _llm_io_debug:
+                try:
+                    global _SIM_TS_LLM_IO_DIR
+                    if _SIM_TS_LLM_IO_DIR is None:
+                        root = _Path(_os.getcwd())
+                        logs_dir = root / ".llm_io_debug"
+                        logs_dir.mkdir(parents=True, exist_ok=True)
+                        try:
+                            session_safe = _re.sub(r"[^0-9A-Za-z._-]", "-", SESSION_ID)
+                        except Exception:
+                            session_safe = (
+                                SESSION_ID.replace(":", "-")
+                                .replace("+", "-")
+                                .replace("/", "-")
+                            )
+                        session_dir = logs_dir / f"{session_safe}"
+                        session_dir.mkdir(parents=True, exist_ok=True)
+                        _SIM_TS_LLM_IO_DIR = str(session_dir)
+                    _dir = _SIM_TS_LLM_IO_DIR
+                except Exception:
+                    _dir = None
+
+                def _io_write(header: str, body: str) -> None:
+                    if not _llm_io_debug or _dir is None:
+                        return
+                    try:
+                        from datetime import datetime as _dt, timezone as _tz
+                        import time as _time
+
+                        d = _Path(_dir)
+                        now = _dt.now(_tz.utc)
+                        hhmmss = now.strftime("%H%M%S")
+                        ns = _time.time_ns() % 1_000_000_000
+                        base = f"{hhmmss}_{ns:09d}"
+                        path = d / f"{base}.txt"
+                        if path.exists():
+                            i = 1
+                            while True:
+                                cand = d / f"{base}_{i}.txt"
+                                if not cand.exists():
+                                    path = cand
+                                    break
+                                i += 1
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.write(f"🔄 [{self._log_label}] {header}\n")
+                            f.write(body.rstrip())
+                            f.write("\n")
+                        try:
+                            kind = (
+                                "request" if "request" in header.lower() else "response"
+                            )
+                            LOGGER.info(f"📝 LLM {kind} written to {path}")
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
+                try:
+                    _sys = getattr(self._llm, "system_message", None)
+                except Exception:
+                    _sys = None
+                req_payload = {
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [{"role": "user", "content": user_block}],
+                }
+                sys_block = f"System message:\n{_sys}\n\n" if _sys else ""
+                _io_write(
+                    "LLM request ➡️:",
+                    f"{sys_block}{_json.dumps(req_payload, indent=4)}",
+                )
+
             answer = await self._llm.generate(user_block)
             dt_ms = int((_t.perf_counter() - t0) * 1000)
             try:
@@ -135,6 +217,13 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
                 )
             except Exception:
                 pass
+
+            # LLM_IO_DEBUG: write response payload
+            if _llm_io_debug:
+                try:
+                    _io_write("LLM response ⬅️:", str(answer))
+                except Exception:
+                    pass
 
             self._answer = answer
             # very small, synthetic trace of "reasoning"
