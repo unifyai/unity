@@ -18,19 +18,38 @@ EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .i
 # With -t/--per-test: one session per collected pytest node id across provided dirs/files.
 PER_TEST=0
 
+# Optional filename match (glob-like, e.g., "*_tool_docstring*")
+NAME_PATTERN=""
+
 # Resolve repo root (parent of this script's directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
 # Parse flags; collect positional args
 declare -a POSITIONAL_ARGS=()
-for _arg in "$@"; do
-  case "$_arg" in
-    -t|--per-test) PER_TEST=1 ;;
-    *) POSITIONAL_ARGS+=( "$_arg" ) ;;
+while (( "$#" )); do
+  case "$1" in
+    -t|--per-test)
+      PER_TEST=1
+      shift
+      ;;
+    -m|--match)
+      if [[ -n "${2-}" ]]; then
+        NAME_PATTERN="$2"
+        shift 2
+      else
+        echo "Error: -m|--match requires a pattern argument (e.g., \"*_tool_docstring*\")." >&2
+        exit 2
+      fi
+      ;;
+    *)
+      POSITIONAL_ARGS+=( "$1" )
+      shift
+      ;;
   esac
 done
-set -- "${POSITIONAL_ARGS[@]}"
+# Reset positional parameters safely under nounset (only expand if set)
+set -- ${POSITIONAL_ARGS[@]+"${POSITIONAL_ARGS[@]}"}
 
 # Always operate from the repo root for discovery, regardless of where the script was invoked
 cd "$REPO_ROOT"
@@ -202,6 +221,30 @@ if (( ${#roots[@]} )); then
   while IFS= read -r -d '' f; do
     found_files+=( "$f" )
   done < <(eval "$(build_find_cmd)")
+fi
+
+# Apply filename pattern filter (matches on basename) if provided
+if [[ -n "$NAME_PATTERN" ]]; then
+  if (( ${#direct_files[@]} )); then
+    tmp_direct=()
+    for f in "${direct_files[@]}"; do
+      b="${f##*/}"
+      if [[ "$b" == $NAME_PATTERN ]]; then
+        tmp_direct+=( "$f" )
+      fi
+    done
+    direct_files=( "${tmp_direct[@]}" )
+  fi
+  if (( ${#found_files[@]} )); then
+    tmp_found=()
+    for f in "${found_files[@]}"; do
+      b="${f##*/}"
+      if [[ "$b" == $NAME_PATTERN ]]; then
+        tmp_found+=( "$f" )
+      fi
+    done
+    found_files=( "${tmp_found[@]}" )
+  fi
 fi
 
 # Combine targets based on mode; sort deterministically (and de-duplicate)
