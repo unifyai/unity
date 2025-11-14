@@ -351,7 +351,8 @@ def _is_helper_tool(name: str) -> bool:
         or name.startswith("resume_")
         or name.startswith("clarify_")
         or name.startswith("interject_")
-        or name.startswith("ask_")
+        # NOTE: ask_* proxies are treated as base tools so they can be scheduled/executed
+        # during backfill when symbolically injected by the outer ask loop.
     )
 
 

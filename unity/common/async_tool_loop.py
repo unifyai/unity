@@ -565,15 +565,21 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                 continue
 
             async def _proxy(
-                _q: str,
+                question: str | None = None,
                 images: dict | list | None = None,
                 _h=h,  # capture now
+                _seed_images=images,  # capture outer ask() images to use by default
             ):
                 # Robust forward; return the downstream ask handle so the inspection loop can adopt it
+                try:
+                    if images is None:
+                        images = _seed_images
+                except Exception:
+                    pass
                 return await forward_handle_call(
                     _h,
                     "ask",
-                    {"question": _q, "images": images},
+                    {"question": question, "images": images},
                     fallback_positional_keys=("question", "content"),
                 )
 
