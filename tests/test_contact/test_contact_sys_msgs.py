@@ -1,4 +1,7 @@
 import re
+import sys
+import subprocess
+import textwrap
 
 from tests.assertion_helpers import (
     extract_tools_dict,
@@ -14,6 +17,60 @@ from unity.contact_manager.prompt_builders import (
     build_update_prompt,
 )
 from unity.contact_manager.contact_manager import ContactManager
+
+
+def _build_prompt_in_subprocess(method: str) -> str:
+    """
+    Build the ContactManager system prompt in a fresh Python process and return it.
+    This ensures we catch differences that only manifest across Python sessions.
+    """
+    assert method in {"ask", "update"}
+    code = textwrap.dedent(
+        f"""
+        import os, sys
+        sys.path.insert(0, os.getcwd())
+        # Install the same static timestamp override used by pytest's autouse fixture,
+        # but inside this fresh process so the time footer is deterministic.
+        import unity.common.prompt_helpers as _ph
+        from datetime import datetime, timezone
+        def _static_now(time_only: bool = False):
+            dt = datetime(2025, 6, 13, 12, 0, 0, tzinfo=timezone.utc)
+            label = "UTC"
+            return (
+                dt.strftime("%H:%M:%S ") + label
+                if time_only
+                else dt.strftime("%Y-%m-%d %H:%M:%S ") + label
+            )
+        _ph.now = _static_now
+        from unity.contact_manager.contact_manager import ContactManager
+        from unity.contact_manager.prompt_builders import build_ask_prompt, build_update_prompt
+
+        cm = ContactManager()
+        if "{method}" == "ask":
+            tools = dict(cm.get_tools("ask"))
+            prompt = build_ask_prompt(
+                tools=tools,
+                num_contacts=cm._num_contacts(),
+                columns=cm._list_columns(),
+            )
+        else:
+            tools = dict(cm.get_tools("update"))
+            prompt = build_update_prompt(
+                tools=tools,
+                num_contacts=cm._num_contacts(),
+                columns=cm._list_columns(),
+            )
+        sys.stdout.write(prompt)
+        """,
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+    return proc.stdout
 
 
 def test_contact_manager_ask_system_prompt_formatting():
@@ -155,40 +212,20 @@ def test_contact_manager_update_system_prompt_formatting():
 
 
 def test_contact_manager_ask_prompt_is_stable_across_serial_builds():
-    cm = ContactManager()
-    tools = dict(cm.get_tools("ask"))
-
-    p1 = build_ask_prompt(
-        tools=tools,
-        num_contacts=cm._num_contacts(),
-        columns=cm._list_columns(),
+    # Build prompts in two separate Python processes to catch cross-session drift
+    p1 = _build_prompt_in_subprocess("ask")
+    p2 = _build_prompt_in_subprocess("ask")
+    assert p1 == p2, (
+        "Ask system prompt changed between separate Python sessions.\n\n"
+        f"First (normalized):\n\n{p1}\n\nSecond (normalized):\n\n{p2}"
     )
-    p2 = build_ask_prompt(
-        tools=tools,
-        num_contacts=cm._num_contacts(),
-        columns=cm._list_columns(),
-    )
-
-    assert (
-        p1 == p2
-    ), f"Ask system prompt changed between serial builds.\n\nFirst:\n\n{p1}\n\nSecond:\n\n{p2}"
 
 
 def test_contact_manager_update_prompt_is_stable_across_serial_builds():
-    cm = ContactManager()
-    tools = dict(cm.get_tools("update"))
-
-    p1 = build_update_prompt(
-        tools=tools,
-        num_contacts=cm._num_contacts(),
-        columns=cm._list_columns(),
+    # Build prompts in two separate Python processes to catch cross-session drift
+    p1 = _build_prompt_in_subprocess("update")
+    p2 = _build_prompt_in_subprocess("update")
+    assert p1 == p2, (
+        "Update system prompt changed between separate Python sessions.\n\n"
+        f"First (normalized):\n\n{p1}\n\nSecond (normalized):\n\n{p2}"
     )
-    p2 = build_update_prompt(
-        tools=tools,
-        num_contacts=cm._num_contacts(),
-        columns=cm._list_columns(),
-    )
-
-    assert (
-        p1 == p2
-    ), f"Update system prompt changed between serial builds.\n\nFirst:\n\n{p1}\n\nSecond:\n\n{p2}"
