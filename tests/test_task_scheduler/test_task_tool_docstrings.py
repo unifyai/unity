@@ -4,6 +4,7 @@ from __future__ import annotations
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.common.llm_helpers import method_to_schema
 import json
+from tests.assertion_helpers import first_diff_block
 
 
 def _unwrap_callable(tool):
@@ -50,26 +51,29 @@ def test_ask_tool_schemas_are_stable_across_serial_calls():
     tools = ts.get_tools("ask")
     assert tools, "TaskScheduler.ask should expose at least one tool"
 
-    # First pass
     first = {
         name: method_to_schema(_unwrap_callable(value), name)
         for name, value in tools.items()
     }
-    # Second pass
     second = {
         name: method_to_schema(_unwrap_callable(value), name)
         for name, value in tools.items()
     }
 
-    # Direct dict equality (order-insensitive)
-    assert first == second, "Tool schemas for ask-tools changed between serial calls"
-
-    # Also ensure JSON-rendered form is stable (order-sensitive, sorted keys)
-    f_dump = json.dumps(first, sort_keys=True)
-    s_dump = json.dumps(second, sort_keys=True)
-    assert (
-        f_dump == s_dump
-    ), "JSON rendering of ask-tool schemas changed between serial calls"
+    # Compare stable JSON render and surface first differing line with context
+    f_dump = json.dumps(first, sort_keys=True, indent=2)
+    s_dump = json.dumps(second, sort_keys=True, indent=2)
+    if f_dump != s_dump:
+        snippet = first_diff_block(
+            f_dump,
+            s_dump,
+            context=3,
+            label_a="First JSON",
+            label_b="Second JSON",
+        )
+        raise AssertionError(
+            "Tool schemas for ask-tools changed between serial calls.\n\n" + snippet,
+        )
 
 
 def test_update_tool_schemas_are_stable_across_serial_calls():
@@ -81,23 +85,26 @@ def test_update_tool_schemas_are_stable_across_serial_calls():
     tools = ts.get_tools("update")
     assert tools, "TaskScheduler.update should expose at least one tool"
 
-    # First pass
     first = {
         name: method_to_schema(_unwrap_callable(value), name)
         for name, value in tools.items()
     }
-    # Second pass
     second = {
         name: method_to_schema(_unwrap_callable(value), name)
         for name, value in tools.items()
     }
 
-    # Direct dict equality (order-insensitive)
-    assert first == second, "Tool schemas for update-tools changed between serial calls"
-
-    # Also ensure JSON-rendered form is stable (order-sensitive, sorted keys)
-    f_dump = json.dumps(first, sort_keys=True)
-    s_dump = json.dumps(second, sort_keys=True)
-    assert (
-        f_dump == s_dump
-    ), "JSON rendering of update-tool schemas changed between serial calls"
+    # Compare stable JSON render and surface first differing line with context
+    f_dump = json.dumps(first, sort_keys=True, indent=2)
+    s_dump = json.dumps(second, sort_keys=True, indent=2)
+    if f_dump != s_dump:
+        snippet = first_diff_block(
+            f_dump,
+            s_dump,
+            context=3,
+            label_a="First JSON",
+            label_b="Second JSON",
+        )
+        raise AssertionError(
+            "Tool schemas for update-tools changed between serial calls.\n\n" + snippet,
+        )

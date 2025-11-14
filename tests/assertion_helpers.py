@@ -10,6 +10,7 @@ as well as reusable prompt formatting assertions for system messages.
 import json
 import re
 from typing import Any, List, Dict, Optional
+from itertools import zip_longest
 
 
 def format_reasoning_steps(reasoning: List[Dict[str, Any]]) -> str:
@@ -162,3 +163,42 @@ def assert_time_footer(prompt: str, prefix: str) -> None:
     assert pattern.fullmatch(
         last,
     ), f"Unexpected last line: {last!r}\n\nFull system prompt:\n\n{prompt}"
+
+
+# ---------------------------------------------------------------------------
+# Diff helpers
+# ---------------------------------------------------------------------------
+
+
+def first_diff_block(
+    a: str,
+    b: str,
+    context: int = 3,
+    label_a: str = "First",
+    label_b: str = "Second",
+) -> str:
+    """
+    Return a compact snippet showing the first differing line between two strings,
+    with a few lines of context above and below the differing line.
+    Only the first differing location is shown (further diffs are not included).
+    """
+    a_lines = a.splitlines()
+    b_lines = b.splitlines()
+
+    for idx, (la, lb) in enumerate(zip_longest(a_lines, b_lines, fillvalue="<EOF>")):
+        if la != lb:
+            start = max(0, idx - context)
+            end = idx + context + 1
+            a_block = "\n".join(
+                a_lines[start : end if end <= len(a_lines) else len(a_lines)],
+            )
+            b_block = "\n".join(
+                b_lines[start : end if end <= len(b_lines) else len(b_lines)],
+            )
+            return (
+                f"First differing line at index {idx}:\n"
+                f"--- {label_a} ---\n{a_block}\n"
+                f"--- {label_b} ---\n{b_block}"
+            )
+
+    return "No differing line found (contents are identical)."

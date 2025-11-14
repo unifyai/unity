@@ -9,6 +9,7 @@ from tests.assertion_helpers import (
     assert_section_spacing,
     assert_selected_headers_have_blank_line,
     assert_time_footer,
+    first_diff_block,
 )
 
 from unity.transcript_manager.prompt_builders import build_ask_prompt
@@ -154,7 +155,9 @@ def test_transcript_manager_ask_prompt_is_stable_across_serial_builds():
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess()
     p2 = _build_prompt_in_subprocess()
-    assert p1 == p2, (
-        "TranscriptManager.ask system prompt changed between separate Python sessions.\n\n"
-        f"First:\n\n{p1}\n\nSecond:\n\n{p2}"
-    )
+    if p1 != p2:
+        snippet = first_diff_block(p1, p2, context=3, label_a="First", label_b="Second")
+        raise AssertionError(
+            "TranscriptManager.ask system prompt changed between separate Python sessions.\n\n"
+            + snippet,
+        )
