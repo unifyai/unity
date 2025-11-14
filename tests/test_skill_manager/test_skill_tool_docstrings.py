@@ -2,6 +2,9 @@ from __future__ import annotations
 
 
 from unity.skill_manager.skill_manager import SkillManager
+from unity.common.llm_helpers import method_to_schema
+import json
+from tests.assertion_helpers import first_diff_block
 
 
 def _unwrap_callable(tool):
@@ -22,3 +25,37 @@ def test_all_ask_tools_have_sufficient_docstrings():
         assert (
             len(doc) >= 100
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
+
+
+def test_ask_tool_schemas_are_stable_across_serial_calls():
+    """
+    The fully unpacked tool schemas (as seen by the LLM in the async tool loop)
+    should be identical across serial calls to the representation function.
+    """
+    sm = SkillManager()
+    tools = sm.get_tools("ask")
+    assert tools, "SkillManager.ask should expose at least one tool"
+
+    first = {
+        name: method_to_schema(_unwrap_callable(value), name)
+        for name, value in tools.items()
+    }
+    second = {
+        name: method_to_schema(_unwrap_callable(value), name)
+        for name, value in tools.items()
+    }
+
+    # Compare stable JSON render and surface first differing line with context
+    f_dump = json.dumps(first, sort_keys=True, indent=2)
+    s_dump = json.dumps(second, sort_keys=True, indent=2)
+    if f_dump != s_dump:
+        snippet = first_diff_block(
+            f_dump,
+            s_dump,
+            context=3,
+            label_a="First JSON",
+            label_b="Second JSON",
+        )
+        raise AssertionError(
+            "Tool schemas for ask-tools changed between serial calls.\n\n" + snippet,
+        )

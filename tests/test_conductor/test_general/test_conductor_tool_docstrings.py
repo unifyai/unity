@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from unity.conductor.conductor import Conductor
+from unity.common.llm_helpers import method_to_schema
+import json
+from tests.assertion_helpers import first_diff_block
 
 
 def _unwrap_callable(tool):
@@ -23,6 +26,40 @@ def test_all_ask_tools_have_sufficient_docstrings():
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
 
 
+def test_ask_tool_schemas_are_stable_across_serial_calls():
+    """
+    The fully unpacked tool schemas (as seen by the LLM in the async tool loop)
+    should be identical across serial calls to the representation function.
+    """
+    c = Conductor()
+    tools = c.get_tools("ask")
+    assert tools, "Conductor.ask should expose at least one tool"
+
+    first = {
+        name: method_to_schema(_unwrap_callable(value), name)
+        for name, value in tools.items()
+    }
+    second = {
+        name: method_to_schema(_unwrap_callable(value), name)
+        for name, value in tools.items()
+    }
+
+    # Compare stable JSON render and surface first differing line with context
+    f_dump = json.dumps(first, sort_keys=True, indent=2)
+    s_dump = json.dumps(second, sort_keys=True, indent=2)
+    if f_dump != s_dump:
+        snippet = first_diff_block(
+            f_dump,
+            s_dump,
+            context=3,
+            label_a="First JSON",
+            label_b="Second JSON",
+        )
+        raise AssertionError(
+            "Tool schemas for ask-tools changed between serial calls.\n\n" + snippet,
+        )
+
+
 def test_all_request_tools_have_sufficient_docstrings():
     c = Conductor()
     tools = c.get_tools("request")
@@ -36,3 +73,38 @@ def test_all_request_tools_have_sufficient_docstrings():
         assert (
             len(doc) >= 100
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
+
+
+def test_request_tool_schemas_are_stable_across_serial_calls():
+    """
+    The fully unpacked tool schemas (as seen by the LLM in the async tool loop)
+    should be identical across serial calls to the representation function.
+    """
+    c = Conductor()
+    tools = c.get_tools("request")
+    assert tools, "Conductor.request should expose at least one tool"
+
+    first = {
+        name: method_to_schema(_unwrap_callable(value), name)
+        for name, value in tools.items()
+    }
+    second = {
+        name: method_to_schema(_unwrap_callable(value), name)
+        for name, value in tools.items()
+    }
+
+    # Compare stable JSON render and surface first differing line with context
+    f_dump = json.dumps(first, sort_keys=True, indent=2)
+    s_dump = json.dumps(second, sort_keys=True, indent=2)
+    if f_dump != s_dump:
+        snippet = first_diff_block(
+            f_dump,
+            s_dump,
+            context=3,
+            label_a="First JSON",
+            label_b="Second JSON",
+        )
+        raise AssertionError(
+            "Tool schemas for request-tools changed between serial calls.\n\n"
+            + snippet,
+        )
