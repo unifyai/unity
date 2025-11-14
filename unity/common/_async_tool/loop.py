@@ -1023,13 +1023,9 @@ async def async_tool_loop_inner(
             return
         # ask
         if base == "ask":
-            if h is not None:
-                await forward_handle_call(  # type: ignore[name-defined]
-                    h,
-                    "ask",
-                    args if isinstance(args, dict) else {},
-                    fallback_positional_keys=["question", "content"],
-                )
+            # Do not forward ask here. The outer ask() starts a dedicated inspection
+            # loop and symbolically injects ask_* tool calls which adopt and run
+            # nested ask handles. Forwarding here would duplicate those calls.
             return
         # pause
         if base == "pause":
