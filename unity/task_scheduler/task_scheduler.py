@@ -378,10 +378,7 @@ class TaskScheduler(BaseTaskScheduler):
 
         id_map: Dict[int, int] = {}
         for lg in log_objs:
-            try:
-                id_map[lg.entries["task_id"]] = lg.id
-            except Exception:
-                continue
+            id_map[lg.entries["task_id"]] = lg.id
         return id_map
 
     def _write_entries_batched(
@@ -1370,13 +1367,10 @@ class TaskScheduler(BaseTaskScheduler):
                 if future_start:
                     status = Status.scheduled
                 else:
-                    try:
-                        primed_exists = (
-                            self._primed_task is not None
-                            and self._primed_task.status == Status.primed
-                        )
-                    except Exception:
-                        primed_exists = False
+                    primed_exists = (
+                        self._primed_task is not None
+                        and self._primed_task.status == Status.primed
+                    )
 
                     if self._active_task is None and not primed_exists:
                         status = Status.primed
@@ -1413,22 +1407,20 @@ class TaskScheduler(BaseTaskScheduler):
         # - If schedule provided, inherit queue_id from predecessor when possible;
         #   otherwise, allocate a fresh queue id (head case).
         derived_qid = None
-        try:
-            if queue_id is not None:
-                derived_qid = int(queue_id)
-            elif schedule is not None:
-                prev_tid = sched_prev(schedule)
-                if prev_tid is not None:
-                    try:
-                        prev_task = self._get_task_or_raise(int(prev_tid))
-                        derived_qid = prev_task.queue_id
-                    except Exception:
-                        derived_qid = None
-                if derived_qid is None:
-                    # Head or standalone scheduled/queued task → allocate new queue id
-                    derived_qid = self._allocate_new_queue_id()
-        except Exception:
-            derived_qid = None
+        prev_task = None
+        if queue_id is not None:
+            derived_qid = int(queue_id)
+        elif schedule is not None:
+            prev_tid = sched_prev(schedule)
+            if prev_tid is not None:
+                try:
+                    prev_task = self._get_task_or_raise(int(prev_tid))
+                    derived_qid = prev_task.queue_id
+                except Exception:
+                    derived_qid = None
+            if derived_qid is None:
+                # Head or standalone scheduled/queued task → allocate new queue id
+                derived_qid = self._allocate_new_queue_id()
 
         task_details = TaskBase(
             name=name,
@@ -1461,24 +1453,14 @@ class TaskScheduler(BaseTaskScheduler):
         # Keep linkage symmetric only when linkage exists; reuse any prefetched
         # neighbour row (e.g., predecessor) to avoid an extra backend read.
         if schedule is not None:
-            prefetched = None
-            try:
-                # from earlier derivation
-                prev_tid = sched_prev(schedule)
-                if prev_tid is not None:
-                    try:
-                        prev_task = locals().get("prev_row")
-                    except Exception:
-                        prev_task = None
-                    if prev_task is not None:
-                        prefetched = {int(prev_tid): prev_task}
-            except Exception:
-                prefetched = None
-            self._sync_adjacent_links(
-                task_id=task_id,
-                schedule=schedule,
-                prefetched_rows=prefetched,
-            )
+            # from earlier derivation
+            prev_tid = sched_prev(schedule)
+            if prev_tid is not None and prev_task is not None:
+                self._sync_adjacent_links(
+                    task_id=task_id,
+                    schedule=schedule,
+                    prefetched_rows={int(prev_tid): prev_task},
+                )
 
         # ── Ensure the in-memory cache reflects any linkage tweaks ──
         if status == Status.primed:
@@ -2596,11 +2578,8 @@ class TaskScheduler(BaseTaskScheduler):
         tasks_by_ids: Dict[int, Task] = {t.task_id: t for t in tasks}
         # Allow editing a queue that includes the currently active task; preserve its status below
         active_tid: Optional[int] = None
-        try:
-            if self._active_task is not None:
-                active_tid = self._active_task.task_id
-        except Exception:
-            active_tid = None
+        if self._active_task is not None:
+            active_tid = self._active_task.task_id
 
         # Allocate queue id when needed
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
@@ -2783,20 +2762,15 @@ class TaskScheduler(BaseTaskScheduler):
         last_checkpoint_id = cid  # noqa: F841
 
         # Best-effort: refresh LocalTaskView membership mapping
-        try:
-            if target_qid is not None:
-                _head_start_local = (
-                    queue_start_at
-                    if queue_start_at is not None
-                    else existing_head_start
-                )
-                self._view.update_after_queue_materialized(
-                    queue_id=target_qid,
-                    order=order,
-                    head_start_at=_head_start_local,
-                )
-        except Exception:
-            pass
+        if target_qid is not None:
+            _head_start_local = (
+                queue_start_at if queue_start_at is not None else existing_head_start
+            )
+            self._view.update_after_queue_materialized(
+                queue_id=target_qid,
+                order=order,
+                head_start_at=_head_start_local,
+            )
 
         return {
             "outcome": "queue set",

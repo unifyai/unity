@@ -858,10 +858,7 @@ class LocalTaskView:
         try:
             result = self._store.delete(logs=logs)
         finally:
-            try:
-                self._queue_index_stale = True
-            except Exception:
-                pass
+            self._queue_index_stale = True
         return result
 
     # ------------------------------- Metrics -------------------------------
