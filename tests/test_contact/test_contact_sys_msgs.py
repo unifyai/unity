@@ -152,21 +152,6 @@ def test_contact_manager_update_system_prompt_formatting():
 # ─────────────────────────────────────────────────────────────────────────────
 # Stability: prompts should be identical across serial builder calls
 # ─────────────────────────────────────────────────────────────────────────────
-def _normalize_prompt_for_stability(prompt: str) -> str:
-    """
-    Remove/normalize inherently dynamic parts from a system prompt to enable
-    stable equality checks across serial builds.
-    """
-    # 1) Normalize the time footer line (e.g., "Current UTC time is 2025-01-01 12:34:56 UTC.")
-    prompt = re.sub(
-        r"Current UTC time is \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\.\Z",
-        "Current UTC time is <TIMESTAMP>.",
-        prompt.strip(),
-        flags=re.M,
-    )
-    # 2) Normalize any memory addresses that may appear in repr() of default values
-    prompt = re.sub(r"0x[0-9a-fA-F]+", "0xADDR", prompt)
-    return prompt
 
 
 def test_contact_manager_ask_prompt_is_stable_across_serial_builds():
@@ -184,10 +169,8 @@ def test_contact_manager_ask_prompt_is_stable_across_serial_builds():
         columns=cm._list_columns(),
     )
 
-    n1 = _normalize_prompt_for_stability(p1)
-    n2 = _normalize_prompt_for_stability(p2)
     assert (
-        n1 == n2
+        p1 == p2
     ), f"Ask system prompt changed between serial builds.\n\nFirst:\n\n{p1}\n\nSecond:\n\n{p2}"
 
 
@@ -206,8 +189,6 @@ def test_contact_manager_update_prompt_is_stable_across_serial_builds():
         columns=cm._list_columns(),
     )
 
-    n1 = _normalize_prompt_for_stability(p1)
-    n2 = _normalize_prompt_for_stability(p2)
     assert (
-        n1 == n2
+        p1 == p2
     ), f"Update system prompt changed between serial builds.\n\nFirst:\n\n{p1}\n\nSecond:\n\n{p2}"
