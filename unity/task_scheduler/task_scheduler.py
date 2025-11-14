@@ -74,9 +74,7 @@ from .types.schedule import (
     sched_next,
 )
 from .queue_utils import sync_adjacent_links as _q_sync_adjacent_links
-from .activation_ops import (
-    detach_from_queue_for_activation as _ops_detach_for_activation,
-)
+from .activation_ops import detach_from_queue_for_activation
 from .reintegration import ReintegrationManager
 from ..common.filter_utils import normalize_filter_expr
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
@@ -745,18 +743,18 @@ class TaskScheduler(BaseTaskScheduler):
         # Adjust queue linkages for activation (and record reintegration plan).
         # detach=True → isolation semantics; detach=False → chain semantics.
 
-        self._detach_from_queue_for_activation(
+        detach_from_queue_for_activation(
+            self,
             task_id=task_id,
             detach=detach,
             unlink_from_prev=unlink_from_prev,
         )
 
         # Build the active plan via the actor and wrap it so the task table stays in sync
-        _task_desc = task.description or task.name or ""
 
         handle = await ActiveTask.create(
             self._actor,
-            task_description=_task_desc,
+            task_description=task.description or task.name,
             _parent_chat_context=parent_chat_context,
             _clarification_up_q=clarification_up_q,
             _clarification_down_q=clarification_down_q,
@@ -824,10 +822,10 @@ class TaskScheduler(BaseTaskScheduler):
             clarification_down_q=clarification_down_q,
             activated_by=ActivatedBy.explicit,
             # Detach first task when explicitly requested; otherwise keep queue semantics
-            detach=bool(detach),
+            detach=detach,
             # Only at creation: if we are starting from a mid-queue task in chained mode,
             # unlink from predecessor once to make this the effective head.
-            unlink_from_prev=(not bool(detach)),
+            unlink_from_prev=not detach,
         )
         return ActiveQueue(
             self,
@@ -3334,20 +3332,6 @@ class TaskScheduler(BaseTaskScheduler):
     # ------------------------------------------------------------------ #
     #  Centralised helpers for queue link manipulation                    #
     # ------------------------------------------------------------------ #
-
-    def _detach_from_queue_for_activation(
-        self,
-        *,
-        task_id: int,
-        detach: bool = True,
-        unlink_from_prev: bool = False,
-    ) -> None:
-        _ops_detach_for_activation(
-            self,
-            task_id=task_id,
-            detach=detach,
-            unlink_from_prev=unlink_from_prev,
-        )
 
     _TERMINAL_STATUSES = {Status.completed, Status.cancelled, Status.failed}
 
