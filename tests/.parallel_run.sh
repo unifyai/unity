@@ -32,6 +32,9 @@ for _arg in "$@"; do
 done
 set -- "${POSITIONAL_ARGS[@]}"
 
+# Always operate from the repo root for discovery, regardless of where the script was invoked
+cd "$REPO_ROOT"
+
 # Build the command to run in each tmux session
 run_cmd() {
   local target="$1"   # pytest target (file path or node id)
@@ -101,25 +104,53 @@ if (( $# == 0 )); then
   roots=( "." )
 else
   for arg in "$@"; do
-    if [[ -f "$arg" ]]; then
-      # only include Python test files directly (names starting with test_)
-      if [[ "${arg##*/}" == test_*.py ]]; then
-        direct_files+=( "$arg" )
-      fi
-    elif [[ "$arg" == *"::"* ]]; then
-      # pytest node id: extract base file and validate it exists and is a test file
+    if [[ "$arg" == *"::"* ]]; then
+      # pytest node id: extract base file and suffix; resolve base relative to caller/tests/root
       base="${arg%%::*}"
+      suffix="${arg#${base}::}"
+      base_path=""
       if [[ -f "$base" ]]; then
-        if [[ "${base##*/}" == test_*.py ]]; then
-          direct_nodes+=( "$arg" )
+        base_path="$base"
+      elif [[ -f "$SCRIPT_DIR/$base" ]]; then
+        base_path="$SCRIPT_DIR/$base"
+      elif [[ -f "$REPO_ROOT/$base" ]]; then
+        base_path="$REPO_ROOT/$base"
+      fi
+      if [[ -n "$base_path" ]]; then
+        repo_rel="${base_path#$REPO_ROOT/}"
+        if [[ "${repo_rel##*/}" == test_*.py ]]; then
+          direct_nodes+=( "${repo_rel}::${suffix}" )
         else
           echo "Warning: Skipping node not under a test_*.py file: $arg" >&2
         fi
       else
         echo "Warning: Skipping non-existent test node (file missing): $arg" >&2
       fi
-    elif [[ -d "$arg" ]]; then
-      roots+=( "$arg" )
+    elif [[ -f "$arg" || -f "$SCRIPT_DIR/$arg" || -f "$REPO_ROOT/$arg" ]]; then
+      # only include Python test files directly (names starting with test_)
+      file_path="$arg"
+      if [[ ! -f "$file_path" ]]; then
+        if [[ -f "$SCRIPT_DIR/$arg" ]]; then
+          file_path="$SCRIPT_DIR/$arg"
+        else
+          file_path="$REPO_ROOT/$arg"
+        fi
+      fi
+      repo_rel="${file_path#$REPO_ROOT/}"
+      if [[ "${repo_rel##*/}" == test_*.py ]]; then
+        direct_files+=( "$repo_rel" )
+      fi
+    elif [[ -d "$arg" || -d "$SCRIPT_DIR/$arg" || -d "$REPO_ROOT/$arg" ]]; then
+      dir_path="$arg"
+      if [[ ! -d "$dir_path" ]]; then
+        if [[ -d "$SCRIPT_DIR/$arg" ]]; then
+          dir_path="$SCRIPT_DIR/$arg"
+        else
+          dir_path="$REPO_ROOT/$arg"
+        fi
+      fi
+      repo_rel="${dir_path#$REPO_ROOT/}"
+      roots+=( "$repo_rel" )
     else
       echo "Warning: Skipping non-existent path: $arg" >&2
     fi
