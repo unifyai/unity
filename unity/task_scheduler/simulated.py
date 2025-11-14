@@ -16,8 +16,7 @@ from typing import List, Optional, Callable, Any
 import unify
 
 from ..common.async_tool_loop import SteerableToolHandle
-from ..common._async_tool.loop_config import TOOL_LOOP_LINEAGE
-from ..constants import LOGGER, LLM_IO_DEBUG, SESSION_ID
+from ..constants import LOGGER
 from .base import BaseTaskScheduler
 from .prompt_builders import (
     build_ask_prompt,
@@ -29,14 +28,16 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..common.simulated import mirror_task_scheduler_tools
-from secrets import token_hex
+from ..common.simulated import (
+    mirror_task_scheduler_tools,
+    SimulatedLineage,
+    SimulatedLog,
+    simulated_llm_roundtrip,
+    SimulatedHandleMixin,
+)
 
-# Per-run file sink for simulated LLM I/O logs (request/response)
-_SIM_TS_LLM_IO_DIR: str | None = None
 
-
-class _SimulatedTaskScheduleHandle(SteerableToolHandle):
+class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
     """A minimal, LLM-backed handle for ask/update interactions."""
 
     def __init__(
@@ -65,14 +66,9 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         self._needs_clar = _requests_clarification
         # Human-friendly log label derived from current lineage, mirroring async loop style:
         # "<outer...>->SimulatedTaskScheduler.<mode>(abcd)"
-        try:
-            parent_lineage = TOOL_LOOP_LINEAGE.get([])
-            parts = list(parent_lineage) if isinstance(parent_lineage, list) else []
-        except Exception:
-            parts = []
-        segment = f"SimulatedTaskScheduler.{self._mode}"
-        base = "->".join([*parts, segment]) if parts else segment
-        self._log_label = f"{base}({token_hex(2)})"
+        self._log_label = SimulatedLineage.make_label(
+            f"SimulatedTaskScheduler.{self._mode}",
+        )
 
         # ── fire the clarification request right away ──────────────────
         self._clar_requested = False
@@ -127,123 +123,21 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
             prompt_parts = [self._initial_text] + self._interjections
             user_block = "\n\n---\n\n".join(prompt_parts)
 
-            # LLM step – simulated thinking with timing
-            import time as _t
-            import os as _os
-            import re as _re
-            from pathlib import Path as _Path
-            import json as _json
-
-            t0 = _t.perf_counter()
+            # LLM roundtrip using shared helper (includes timing, gated reply body, and optional dumps)
             try:
-                LOGGER.info(f"🔄 [{self._log_label}] LLM simulating…")
+                sys_msg = getattr(self._llm, "system_message", None)
             except Exception:
-                pass
-
-            # LLM_IO_DEBUG: write request payload
-            _llm_io_debug = bool(LLM_IO_DEBUG)
-            _dir: str | None = None
-            if _llm_io_debug:
-                try:
-                    global _SIM_TS_LLM_IO_DIR
-                    if _SIM_TS_LLM_IO_DIR is None:
-                        root = _Path(_os.getcwd())
-                        logs_dir = root / ".llm_io_debug"
-                        logs_dir.mkdir(parents=True, exist_ok=True)
-                        try:
-                            session_safe = _re.sub(r"[^0-9A-Za-z._-]", "-", SESSION_ID)
-                        except Exception:
-                            session_safe = (
-                                SESSION_ID.replace(":", "-")
-                                .replace("+", "-")
-                                .replace("/", "-")
-                            )
-                        session_dir = logs_dir / f"{session_safe}"
-                        session_dir.mkdir(parents=True, exist_ok=True)
-                        _SIM_TS_LLM_IO_DIR = str(session_dir)
-                    _dir = _SIM_TS_LLM_IO_DIR
-                except Exception:
-                    _dir = None
-
-                def _io_write(header: str, body: str) -> None:
-                    if not _llm_io_debug or _dir is None:
-                        return
-                    try:
-                        from datetime import datetime as _dt, timezone as _tz
-                        import time as _time
-
-                        d = _Path(_dir)
-                        now = _dt.now(_tz.utc)
-                        hhmmss = now.strftime("%H%M%S")
-                        ns = _time.time_ns() % 1_000_000_000
-                        base = f"{hhmmss}_{ns:09d}"
-                        path = d / f"{base}.txt"
-                        if path.exists():
-                            i = 1
-                            while True:
-                                cand = d / f"{base}_{i}.txt"
-                                if not cand.exists():
-                                    path = cand
-                                    break
-                                i += 1
-                        with open(path, "w", encoding="utf-8") as f:
-                            f.write(f"🔄 [{self._log_label}] {header}\n")
-                            f.write(body.rstrip())
-                            f.write("\n")
-                        try:
-                            kind = (
-                                "request" if "request" in header.lower() else "response"
-                            )
-                            LOGGER.info(f"📝 LLM {kind} written to {path}")
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-
-                try:
-                    _sys = getattr(self._llm, "system_message", None)
-                except Exception:
-                    _sys = None
-                req_payload = {
+                sys_msg = None
+            answer = await simulated_llm_roundtrip(
+                self._llm,
+                label=self._log_label,
+                prompt=user_block,
+                sys_for_dump=sys_msg,
+                request_dump_body={
                     "model": getattr(self._llm, "model", None),
                     "messages": [{"role": "user", "content": user_block}],
-                }
-                sys_block = f"System message:\n{_sys}\n\n" if _sys else ""
-                _io_write(
-                    "LLM request ➡️:",
-                    f"{sys_block}{_json.dumps(req_payload, indent=4)}",
-                )
-
-            answer = await self._llm.generate(user_block)
-            dt_ms = int((_t.perf_counter() - t0) * 1000)
-            # Show reply body only when there's no outer async tool loop; otherwise the outer loop
-            # will record the tool result and duplication is noisy.
-            try:
-                try:
-                    parent_lineage = TOOL_LOOP_LINEAGE.get([])
-                    has_outer = (
-                        isinstance(parent_lineage, list) and len(parent_lineage) > 0
-                    )
-                except Exception:
-                    has_outer = False
-                if has_outer:
-                    LOGGER.info(f"✅ [{self._log_label}] LLM replied in {dt_ms} ms")
-                else:
-                    _ans_preview = str(answer)
-                    if len(_ans_preview) > 800:
-                        _ans_preview = _ans_preview[:800] + "…"
-                    LOGGER.info(
-                        f"✅ [{self._log_label}] LLM replied in {dt_ms} ms:\n{_ans_preview}",
-                    )
-            except Exception:
-                pass
-
-            # LLM_IO_DEBUG: write response payload
-            if _llm_io_debug:
-                try:
-                    _io_write("LLM response ⬅️:", str(answer))
-                except Exception:
-                    pass
+                },
+            )
 
             self._answer = answer
             # very small, synthetic trace of "reasoning"
@@ -261,11 +155,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         """Append a follow-up message that will be folded into the prompt."""
         if self._cancelled:
             return "Interaction already stopped."
-        try:
-            _preview = message if len(message) <= 120 else f"{message[:120]}…"
-            LOGGER.info(f"💬 [{self._log_label}] Interject requested: {_preview}")
-        except Exception:
-            pass
+        self._log_interject(message)
         self._interjections.append(message)
         return "Noted."
 
@@ -275,11 +165,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         The `cancel` flag is required but ignored; the interaction is always
         cancelled.
         """
-        try:
-            suffix = f" – reason: {reason}" if reason else ""
-            LOGGER.info(f"🛑 [{self._log_label}] Stop requested{suffix}")
-        except Exception:
-            pass
+        self._log_stop(reason)
         self._cancelled = True
         self._done_event.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
@@ -287,20 +173,14 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
     def pause(self) -> str:
         if self._paused:
             return "Already paused."
-        try:
-            LOGGER.info(f"⏸️ [{self._log_label}] Pause requested")
-        except Exception:
-            pass
+        self._log_pause()
         self._paused = True
         return "Paused."
 
     def resume(self) -> str:
         if not self._paused:
             return "Already running."
-        try:
-            LOGGER.info(f"▶️ [{self._log_label}] Resume requested")
-        except Exception:
-            pass
+        self._log_resume()
         self._paused = False
         return "Resumed."
 
@@ -361,13 +241,12 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle):
         # Align with real async tool loop: use a concise "Question(<parent_label>)" log label
         # and avoid lineage chaining arrows here.
         try:
-            handle._log_label = f"Question({self._log_label})({token_hex(2)})"  # type: ignore[attr-defined]
+            handle._log_label = SimulatedLineage.question_label(self._log_label)  # type: ignore[attr-defined]
         except Exception:
             pass
 
         try:
-            _preview = question if len(question) <= 120 else f"{question[:120]}…"
-            LOGGER.info(f"❓ [{handle._log_label}] Ask requested: {_preview}")  # type: ignore[attr-defined]
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), question)  # type: ignore[arg-type]
         except Exception:
             pass
 
@@ -533,8 +412,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         # Emit a human-facing log for the initial ask so tests see immediate feedback
         try:
-            _preview = text if len(text) <= 120 else f"{text[:120]}…"
-            LOGGER.info(f"❓ [{handle._log_label}] Ask requested: {_preview}")  # type: ignore[attr-defined]
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
         except Exception:
             pass
 
@@ -595,8 +473,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         # Emit a human-facing log for the initial update so tests see immediate feedback
         try:
-            _preview = text if len(text) <= 120 else f"{text[:120]}…"
-            LOGGER.info(f"📝 [{handle._log_label}] Update requested: {_preview}")  # type: ignore[attr-defined]
+            SimulatedLog.log_request("update", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
         except Exception:
             pass
 
@@ -661,14 +538,8 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         # Emit a scheduler-level execute log with a stable label
         try:
-            # Build nested label from current lineage
-            parent_lineage = TOOL_LOOP_LINEAGE.get([])
-            parts = list(parent_lineage) if isinstance(parent_lineage, list) else []
-            segment = "SimulatedTaskScheduler.execute"
-            base = "->".join([*parts, segment]) if parts else segment
-            _exec_label = f"{base}({token_hex(2)})"
-            _preview = text if len(text) <= 120 else f"{text[:120]}…"
-            LOGGER.info(f"🎬 [{_exec_label}] Execute requested: {_preview}")
+            _exec_label = SimulatedLineage.make_label("SimulatedTaskScheduler.execute")
+            SimulatedLog.log_request("execute", _exec_label, text)
         except Exception:
             pass
 
