@@ -283,7 +283,7 @@ class TasksStore:
             for e in normalised:
                 lg = unify.log(context=self._ctx, new=True, **e)
                 try:
-                    log_ids.append(int(getattr(lg, "id", None)))
+                    log_ids.append(lg.id)
                 except Exception:
                     pass
             return {"log_event_ids": log_ids}
@@ -717,11 +717,10 @@ class LocalTaskView:
         """
         log_obj = self._store.log(entries=entries, new=new)
         try:
-            e = getattr(log_obj, "entries", {}) or {}
-            tid = e.get("task_id")
-            lid = getattr(log_obj, "id", None)
-            if isinstance(tid, int) and isinstance(lid, int):
-                self.cache_log_id(task_id=int(tid), log_id=int(lid))
+            task_id = log_obj.entries.get("task_id")
+            log_id = log_obj.id
+            if task_id is not None and log_id is not None:
+                self.cache_log_id(task_id=task_id, log_id=log_id)
         except Exception:
             pass
         try:
@@ -747,11 +746,10 @@ class LocalTaskView:
             if isinstance(result, list):
                 for lg in result:
                     try:
-                        e = getattr(lg, "entries", {}) or {}
-                        tid = e.get("task_id")
-                        lid = getattr(lg, "id", None)
-                        if isinstance(tid, int) and isinstance(lid, int):
-                            self.cache_log_id(task_id=int(tid), log_id=int(lid))
+                        task_id = lg.entries.get("task_id")
+                        log_id = lg.id
+                        if task_id is not None and log_id is not None:
+                            self.cache_log_id(task_id=task_id, log_id=log_id)
                     except Exception:
                         continue
         except Exception:
@@ -793,21 +791,20 @@ class LocalTaskView:
         by_tid_to_log_id: Dict[int, int] = {}
         for lg in logs or []:
             try:
-                e = getattr(lg, "entries", {}) or {}
-                tid = e.get("task_id")
-                lid = getattr(lg, "id", None)
-                if isinstance(tid, int) and isinstance(lid, int):
-                    by_tid_to_log_id[int(tid)] = int(lid)
+                task_id = lg.entries.get("task_id")
+                log_id = lg.id
+                if task_id is not None and log_id is not None:
+                    by_tid_to_log_id[task_id] = log_id
             except Exception:
                 continue
 
         log_ids: List[int] = []
         entries_list: List[Dict[str, Any]] = []
-        for tid in target_tids:
-            lid = by_tid_to_log_id.get(int(tid))
-            if isinstance(lid, int):
-                log_ids.append(int(lid))
-                entries_list.append(entries_by_tid[int(tid)])
+        for task_id in target_tids:
+            log_id = by_tid_to_log_id.get(task_id)
+            if log_id is not None:
+                log_ids.append(log_id)
+                entries_list.append(entries_by_tid[task_id])
 
         if not log_ids:
             return {"detail": "No matching task_ids resolved"}
