@@ -57,7 +57,6 @@ from .timeout_timer import TimeoutTimer
 from .messages import (
     insert_tool_message_after_assistant,
     ensure_placeholders_for_pending,
-    propagate_stop_once,
     forward_handle_call,
     schedule_missing_for_message,
     build_helper_ack_content,
@@ -686,10 +685,6 @@ async def async_tool_loop_inner(
             )
 
     # (Initial live-images overview already injected directly when seeding messages.)
-
-    # Ensure we forward stop to nested handles at most once, even if multiple
-    # branches detect cancellation/stop around the same time.
-    _stop_forwarded_once: bool = False
 
     # Preflight repair: backfill any pre-existing assistant tool_calls without replies
     with suppress(Exception):
@@ -1542,13 +1537,8 @@ async def async_tool_loop_inner(
                             msg_dispatcher=_msg_dispatcher,
                         )
                     if cancel_event.is_set():
-                        # Forward stop to any nested handles before aborting
-                        with suppress(Exception):
-                            _stop_forwarded_once = await propagate_stop_once(
-                                tools_data.info,
-                                _stop_forwarded_once,
-                                "outer-loop cancelled",
-                            )
+                        # Cancellation requested – rely on mirrored stop to have
+                        # already reached children; abort loop gracefully.
                         raise asyncio.CancelledError
                     # No graceful stop path
                     continue  # remain paused: do not allow the LLM to speak while paused
@@ -1598,12 +1588,8 @@ async def async_tool_loop_inner(
 
                     # cancelled?
                     if cancel_event.is_set():
-                        with suppress(Exception):
-                            _stop_forwarded_once = await propagate_stop_once(
-                                tools_data.info,
-                                _stop_forwarded_once,
-                                "outer-loop cancelled",
-                            )
+                        # Cancellation requested – rely on mirrored stop to have
+                        # already reached children; abort loop gracefully.
                         raise asyncio.CancelledError
                     # remain paused
                     continue  # top-of-loop, still paused
@@ -1911,12 +1897,7 @@ async def async_tool_loop_inner(
                     continue  # → loop, will be processed in 0.
 
                 if cancel_waiter in done:
-                    with suppress(Exception):
-                        _stop_forwarded_once = await propagate_stop_once(
-                            tools_data.info,
-                            _stop_forwarded_once,
-                            "outer-loop cancelled",
-                        )
+                    # Cancellation wins; mirrored stop is the only propagation path.
                     raise asyncio.CancelledError  # cancellation wins
                 # No graceful stop path
 
@@ -3019,12 +3000,6 @@ async def async_tool_loop_inner(
         # resources cleanly.  Only after every task has finished/aborted do
         # we re-raise the same `CancelledError`, preserving expected asyncio
         # semantics for upstream callers.
-        with suppress(Exception):
-            _stop_forwarded_once = await propagate_stop_once(
-                tools_data.info,
-                _stop_forwarded_once,
-                "outer-loop cancelled",
-            )
         await tools_data.cancel_pending_tasks()
         raise
     finally:

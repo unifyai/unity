@@ -653,11 +653,22 @@ async def test_pause_nested_loop_calls_pause():
     """
     pause_called = {"count": 0}
 
-    async def dummy_long_job() -> (
-        AsyncToolLoopHandle
-    ):  # returns quickly, but "long" enough to pause
+    async def dummy_long_job() -> AsyncToolLoopHandle:
+        """
+        Return a handle whose underlying coroutine will not complete until the
+        pause helper has been invoked (deterministic gating).
+        """
+        pause_called_gate = asyncio.Event()
+
+        async def _run():
+            # Block completion until pause is called
+            await pause_called_gate.wait()
+            # Small tail to mimic finishing after pause
+            await asyncio.sleep(0.1)
+            return "done-after-pause"
+
         handle = AsyncToolLoopHandle(
-            task=asyncio.create_task(asyncio.sleep(16)),
+            task=asyncio.create_task(_run()),
             interject_queue=asyncio.Queue(),
             cancel_event=asyncio.Event(),
             stop_event=asyncio.Event(),
@@ -666,6 +677,7 @@ async def test_pause_nested_loop_calls_pause():
         # expose `.pause` and `.resume`
         async def _pause(self):  # noqa: D401
             pause_called["count"] += 1
+            pause_called_gate.set()
 
         async def _resume(self):  # noqa: D401
             pass  # no-op for this test
@@ -687,8 +699,8 @@ async def test_pause_nested_loop_calls_pause():
     )
     client.set_system_message(
         "1️⃣  Call `dummy_long_job`.\n"
-        "2️⃣  When the *user* says **pause**, call the helper whose name "
-        "starts with `_pause_`.\n"
+        "2️⃣  When the *user* says **pause**, you MUST immediately call exactly once the helper whose name "
+        "starts with `pause_` (e.g. `pause_dummy_long_job_<id>`). Do NOT call any other helpers before this.\n"
         "2️⃣b If waiting is still needed, call the `wait` helper.\n"
         "3️⃣  Keep waiting for the job to finish and do not produce any other reply; then reply with 'paused done'.",
     )
@@ -704,6 +716,9 @@ async def test_pause_nested_loop_calls_pause():
     # Wait deterministically until the tool has been scheduled so the pause helper exists
     await _wait_for_tool_request(client, "dummy_long_job")
     await top.interject("pause")
+    # Ensure the assistant actually invoked the pause helper and we saw its ack
+    await _wait_for_assistant_call_prefix(client, "pause_")
+    await _wait_for_tool_message_prefix(client, "pause ")
 
     final = await top.result()
 
