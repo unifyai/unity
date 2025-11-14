@@ -621,9 +621,6 @@ class ToolsData:
                     _m_base = method.lower().strip()
                     if _m_base in ("pause", "resume"):
                         continue
-                    # Do NOT replay 'ask' – outer ask loop injects ask_* tools to handle this
-                    if _m_base == "ask":
-                        continue
                     args = rec.get("args") or ()
                     kwargs = rec.get("kwargs") or {}
                     fb = rec.get("fallback") or ()

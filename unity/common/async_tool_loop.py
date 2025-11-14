@@ -668,10 +668,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             images=images,
         )
 
-        # Grant the inspection loop an immediate LLM turn (without adding a new message)
-        with suppress(Exception):
-            await helper_handle._queue.put({"_replay": True})  # type: ignore[attr-defined]
-
         # Monkey-patch result() to record the assistant answer when available
         if not _return_reasoning_steps:
             _orig_result = helper_handle.result
