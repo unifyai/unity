@@ -2755,52 +2755,7 @@ async def async_tool_loop_inner(
                             )
                             continue  # handled interject helper for live target
 
-                    elif lname_cf.startswith("ask_"):
-                        # Forward 'ask' helper to the specific child
-                        with suppress(Exception):
-                            payload = json.loads(call["function"]["arguments"]) or {}
-                            question = payload.get("question") or payload.get("content")
-                            if question is None:
-                                question = ""
-                        if "payload" not in locals():
-                            payload = {}
-                            question = "<unparsable>"
-
-                        call_id_suffix = name.split("_")[-1]
-                        tgt_task = next(
-                            (
-                                t
-                                for t, inf in tools_data.info.items()
-                                if str(inf.call_id).endswith(call_id_suffix)
-                            ),
-                            None,
-                        )
-                        pretty_name = (
-                            f"ask {tools_data.info[tgt_task].name}({question})"
-                            if tgt_task
-                            else name
-                        )
-                        if tgt_task:
-                            with suppress(Exception):
-                                await _dispatch_steering_to_child(
-                                    "ask",
-                                    payload,
-                                    tools_data.info[tgt_task],
-                                )
-                            tool_msg = create_tool_call_message(
-                                name=pretty_name,
-                                call_id=call["id"],
-                                content=f'Question "{question}" forwarded to the running tool.',
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                msg,
-                                tool_msg,
-                                client,
-                                _msg_dispatcher,
-                            )
-                            continue
-                        # No matching target child – treat as a BASE tool call (do not continue)
+                    # (ask_* helpers are treated as base dynamic tools; no special-case here)
 
                     # Respect hidden per-tool total-call quotas (pre-pruned); guard
                     if tools_data.has_exceeded_quota_for_tool(name):
