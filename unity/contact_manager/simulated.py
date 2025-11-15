@@ -572,9 +572,30 @@ class SimulatedContactManager(BaseContactManager):
             f"Contact JSON schema (for each item in `contacts`):\n{schema_json}"
         )
 
+        # Use unified simulated roundtrip so standard logs ("LLM simulating…") are emitted
+        try:
+            sys_msg = getattr(self._llm, "system_message", None)
+        except Exception:
+            sys_msg = None
+        # Prefer the scheduled label when available so logs correlate
+        label = (
+            sched[0]
+            if sched is not None and isinstance(sched, tuple) and len(sched) >= 1
+            else SimulatedLineage.make_label("SimulatedContactManager.filter_contacts")
+        )
+
         async def _call_llm() -> str:
             self._llm.set_response_format(_ContactsListResponse)
-            return await self._llm.generate(prompt)
+            return await simulated_llm_roundtrip(
+                self._llm,
+                label=label,
+                prompt=prompt,
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
 
         try:
             try:
@@ -772,9 +793,31 @@ class SimulatedContactManager(BaseContactManager):
             indent=2,
         )
 
+        # Use unified simulated roundtrip so standard logs ("LLM simulating…") are emitted
+        try:
+            sys_msg = getattr(self._llm, "system_message", None)
+        except Exception:
+            sys_msg = None
+        label = (
+            sched[0]
+            if sched is not None and isinstance(sched, tuple) and len(sched) >= 1
+            else SimulatedLineage.make_label("SimulatedContactManager.update_contact")
+        )
+
         async def _call_llm() -> str:
             self._llm.set_response_format(_UpdateOutcome)
-            return await self._llm.generate(f"{instruction}\n\n{user_payload}")
+            return await simulated_llm_roundtrip(
+                self._llm,
+                label=label,
+                prompt=f"{instruction}\n\n{user_payload}",
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [
+                        {"role": "user", "content": f"{instruction}\n\n{user_payload}"},
+                    ],
+                },
+            )
 
         try:
             try:
