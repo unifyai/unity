@@ -18,7 +18,7 @@ async def test_task_nested_steer_interject_reaches_inner_ask():
     # Keep the inner actor alive long enough for nested steering
     from unity.actor.simulated import SimulatedActor  # local import for test isolation
 
-    ts = TaskScheduler(actor=SimulatedActor(steps=3, duration=None))
+    ts = TaskScheduler(actor=SimulatedActor(steps=None, duration=None))
 
     # Start an update flow that will run an inner ask on the first turn
     h = await ts.update(

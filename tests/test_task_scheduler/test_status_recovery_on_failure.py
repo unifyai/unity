@@ -10,8 +10,8 @@ from unity.task_scheduler.types.status import Status
 async def test_defer_reinstate_failure_fallback_downgrades_status(monkeypatch):
     """If reinstate fails during a defer stop, status should downgrade to prior or 'queued'."""
 
-    # Use a fast actor
-    actor = SimulatedActor(steps=5)
+    # Use an indefinite actor; stop explicitly
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Create a queued task and start it
@@ -44,7 +44,7 @@ async def test_defer_reinstate_failure_fallback_downgrades_status(monkeypatch):
 async def test_orphan_active_guard_prevents_new_execution(monkeypatch):
     """If a row is marked 'active' without an active pointer, execute should refuse to start a new task."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Create task and manually simulate an orphan 'active' row by updating instance status via internal instance method
@@ -58,6 +58,12 @@ async def test_orphan_active_guard_prevents_new_execution(monkeypatch):
     # Now, attempt to start another task should be rejected
     with pytest.raises(RuntimeError):
         await ts.execute(task_id=tid)
+    # Cleanup: stop the original handle to avoid leaking background threads
+    try:
+        h.stop(cancel=False)
+        await h.result()
+    except Exception:
+        pass
 
 
 @pytest.mark.asyncio
@@ -65,7 +71,7 @@ async def test_orphan_active_guard_prevents_new_execution(monkeypatch):
 async def test_disallow_internal_status_edits_on_active_task(monkeypatch):
     """Direct updates to the active task's status should be refused and must go through the live handle."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     tid = ts._create_task(name="B", description="B")["details"]["task_id"]
