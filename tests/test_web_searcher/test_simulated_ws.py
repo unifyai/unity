@@ -14,7 +14,12 @@ from unity.web_searcher.simulated import (
 )
 
 # keeps each test isolated in its own Unify project / trace context
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -83,7 +88,7 @@ async def test_handle_interject(monkeypatch):
     h = await ws.ask("Summarize latest announcements from major vendors.")
     await asyncio.sleep(0.05)
     reply = h.interject("Prefer primary sources and release notes.")
-    assert "ack" in reply.lower() or "noted" in reply.lower()
+    assert _ack_ok(reply)
     await h.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
 
@@ -120,7 +125,7 @@ async def test_handle_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
     await down_q.put(
         "Let's focus on Twitter, and let me know if the most recent was a tweet or a retweet.",
@@ -174,8 +179,7 @@ async def test_handle_pause_and_resume(monkeypatch):
     assert "pause" in pause_msg.lower()
 
     res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done()
+    await _assert_blocks_while_paused(res_task)
 
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
