@@ -224,7 +224,10 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
     class _Short(SimulatedActor):  # type: ignore[misc]
         def __init__(self, *a, **kw):
             kw.pop("duration", None)
-            super().__init__(steps=1, duration=None, *a, **kw)
+            # Use 2 steps so result()’s auto-consumed step does not immediately complete the task.
+            # This leaves the second step to be consumed by the explicit interject, ensuring the
+            # defer interjection on B is applied before auto-completion.
+            super().__init__(steps=2, duration=None, *a, **kw)
 
     monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _Short, raising=True)
     monkeypatch.setattr(
