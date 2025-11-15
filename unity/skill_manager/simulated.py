@@ -17,12 +17,16 @@ from ..common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
-from ..events.manager_event_logging import log_manager_call
-
 from ..function_manager.simulated import SimulatedFunctionManager
 from ..function_manager.types.function import Function
 from .prompt_builders import build_ask_prompt
 from .base import BaseSkillManager
+from ..common.simulated import (
+    SimulatedLineage,
+    SimulatedLog,
+    maybe_tool_log_scheduled,
+    SimulatedHandleMixin,
+)
 
 
 class SimulatedSkillManager(BaseSkillManager):
@@ -84,7 +88,6 @@ class SimulatedSkillManager(BaseSkillManager):
         return 10
 
     @functools.wraps(BaseSkillManager.ask, updated=())
-    @log_manager_call("SimulatedSkillManager", "ask", payload_key="question")
     async def ask(
         self,
         text: str,
@@ -93,48 +96,42 @@ class SimulatedSkillManager(BaseSkillManager):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
         _clarification_up_q: Optional[asyncio.Queue[str]] = None,
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
+
+        # Tool-style scheduled log (only when there is no parent lineage)
+        sched = maybe_tool_log_scheduled(
+            "SimulatedSkillManager.ask",
+            "ask",
+            {
+                "text": text if isinstance(text, str) else repr(text),
+                "has_clarification_channels": bool(
+                    _clarification_up_q is not None
+                    and _clarification_down_q is not None,
+                ),
+            },
+        )
+        # Prefer a stable lineage-aware label for subsequent steering logs
+        label = (
+            sched[0]
+            if isinstance(sched, tuple) and len(sched) >= 1
+            else SimulatedLineage.make_label("SimulatedSkillManager.ask")
+        )
 
         tools = dict(self._tools)
 
         if _clarification_up_q is not None and _clarification_down_q is not None:
 
             async def _on_request(q: str):
+                # Simulated, best-effort, human-facing log only
                 try:
-                    from ..events.event_bus import EVENT_BUS, Event
-
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "SimulatedSkillManager",
-                                "method": "ask",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
+                    SimulatedLog.log_clarification_request(label, q)
                 except Exception:
                     pass
 
             async def _on_answer(ans: str):
+                # Simulated, best-effort, human-facing log only
                 try:
-                    from ..events.event_bus import EVENT_BUS, Event
-
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "SimulatedSkillManager",
-                                "method": "ask",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
+                    SimulatedLog.log_clarification_answer(label, ans)
                 except Exception:
                     pass
 
@@ -155,7 +152,7 @@ class SimulatedSkillManager(BaseSkillManager):
             ),
         )
 
-        handle = start_async_tool_loop(
+        inner_handle = start_async_tool_loop(
             client,
             text,
             tools,
@@ -165,12 +162,144 @@ class SimulatedSkillManager(BaseSkillManager):
         )
 
         if _return_reasoning_steps:
-            original_result = handle.result
+            original_result = inner_handle.result
 
             async def wrapped_result():
                 answer = await original_result()
                 return answer, client.messages
 
-            handle.result = wrapped_result  # type: ignore
+            inner_handle.result = wrapped_result  # type: ignore
 
-        return handle
+        # Wrap the underlying tool-loop handle with a simulated logging proxy
+        return _SimulatedSkillHandle(inner_handle, label)
+
+
+class _SimulatedSkillHandle(SteerableToolHandle, SimulatedHandleMixin):
+    """
+    Thin proxy around the async tool loop handle that adds simulated logging
+    consistent with other simulated managers (pause/resume/stop/interject/ask,
+    clarifications and notifications).
+    """
+
+    def __init__(self, inner: SteerableToolHandle, log_label: str) -> None:
+        self._inner = inner
+        # Human-friendly, lineage-aware label for consistent logs
+        self._log_label = (
+            str(log_label)
+            if log_label
+            else SimulatedLineage.make_label(
+                "SimulatedSkillManager.ask",
+            )
+        )
+
+    # Steering methods ---------------------------------------------------------
+    async def interject(
+        self,
+        message: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> Optional[str]:
+        self._log_interject(message)
+        try:
+            return await self._inner.interject(
+                message,
+                parent_chat_context_cont=parent_chat_context_cont,
+            )
+        except TypeError:
+            # Fallback for inner handles with a simpler signature
+            return await self._inner.interject(message)  # type: ignore[arg-type]
+
+    def stop(
+        self,
+        reason: Optional[str] = None,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+    ) -> Optional[str]:
+        self._log_stop(reason)
+        try:
+            return self._inner.stop(
+                reason,
+                parent_chat_context_cont=parent_chat_context_cont,
+            )
+        except TypeError:
+            return self._inner.stop(reason)  # type: ignore[call-arg]
+
+    def pause(self) -> Optional[str]:
+        self._log_pause()
+        return self._inner.pause()
+
+    def resume(self) -> Optional[str]:
+        self._log_resume()
+        return self._inner.resume()
+
+    def done(self) -> bool:
+        return self._inner.done()
+
+    async def result(self) -> str:
+        return await self._inner.result()
+
+    # Nested ask ---------------------------------------------------------------
+    async def ask(
+        self,
+        question: str,
+        *,
+        parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
+        _return_reasoning_steps: bool = False,
+        **kwargs,
+    ) -> "SteerableToolHandle":
+        # Build a concise child label and emit a simulated ask log
+        try:
+            child_label = SimulatedLineage.question_label(self._log_label)
+        except Exception:
+            child_label = f"Question({self._log_label})"
+        try:
+            SimulatedLog.log_request("ask", child_label, question)
+        except Exception:
+            pass
+
+        # Delegate to the underlying handle
+        try:
+            inner = await self._inner.ask(
+                question,
+                parent_chat_context_cont=parent_chat_context_cont,
+                images=images,
+                _return_reasoning_steps=_return_reasoning_steps,
+                **(kwargs or {}),
+            )
+        except TypeError:
+            inner = await self._inner.ask(question)  # type: ignore[call-arg]
+        # Wrap nested handle too so steering logs remain consistent
+        return _SimulatedSkillHandle(inner, child_label)
+
+    # Bottom-up event APIs -----------------------------------------------------
+    async def next_clarification(self) -> dict:
+        evt = await self._inner.next_clarification()
+        try:
+            msg = ""
+            if isinstance(evt, dict):
+                msg = str(evt.get("message", "")).strip()
+            if msg:
+                SimulatedLog.log_clarification_request(self._log_label, msg)
+        except Exception:
+            pass
+        return evt
+
+    async def next_notification(self) -> dict:
+        evt = await self._inner.next_notification()
+        try:
+            message = ""
+            if isinstance(evt, dict):
+                message = str(evt.get("message", "")).strip()
+            if message:
+                SimulatedLog.log_notification(self._log_label, message)
+        except Exception:
+            pass
+        return evt
+
+    async def answer_clarification(self, call_id: str, answer: str) -> None:
+        try:
+            SimulatedLog.log_clarification_answer(self._log_label, answer)
+        except Exception:
+            pass
+        await self._inner.answer_clarification(call_id, answer)
