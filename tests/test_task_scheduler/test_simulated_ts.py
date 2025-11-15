@@ -332,3 +332,31 @@ async def test_execute_requests_clarification():
     assert isinstance(answer, str) and answer.strip()
     # The simulated actor completes immediately after clarification
     assert "clarification" in answer.lower()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 12.  Clear – reset and remain usable                                        #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_clear():
+    """
+    SimulatedTaskScheduler.clear should reset the manager (hard-coded completion)
+    and remain usable afterwards.
+    """
+    ts = SimulatedTaskScheduler()
+    # Do an update to create some prior state in the stateful LLM
+    h_upd = await ts.update(
+        "Create a temporary task called 'Temp Task' with low priority.",
+    )
+    await asyncio.wait_for(h_upd.result(), timeout=DEFAULT_TIMEOUT)
+
+    # Clear should not raise and should be quick (no LLM roundtrip)
+    ts.clear()
+
+    # Post-clear, an ask should still work
+    h_q = await ts.ask("List any tasks scheduled for today.")
+    answer = await asyncio.wait_for(h_q.result(), timeout=DEFAULT_TIMEOUT)
+    assert (
+        isinstance(answer, str) and answer.strip()
+    ), "Answer should be non-empty after clear()"
