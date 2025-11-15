@@ -49,6 +49,8 @@ class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
         # Optional: function entrypoint context and prebaked result
         entrypoint_info: dict | None = None,
         planned_result: str | None = None,
+        # New: optional session suffix to reuse across simulated logs
+        session_suffix: "str | None" = None,
     ) -> None:
         self._llm = llm
         self._description = description
@@ -80,9 +82,18 @@ class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._stop_event = threading.Event()
         self._monitor_thread: threading.Thread | None = None
 
-        # Human-friendly log label derived from current lineage, mirroring simulated TaskScheduler:
+        # Human-friendly log label derived from current lineage. Reuse a provided session suffix when present.
         # "<outer...>->SimulatedActor.act(abcd)"
-        self._log_label = SimulatedLineage.make_label("SimulatedActor.act")
+        try:
+            if session_suffix:
+                self._log_label = SimulatedLineage.make_label_with_suffix(
+                    "SimulatedActor.act",
+                    session_suffix,
+                )
+            else:
+                self._log_label = SimulatedLineage.make_label("SimulatedActor.act")
+        except Exception:
+            self._log_label = "SimulatedActor.act"
 
         self._start()
 
@@ -680,6 +691,8 @@ class SimulatedActor(BaseActor):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         # optional function entrypoint id
         entrypoint: Optional[int] = None,
+        # New: optional session suffix to reuse across simulated logs
+        session_suffix: Optional[str] = None,
         **kwargs,
     ) -> SimulatedActorHandle:
         # Emit a scheduler-like nested log for starting an action
@@ -688,7 +701,13 @@ class SimulatedActor(BaseActor):
         except Exception:
             parts = []
         try:
-            _act_label = SimulatedLineage.make_label("SimulatedActor.act")
+            if session_suffix:
+                _act_label = SimulatedLineage.make_label_with_suffix(
+                    "SimulatedActor.act",
+                    session_suffix,
+                )
+            else:
+                _act_label = SimulatedLineage.make_label("SimulatedActor.act")
             SimulatedLog.log_request("act", _act_label, description)
         except Exception:
             pass
@@ -745,4 +764,5 @@ class SimulatedActor(BaseActor):
             log_mode=self._log_mode,
             entrypoint_info=entrypoint_info,
             planned_result=planned_result,
+            session_suffix=session_suffix,
         )

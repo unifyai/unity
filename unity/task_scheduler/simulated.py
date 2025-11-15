@@ -549,11 +549,17 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             from ..actor.simulated import SimulatedActor
 
             actor = SimulatedActor(**actor_kwargs)
+        # Reuse the scheduler's suffix for the actor session to provide a single session id across logs
+        try:
+            _suffix = SimulatedLineage.extract_suffix(_exec_label)
+        except Exception:
+            _suffix = None
         handle = await actor.act(
             task_description,
             _parent_chat_context=_parent_chat_context,
             _clarification_up_q=_clarification_up_q,
             _clarification_down_q=_clarification_down_q,
+            session_suffix=_suffix,
         )
 
         if should_log and call_id is not None:
