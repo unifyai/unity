@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import functools
 import threading
 from typing import List, Dict, Any, Optional
@@ -32,6 +30,7 @@ from ..common.simulated import (
     maybe_tool_log_completed,
 )
 from ..constants import LOGGER
+from ..common.llm_client import new_llm_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -255,15 +254,8 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
-        # One shared, memory-retaining LLM
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        # One shared, memory-retaining LLM (reuse common client for fast init/clear)
+        self._llm = new_llm_client(stateful=True)
         # Mirror the real knowledge manager's tool exposure for prompts
         ref_tools = mirror_knowledge_manager_tools("refactor")
         upd_tools = mirror_knowledge_manager_tools("update")
