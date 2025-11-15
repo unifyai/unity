@@ -47,11 +47,9 @@ async def test_summary_on_natural_completion(monkeypatch):
     def write_entries_probe(*args, **kwargs):
         res = original_write_entries(*args, **kwargs)
         entries = kwargs.get("entries", {})
-        if (
-            isinstance(entries, dict)
-            and entries.get("status") == Status.completed
-            and entries.get("info") == MOCK_SUMMARY
-        ):
+        # New behavior: status and info are written in separate calls.
+        # Trigger when the summary ('info') is written, regardless of status in the same write.
+        if isinstance(entries, dict) and entries.get("info") == MOCK_SUMMARY:
             summary_saved_event.set()
         return res
 
@@ -77,22 +75,26 @@ async def test_summary_on_natural_completion(monkeypatch):
     # Verify the expected write happened
     assert write_entries_spy.call_count >= 1
 
-    # Find the specific call related to saving the summary
-    summary_update_call = None
+    # Find the specific call related to saving the summary (info-only write is expected)
+    summary_info_call = None
+    status_completed_call = None
     for call in write_entries_spy.call_args_list:
         args, kwargs = call
         entries = kwargs.get("entries", {})
-        # Look for the call that sets completed status and our summary
-        if (
-            isinstance(entries, dict)
-            and entries.get("status") == Status.completed
-            and entries.get("info") == MOCK_SUMMARY
-        ):
-            summary_update_call = call
-            break
-    assert (
-        summary_update_call is not None
-    ), f"Did not find the expected call to _write_log_entries with status='completed' and correct summary. Calls: {write_entries_spy.call_args_list}"
+        # Info write
+        if isinstance(entries, dict) and entries.get("info") == MOCK_SUMMARY:
+            summary_info_call = call
+        # Status write (may be in a separate call)
+        if isinstance(entries, dict) and entries.get("status") == Status.completed:
+            status_completed_call = call
+    assert summary_info_call is not None, (
+        "Did not find the expected call to _write_log_entries with the correct summary. "
+        f"Calls: {write_entries_spy.call_args_list}"
+    )
+    assert status_completed_call is not None, (
+        "Did not find the expected call to _write_log_entries setting status='completed'. "
+        f"Calls: {write_entries_spy.call_args_list}"
+    )
 
     # Verify the data in the store (this should now pass as the write was allowed)
     final_rows = ts._filter_tasks(
@@ -304,24 +306,25 @@ async def test_summary_on_stop_cancel(monkeypatch):
     # Verify the expected write happened
     assert write_entries_spy.call_count >= 1
 
-    # Find the specific call that saves the summary with status 'cancelled'
-    summary_update_call_found = False
+    # Expect separate writes: one for status=cancelled, one for info=<summary>
+    status_cancelled_found = False
+    info_summary_found = False
     for call in write_entries_spy.call_args_list:
         args, kwargs = call
         entries = kwargs.get("entries", {})
-        # Look for the call that sets cancelled status and our summary
-        if (
-            isinstance(entries, dict)
-            and entries.get("status") == Status.cancelled
-            and entries.get("info") == MOCK_SUMMARY
-        ):
-            # Check if it targeted the correct log (optional, adds complexity)
-            summary_update_call_found = True
-            break
+        if isinstance(entries, dict) and entries.get("status") == Status.cancelled:
+            status_cancelled_found = True
+        if isinstance(entries, dict) and entries.get("info") == MOCK_SUMMARY:
+            info_summary_found = True
 
-    assert (
-        summary_update_call_found
-    ), f"Did not find the expected call to _write_log_entries setting status='cancelled' and info. Calls: {write_entries_spy.call_args_list}"
+    assert status_cancelled_found, (
+        "Did not find the expected call to _write_log_entries setting status='cancelled'. "
+        f"Calls: {write_entries_spy.call_args_list}"
+    )
+    assert info_summary_found, (
+        "Did not find the expected call to _write_log_entries saving the summary. "
+        f"Calls: {write_entries_spy.call_args_list}"
+    )
 
     # Verify the data in the store
     final_rows = ts._filter_tasks(
@@ -378,11 +381,8 @@ async def test_summary_on_execution_error(monkeypatch):
     def write_entries_probe_failed(*args, **kwargs):
         res = original_write_entries(*args, **kwargs)
         entries = kwargs.get("entries", {})
-        if (
-            isinstance(entries, dict)
-            and entries.get("status") == Status.failed
-            and entries.get("info") == MOCK_SUMMARY
-        ):
+        # Trigger when summary info is written; status is written separately
+        if isinstance(entries, dict) and entries.get("info") == MOCK_SUMMARY:
             summary_saved_event.set()
         return res
 
@@ -421,23 +421,25 @@ async def test_summary_on_execution_error(monkeypatch):
     # Verify the expected write happened
     assert write_entries_spy.call_count >= 1
 
-    # Find the specific call that saves the summary with status 'failed'
-    summary_update_call_found = False
+    # Expect separate writes: one with status failed, one with info summary
+    status_failed_found = False
+    info_summary_found = False
     for call in write_entries_spy.call_args_list:
         args, kwargs = call
         entries = kwargs.get("entries", {})
-        # Look for the call that sets failed status and our summary
-        if (
-            isinstance(entries, dict)
-            and entries.get("status") == Status.failed
-            and entries.get("info") == MOCK_SUMMARY
-        ):
-            summary_update_call_found = True
-            break
+        if isinstance(entries, dict) and entries.get("status") == Status.failed:
+            status_failed_found = True
+        if isinstance(entries, dict) and entries.get("info") == MOCK_SUMMARY:
+            info_summary_found = True
 
-    assert (
-        summary_update_call_found
-    ), f"Did not find the expected call to _write_log_entries setting status='failed' and info. Calls: {write_entries_spy.call_args_list}"
+    assert status_failed_found, (
+        "Did not find the expected call to _write_log_entries setting status='failed'. "
+        f"Calls: {write_entries_spy.call_args_list}"
+    )
+    assert info_summary_found, (
+        "Did not find the expected call to _write_log_entries saving the summary. "
+        f"Calls: {write_entries_spy.call_args_list}"
+    )
 
     # Verify the data in the store
     final_rows = ts._filter_tasks(
@@ -493,13 +495,12 @@ async def test_summary_targets_correct_instance_for_recurring(monkeypatch):
         status_called = call_record.get("status")
         info_called = call_record.get("info")
 
-        if instance_id_called == 0 and status_called == Status.completed:
-            if info_called == MOCK_SUMMARY:
-                summary_saved_event_0.set()
+        # New behavior: summary is written independently of status
+        if instance_id_called == 0 and info_called == MOCK_SUMMARY:
+            summary_saved_event_0.set()
 
-        elif instance_id_called == 1 and status_called == Status.completed:
-            if info_called == "Mock summary for run 1":
-                summary_saved_event_1.set()
+        elif instance_id_called == 1 and info_called == "Mock summary for run 1":
+            summary_saved_event_1.set()
 
         # Return a dummy sync result to mimic scheduler write
         return {"detail": "Update recorded by spy"}
@@ -551,16 +552,18 @@ async def test_summary_targets_correct_instance_for_recurring(monkeypatch):
     call_0_found = any(
         call.get("task_id") == task_id
         and call.get("instance_id") == 0
-        and call.get("status") == Status.completed
         and call.get("info") == MOCK_SUMMARY
         for call in update_instance_calls
     )
-    assert call_0_found, "Summary write call for instance 0 not found or incorrect."
+    assert call_0_found, (
+        "Summary write call for instance 0 not found or incorrect. "
+        f"Calls: {update_instance_calls}"
+    )
     call_index_0 = next(
         (
             i
             for i, call in enumerate(update_instance_calls)
-            if call.get("instance_id") == 0 and call.get("status") == Status.completed
+            if call.get("instance_id") == 0
         ),
         -1,
     )
@@ -630,7 +633,6 @@ async def test_summary_targets_correct_instance_for_recurring(monkeypatch):
     found_call_1 = any(
         call.get("task_id") == task_id
         and call.get("instance_id") == 1
-        and call.get("status") == Status.completed
         and call.get("info") == EXPECTED_SUMMARY_1
         for i, call in enumerate(update_instance_calls)
         if i > call_index_0
