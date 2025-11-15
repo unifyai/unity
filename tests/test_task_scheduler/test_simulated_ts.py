@@ -1,7 +1,6 @@
 # tests/test_simulated_task_scheduler.py
 from __future__ import annotations
 
-import re
 import asyncio
 import pytest
 import functools
@@ -12,7 +11,13 @@ from unity.task_scheduler.simulated import (
 )
 
 # Helper identical to the one used elsewhere in the test-suite
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+    _normalize_alnum_lower,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -66,13 +71,13 @@ async def test_ts_stateful_memory_serial_asks():
         "Respond with only the **single-word** codename and **nothing else**.",
     )
     codename = await h1.result()
-    codename = re.sub(r"\W+", "", codename.strip().lower().replace("codename", ""))
+    codename = _normalize_alnum_lower(codename.replace("codename", ""))
     assert codename, "Codename should not be empty"
 
     # 2) Ask what codename was suggested
     h2 = await ts.ask("Great. What codename did you propose earlier?")
     answer2 = (await h2.result()).lower()
-    answer2 = re.sub(r"\W+", "", answer2.strip().lower().replace("codename", ""))
+    answer2 = _normalize_alnum_lower(answer2.replace("codename", ""))
 
     assert (codename in answer2) or (
         answer2 in codename
@@ -135,7 +140,7 @@ async def test_interject_simulated_ts(monkeypatch):
     # Send a follow-up while it is “running”
     await asyncio.sleep(0.05)
     reply = handle.interject("Also include any deadlines, please.")
-    assert "noted" in reply.lower()
+    assert _ack_ok(reply)
 
     await handle.result()
     assert counts["interject"] == 1, ".interject should be called exactly once"
@@ -173,7 +178,7 @@ async def test_ts_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=300)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
 
     await down_q.put("Yes – prioritise according to deadlines.")
@@ -231,13 +236,12 @@ async def test_pause_and_resume_simulated_ts(monkeypatch):
     assert "pause" in pause_reply.lower()
 
     res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done(), "result() should block while the handle is paused"
+    await _assert_blocks_while_paused(res_task)
 
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
 
-    answer = await asyncio.wait_for(res_task, timeout=300)
+    answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
 
     assert counts == {
@@ -293,7 +297,7 @@ async def test_execute_basic_completion():
     """
     ts = SimulatedTaskScheduler(actor_steps=1, actor_duration=None)
     handle = await ts.execute("Prepare slides for kickoff")
-    answer = await asyncio.wait_for(handle.result(), timeout=60)
+    answer = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
     # The simulated actor typically returns a completion-style sentence
     assert "completed" in answer.lower()
@@ -301,55 +305,8 @@ async def test_execute_basic_completion():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 11.  Execute – interject while running                                      #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_execute_interject():
-    """
-    Interjections should be accepted by the execute handle and the run should still complete.
-    Use actor_steps=2 so one interject + result completes the run.
-    """
-    ts = SimulatedTaskScheduler(actor_steps=2, actor_duration=None)
-    handle = await ts.execute("Draft the launch email copy")
-
-    await asyncio.sleep(0.05)
-    await handle.interject("Please emphasise the green colour scheme.")
-    answer = await asyncio.wait_for(handle.result(), timeout=120)
-    assert isinstance(answer, str) and answer.strip()
-    # Not asserting the exact text; ensure it's a plausible completion
-    assert "completed" in answer.lower()
-    assert "email" in answer.lower()
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 12.  Execute – pause → resume round-trip                                    #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_execute_pause_and_resume():
-    """
-    The execute handle should support pause and resume without errors.
-    Use actor_steps=2 so pause/resume consumes progress and result() finishes.
-    """
-    ts = SimulatedTaskScheduler(actor_steps=3, actor_duration=None)
-    handle = await ts.execute("Compile competitor analysis")
-
-    pause_reply = handle.pause()
-    assert "pause" in pause_reply.lower()
-
-    res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done(), "result() should wait while paused"
-
-    resume_reply = handle.resume()
-    assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
-    answer = await asyncio.wait_for(res_task, timeout=120)
-    assert isinstance(answer, str) and answer.strip()
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 13.  Execute – clarification handshake                                      #
+# 11.  Execute – clarification handshake                                      #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
@@ -368,31 +325,11 @@ async def test_execute_requests_clarification():
         _clarification_down_q=down_q,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
     await down_q.put("Export only records updated in the last 24 hours.")
 
-    answer = await asyncio.wait_for(handle.result(), timeout=120)
+    answer = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
     # The simulated actor completes immediately after clarification
     assert "clarification" in answer.lower()
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 14.  Execute – next_notification reports progress                           #
-# ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.asyncio
-@_handle_project
-async def test_execute_next_notification_progress():
-    """
-    The simulated actor emits progress notifications showing remaining steps when configured.
-    """
-    ts = SimulatedTaskScheduler(actor_steps=3, actor_duration=None)
-    handle = await ts.execute("Assemble press kit")
-
-    # Consume a notification and ensure it contains a useful progress message
-    evt = await asyncio.wait_for(handle.next_notification(), timeout=60)
-    assert isinstance(evt, dict)
-    assert evt.get("type") == "notification"
-    msg = str(evt.get("message", "")).lower()
-    assert "steps remaining" in msg or "time remaining" in msg

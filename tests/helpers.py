@@ -169,3 +169,48 @@ def _handle_project(
                 unify.unset_context()
 
     return wrapper
+
+
+# ---------------- Additional shared test helpers ----------------
+import asyncio
+import re
+import uuid
+
+DEFAULT_TIMEOUT = 60
+
+
+def _assert_non_empty_str(val: object) -> None:
+    assert isinstance(val, str) and val.strip(), "Expected a non-empty string"
+
+
+def _normalize_alnum_lower(s: str) -> str:
+    return re.sub(r"\W+", "", s.strip().lower())
+
+
+def _contains_any(text: str, substrings: list[str]) -> bool:
+    t = text.lower()
+    return any(sub.lower() in t for sub in substrings)
+
+
+def _ack_ok(reply: str) -> bool:
+    return _contains_any(
+        reply,
+        ["ack", "acknowledged", "noted", "received", "okay", "ok"],
+    )
+
+
+async def _assert_blocks_while_paused(result_coro, delay: float = 0.1) -> None:
+    t = asyncio.create_task(result_coro)
+    await asyncio.sleep(delay)
+    assert not t.done(), "result() should block while paused"
+    # caller should resume and then await the same task
+
+
+def _unique_token(prefix: str = "TOKEN") -> str:
+    return f"{prefix}-{uuid.uuid4()}"
+
+
+def make_queues():
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+    return up_q, down_q
