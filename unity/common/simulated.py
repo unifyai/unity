@@ -104,6 +104,10 @@ class SimulatedLog:
         "pause": "⏸️",
         "resume": "▶️",
         "stop": "🛑",
+        # simulated-only convenience
+        "clar_req": "❓",
+        "clar_ans": "💬",
+        "notification": "🔔",
     }
     _VERBS = {
         "ask": "Ask requested",
@@ -114,6 +118,10 @@ class SimulatedLog:
         "pause": "Pause requested",
         "resume": "Resume requested",
         "stop": "Stop requested",
+        # simulated-only convenience
+        "clar_req": "Clarification requested",
+        "clar_ans": "Clarification answer received",
+        "notification": "Notification",
     }
 
     @staticmethod
@@ -133,6 +141,45 @@ class SimulatedLog:
             LOGGER.info(f"{icon} [{label}] {verb}{suffix}")
         except Exception:
             # Never let logging break control flow
+            pass
+
+    @staticmethod
+    def log_clarification_request(label: str, question: str) -> None:
+        """Emit a standardised clarification-request log line."""
+        try:
+            from unity.constants import LOGGER  # noqa: WPS433
+        except Exception:
+            return
+        try:
+            q = SimulatedLineage.preview(question)
+            LOGGER.info(f"❓ [{label}] Clarification requested: {q}")
+        except Exception:
+            pass
+
+    @staticmethod
+    def log_clarification_answer(label: str, answer: str) -> None:
+        """Emit a standardised clarification-answer log line."""
+        try:
+            from unity.constants import LOGGER  # noqa: WPS433
+        except Exception:
+            return
+        try:
+            a = SimulatedLineage.preview(answer)
+            LOGGER.info(f"💬 [{label}] Clarification answer received: {a}")
+        except Exception:
+            pass
+
+    @staticmethod
+    def log_notification(label: str, message: str) -> None:
+        """Emit a standardised notification log line."""
+        try:
+            from unity.constants import LOGGER  # noqa: WPS433
+        except Exception:
+            return
+        try:
+            m = SimulatedLineage.preview(message)
+            LOGGER.info(f"🔔 [{label}] Notification: {m}")
+        except Exception:
             pass
 
 
@@ -211,6 +258,102 @@ class SimulatedLLMIO:
         except Exception:
             # Silent best-effort
             pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Best-effort EventBus publishers for simulated flows
+# ─────────────────────────────────────────────────────────────────────────────
+async def _publish_sim_clarification_request(
+    call_id: "str | None",
+    manager: "str | None",
+    method: "str | None",
+    *,
+    label: str,
+    question: str,
+) -> None:
+    if not call_id or not manager or not method:
+        return
+    try:
+        from unity.events.manager_event_logging import (  # noqa: WPS433
+            publish_manager_method_event as _pub_evt,
+        )
+
+        await _pub_evt(
+            call_id,
+            str(manager),
+            str(method),
+            phase="clarification",
+            kind="request",
+            question=str(question),
+            label=str(label),
+        )
+    except Exception:
+        # best-effort only
+        pass
+
+
+async def _publish_sim_clarification_answer(
+    call_id: "str | None",
+    manager: "str | None",
+    method: "str | None",
+    *,
+    label: str,
+    answer: str,
+) -> None:
+    if not call_id or not manager or not method:
+        return
+    try:
+        from unity.events.manager_event_logging import (  # noqa: WPS433
+            publish_manager_method_event as _pub_evt,
+        )
+
+        await _pub_evt(
+            call_id,
+            str(manager),
+            str(method),
+            phase="clarification",
+            kind="answer",
+            answer=str(answer),
+            label=str(label),
+        )
+    except Exception:
+        # best-effort only
+        pass
+
+
+async def _publish_sim_notification(
+    call_id: "str | None",
+    manager: "str | None",
+    method: "str | None",
+    *,
+    label: str,
+    message: str,
+    tool_name: "str | None" = None,
+) -> None:
+    if not call_id or not manager or not method:
+        return
+    try:
+        from unity.events.manager_event_logging import (  # noqa: WPS433
+            publish_manager_method_event as _pub_evt,
+        )
+
+        payload = {
+            "phase": "notification",
+            "message": str(message),
+            "label": str(label),
+        }
+        if tool_name:
+            payload["tool_name"] = str(tool_name)
+
+        await _pub_evt(
+            call_id,
+            str(manager),
+            str(method),
+            **payload,
+        )
+    except Exception:
+        # best-effort only
+        pass
 
 
 async def simulated_llm_roundtrip(
