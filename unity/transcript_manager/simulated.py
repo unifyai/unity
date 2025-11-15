@@ -14,19 +14,12 @@ from .prompt_builders import (
     build_ask_prompt,
     build_simulated_method_prompt,
 )
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
-)
 from ..common.simulated import (
     mirror_transcript_manager_tools,
     SimulatedLineage,
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
-    _publish_sim_clarification_request,
-    _publish_sim_clarification_answer,
 )
 from .types.message import Message
 from ..common.llm_client import new_llm_client
@@ -50,18 +43,12 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
-        call_id: str | None = None,
-        manager_name: str | None = None,
-        method_name: str | None = None,
     ):
         self._llm = llm
         self._initial = initial_text
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
-        self._call_id = call_id
-        self._manager = manager_name
-        self._method = method_name
         if _requests_clarification and (
             not clarification_up_q or not clarification_down_q
         ):
@@ -79,18 +66,6 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._clar_up_q.put_nowait(q_text)
                 try:
                     SimulatedLog.log_clarification_request(self._log_label, q_text)
-                except Exception:
-                    pass
-                try:
-                    asyncio.create_task(
-                        _publish_sim_clarification_request(
-                            self._call_id,
-                            self._manager,
-                            self._method,
-                            label=self._log_label,
-                            question=q_text,
-                        ),
-                    )
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -129,16 +104,6 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._extra_user_msgs.append(f"Clarification: {clar_reply}")
                 try:
                     SimulatedLog.log_clarification_answer(self._log_label, clar_reply)
-                except Exception:
-                    pass
-                try:
-                    await _publish_sim_clarification_answer(
-                        self._call_id,
-                        self._manager,
-                        self._method,
-                        label=self._log_label,
-                        answer=clar_reply,
-                    )
                 except Exception:
                     pass
                 try:
@@ -328,15 +293,8 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         should_log = self._log_events or log_events
         call_id = None
 
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "TranscriptManager",
-                "ask",
-                phase="incoming",
-                question=text,
-            )
+        # No EventBus publishing for simulated managers
+        call_id = None
 
         instruction = build_simulated_method_prompt(
             "ask",
@@ -350,9 +308,6 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
-            call_id=call_id,
-            manager_name="TranscriptManager",
-            method_name="ask",
         )
 
         # Emit a human-facing log for the initial ask so tests/consumers see immediate feedback
@@ -361,13 +316,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         except Exception:
             pass
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "TranscriptManager",
-                "ask",
-            )
+        # No EventBus publishing for simulated managers
         return handle
 
     @functools.wraps(BaseTranscriptManager.clear, updated=())
