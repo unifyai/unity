@@ -20,9 +20,11 @@ from ..common.async_tool_loop import SteerableToolHandle
 from ..common.simulated import (
     mirror_contact_manager_tools,
     SimulatedLineage,
+    SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
     maybe_tool_log_scheduled,
+    maybe_tool_log_completed,
 )
 from ..constants import LOGGER
 
@@ -549,6 +551,12 @@ class SimulatedContactManager(BaseContactManager):
         ``response_format`` enforcement, ensuring scenario consistency.
         """
 
+        sched = maybe_tool_log_scheduled(
+            "SimulatedContactManager.filter_contacts",
+            "filter_contacts",
+            {"filter": filter, "offset": offset, "limit": limit},
+        )
+
         schema_json = json.dumps(Contact.model_json_schema(), indent=2)
         filter_clause = (
             f"Filter expression: `{filter}`."
@@ -590,11 +598,21 @@ class SimulatedContactManager(BaseContactManager):
         model = _ContactsListResponse.model_validate_json(raw)
         # _ContactRecord is a subclass of Contact, so callers can treat these
         # as Contact instances. Apply slicing locally as a safety net.
-        return (
+        contacts = (
             model.contacts[offset : offset + limit]
             if limit is not None
             else model.contacts[offset:]
         )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "filter_contacts",
+                {"count": len(contacts), "offset": offset, "limit": limit},
+                t0,
+            )
+        return contacts
 
     # ------------------------------------------------------------------ #
     #  Simulated _create_contact                                         #
@@ -686,10 +704,9 @@ class SimulatedContactManager(BaseContactManager):
         email_address: Optional[str] = None,
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
+        description: Optional[str] = None,
         bio: Optional[str] = None,
         rolling_summary: Optional[str] = None,
-        respond_to: Optional[bool] = None,
-        response_policy: Optional[str] = None,
         custom_fields: Optional[Dict[str, Any]] = None,
     ) -> "ToolOutcome":
         """
@@ -697,6 +714,31 @@ class SimulatedContactManager(BaseContactManager):
         structured output enforced via ``response_format``. The shared stateful
         LLM generates a JSON payload that we validate against ``_UpdateOutcome``.
         """
+
+        sched = maybe_tool_log_scheduled(
+            "SimulatedContactManager.update_contact",
+            "update_contact",
+            {
+                "contact_id": contact_id,
+                "fields": sorted(
+                    [
+                        k
+                        for k, v in {
+                            "first_name": first_name,
+                            "surname": surname,
+                            "email_address": email_address,
+                            "phone_number": phone_number,
+                            "whatsapp_number": whatsapp_number,
+                            "description": description,
+                            "bio": bio,
+                            "rolling_summary": rolling_summary,
+                            **(custom_fields or {}),
+                        }.items()
+                        if v is not None
+                    ],
+                ),
+            },
+        )
 
         # Only include fields that are actually being modified
         updates = {
@@ -707,10 +749,9 @@ class SimulatedContactManager(BaseContactManager):
                 "email_address": email_address,
                 "phone_number": phone_number,
                 "whatsapp_number": whatsapp_number,
+                "description": description,
                 "bio": bio,
                 "rolling_summary": rolling_summary,
-                "respond_to": respond_to,
-                "response_policy": response_policy,
                 **(custom_fields or {}),
             }.items()
             if v is not None
@@ -753,7 +794,11 @@ class SimulatedContactManager(BaseContactManager):
                 pass
 
         model = _UpdateOutcome.model_validate_json(raw)
-        return model.model_dump()
+        out = model.model_dump()
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(label, cid, "update_contact", out, t0)
+        return out
 
     # ------------------------------------------------------------------ #
     #  Simulated _delete_contact                                          #
@@ -858,6 +903,11 @@ class SimulatedContactManager(BaseContactManager):
 
     @functools.wraps(BaseContactManager.clear, updated=())
     def clear(self) -> None:
+        sched = maybe_tool_log_scheduled(
+            "SimulatedContactManager.clear",
+            "clear",
+            {},
+        )
         type(self).__init__(
             self,
             description=getattr(
@@ -873,6 +923,9 @@ class SimulatedContactManager(BaseContactManager):
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
         )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(label, cid, "clear", {"outcome": "reset"}, t0)
 
 
 # --- TYPE CHECKING SUPPORT --------------------------------------------------
