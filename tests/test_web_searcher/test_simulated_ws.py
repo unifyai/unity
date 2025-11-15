@@ -23,6 +23,27 @@ from tests.helpers import (
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# 0.  Doc-string inheritance                                                 #
+# ────────────────────────────────────────────────────────────────────────────
+def test_simulated_ws_docstrings_match_base():
+    """
+    Public methods in SimulatedWebSearcher should copy the real
+    BaseWebSearcher doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.web_searcher.base import BaseWebSearcher
+    from unity.web_searcher.simulated import SimulatedWebSearcher
+
+    assert (
+        BaseWebSearcher.ask.__doc__.strip() in SimulatedWebSearcher.ask.__doc__.strip()
+    ), ".ask doc-string was not copied correctly"
+
+    assert (
+        BaseWebSearcher.update.__doc__.strip()
+        in SimulatedWebSearcher.update.__doc__.strip()
+    ), ".update doc-string was not copied correctly"
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # 1.  Basic start-and-ask                                                    #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
@@ -253,3 +274,20 @@ def test_simulated_web_searcher_clear_reinitialises():
     # After clear, llm handle should be replaced and tools still present
     assert getattr(sim, "_llm", None) is not None and sim._llm is not old_llm
     assert isinstance(sim._ask_tools, dict) and sim._ask_tools
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 9.  Update – basic completion                                              #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_update_basic_completion():
+    """
+    SimulatedWebSearcher.update should return a live handle that completes.
+    """
+    ws = SimulatedWebSearcher()
+    h = await ws.update(
+        "Create a website entry for host=example.com with tags ['docs', 'security']",
+    )
+    answer = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(answer, str) and answer.strip()
