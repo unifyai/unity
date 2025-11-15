@@ -511,4 +511,128 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
         # No EventBus publishing for simulated managers
 
-        return handle
+        # Wrap the actor handle to expose TaskScheduler-style stop(cancel=..., reason=...) while
+        # delegating all behaviour to the underlying actor. Named to mirror ActiveQueue's surface
+        # (single-task, passthrough-style).
+        class SimulatedActiveQueue(SteerableToolHandle, SimulatedHandleMixin):  # type: ignore[abstract-method]
+            def __init__(self, inner: SteerableToolHandle, log_label: str) -> None:
+                self._inner = inner
+                # Provide a stable, scheduler-aligned log label for status lines
+                self._log_label = log_label
+
+            # --- steerable surface ---
+            async def interject(self, message: str, *, images: object | None = None) -> None:  # type: ignore[override]
+                self._log_interject(message)
+                try:
+                    await self._inner.interject(message, images=images)  # type: ignore[arg-type]
+                except Exception:
+                    return None
+
+            def stop(self, *, cancel: bool = False, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
+                self._log_stop(reason)
+                # Prefer actor-style stop(reason) but tolerate both signatures
+                try:
+                    return self._inner.stop(reason)  # type: ignore[call-arg]
+                except TypeError:
+                    try:
+                        return self._inner.stop(cancel=cancel, reason=reason)  # type: ignore[call-arg]
+                    except Exception:
+                        return "Stopped."
+                except Exception:
+                    return "Stopped."
+
+            def pause(self) -> Optional[str]:  # type: ignore[override]
+                self._log_pause()
+                try:
+                    return self._inner.pause()
+                except Exception:
+                    return "Already completed."
+
+            def resume(self) -> Optional[str]:  # type: ignore[override]
+                self._log_resume()
+                try:
+                    return self._inner.resume()
+                except Exception:
+                    return "Already completed."
+
+            def done(self) -> bool:  # type: ignore[override]
+                try:
+                    return self._inner.done()
+                except Exception:
+                    return True
+
+            async def result(self) -> str:  # type: ignore[override]
+                try:
+                    return await self._inner.result()
+                except Exception:
+                    return "processed stopped early, no result"
+
+            # --- event APIs (best-effort pass-through) ---
+            async def next_clarification(self) -> dict:
+                try:
+                    return await self._inner.next_clarification()  # type: ignore[attr-defined]
+                except Exception:
+                    return {}
+
+            async def next_notification(self) -> dict:
+                try:
+                    return await self._inner.next_notification()  # type: ignore[attr-defined]
+                except Exception:
+                    return {}
+
+            async def answer_clarification(self, call_id: str, answer: str) -> None:
+                try:
+                    await self._inner.answer_clarification(call_id, answer)  # type: ignore[attr-defined]
+                except Exception:
+                    return None
+
+            # --- ask semantics: wrap actor's one-shot answer into a static handle ---
+            async def ask(
+                self,
+                question: str,
+                *,
+                _return_reasoning_steps: bool = False,
+            ) -> "SteerableToolHandle":
+                # Actor.ask returns a string; package it as a minimal static handle
+                try:
+                    answer_text = await self._inner.ask(question)  # type: ignore[attr-defined]
+                except Exception:
+                    answer_text = ""
+
+                class _AnswerHandle(SteerableToolHandle):  # type: ignore[abstract-method]
+                    def __init__(self, text: str) -> None:
+                        self._text = text
+
+                    async def interject(self, message: str): ...
+
+                    def stop(self, reason: Optional[str] = None): ...
+
+                    def pause(self): ...
+
+                    def resume(self): ...
+
+                    def done(self) -> bool:
+                        return True
+
+                    async def result(self) -> str:
+                        return self._text
+
+                    async def ask(self, q: str) -> "SteerableToolHandle":  # type: ignore[override]
+                        return self
+
+                    async def next_clarification(self) -> dict:
+                        return {}
+
+                    async def next_notification(self) -> dict:
+                        return {}
+
+                    async def answer_clarification(
+                        self,
+                        call_id: str,
+                        answer: str,
+                    ) -> None:
+                        return None
+
+                return _AnswerHandle(answer_text)
+
+        return SimulatedActiveQueue(handle, _exec_label)
