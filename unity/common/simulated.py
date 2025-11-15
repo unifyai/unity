@@ -892,6 +892,34 @@ def mirror_knowledge_manager_tools(kind: str) -> Dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Shared prompt helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_followup_prompt(
+    *,
+    question: str,
+    initial_instruction: str,
+    extra_messages: list[str] | None = None,
+) -> str:
+    """
+    Build a standardized follow-up question prompt for simulated handles.
+
+    Ensures consistent wording and formatting across managers and fixes prior typos.
+    """
+    preamble = (
+        f"Your only task is to simulate an answer to the following question: {question}\n\n"
+        "There is also an ongoing simulated process with the instructions given below. "
+        "Please make your answer realistic and consistent with the context of the simulated task."
+    )
+    parts: list[str] = [preamble, initial_instruction]
+    if extra_messages:
+        parts.extend(extra_messages)
+    parts.append(f"Question to answer (as a reminder!): {question}")
+    return "\n\n---\n\n".join(parts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # FileManager mirroring
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -7,8 +7,6 @@ and execute. All responses are produced by a shared, stateful LLM; no storage
 or queue state is read or written.
 """
 import asyncio
-import json
-import os
 import threading
 import functools
 from typing import List, Optional, Callable, Any
@@ -23,12 +21,14 @@ from .prompt_builders import (
     build_update_prompt,
     build_simulated_method_prompt,
 )
+from ..common.llm_client import new_llm_client
 from ..common.simulated import (
     mirror_task_scheduler_tools,
     SimulatedLineage,
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
+    build_followup_prompt,
     maybe_tool_log_scheduled,
     maybe_tool_log_completed,
     maybe_tool_log_scheduled_with_label,
@@ -162,7 +162,7 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
             return "Interaction already stopped."
         self._log_interject(message)
         self._interjections.append(message)
-        return "Noted."
+        return "Acknowledged."
 
     def stop(self, *, cancel: bool, reason: Optional[str] = None) -> str:
         """Cancel further processing so `.result()` raises.
@@ -218,16 +218,10 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         *,
         _return_reasoning_steps: bool = False,
     ) -> "SteerableToolHandle":
-        q_msg = (
-            f"Your only task is to simulate an answer to the following question: {question}\n\n"
-            "However, there is a also ongoing simulated process which had the instructions given below. "
-            "Please make your answer realastic and conceivable given the provided context of the simulated taks."
-        )
-        follow_up_prompt = "\n\n---\n\n".join(
-            [q_msg]
-            + [self._initial_text]
-            + self._interjections
-            + [f"Question to answer (as a reminder!): {question}"],
+        follow_up_prompt = build_followup_prompt(
+            question=question,
+            initial_instruction=self._initial_text,
+            extra_messages=list(self._interjections),
         )
 
         # Create the new helper handle first so we can log using its stable label
@@ -288,14 +282,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         self._actor_duration: Optional[float] = actor_duration
 
         # One shared, *stateful* LLM for *everything*
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        self._llm = new_llm_client(stateful=True)
         # Build tool lists programmatically so prompts match the exposed surface.
         ask_tools = mirror_task_scheduler_tools("ask")
         update_tools = mirror_task_scheduler_tools("update")
@@ -464,7 +451,7 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
     @functools.wraps(BaseTaskScheduler.execute, updated=())
     async def execute(
         self,
-        text: str,
+        task_id: int | str,
         *,
         isolated: Optional[bool] = None,
         _parent_chat_context: list[dict] | None = None,
@@ -473,19 +460,12 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         _clarification_down_q: asyncio.Queue[str] | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
-        """
-        Execute a *simulated* task from **free-form** text.
-
-        The implementation pretends that the supplied *text* uniquely
-        identifies the task – no attempt is made to reconcile with a real data
-        store.  A new :class:`unity.actor.simulated.SimulatedPlan` is spun up
-        and its handle returned.
-        """
         should_log = self._log_events or log_events
         call_id = None
 
         # No EventBus publishing for simulated managers
 
+        text = f"Run task {task_id}" if isinstance(task_id, int) else str(task_id)
         task_description = f"{text} (simulated)"
 
         # Build actor with configured defaults or via a custom factory
