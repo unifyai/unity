@@ -301,3 +301,29 @@ async def test_handle_ask():
     assert isinstance(handle_answer, str) and handle_answer.strip(), (
         "Handle should still yield a non-empty answer after nested ask",
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 11. Clear – reset and remain usable                                         #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_clear():
+    """
+    SimulatedKnowledgeManager.clear should reset the manager (hard-coded completion)
+    and remain usable afterwards.
+    """
+    km = SimulatedKnowledgeManager()
+    # Seed some prior state via an update call
+    h_store = await km.update("Add a temporary fact about Project Phoenix.")
+    await asyncio.wait_for(h_store.result(), timeout=DEFAULT_TIMEOUT)
+
+    # Clear should not raise and should be quick (no LLM roundtrip requirement)
+    km.clear()
+
+    # Post-clear, an ask should still work
+    h_q = await km.ask("List any knowledge stored today.")
+    answer = await asyncio.wait_for(h_q.result(), timeout=DEFAULT_TIMEOUT)
+    assert (
+        isinstance(answer, str) and answer.strip()
+    ), "Answer should be non-empty after clear()"
