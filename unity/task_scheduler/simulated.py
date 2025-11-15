@@ -29,6 +29,9 @@ from ..common.simulated import (
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
+    maybe_tool_log_scheduled,
+    maybe_tool_log_completed,
+    maybe_tool_log_scheduled_with_label,
 )
 
 
@@ -329,40 +332,32 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
     @functools.wraps(BaseTaskScheduler.clear, updated=())
     def clear(self) -> None:
-        try:
-            # Reset the LLM's internal state (best-effort)
-            self._llm.reset_state()
-        except Exception:
-            pass
-        # Rebuild and set the system message again to mirror initialisation
-        from .types.task import Task as _Task  # local import to avoid cycles
-
-        fake_task_columns = [
-            {k: str(v.annotation)} for k, v in _Task.model_fields.items()
-        ]
-        ask_tools = mirror_task_scheduler_tools("ask")
-        update_tools = mirror_task_scheduler_tools("update")
-        ask_msg = build_ask_prompt(
-            ask_tools,
-            num_tasks=10,
-            columns=fake_task_columns,
-            include_activity=self._rolling_summary_in_prompts,
+        sched = maybe_tool_log_scheduled(
+            "SimulatedTaskScheduler.clear",
+            "clear",
+            {},
         )
-        update_msg = build_update_prompt(
-            update_tools,
-            num_tasks=10,
-            columns=fake_task_columns,
-            include_activity=self._rolling_summary_in_prompts,
+        type(self).__init__(
+            self,
+            description=getattr(
+                self,
+                "_description",
+                "nothing fixed, make up some imaginary scenario",
+            ),
+            log_events=getattr(self, "_log_events", False),
+            rolling_summary_in_prompts=getattr(
+                self,
+                "_rolling_summary_in_prompts",
+                True,
+            ),
+            simulation_guidance=getattr(self, "_simulation_guidance", None),
+            actor_factory=getattr(self, "_actor_factory", None),
+            actor_steps=getattr(self, "_actor_steps", None),
+            actor_duration=getattr(self, "_actor_duration", None),
         )
-        self._llm.set_system_message(
-            "You are a *simulated* task-list manager. "
-            "No real database exists; invent plausible tasks but remain internally "
-            "consistent across turns.\n\n"
-            "As reference, here are the *real* TaskScheduler prompts:\n\n"
-            f"ASK system message:\n{ask_msg}\n\n"
-            f"UPDATE system message:\n{update_msg}\n\n"
-            f"Back-story: {self._description}",
-        )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(label, cid, "clear", {"outcome": "reset"}, t0)
 
     # ------------------------------------------------------------------ #
     #  ask                                                               #
