@@ -293,23 +293,6 @@ async def test_execute_returns_handle_with_append_to_queue_introspection():
 
 
 # --------------------------------------------------------------------------- #
-#  6.2. (removed: dynamic helper append_to_queue end-to-end via outer loop)   #
-# --------------------------------------------------------------------------- #
-
-
-# --------------------------------------------------------------------------- #
-#  7. Clarification request for unknown id                                    #
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.skip(
-    reason="Clarification via free‑form execute removed; execute(task_id: int) only.",
-)
-def test_execute_requests_clarification_for_unknown_id():  # pragma: no cover
-    pass
-
-
-# --------------------------------------------------------------------------- #
 #  A. Activation metadata                                                      #
 # --------------------------------------------------------------------------- #
 
