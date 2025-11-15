@@ -361,6 +361,10 @@ async def test_async_tool_loop_can_call_append_to_queue_helper():
     # 1) Wait deterministically until `scheduler_execute` has been requested
     await _wait_for_tool_request(client, "scheduler_execute")
 
+    # Ensure the tool-result placeholder for scheduler_execute is appended so the
+    # loop is fully between turns (prevents double logging on immediate interjection).
+    await _wait_for_tool_message_prefix(client, "scheduler_execute")
+
     # 2) The loop won't produce another assistant turn until a tool finishes or we interject.
     #    Prompt the model explicitly to call the dynamic helper whose name starts with `append_to_queue_`.
     await outer.interject(
