@@ -213,21 +213,36 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         reason: Optional[str] = None
 
         try:
+            # Attempt scheduler-provided classifier first (broad signature compatibility)
             if self._scheduler is not None and hasattr(
                 self._scheduler,
                 "_classify_steering_intent",
             ):
-                intent, reason = await self._scheduler._classify_steering_intent(  # type: ignore[attr-defined]
-                    message,
-                    parent_chat_context=None,
-                )
+                try:
+                    # Prefer calling with only the message to avoid kwarg name mismatches
+                    intent, reason = await self._scheduler._classify_steering_intent(  # type: ignore[attr-defined]
+                        message,
+                    )
+                except TypeError:
+                    # Retry with underscore-style kwarg for compatibility with some implementations
+                    intent, reason = await self._scheduler._classify_steering_intent(  # type: ignore[attr-defined]
+                        message,
+                        _parent_chat_context=None,
+                    )
             else:
                 intent, reason = await classify_steering_intent(
                     message,
                     parent_chat_context=None,
                 )
-        except Exception:
-            intent, reason = None, None
+        except Exception as e:
+            # Robust fallback: use built-in classifier to avoid losing the steering signal entirely
+            try:
+                intent, reason = await classify_steering_intent(
+                    message,
+                    parent_chat_context=None,
+                )
+            except Exception as _e:
+                intent, reason = None, None
 
         self._last_intent = intent
         self._last_intent_reason = reason or message
