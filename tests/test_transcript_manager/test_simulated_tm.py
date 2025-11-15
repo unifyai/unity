@@ -10,7 +10,13 @@ from unity.transcript_manager.simulated import (
 )
 
 # Helper identical to the one used elsewhere in the test-suite
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+    _unique_token,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -56,12 +62,10 @@ async def test_tm_stateful_memory_serial_asks():
     a unique token and then require that the second turn recalls that exact
     token somewhere in its response.
     """
-    import uuid
-
     tm = SimulatedTranscriptManager()
 
     # 1) Seed a unique token inside a realistic transcript request
-    token = f"TICKET-{uuid.uuid4()}"
+    token = _unique_token("TICKET")
     handle1 = await tm.ask(
         "Please produce exactly one realistic transcript message. "
         f"Ensure the message content includes this exact ticket number verbatim: {token}",
@@ -113,7 +117,7 @@ async def test_handle_interject(monkeypatch):
     # interject while running
     await asyncio.sleep(0.05)
     reply = handle.interject("Also include any emojis Bob used.")
-    assert "ack" in reply.lower()
+    assert _ack_ok(reply)
 
     await handle.result()
     assert counts["interject"] == 1, ".interject should be called exactly once"
@@ -152,7 +156,7 @@ async def test_handle_requests_clarification():
     )
 
     # Must ask for clarification first
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
 
     # Provide clarification
@@ -212,14 +216,13 @@ async def test_handle_pause_and_resume(monkeypatch):
 
     # Start result() – it should block while paused.
     res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done(), "result() must wait while paused"
+    await _assert_blocks_while_paused(res_task)
 
     # Resume and ensure execution proceeds.
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
 
-    answer = await asyncio.wait_for(res_task, timeout=60)
+    answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
 
     # Each steering method should have been called exactly once.

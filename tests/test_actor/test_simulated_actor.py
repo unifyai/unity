@@ -3,7 +3,11 @@ import functools
 import pytest
 
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+)
 from unity.function_manager.function_manager import FunctionManager
 from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.types import RawImageRef, AnnotatedImageRef
@@ -111,7 +115,7 @@ async def test_handle_requests_clarification():
         _clarification_down_q=down_q,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
 
     await down_q.put("Yes, please compile the Q1 report now.")
@@ -163,13 +167,12 @@ async def test_handle_pause_and_resume(monkeypatch):
     assert "pause" in pause_reply.lower()
 
     res = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res.done(), "result() must wait while paused"
+    await _assert_blocks_while_paused(res)
 
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
 
-    answer = await asyncio.wait_for(res, timeout=60)
+    answer = await asyncio.wait_for(res, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
     assert counts == {"pause": 1, "resume": 1}
 
@@ -342,7 +345,7 @@ async def test_next_notification_emits_and_consumes_step():
     assert isinstance(before, int) and before == 2
 
     # next_notification should return a real event and consume one step
-    evt = await asyncio.wait_for(handle.next_notification(), timeout=30)
+    evt = await asyncio.wait_for(handle.next_notification(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(evt, dict)
     assert evt.get("type") == "notification"
     assert evt.get("tool_name") == "simulated_actor"
@@ -353,5 +356,5 @@ async def test_next_notification_emits_and_consumes_step():
 
     # Complete the simulation and ensure result is available
     handle.simulate_step()
-    res = await asyncio.wait_for(handle.result(), timeout=30)
+    res = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(res, str) and res.strip()
