@@ -199,15 +199,22 @@ def _ack_ok(reply: str) -> bool:
     )
 
 
-async def _assert_blocks_while_paused(result_coro, delay: float = 0.1) -> None:
+async def _assert_blocks_while_paused(result_or_coro, delay: float = 0.1):
     # Accept either a coroutine or a Task/Future; create a task only when needed.
-    if isinstance(result_coro, asyncio.Task) or asyncio.isfuture(result_coro):
-        t = result_coro
-    else:
-        t = asyncio.create_task(result_coro)
+    try:
+        is_task = isinstance(result_or_coro, asyncio.Task)
+        is_future = asyncio.isfuture(result_or_coro)
+    except Exception:
+        is_task = False
+        is_future = False
+    t = (
+        result_or_coro
+        if (is_task or is_future)
+        else asyncio.create_task(result_or_coro)
+    )
     await asyncio.sleep(delay)
     assert not t.done(), "result() should block while paused"
-    # caller should resume and then await the same task
+    return t
 
 
 def _unique_token(prefix: str = "TOKEN") -> str:

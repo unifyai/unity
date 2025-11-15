@@ -235,8 +235,7 @@ async def test_pause_and_resume_simulated_ts(monkeypatch):
     pause_reply = handle.pause()
     assert "pause" in pause_reply.lower()
 
-    res_task = asyncio.create_task(handle.result())
-    await _assert_blocks_while_paused(res_task)
+    res_task = await _assert_blocks_while_paused(handle.result())
 
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()

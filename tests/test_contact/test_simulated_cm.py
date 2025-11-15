@@ -221,8 +221,7 @@ async def test_handle_pause_and_resume(monkeypatch):
     assert "pause" in pause_msg.lower()
 
     # 2️⃣ Kick off result() – it should block while paused
-    res_task = asyncio.create_task(handle.result())
-    await _assert_blocks_while_paused(res_task)
+    res_task = await _assert_blocks_while_paused(handle.result())
 
     # 3️⃣ Resume and ensure the task now completes
     resume_msg = handle.resume()
