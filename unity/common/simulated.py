@@ -56,6 +56,36 @@ class SimulatedLineage:
 
         return f"Question({parent_label})({token_hex(2)})"
 
+    # --- New helpers for consistent session suffix reuse ---------------------
+    @staticmethod
+    def extract_suffix(label: str) -> "str | None":
+        """
+        Return the trailing '(xxxx)' hex suffix from a label when present.
+        """
+        s = str(label or "").strip()
+        if not s.endswith(")"):
+            return None
+        try:
+            open_idx = s.rfind("(")
+            if open_idx == -1:
+                return None
+            return s[open_idx + 1 : -1] or None
+        except Exception:
+            return None
+
+    @staticmethod
+    def make_label_with_suffix(segment: str, suffix: str) -> str:
+        """
+        Compose '<outer...>->Segment(suffix)' using the provided suffix.
+        """
+        try:
+            parts = SimulatedLineage.parent_lineage()
+            base = "->".join([*parts, segment]) if parts else segment
+        except Exception:
+            base = segment
+        suf = str(suffix or "").strip()
+        return f"{base}({suf})" if suf else SimulatedLineage.make_label(segment)
+
     @staticmethod
     def preview(text: str, limit: int = PREVIEW_LIMIT) -> str:
         s = str(text or "")
