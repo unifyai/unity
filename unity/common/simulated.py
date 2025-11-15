@@ -202,7 +202,7 @@ def maybe_tool_log_scheduled(segment: str, method: str, args: dict):
         cid = SimulatedLineage.extract_suffix(label) or ""
         try:
             LOGGER.info(
-                f"🛠️ [{label}] ToolCall Scheduled: {method} - {cid} | args={_json.dumps(args)}",
+                f"🛠️ [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
             )
         except Exception:
             pass
@@ -226,7 +226,7 @@ def maybe_tool_log_scheduled_with_label(label: str, method: str, args: dict):
         cid = SimulatedLineage.extract_suffix(label) or ""
         try:
             LOGGER.info(
-                f"🛠️ [{label}] ToolCall Scheduled: {method} - {cid} | args={_json.dumps(args)}",
+                f"🛠️ [{label}] ToolCall Scheduled | args={_json.dumps(args)}",
             )
         except Exception:
             pass
@@ -255,7 +255,7 @@ def maybe_tool_log_completed(
         dt = _time.perf_counter() - float(t0)
         try:
             LOGGER.info(
-                f"✅ [{label}] ToolCall Completed in {dt:.2f}s: {method} - {cid} | result={_json.dumps(result)}",
+                f"✅ [{label}] ToolCall Completed in {dt:.2f}s | result={_json.dumps(result)}",
             )
         except Exception:
             pass
