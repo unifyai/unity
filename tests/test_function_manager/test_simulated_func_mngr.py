@@ -143,3 +143,25 @@ def test_sim_fm_search_functions_by_similarity_bounds_and_shape():
     assert isinstance(first, dict)
     for key in ("name", "function_id", "argspec", "score"):
         assert key in first
+
+
+# --------------------------------------------------------------------------- #
+#  clear                                                                      #
+# --------------------------------------------------------------------------- #
+
+
+@_handle_project
+@pytest.mark.unit
+def test_simulated_clear_sync():
+    """
+    SimulatedFunctionManager.clear should reset the manager (hard-coded completion)
+    and remain usable afterwards.
+    """
+    fm = SimulatedFunctionManager()
+    # Do a synchronous operation to create some prior state
+    fm.add_functions(implementations="def _tmp():\n    return 1\n")
+    # Clear should not raise and should be quick (no LLM roundtrip requirement)
+    fm.clear()
+    # Post-clear, read-only operations should still work
+    post = fm.list_functions()
+    assert isinstance(post, dict) and post is not None
