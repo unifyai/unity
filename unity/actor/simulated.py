@@ -724,9 +724,18 @@ class SimulatedActor(BaseActor):
                 )
             else:
                 _act_label = SimulatedLineage.make_label("SimulatedActor.act")
-            SimulatedLog.log_request("act", _act_label, description)
         except Exception:
-            pass
+            _act_label = "SimulatedActor.act"
+        # Tool-style scheduled log (only when no parent lineage)
+        _log_tools = not SimulatedLineage.has_outer()
+        if _log_tools:
+            try:
+                _cid = SimulatedLineage.extract_suffix(_act_label) or ""
+                LOGGER.info(
+                    f'🛠️ [{_act_label}] ToolCall Scheduled: act - {_cid} | args={{"description": {json.dumps(description)}}}',
+                )
+            except Exception:
+                pass
 
         entrypoint_info: dict | None = None
         planned_result: str | None = None

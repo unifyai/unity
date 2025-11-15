@@ -7,6 +7,7 @@ import functools
 from typing import List, Optional, Dict, Any
 
 import unify
+import json
 
 from ..common.async_tool_loop import SteerableToolHandle
 from .base import BaseTranscriptManager
@@ -24,6 +25,7 @@ from ..common.simulated import (
 from .types.message import Message
 from ..common.llm_client import new_llm_client
 from ..constants import LOGGER
+import time
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -296,6 +298,19 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         # No EventBus publishing for simulated managers
         call_id = None
 
+        # Tool-style scheduled log (gate to no-parent-lineage)
+        _log_tools = not SimulatedLineage.has_outer()
+        _label = SimulatedLineage.make_label("SimulatedTranscriptManager.ask")
+        _cid = SimulatedLineage.extract_suffix(_label) or ""
+        _t0 = time.perf_counter()
+        if _log_tools:
+            try:
+                LOGGER.info(
+                    f'🛠️ [{_label}] ToolCall Scheduled: ask - {_cid} | args={{"text": {json.dumps(text) if isinstance(text, str) else repr(text)}, "requests_clarification": {_requests_clarification}}}',
+                )
+            except Exception:
+                pass
+
         instruction = build_simulated_method_prompt(
             "ask",
             text,
@@ -310,17 +325,24 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             clarification_down_q=_clarification_down_q,
         )
 
-        # Emit a human-facing log for the initial ask so tests/consumers see immediate feedback
-        try:
-            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
-        except Exception:
-            pass
+        # Do not emit ❓ Ask requested here; tool-style scheduled log above already captures inputs
 
         # No EventBus publishing for simulated managers
         return handle
 
     @functools.wraps(BaseTranscriptManager.clear, updated=())
     def clear(self) -> None:
+        _log_tools = not SimulatedLineage.has_outer()
+        _label = SimulatedLineage.make_label("SimulatedTranscriptManager.clear")
+        _cid = SimulatedLineage.extract_suffix(_label) or ""
+        _t0 = time.perf_counter()
+        if _log_tools:
+            try:
+                LOGGER.info(
+                    f"🛠️ [{_label}] ToolCall Scheduled: clear - {_cid} | args={{}}",
+                )
+            except Exception:
+                pass
         type(self).__init__(
             self,
             description=getattr(
@@ -336,3 +358,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
         )
+        if _log_tools:
+            try:
+                dt = time.perf_counter() - _t0
+                LOGGER.info(
+                    f'✅ [{_label}] ToolCall Completed in {dt:.2f}s: clear - {_cid} | result={{"outcome": "reset"}}',
+                )
+            except Exception:
+                pass
