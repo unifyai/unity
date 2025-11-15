@@ -479,11 +479,17 @@ class SimulatedContactManager(BaseContactManager):
             clarification_down_q=_clarification_down_q,
         )
 
-        # Emit a human-facing log for the initial ask so tests and users see immediate feedback
-        try:
-            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
-        except Exception:
-            pass
+        # Tool-style scheduled log (only when no parent lineage)
+        _log_tools = not SimulatedLineage.has_outer()
+        if _log_tools:
+            try:
+                _label = SimulatedLineage.make_label("SimulatedContactManager.ask")
+                _cid = SimulatedLineage.extract_suffix(_label) or ""
+                LOGGER.info(
+                    f'🛠️ [{_label}] ToolCall Scheduled: ask - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
+                )
+            except Exception:
+                pass
 
         # No EventBus publishing for simulated managers
 
@@ -522,11 +528,17 @@ class SimulatedContactManager(BaseContactManager):
             clarification_down_q=_clarification_down_q,
         )
 
-        # Emit a human-facing log for the initial update so tests and users see immediate feedback
-        try:
-            SimulatedLog.log_request("update", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
-        except Exception:
-            pass
+        # Tool-style scheduled log (only when no parent lineage)
+        _log_tools = not SimulatedLineage.has_outer()
+        if _log_tools:
+            try:
+                _label = SimulatedLineage.make_label("SimulatedContactManager.update")
+                _cid = SimulatedLineage.extract_suffix(_label) or ""
+                LOGGER.info(
+                    f'🛠️ [{_label}] ToolCall Scheduled: update - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
+                )
+            except Exception:
+                pass
 
         # No EventBus publishing for simulated managers
 

@@ -363,11 +363,17 @@ class SimulatedFileManager(BaseFileManager):
             clarification_down_q=_clarification_down_q,
         )
 
-        # Emit a human-facing log for the initial ask so tests/users see immediate feedback
-        try:
-            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), question)  # type: ignore[arg-type]
-        except Exception:
-            pass
+        # Tool-style scheduled log (only when no parent lineage)
+        _log_tools = not SimulatedLineage.has_outer()
+        if _log_tools:
+            try:
+                _label = SimulatedLineage.make_label("SimulatedFileManager.ask")
+                _cid = SimulatedLineage.extract_suffix(_label) or ""
+                LOGGER.info(
+                    f'🛠️ [{_label}] ToolCall Scheduled: ask - {_cid} | args={{"filename": {json.dumps(filename)}, "question": {json.dumps(question)}, "requests_clarification": {_requests_clarification}}}',
+                )
+            except Exception:
+                pass
 
         return handle
 

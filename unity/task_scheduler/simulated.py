@@ -404,11 +404,17 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_down_q=_clarification_down_q,
         )
 
-        # Emit a human-facing log for the initial ask so tests see immediate feedback
-        try:
-            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
-        except Exception:
-            pass
+        # Tool-style scheduled log (only when no parent lineage)
+        _log_tools = not SimulatedLineage.has_outer()
+        if _log_tools:
+            try:
+                _label = SimulatedLineage.make_label("SimulatedTaskScheduler.ask")
+                _cid = SimulatedLineage.extract_suffix(_label) or ""
+                LOGGER.info(
+                    f'🛠️ [{_label}] ToolCall Scheduled: ask - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
+                )
+            except Exception:
+                pass
 
         # No EventBus publishing for simulated managers
 
@@ -451,11 +457,17 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
             clarification_down_q=_clarification_down_q,
         )
 
-        # Emit a human-facing log for the initial update so tests see immediate feedback
-        try:
-            SimulatedLog.log_request("update", getattr(handle, "_log_label", ""), text)  # type: ignore[arg-type]
-        except Exception:
-            pass
+        # Tool-style scheduled log (only when no parent lineage)
+        _log_tools = not SimulatedLineage.has_outer()
+        if _log_tools:
+            try:
+                _label = SimulatedLineage.make_label("SimulatedTaskScheduler.update")
+                _cid = SimulatedLineage.extract_suffix(_label) or ""
+                LOGGER.info(
+                    f'🛠️ [{_label}] ToolCall Scheduled: update - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
+                )
+            except Exception:
+                pass
 
         # No EventBus publishing for simulated managers
 
@@ -502,12 +514,20 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         # Drop None values so defaults are not forced
         actor_kwargs = {k: v for k, v in actor_kwargs.items() if v is not None}
 
-        # Emit a scheduler-level execute log with a stable label
+        # Tool-style scheduled log for execute (only when no parent lineage)
+        _log_tools = not SimulatedLineage.has_outer()
         try:
             _exec_label = SimulatedLineage.make_label("SimulatedTaskScheduler.execute")
-            SimulatedLog.log_request("execute", _exec_label, text)
         except Exception:
-            pass
+            _exec_label = "SimulatedTaskScheduler.execute"
+        if _log_tools:
+            try:
+                _cid = SimulatedLineage.extract_suffix(_exec_label) or ""
+                LOGGER.info(
+                    f'🛠️ [{_exec_label}] ToolCall Scheduled: execute - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
+                )
+            except Exception:
+                pass
 
         if self._actor_factory is not None:
             actor = self._actor_factory(**actor_kwargs)
