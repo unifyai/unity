@@ -293,6 +293,127 @@ async def test_execute_returns_handle_with_append_to_queue_introspection():
 
 
 # --------------------------------------------------------------------------- #
+#  6.2. End‑to‑end: async tool loop can call dynamic append_to_queue           #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_async_tool_loop_can_call_append_to_queue_helper():
+    """
+    End-to-end: An outer async tool loop (proxying the Conductor) should be able to:
+      1) call TaskScheduler.execute to start a task, and then
+      2) call the dynamically exposed helper whose name starts with `append_to_queue_`
+         to append another task while the first is running.
+    """
+    # Localized imports to mirror other async tool loop tests
+    import unify  # type: ignore
+    from unity.common.async_tool_loop import start_async_tool_loop
+    from tests.helpers import SETTINGS  # reuse cache/tracing settings
+    from tests.test_async_tool_loop.async_helpers import (  # wait helpers
+        _wait_for_tool_request,
+        _wait_for_assistant_call_prefix,
+        _wait_for_tool_message_prefix,
+        _wait_for_condition,
+    )
+
+    # Keep the actor alive (no auto-complete by steps/time)
+    actor = SimulatedActor(steps=None, duration=None)
+    ts = TaskScheduler(actor=actor)
+
+    # Create a singleton queue with one task A, and a standalone task B to append
+    (a_id,) = tuple(await _make_ordered_queue(ts, ["ATask"]))  # type: ignore[misc]
+    b_id = ts._create_task(name="BTask", description="BTask")["details"]["task_id"]  # type: ignore[index]
+
+    # Tool that starts execution and returns the steerable ActiveQueue handle
+    @unify.traced
+    async def scheduler_execute(*, task_id: int) -> "object":
+        return await ts.execute(task_id=task_id)
+
+    # LLM client configured like other async tool loop tests
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+
+    # Clear, step-by-step instructions to the model:
+    #  1) call `scheduler_execute(task_id=a_id)`
+    #  2) once running, call helper starting with `append_to_queue_` with task_id=b_id
+    client.set_system_message(
+        "You are orchestrating a running task.\n"
+        "First, start the task by calling the tool `scheduler_execute` with the provided task_id.\n"
+        "After it is in-flight, call the helper whose name starts with `append_to_queue_` and pass\n"
+        f"task_id={int(b_id)} to append that task to the current queue.\n"
+        "Do not invent tool names; use exactly the provided names. Finish with a short OK.",
+    )
+
+    outer = start_async_tool_loop(
+        client,
+        message=f"Start the task {int(a_id)} now, then append {int(b_id)} to its queue.",
+        tools={"scheduler_execute": scheduler_execute},
+        max_steps=30,
+        timeout=300,
+    )
+
+    # 1) Wait deterministically until `scheduler_execute` has been requested
+    await _wait_for_tool_request(client, "scheduler_execute")
+
+    # 2) The loop won't produce another assistant turn until a tool finishes or we interject.
+    #    Prompt the model explicitly to call the dynamic helper whose name starts with `append_to_queue_`.
+    await outer.interject(
+        f"Now append task_id={int(b_id)} to the current queue using the helper whose name starts with 'append_to_queue_'.",
+    )
+
+    # 3) Next, wait until the assistant calls a dynamic helper whose name starts with append_to_queue_
+    await _wait_for_assistant_call_prefix(client, "append_to_queue_")
+    # And wait until the tool result message for the append helper is recorded
+    await _wait_for_tool_message_prefix(client, "append_to_queue_")
+
+    # Verify that B was appended behind A in the live queue (wait deterministically)
+    async def _has_appended() -> bool:
+        live_local = ts._get_queue_for_task(task_id=a_id)
+        ids_local = [getattr(r, "task_id", None) for r in (live_local or [])]
+        try:
+            return bool(
+                ids_local
+                and ids_local[0] == a_id
+                and (b_id in ids_local)
+                and ids_local.index(b_id) == len(ids_local) - 1,
+            )
+        except Exception:
+            return False
+
+    await _wait_for_condition(_has_appended, poll=0.01, timeout=60.0)
+
+    # Proactively stop the running task inside the scheduler to avoid hanging on
+    # a never-ending simulated actor (steps=None, duration=None).
+    try:
+        active = getattr(ts, "_active_task", None)
+        if active is not None:
+            active.stop(cancel=False)
+    except Exception:
+        pass
+
+    # Also stop the outer async tool loop; the end-to-end goal (append helper) is verified.
+    try:
+        outer.stop("test cleanup")
+    except Exception:
+        pass
+
+    # Allow the outer loop to finish cleanly
+    try:
+        final = await asyncio.wait_for(outer.result(), timeout=120)
+        assert isinstance(final, str)
+    except Exception:
+        # Best-effort cleanup if the model doesn't finish on its own
+        outer.stop("cleanup")
+        await asyncio.wait_for(asyncio.shield(outer.result()), timeout=120)
+
+
+# --------------------------------------------------------------------------- #
 #  A. Activation metadata                                                      #
 # --------------------------------------------------------------------------- #
 
