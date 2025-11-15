@@ -23,6 +23,7 @@ from ..common.simulated import (
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
+    build_followup_prompt,
     maybe_tool_log_scheduled,
     maybe_tool_log_completed,
 )
@@ -333,16 +334,10 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         return self._done.is_set()
 
     async def ask(self, question: str) -> "SteerableToolHandle":
-        q_msg = (
-            f"Your only task is to simulate an answer to the following question: {question}\n\n"
-            "However, there is a also ongoing simulated process which had the instructions given below. "
-            "Please make your answer realastic and conceivable given the provided context of the simulated taks."
-        )
-        follow_up_prompt = "\n\n---\n\n".join(
-            [q_msg]
-            + [self._initial]
-            + self._extra_msgs
-            + [f"Question to answer (as a reminder!): {question}"],
+        follow_up_prompt = build_followup_prompt(
+            question=question,
+            initial_instruction=self._initial,
+            extra_messages=list(self._extra_msgs),
         )
         # Create a nested helper handle so we can log using its stable label, mirroring TaskScheduler/Actor
         handle = _SimulatedContactHandle(
@@ -461,6 +456,7 @@ class SimulatedContactManager(BaseContactManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
+        images: object | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -505,6 +501,7 @@ class SimulatedContactManager(BaseContactManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
+        images: object | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
@@ -691,7 +688,25 @@ class SimulatedContactManager(BaseContactManager):
 
         async def _call_llm() -> str:
             self._llm.set_response_format(_CreateOutcome)
-            return await self._llm.generate(f"{instruction}\n\n{user_payload}")
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            label = SimulatedLineage.make_label(
+                "SimulatedContactManager._create_contact",
+            )
+            return await simulated_llm_roundtrip(
+                self._llm,
+                label=label,
+                prompt=f"{instruction}\n\n{user_payload}",
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [
+                        {"role": "user", "content": f"{instruction}\n\n{user_payload}"},
+                    ],
+                },
+            )
 
         try:
             try:
@@ -865,7 +880,23 @@ class SimulatedContactManager(BaseContactManager):
 
         async def _call_llm() -> str:
             self._llm.set_response_format(_DeleteOutcome)
-            return await self._llm.generate(instruction)
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            label = SimulatedLineage.make_label(
+                "SimulatedContactManager._delete_contact",
+            )
+            return await simulated_llm_roundtrip(
+                self._llm,
+                label=label,
+                prompt=instruction,
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [{"role": "user", "content": instruction}],
+                },
+            )
 
         try:
             try:
@@ -914,8 +945,27 @@ class SimulatedContactManager(BaseContactManager):
 
         async def _call_llm() -> str:
             self._llm.set_response_format(_MergeOutcomeStrict)
-            return await self._llm.generate(
-                f"{instruction}\n\n{json.dumps(payload, indent=2)}",
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            label = SimulatedLineage.make_label(
+                "SimulatedContactManager._merge_contacts",
+            )
+            return await simulated_llm_roundtrip(
+                self._llm,
+                label=label,
+                prompt=f"{instruction}\n\n{json.dumps(payload, indent=2)}",
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": f"{instruction}\n\n{json.dumps(payload, indent=2)}",
+                        },
+                    ],
+                },
             )
 
         try:

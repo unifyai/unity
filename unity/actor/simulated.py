@@ -1,11 +1,10 @@
 import asyncio
-import os
-import json
 import threading
 import time
 
 import unify
 from .base import BaseActor
+import functools
 from typing import Optional
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.function_manager.function_manager import FunctionManager
@@ -16,6 +15,7 @@ from unity.common.simulated import (
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
 )
+from unity.common.llm_client import new_llm_client
 
 
 class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
@@ -676,14 +676,7 @@ class SimulatedActor(BaseActor):
         self._sim_guidance: Optional[str] = simulation_guidance
 
         # One shared, memory-retaining LLM for all activities
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            stateful=True,
-        )
+        self._llm = new_llm_client(stateful=True)
         # Compose a system message that preserves default behaviour while
         # allowing optional simulation guidance to influence simulated responses.
         _base_sys = (
@@ -698,6 +691,7 @@ class SimulatedActor(BaseActor):
             )
         self._llm.set_system_message(_base_sys)
 
+    @functools.wraps(BaseActor.act, updated=())
     async def act(
         self,
         description: str,

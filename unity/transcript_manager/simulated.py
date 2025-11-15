@@ -20,6 +20,7 @@ from ..common.simulated import (
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
+    build_followup_prompt,
     maybe_tool_log_scheduled,
     maybe_tool_log_completed,
 )
@@ -59,6 +60,9 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 "Clarification queues must be provided when _requests_clarification is True",
             )
         self._needs_clar = _requests_clarification
+        # Human-friendly log label derived from current lineage, mirroring other simulated managers:
+        # "<outer...>->SimulatedTranscriptManager.ask(abcd)"
+        self._log_label = SimulatedLineage.make_label("SimulatedTranscriptManager.ask")
 
         # fire clarification immediately if queues supplied
         if self._needs_clar:
@@ -69,6 +73,10 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._clar_up_q.put_nowait(q_text)
                 try:
                     SimulatedLog.log_clarification_request(self._log_label, q_text)
+                except Exception:
+                    pass
+                try:
+                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
                 except Exception:
                     pass
             except asyncio.QueueFull:
@@ -82,9 +90,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._answer: Optional[str] = None
         self._msgs: List[Dict[str, Any]] = []
         self._paused = False
-        # Human-friendly log label derived from current lineage, mirroring other simulated managers:
-        # "<outer...>->SimulatedTranscriptManager.ask(abcd)"
-        self._log_label = SimulatedLineage.make_label("SimulatedTranscriptManager.ask")
+        # label already set above
 
     # ──  API expected by SteerableToolHandle  ──────────────────────────────
     async def result(self):
@@ -172,16 +178,10 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         return self._done.is_set()
 
     async def ask(self, question: str) -> "SteerableToolHandle":
-        q_msg = (
-            f"Your only task is to simulate an answer to the following question: {question}\n\n"
-            "However, there is a also ongoing simulated process which had the instructions given below. "
-            "Please make your answer realastic and conceivable given the provided context of the simulated taks."
-        )
-        follow_up_prompt = "\n\n---\n\n".join(
-            [q_msg]
-            + [self._initial]
-            + self._extra_user_msgs
-            + [f"Question to answer (as a reminder!): {question}"],
+        follow_up_prompt = build_followup_prompt(
+            question=question,
+            initial_instruction=self._initial,
+            extra_messages=list(self._extra_user_msgs),
         )
 
         handle = _SimulatedTranscriptHandle(
@@ -296,6 +296,7 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
+        images: object | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events

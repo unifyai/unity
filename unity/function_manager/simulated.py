@@ -3,10 +3,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-import os
 from typing import Any, Dict, List, Optional
 
-import unify
 
 from .base import BaseFunctionManager
 from .types.function import Function
@@ -16,6 +14,7 @@ from ..common.simulated import (
     maybe_tool_log_scheduled,
     maybe_tool_log_completed,
 )
+from ..common.llm_client import new_llm_client
 
 
 class SimulatedFunctionManager(BaseFunctionManager):
@@ -41,14 +40,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self._simulation_guidance = simulation_guidance
 
         # One shared, *stateful* LLM for the simulation
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        self._llm = new_llm_client(stateful=True)
 
         columns = [{k: str(v.annotation)} for k, v in Function.model_fields.items()]
 
