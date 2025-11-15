@@ -7,6 +7,30 @@ from unity.function_manager.simulated import SimulatedFunctionManager
 
 
 # --------------------------------------------------------------------------- #
+#  Doc-string inheritance                                                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_simulated_fm_docstrings_match_base():
+    """
+    Public methods in SimulatedFunctionManager should copy the real
+    BaseFunctionManager doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.function_manager.base import BaseFunctionManager
+    from unity.function_manager.simulated import SimulatedFunctionManager
+
+    assert (
+        BaseFunctionManager.add_functions.__doc__.strip()
+        in SimulatedFunctionManager.add_functions.__doc__.strip()
+    ), ".add_functions doc-string was not copied correctly"
+
+    assert (
+        BaseFunctionManager.list_functions.__doc__.strip()
+        in SimulatedFunctionManager.list_functions.__doc__.strip()
+    ), ".list_functions doc-string was not copied correctly"
+
+
+# --------------------------------------------------------------------------- #
 #  add_functions                                                              #
 # --------------------------------------------------------------------------- #
 
