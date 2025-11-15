@@ -468,7 +468,7 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
     # Spy: record interjections delivered to each task; avoid networked LLM
     calls: list[tuple[str, str]] = []
 
-    async def spy_interject(self, instruction: str):  # type: ignore[override]
+    async def spy_interject(self, instruction: str, *, images=None):  # type: ignore[override]
         try:
             desc = getattr(self, "_description", None) or ""
         except Exception:
@@ -1247,7 +1247,7 @@ async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
             pass
         return "OK"
 
-    async def spy_actor_interject(self, instruction: str):  # type: ignore[override]
+    async def spy_actor_interject(self, instruction: str, *, images=None):  # type: ignore[override]
         interject_calls["count"] += 1
         try:
             self.simulate_step()
