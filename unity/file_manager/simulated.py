@@ -364,16 +364,15 @@ class SimulatedFileManager(BaseFileManager):
         )
 
         # Tool-style scheduled log (only when no parent lineage)
-        _log_tools = not SimulatedLineage.has_outer()
-        if _log_tools:
-            try:
-                _label = SimulatedLineage.make_label("SimulatedFileManager.ask")
-                _cid = SimulatedLineage.extract_suffix(_label) or ""
-                LOGGER.info(
-                    f'🛠️ [{_label}] ToolCall Scheduled: ask - {_cid} | args={{"filename": {json.dumps(filename)}, "question": {json.dumps(question)}, "requests_clarification": {_requests_clarification}}}',
-                )
-            except Exception:
-                pass
+        maybe_tool_log_scheduled(
+            "SimulatedFileManager.ask",
+            "ask",
+            {
+                "filename": filename,
+                "question": question,
+                "requests_clarification": _requests_clarification,
+            },
+        )
 
         return handle
 

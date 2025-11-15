@@ -405,16 +405,11 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         )
 
         # Tool-style scheduled log (only when no parent lineage)
-        _log_tools = not SimulatedLineage.has_outer()
-        if _log_tools:
-            try:
-                _label = SimulatedLineage.make_label("SimulatedTaskScheduler.ask")
-                _cid = SimulatedLineage.extract_suffix(_label) or ""
-                LOGGER.info(
-                    f'🛠️ [{_label}] ToolCall Scheduled: ask - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
-                )
-            except Exception:
-                pass
+        maybe_tool_log_scheduled(
+            "SimulatedTaskScheduler.ask",
+            "ask",
+            {"text": text, "requests_clarification": _requests_clarification},
+        )
 
         # No EventBus publishing for simulated managers
 
@@ -458,16 +453,11 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         )
 
         # Tool-style scheduled log (only when no parent lineage)
-        _log_tools = not SimulatedLineage.has_outer()
-        if _log_tools:
-            try:
-                _label = SimulatedLineage.make_label("SimulatedTaskScheduler.update")
-                _cid = SimulatedLineage.extract_suffix(_label) or ""
-                LOGGER.info(
-                    f'🛠️ [{_label}] ToolCall Scheduled: update - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
-                )
-            except Exception:
-                pass
+        maybe_tool_log_scheduled(
+            "SimulatedTaskScheduler.update",
+            "update",
+            {"text": text, "requests_clarification": _requests_clarification},
+        )
 
         # No EventBus publishing for simulated managers
 
@@ -515,19 +505,15 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
         actor_kwargs = {k: v for k, v in actor_kwargs.items() if v is not None}
 
         # Tool-style scheduled log for execute (only when no parent lineage)
-        _log_tools = not SimulatedLineage.has_outer()
         try:
             _exec_label = SimulatedLineage.make_label("SimulatedTaskScheduler.execute")
         except Exception:
             _exec_label = "SimulatedTaskScheduler.execute"
-        if _log_tools:
-            try:
-                _cid = SimulatedLineage.extract_suffix(_exec_label) or ""
-                LOGGER.info(
-                    f'🛠️ [{_exec_label}] ToolCall Scheduled: execute - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
-                )
-            except Exception:
-                pass
+        maybe_tool_log_scheduled_with_label(
+            _exec_label,
+            "execute",
+            {"text": text, "requests_clarification": _requests_clarification},
+        )
 
         if self._actor_factory is not None:
             actor = self._actor_factory(**actor_kwargs)

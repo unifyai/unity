@@ -20,9 +20,9 @@ from ..common.async_tool_loop import SteerableToolHandle
 from ..common.simulated import (
     mirror_contact_manager_tools,
     SimulatedLineage,
-    SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
+    maybe_tool_log_scheduled,
 )
 from ..constants import LOGGER
 
@@ -480,16 +480,11 @@ class SimulatedContactManager(BaseContactManager):
         )
 
         # Tool-style scheduled log (only when no parent lineage)
-        _log_tools = not SimulatedLineage.has_outer()
-        if _log_tools:
-            try:
-                _label = SimulatedLineage.make_label("SimulatedContactManager.ask")
-                _cid = SimulatedLineage.extract_suffix(_label) or ""
-                LOGGER.info(
-                    f'🛠️ [{_label}] ToolCall Scheduled: ask - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
-                )
-            except Exception:
-                pass
+        maybe_tool_log_scheduled(
+            "SimulatedContactManager.ask",
+            "ask",
+            {"text": text, "requests_clarification": _requests_clarification},
+        )
 
         # No EventBus publishing for simulated managers
 
@@ -529,16 +524,11 @@ class SimulatedContactManager(BaseContactManager):
         )
 
         # Tool-style scheduled log (only when no parent lineage)
-        _log_tools = not SimulatedLineage.has_outer()
-        if _log_tools:
-            try:
-                _label = SimulatedLineage.make_label("SimulatedContactManager.update")
-                _cid = SimulatedLineage.extract_suffix(_label) or ""
-                LOGGER.info(
-                    f'🛠️ [{_label}] ToolCall Scheduled: update - {_cid} | args={{"text": {json.dumps(text)}, "requests_clarification": {_requests_clarification}}}',
-                )
-            except Exception:
-                pass
+        maybe_tool_log_scheduled(
+            "SimulatedContactManager.update",
+            "update",
+            {"text": text, "requests_clarification": _requests_clarification},
+        )
 
         # No EventBus publishing for simulated managers
 

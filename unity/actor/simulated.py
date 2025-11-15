@@ -727,15 +727,18 @@ class SimulatedActor(BaseActor):
         except Exception:
             _act_label = "SimulatedActor.act"
         # Tool-style scheduled log (only when no parent lineage)
-        _log_tools = not SimulatedLineage.has_outer()
-        if _log_tools:
-            try:
-                _cid = SimulatedLineage.extract_suffix(_act_label) or ""
-                LOGGER.info(
-                    f'🛠️ [{_act_label}] ToolCall Scheduled: act - {_cid} | args={{"description": {json.dumps(description)}}}',
-                )
-            except Exception:
-                pass
+        try:
+            from unity.common.simulated import (  # noqa: WPS433
+                maybe_tool_log_scheduled_with_label as _log_sched,
+            )
+
+            _log_sched(
+                _act_label,
+                "act",
+                {"description": description},
+            )
+        except Exception:
+            pass
 
         entrypoint_info: dict | None = None
         planned_result: str | None = None
