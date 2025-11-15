@@ -270,3 +270,52 @@ async def test_handle_ask():
     assert isinstance(handle_answer, str) and handle_answer.strip(), (
         "Handle should still yield a non-empty answer after nested ask",
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 10.  Simulated private helpers                                             #
+# ────────────────────────────────────────────────────────────────────────────
+@_handle_project
+def test_simulated_filter_contacts_sync():
+    """
+    SimulatedContactManager.filter_contacts should produce a plausible list of
+    contacts synchronously (cannot be called from an active event loop).
+    """
+    cm = SimulatedContactManager()
+    # Use a permissive filter; just validate basic shape and limit behaviour
+    results = cm.filter_contacts(filter="True", limit=3)
+    assert isinstance(results, list), "Expected list of contacts"
+    assert len(results) <= 3, "Limit should cap the number of returned contacts"
+    if results:
+        first = results[0]
+        assert hasattr(first, "contact_id"), "Each contact should have contact_id"
+
+
+@_handle_project
+def test_simulated_update_contact_sync():
+    """
+    SimulatedContactManager.update_contact should return a structured confirmation
+    with 'outcome' and 'details.contact_id'.
+    """
+    cm = SimulatedContactManager()
+    out = cm.update_contact(contact_id=123, first_name="Alice")
+    assert isinstance(out, dict), "update_contact yields a dict-like outcome"
+    assert "outcome" in out, "Outcome should include 'outcome' message"
+    assert "details" in out and isinstance(out["details"], dict)
+    assert isinstance(out["details"].get("contact_id"), int)
+
+
+@_handle_project
+def test_simulated_clear_sync():
+    """
+    SimulatedContactManager.clear should reset the manager (hard-coded completion)
+    and remain usable afterwards.
+    """
+    cm = SimulatedContactManager()
+    # Do a synchronous operation to create some prior state
+    cm.update_contact(contact_id=1, surname="Smith")
+    # Clear should not raise and should be quick (no LLM roundtrip)
+    cm.clear()
+    # Post-clear, synchronous helper still works
+    post = cm.filter_contacts(limit=1)
+    assert isinstance(post, list)
