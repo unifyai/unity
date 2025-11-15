@@ -17,19 +17,12 @@ from .prompt_builders import (
     build_simulated_method_prompt,
 )
 from ..common.async_tool_loop import SteerableToolHandle
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
-)
 from ..common.simulated import (
     mirror_contact_manager_tools,
     SimulatedLineage,
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
-    _publish_sim_clarification_request,
-    _publish_sim_clarification_answer,
 )
 from ..constants import LOGGER
 
@@ -206,9 +199,6 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
-        call_id: str | None = None,
-        manager_name: str | None = None,
-        method_name: str | None = None,
     ):
         self._llm = llm
         self._initial = initial_text
@@ -216,9 +206,6 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
         self._mode = str(mode or "ask")
-        self._call_id = call_id
-        self._manager = manager_name
-        self._method = method_name
         if _requests_clarification and (
             not clarification_up_q or not clarification_down_q
         ):
@@ -239,19 +226,6 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._clar_up_q.put_nowait(q_text)
                 try:
                     SimulatedLog.log_clarification_request(self._log_label, q_text)
-                except Exception:
-                    pass
-                try:
-                    # fire-and-forget EventBus publish
-                    asyncio.create_task(
-                        _publish_sim_clarification_request(
-                            self._call_id,
-                            self._manager,
-                            self._method,
-                            label=self._log_label,
-                            question=q_text,
-                        ),
-                    )
                 except Exception:
                     pass
                 try:
@@ -291,16 +265,6 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._extra_msgs.append(f"Clarification: {clar}")
                 try:
                     SimulatedLog.log_clarification_answer(self._log_label, clar)
-                except Exception:
-                    pass
-                try:
-                    await _publish_sim_clarification_answer(
-                        self._call_id,
-                        self._manager,
-                        self._method,
-                        label=self._log_label,
-                        answer=clar,
-                    )
                 except Exception:
                     pass
                 try:
@@ -500,16 +464,6 @@ class SimulatedContactManager(BaseContactManager):
         should_log = self._log_events or log_events
         call_id = None
 
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "ContactManager",
-                "ask",
-                phase="incoming",
-                question=text,
-            )
-
         instruction = build_simulated_method_prompt(
             "ask",
             text,
@@ -523,9 +477,6 @@ class SimulatedContactManager(BaseContactManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
-            call_id=call_id,
-            manager_name="ContactManager",
-            method_name="ask",
         )
 
         # Emit a human-facing log for the initial ask so tests and users see immediate feedback
@@ -534,13 +485,7 @@ class SimulatedContactManager(BaseContactManager):
         except Exception:
             pass
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "ContactManager",
-                "ask",
-            )
+        # No EventBus publishing for simulated managers
 
         return handle
 
@@ -562,16 +507,6 @@ class SimulatedContactManager(BaseContactManager):
         should_log = self._log_events or log_events
         call_id = None
 
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "ContactManager",
-                "update",
-                phase="incoming",
-                request=text,
-            )
-
         instruction = build_simulated_method_prompt(
             "update",
             text,
@@ -585,9 +520,6 @@ class SimulatedContactManager(BaseContactManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
-            call_id=call_id,
-            manager_name="ContactManager",
-            method_name="update",
         )
 
         # Emit a human-facing log for the initial update so tests and users see immediate feedback
@@ -596,13 +528,7 @@ class SimulatedContactManager(BaseContactManager):
         except Exception:
             pass
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "ContactManager",
-                "update",
-            )
+        # No EventBus publishing for simulated managers
 
         return handle
 

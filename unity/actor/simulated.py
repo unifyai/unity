@@ -15,9 +15,6 @@ from unity.common.simulated import (
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
-    _publish_sim_clarification_request,
-    _publish_sim_clarification_answer,
-    _publish_sim_notification,
 )
 
 
@@ -54,10 +51,6 @@ class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
         planned_result: str | None = None,
         # New: optional session suffix to reuse across simulated logs
         session_suffix: "str | None" = None,
-        # Optional manager context for EventBus correlation
-        call_id: "str | None" = None,
-        manager_name: "str | None" = None,
-        method_name: "str | None" = None,
     ) -> None:
         self._llm = llm
         self._description = description
@@ -70,9 +63,6 @@ class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._log_mode: str | None = (
             log_mode if log_mode in ("print", "log", None) else "log"
         )
-        self._call_id = call_id
-        self._manager = manager_name
-        self._method = method_name
 
         # Store optional entrypoint metadata and a planned completion result
         self._entrypoint_info: dict | None = entrypoint_info
@@ -131,18 +121,6 @@ class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
                             )
                         except Exception:
                             pass
-                        try:
-                            asyncio.create_task(
-                                _publish_sim_clarification_request(
-                                    self._call_id,
-                                    self._manager,
-                                    self._method,
-                                    label=self._log_label,
-                                    question=q_text,
-                                ),
-                            )
-                        except Exception:
-                            pass
                     except asyncio.QueueFull:
                         pass
                     while True:
@@ -153,18 +131,6 @@ class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
                             time.sleep(0.05)
                     try:
                         SimulatedLog.log_clarification_answer(self._log_label, answer)
-                    except Exception:
-                        pass
-                    try:
-                        asyncio.get_event_loop().create_task(
-                            _publish_sim_clarification_answer(
-                                self._call_id,
-                                self._manager,
-                                self._method,
-                                label=self._log_label,
-                                answer=answer,
-                            ),
-                        )
                     except Exception:
                         pass
                     self._complete(f"Clarification received: {answer}")
@@ -666,17 +632,6 @@ class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
             SimulatedLog.log_notification(self._log_label, message)
         except Exception:
             pass
-        try:
-            await _publish_sim_notification(
-                self._call_id,
-                self._manager,
-                self._method,
-                label=self._log_label,
-                message=message,
-                tool_name="simulated_actor",
-            )
-        except Exception:
-            pass
         return {
             "type": "notification",
             "tool_name": "simulated_actor",
@@ -754,10 +709,6 @@ class SimulatedActor(BaseActor):
         entrypoint: Optional[int] = None,
         # New: optional session suffix to reuse across simulated logs
         session_suffix: Optional[str] = None,
-        # Optional manager context for EventBus correlation
-        call_id: "str | None" = None,
-        manager_name: "str | None" = None,
-        method_name: "str | None" = None,
         **kwargs,
     ) -> SimulatedActorHandle:
         # Emit a scheduler-like nested log for starting an action
@@ -830,7 +781,4 @@ class SimulatedActor(BaseActor):
             entrypoint_info=entrypoint_info,
             planned_result=planned_result,
             session_suffix=session_suffix,
-            call_id=call_id,
-            manager_name=manager_name,
-            method_name=method_name,
         )
