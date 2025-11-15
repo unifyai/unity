@@ -21,6 +21,7 @@ from ..common.simulated import (
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
+    maybe_tool_log_scheduled,
 )
 from ..constants import LOGGER
 
