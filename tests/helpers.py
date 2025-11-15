@@ -200,7 +200,11 @@ def _ack_ok(reply: str) -> bool:
 
 
 async def _assert_blocks_while_paused(result_coro, delay: float = 0.1) -> None:
-    t = asyncio.create_task(result_coro)
+    # Accept either a coroutine or a Task/Future; create a task only when needed.
+    if isinstance(result_coro, asyncio.Task) or asyncio.isfuture(result_coro):
+        t = result_coro
+    else:
+        t = asyncio.create_task(result_coro)
     await asyncio.sleep(delay)
     assert not t.done(), "result() should block while paused"
     # caller should resume and then await the same task
