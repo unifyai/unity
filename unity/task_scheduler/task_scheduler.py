@@ -123,13 +123,23 @@ class TaskScheduler(BaseTaskScheduler):
         def _decorator(func):
             @functools.wraps(func, updated=())
             async def _wrapper(self, *args, **kwargs):
-                # Determine the textual payload (all three methods accept 'text')
-                if "text" in kwargs:
-                    payload_value = kwargs["text"]
-                elif len(args) >= 1:
-                    payload_value = args[0]
+                # Determine the payload value for logging.
+                # For ask/update we log the 'text' argument.
+                # For execute we log the integer 'task_id' (not stringified).
+                if method_name == "execute":
+                    if "task_id" in kwargs:
+                        payload_value = kwargs["task_id"]
+                    elif len(args) >= 1:
+                        payload_value = args[0]
+                    else:
+                        payload_value = None
                 else:
-                    payload_value = ""
+                    if "text" in kwargs:
+                        payload_value = kwargs["text"]
+                    elif len(args) >= 1:
+                        payload_value = args[0]
+                    else:
+                        payload_value = ""
 
                 call_id = new_call_id()
                 await publish_manager_method_event(

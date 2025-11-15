@@ -85,7 +85,7 @@ async def test_managermethod_events_for_execute():
         for e in ev
         if e.payload.get("manager") == "TaskScheduler"
         and e.payload.get("method") == "execute"
-        and e.payload.get("request") == str(task_id)
+        and e.payload.get("request") == task_id
     ]
     assert incoming
     call_id = incoming[0].calling_id
