@@ -183,6 +183,86 @@ class SimulatedLog:
             pass
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Tool-call style logging helpers (gated by parent lineage)
+# ─────────────────────────────────────────────────────────────────────────────
+def maybe_tool_log_scheduled(segment: str, method: str, args: dict):
+    """
+    Emit a standardized 'ToolCall Scheduled' log line when there is no parent lineage.
+    Returns (label, call_id, t0) on success; otherwise None.
+    """
+    try:
+        if SimulatedLineage.has_outer():
+            return None
+        from unity.constants import LOGGER  # noqa: WPS433
+        import json as _json  # noqa: WPS433
+        import time as _time  # noqa: WPS433
+
+        label = SimulatedLineage.make_label(segment)
+        cid = SimulatedLineage.extract_suffix(label) or ""
+        try:
+            LOGGER.info(
+                f"🛠️ [{label}] ToolCall Scheduled: {method} - {cid} | args={_json.dumps(args)}",
+            )
+        except Exception:
+            pass
+        return label, cid, _time.perf_counter()
+    except Exception:
+        return None
+
+
+def maybe_tool_log_scheduled_with_label(label: str, method: str, args: dict):
+    """
+    Emit 'ToolCall Scheduled' using a precomputed label when there is no parent lineage.
+    Returns (label, call_id, t0) on success; otherwise None.
+    """
+    try:
+        if SimulatedLineage.has_outer():
+            return None
+        from unity.constants import LOGGER  # noqa: WPS433
+        import json as _json  # noqa: WPS433
+        import time as _time  # noqa: WPS433
+
+        cid = SimulatedLineage.extract_suffix(label) or ""
+        try:
+            LOGGER.info(
+                f"🛠️ [{label}] ToolCall Scheduled: {method} - {cid} | args={_json.dumps(args)}",
+            )
+        except Exception:
+            pass
+        return label, cid, _time.perf_counter()
+    except Exception:
+        return None
+
+
+def maybe_tool_log_completed(
+    label: str,
+    cid: str,
+    method: str,
+    result: dict,
+    t0: float,
+) -> None:
+    """
+    Emit a standardized 'ToolCall Completed' log line when there is no parent lineage.
+    """
+    try:
+        if SimulatedLineage.has_outer():
+            return
+        from unity.constants import LOGGER  # noqa: WPS433
+        import json as _json  # noqa: WPS433
+        import time as _time  # noqa: WPS433
+
+        dt = _time.perf_counter() - float(t0)
+        try:
+            LOGGER.info(
+                f"✅ [{label}] ToolCall Completed in {dt:.2f}s: {method} - {cid} | result={_json.dumps(result)}",
+            )
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 class SimulatedLLMIO:
     """Shared file writer for LLM request/response debugging."""
 
