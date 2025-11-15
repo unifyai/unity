@@ -10,6 +10,12 @@ import unify
 
 from .base import BaseFunctionManager
 from .types.function import Function
+from ..common.simulated import (
+    SimulatedLineage,
+    simulated_llm_roundtrip,
+)
+from ..constants import LOGGER
+import time
 
 
 class SimulatedFunctionManager(BaseFunctionManager):
@@ -134,6 +140,43 @@ class SimulatedFunctionManager(BaseFunctionManager):
         return (self._simulation_guidance or "").strip()
 
     # ------------------------------------------------------------------ #
+    #  Tool-call style logging helpers (only when no parent lineage)     #
+    # ------------------------------------------------------------------ #
+    def _tool_log_start(self, method: str, args: dict) -> tuple[str, str, float, bool]:
+        label = SimulatedLineage.make_label(f"SimulatedFunctionManager.{method}")
+        call_id = SimulatedLineage.extract_suffix(label) or ""
+        t0 = time.perf_counter()
+        log_enabled = not SimulatedLineage.has_outer()
+        if log_enabled:
+            try:
+                LOGGER.info(
+                    f"🛠️ [{label}] ToolCall Scheduled: {method} - {call_id} | args={json.dumps(args)}",
+                )
+            except Exception:
+                pass
+        return label, call_id, t0, log_enabled
+
+    def _tool_log_end(
+        self,
+        method: str,
+        *,
+        label: str,
+        call_id: str,
+        t0: float,
+        result_summary: dict,
+        enabled: bool,
+    ) -> None:
+        if not enabled:
+            return
+        try:
+            dt = time.perf_counter() - t0
+            LOGGER.info(
+                f"✅ [{label}] ToolCall Completed in {dt:.2f}s: {method} - {call_id} | result={json.dumps(result_summary)}",
+            )
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ #
     # Public API – mirror BaseFunctionManager                            #
     # ------------------------------------------------------------------ #
     @functools.wraps(BaseFunctionManager.add_functions, updated=())
@@ -144,6 +187,15 @@ class SimulatedFunctionManager(BaseFunctionManager):
         preconditions: Optional[Dict[str, Dict]] = None,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
+        label, call_id, t0, _log_tools = self._tool_log_start(
+            "add_functions",
+            {
+                "implementations_count": (
+                    len(implementations) if isinstance(implementations, list) else 1
+                ),
+                "has_preconditions": bool(preconditions),
+            },
+        )
         # No persistence – acknowledge each function name with a simulated status
         if isinstance(implementations, str):
             implementations = [implementations]
@@ -159,6 +211,14 @@ class SimulatedFunctionManager(BaseFunctionManager):
             except Exception:
                 pass
             results[name] = "added (simulated)"
+        self._tool_log_end(
+            "add_functions",
+            label=label,
+            call_id=call_id,
+            t0=t0,
+            result_summary={"total": len(results)},
+            enabled=_log_tools,
+        )
         return results
 
     @functools.wraps(BaseFunctionManager.list_functions, updated=())
@@ -170,6 +230,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
     ) -> Dict[str, Dict[str, Any]]:
         # Ask the stateful LLM to produce a catalogue snapshot aligned to guidance
         guidance = self._guidance_hint()
+        label, call_id, t0, _log_tools = self._tool_log_start(
+            "list_functions",
+            {"include_implementations": include_implementations},
+        )
         prompt = (
             "Simulate FunctionManager.list_functions. Return ONLY a JSON object mapping "
             "function name -> {function_id, argspec, docstring"
@@ -180,7 +244,22 @@ class SimulatedFunctionManager(BaseFunctionManager):
         )
 
         def _call() -> str:
-            return self._run_async_sync(self._llm.generate(prompt))
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            return self._run_async_sync(
+                simulated_llm_roundtrip(
+                    self._llm,
+                    label=label,
+                    prompt=prompt,
+                    sys_for_dump=sys_msg,
+                    request_dump_body={
+                        "model": getattr(self._llm, "model", None),
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                ),
+            )
 
         raw = _call()
         data = self._extract_json(raw)
@@ -188,6 +267,14 @@ class SimulatedFunctionManager(BaseFunctionManager):
             raise ValueError(
                 "list_functions: expected a JSON object mapping name -> metadata",
             )
+        self._tool_log_end(
+            "list_functions",
+            label=label,
+            call_id=call_id,
+            t0=t0,
+            result_summary={"total": len(data)},
+            enabled=_log_tools,
+        )
         return data
 
     @functools.wraps(BaseFunctionManager.get_precondition, updated=())
@@ -197,8 +284,21 @@ class SimulatedFunctionManager(BaseFunctionManager):
         function_name: str,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
+        label, call_id, t0, _log_tools = self._tool_log_start(
+            "get_precondition",
+            {"function_name": function_name},
+        )
         # Simulate that no explicit preconditions are stored
-        return None
+        result = None
+        self._tool_log_end(
+            "get_precondition",
+            label=label,
+            call_id=call_id,
+            t0=t0,
+            result_summary={"present": result is not None},
+            enabled=_log_tools,
+        )
+        return result
 
     @functools.wraps(BaseFunctionManager.delete_function, updated=())
     def delete_function(
@@ -208,8 +308,21 @@ class SimulatedFunctionManager(BaseFunctionManager):
         delete_dependents: bool = True,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
+        label, call_id, t0, _log_tools = self._tool_log_start(
+            "delete_function",
+            {"function_id": function_id, "delete_dependents": delete_dependents},
+        )
         # Acknowledge deletion without side effects
-        return {f"id={function_id}": "deleted (simulated)"}
+        result = {f"id={function_id}": "deleted (simulated)"}
+        self._tool_log_end(
+            "delete_function",
+            label=label,
+            call_id=call_id,
+            t0=t0,
+            result_summary=result,
+            enabled=_log_tools,
+        )
+        return result
 
     @functools.wraps(BaseFunctionManager.search_functions, updated=())
     def search_functions(
@@ -221,6 +334,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         guidance = self._guidance_hint()
+        label, call_id, t0, _log_tools = self._tool_log_start(
+            "search_functions",
+            {"filter": filter, "offset": offset, "limit": limit},
+        )
         prompt = (
             "Simulate FunctionManager.search_functions. Return ONLY a JSON array of objects "
             "with fields name, function_id, argspec, docstring. "
@@ -231,7 +348,22 @@ class SimulatedFunctionManager(BaseFunctionManager):
         )
 
         def _call() -> str:
-            return self._run_async_sync(self._llm.generate(prompt))
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            return self._run_async_sync(
+                simulated_llm_roundtrip(
+                    self._llm,
+                    label=label,
+                    prompt=prompt,
+                    sys_for_dump=sys_msg,
+                    request_dump_body={
+                        "model": getattr(self._llm, "model", None),
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                ),
+            )
 
         raw = _call()
         data = self._extract_json(raw)
@@ -239,6 +371,14 @@ class SimulatedFunctionManager(BaseFunctionManager):
             raise ValueError(
                 "search_functions: expected a JSON array of function records",
             )
+        self._tool_log_end(
+            "search_functions",
+            label=label,
+            call_id=call_id,
+            t0=t0,
+            result_summary={"total": len(data)},
+            enabled=_log_tools,
+        )
         return data
 
     @functools.wraps(BaseFunctionManager.search_functions_by_similarity, updated=())
@@ -250,6 +390,10 @@ class SimulatedFunctionManager(BaseFunctionManager):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         guidance = self._guidance_hint()
+        label, call_id, t0, _log_tools = self._tool_log_start(
+            "search_functions_by_similarity",
+            {"query": query, "n": n},
+        )
         prompt = (
             "Simulate FunctionManager.search_functions_by_similarity. Given the natural-language query, "
             "invent up to n plausible functions that would exist in the current catalogue. "
@@ -259,7 +403,22 @@ class SimulatedFunctionManager(BaseFunctionManager):
         )
 
         def _call() -> str:
-            return self._run_async_sync(self._llm.generate(prompt))
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            return self._run_async_sync(
+                simulated_llm_roundtrip(
+                    self._llm,
+                    label=label,
+                    prompt=prompt,
+                    sys_for_dump=sys_msg,
+                    request_dump_body={
+                        "model": getattr(self._llm, "model", None),
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                ),
+            )
 
         raw = _call()
         data = self._extract_json(raw)
@@ -267,10 +426,19 @@ class SimulatedFunctionManager(BaseFunctionManager):
             raise ValueError(
                 "search_functions_by_similarity: expected a JSON array of function records with scores",
             )
+        self._tool_log_end(
+            "search_functions_by_similarity",
+            label=label,
+            call_id=call_id,
+            t0=t0,
+            result_summary={"total": len(data)},
+            enabled=_log_tools,
+        )
         return data
 
     @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:
+        label, call_id, t0, _log_tools = self._tool_log_start("clear", {})
         type(self).__init__(
             self,
             description=getattr(
@@ -285,4 +453,12 @@ class SimulatedFunctionManager(BaseFunctionManager):
                 True,
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
+        )
+        self._tool_log_end(
+            "clear",
+            label=label,
+            call_id=call_id,
+            t0=t0,
+            result_summary={"outcome": "reset"},
+            enabled=_log_tools,
         )
