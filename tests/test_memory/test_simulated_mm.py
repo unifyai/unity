@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import functools
 import pytest
+import asyncio
 
 from unity.memory_manager.simulated import SimulatedMemoryManager
 from unity.contact_manager.simulated import SimulatedContactManager
@@ -30,7 +31,7 @@ from unity.task_scheduler.simulated import SimulatedTaskScheduler
 from unity.contact_manager.types.contact import Contact
 
 # shared helper used throughout the test-suite – isolates each test run
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, DEFAULT_TIMEOUT
 
 
 # --------------------------------------------------------------------------- #
@@ -388,3 +389,47 @@ async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
 
     assert isinstance(result, str) and result.strip()
     assert counts["ts_update"] >= 1, "TaskScheduler.update should be invoked"
+
+
+# --------------------------------------------------------------------------- #
+# 7. reset – should complete and manager remains usable                        #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_mm_reset_remains_usable():
+    mm = SimulatedMemoryManager()
+    # Reset should not raise
+    await asyncio.wait_for(mm.reset(), timeout=DEFAULT_TIMEOUT)
+    # After reset, a public method should still be usable
+    result = await asyncio.wait_for(
+        mm.update_tasks("Please schedule a quick follow-up for tomorrow."),
+        timeout=DEFAULT_TIMEOUT,
+    )
+    assert isinstance(result, str) and result.strip()
+
+
+# --------------------------------------------------------------------------- #
+# 8. build_plain_transcript – includes manager_method JSON lines               #
+# --------------------------------------------------------------------------- #
+@_handle_project
+def test_mm_build_plain_transcript_includes_manager_method_json():
+    msgs = [
+        {"sender": "Alice Example", "content": "Hi Bob"},
+        {
+            "kind": "manager_method",
+            "data": {
+                "source": "ConversationManager",
+                "phase": "incoming",
+                "method": "ContactManager.update",
+                "args": {"contact_id": 1, "bio": "Updated."},
+            },
+        },
+        {"sender": "Bob Example", "content": "Hi Alice"},
+    ]
+    out = SimulatedMemoryManager.build_plain_transcript(msgs)
+    assert isinstance(out, str) and out.strip()
+    # Plain chat lines should be rendered
+    assert "Alice Example: Hi Bob" in out
+    assert "Bob Example: Hi Alice" in out
+    # Manager-method event should be appended as a JSON line
+    assert '"kind": "manager_method"' in out
