@@ -314,6 +314,8 @@ def simulate_linkedin_sales_leads() -> str:
     assert isinstance(reply, str) and reply.strip(), "Expected a non-empty reply"
     assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
 
+    # Ensure clean shutdown to avoid relying on natural step completion
+    task.stop(cancel=False)
     await task.result()
 
 
@@ -376,4 +378,6 @@ async def test_active_task_interject_image_guides_simulation_to_spreadsheet(
     assert isinstance(reply, str) and reply.strip()
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
+    # Ensure clean shutdown to avoid relying on natural step completion
+    task.stop(cancel=False)
     await task.result()
