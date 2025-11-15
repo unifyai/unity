@@ -25,6 +25,8 @@ from ..common.simulated import (
     SimulatedLog,
     simulated_llm_roundtrip,
     SimulatedHandleMixin,
+    _publish_sim_clarification_request,
+    _publish_sim_clarification_answer,
 )
 from .types.message import Message
 from ..common.llm_client import new_llm_client
@@ -48,12 +50,18 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
         clarification_down_q: asyncio.Queue[str] | None,
+        call_id: str | None = None,
+        manager_name: str | None = None,
+        method_name: str | None = None,
     ):
         self._llm = llm
         self._initial = initial_text
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
+        self._call_id = call_id
+        self._manager = manager_name
+        self._method = method_name
         if _requests_clarification and (
             not clarification_up_q or not clarification_down_q
         ):
@@ -65,9 +73,26 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         # fire clarification immediately if queues supplied
         if self._needs_clar:
             try:
-                self._clar_up_q.put_nowait(
-                    "Could you clarify your information-need around the transcripts?",
+                q_text = (
+                    "Could you clarify your information-need around the transcripts?"
                 )
+                self._clar_up_q.put_nowait(q_text)
+                try:
+                    SimulatedLog.log_clarification_request(self._log_label, q_text)
+                except Exception:
+                    pass
+                try:
+                    asyncio.create_task(
+                        _publish_sim_clarification_request(
+                            self._call_id,
+                            self._manager,
+                            self._method,
+                            label=self._log_label,
+                            question=q_text,
+                        ),
+                    )
+                except Exception:
+                    pass
             except asyncio.QueueFull:
                 pass
 
@@ -102,6 +127,20 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
                     pass
                 clar_reply = await self._clar_down_q.get()
                 self._extra_user_msgs.append(f"Clarification: {clar_reply}")
+                try:
+                    SimulatedLog.log_clarification_answer(self._log_label, clar_reply)
+                except Exception:
+                    pass
+                try:
+                    await _publish_sim_clarification_answer(
+                        self._call_id,
+                        self._manager,
+                        self._method,
+                        label=self._log_label,
+                        answer=clar_reply,
+                    )
+                except Exception:
+                    pass
                 try:
                     LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
                 except Exception:
@@ -311,6 +350,9 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
             clarification_down_q=_clarification_down_q,
+            call_id=call_id,
+            manager_name="TranscriptManager",
+            method_name="ask",
         )
 
         # Emit a human-facing log for the initial ask so tests/consumers see immediate feedback
