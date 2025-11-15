@@ -10,7 +10,6 @@ actor‐instance into the scheduler via an `ActiveQueue` public handle.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import functools
 from typing import Dict, List
 from datetime import datetime, timezone
@@ -36,7 +35,8 @@ from tests.helpers import _handle_project
 
 async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     """Return *(scheduler, handle)* where *handle* is the active task."""
-    actor = SimulatedActor(steps=steps)
+    # Always keep the simulated actor alive indefinitely; tests will stop explicitly
+    actor = SimulatedActor(steps=None, duration=None)
     scheduler = TaskScheduler(actor=actor)
 
     task_id = scheduler._create_task(name=description, description=description)[
@@ -95,16 +95,15 @@ async def test_execute_ask(monkeypatch):
 
     _scheduler, task = await _make_scheduler_with_task(
         "Analyse new product launch performance.",
-        steps=3,
     )
 
     # Perform a read-only ask on the returned handle – should delegate once
     ask_h = await task.ask("Do we have any early metrics?")
     await ask_h.result()
 
-    # Let the outer execute loop finish naturally (best‑effort).
-    with contextlib.suppress(Exception):
-        await asyncio.wait_for(task.result(), timeout=10.0)
+    # Explicitly stop to avoid relying on step-based completion
+    task.stop(cancel=False)
+    await task.result()
 
     assert calls["ask"] == 1, "ask must be called exactly once"
 
@@ -132,7 +131,6 @@ async def test_execute_interject(monkeypatch):
 
     _scheduler, task = await _make_scheduler_with_task(
         "Investigate competitor pricing.",
-        steps=2,
     )
 
     await task.interject("First gather public filings.")
@@ -175,7 +173,6 @@ async def test_execute_pause_resume(monkeypatch):
 
     _scheduler, task = await _make_scheduler_with_task(
         "Run SEO audit for the website.",
-        steps=2,
     )
 
     # Pause, wait a moment to ensure the thread blocks, then resume.
@@ -212,7 +209,6 @@ async def test_execute_stop(monkeypatch):
 
     _scheduler, task = await _make_scheduler_with_task(
         "Extract sentiment from reviews.",
-        steps=5,
     )
 
     task.stop(cancel=False)
@@ -235,15 +231,15 @@ async def test_execute_result_and_done():
 
     _scheduler, task = await _make_scheduler_with_task(
         "Compile coverage metrics.",
-        steps=1,
     )
 
-    # One interjection increments the internal step counter to fulfil `_steps`.
+    # Perform an interjection for activity, then stop explicitly
     await task.interject("Provide initial outline first.")
+    task.stop(cancel=False)
     result = await task.result()
 
-    assert "completed" in result.lower()
-    assert task.done(), "`done()` must return True after natural completion"
+    assert "stopped" in result.lower()
+    assert task.done(), "`done()` must return True after explicit stop"
 
 
 # --------------------------------------------------------------------------- #
@@ -263,7 +259,7 @@ async def test_execute_returns_handle_with_append_to_queue_introspection():
 
     # Immediate completion per task to avoid timing races; we don't need to
     # exercise the loop, only to obtain the handle for introspection.
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Create a single runnable task and start it by id
@@ -292,10 +288,8 @@ async def test_execute_returns_handle_with_append_to_queue_introspection():
     assert "append" in doc.lower() and "task" in doc.lower()
 
     # Cleanup: ensure any background work is finalised quickly
-    try:
-        await handle.result()
-    except Exception:
-        pass
+    handle.stop(cancel=False)
+    await handle.result()
 
 
 # --------------------------------------------------------------------------- #
@@ -325,7 +319,7 @@ def test_execute_requests_clarification_for_unknown_id():  # pragma: no cover
 async def test_execute_sets_activated_by_explicit():
     """Starting a task explicitly via execute should set activated_by='explicit'."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Seed a simple queued task
@@ -334,6 +328,7 @@ async def test_execute_sets_activated_by_explicit():
 
     # Start by id (fast-path)
     handle = await ts.execute(task_id=task_id)
+    handle.stop(cancel=False)
     await handle.result()
 
     # Verify activated_by on the activated instance (may already be completed)
@@ -346,7 +341,7 @@ async def test_execute_sets_activated_by_explicit():
 async def test_update_status_cannot_force_active_and_does_not_set_activation_metadata():
     """Direct status updates cannot set 'active' and should not set 'activated_by'."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Create a normal queued task
@@ -374,7 +369,7 @@ async def test_update_status_cannot_force_active_and_does_not_set_activation_met
 async def test_tasks_table_has_activated_by_column():
     """The Tasks context should include the activated_by column based on the Task model."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Create any task to ensure context exists

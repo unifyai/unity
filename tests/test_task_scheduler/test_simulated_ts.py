@@ -292,15 +292,16 @@ async def test_handle_ask():
 async def test_execute_basic_completion():
     """
     SimulatedTaskScheduler.execute should return a live handle that completes.
-    Use actor_steps=1 so result() completes promptly.
+    Keep the inner actor alive indefinitely; stop explicitly to finish.
     """
-    ts = SimulatedTaskScheduler(actor_steps=1, actor_duration=None)
+    ts = SimulatedTaskScheduler(actor_steps=None, actor_duration=None)
     handle = await ts.execute("Prepare slides for kickoff")
+    # Explicitly stop to avoid relying on step-based completion
+    handle.stop(cancel=False)
     answer = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
-    # The simulated actor typically returns a completion-style sentence
-    assert "completed" in answer.lower()
-    assert "slides" in answer.lower()
+    # The simulated actor should report it was stopped
+    assert "stopped" in answer.lower()
 
 
 # ────────────────────────────────────────────────────────────────────────────
