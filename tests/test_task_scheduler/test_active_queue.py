@@ -467,13 +467,24 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
 
     # Spy: record interjections delivered to each task; avoid networked LLM
     calls: list[tuple[str, str]] = []
+    last_desc: list[str] = [""]
 
     async def spy_interject(self, instruction: str, *, images=None):  # type: ignore[override]
         try:
-            desc = getattr(self, "_description", None) or ""
+            desc_val = getattr(self, "_description", None)
+            desc = (
+                str(desc_val)
+                if desc_val is not None and str(desc_val)
+                else (last_desc[0] or "")
+            )
         except Exception:
-            desc = ""
+            desc = last_desc[0] or ""
         calls.append((str(desc), str(instruction)))
+        try:
+            if desc:
+                last_desc[0] = desc
+        except Exception:
+            pass
         try:
             self.simulate_step()
         except Exception:
