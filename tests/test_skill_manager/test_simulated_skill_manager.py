@@ -42,6 +42,22 @@ async def test_start_and_ask_simulated_skill_manager():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 3.  Ask with reasoning steps                                                 #
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_return_reasoning_steps_simulated_skill_manager():
+    sm = SimulatedSkillManager()
+    handle = await sm.ask(
+        "List your high-level skills briefly.",
+        _return_reasoning_steps=True,
+    )
+    answer, messages = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(answer, str) and answer.strip()
+    assert isinstance(messages, list) and len(messages) >= 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 3.  Interject while running
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
