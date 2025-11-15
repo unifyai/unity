@@ -10,7 +10,13 @@ from unity.file_manager.simulated import (
 )
 
 # helper that wraps each test in its own Unify project / trace context
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+    _normalize_alnum_lower,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -85,37 +91,11 @@ async def test_fm_stateful_serial_asks():
         "What single word did you just use to describe this file?",
     )
     ans2 = (await h2.result()).lower()
-    # Check if the LLM's response is consistent with the theme
-    # Extract the key word from both responses for comparison
-    import re
-
-    # Look for quoted words or key terms
-    theme_words = re.findall(r'"([^"]*)"', theme.lower())
-    ans2_words = re.findall(r'"([^"]*)"', ans2.lower())
-
-    # If no quoted words, try to extract the last meaningful word from theme
-    if not theme_words:
-        theme_parts = theme.lower().strip('."').split()
-        if theme_parts:
-            theme_words = [theme_parts[-1]]  # Take the last word as the theme
-
-    if not ans2_words:
-        ans2_parts = ans2.lower().strip('."').split()
-        if ans2_parts:
-            ans2_words = [ans2_parts[-1]]  # Take the last word as answer
-
-    # Check if there's overlap in the key words
-    has_overlap = (
-        any(word in ans2.lower() for word in theme_words) if theme_words else False
-    )
-    has_overlap = (
-        has_overlap or any(word in theme.lower() for word in ans2_words)
-        if ans2_words
-        else has_overlap
-    )
-
+    theme_norm = _normalize_alnum_lower(theme)
+    ans2_norm = _normalize_alnum_lower(ans2)
+    assert theme_norm, "Theme should normalize to a non-empty token"
     assert (
-        has_overlap
+        theme_norm in ans2_norm or ans2_norm in theme_norm
     ), f"LLM should recall the theme it produced earlier. Theme: '{theme}', Answer: '{ans2}'"
 
 
@@ -201,7 +181,7 @@ async def test_interject_simulated_fm(monkeypatch):
     handle = await fm.ask("report.txt", "Summarize the key points.")
     await asyncio.sleep(0.05)
     reply = handle.interject("Focus on financial metrics.")
-    assert "ack" in reply.lower() or "noted" in reply.lower()
+    assert _ack_ok(reply)
     await handle.result()
     assert calls["interject"] == 1, ".interject should be called exactly once"
 
@@ -252,7 +232,7 @@ async def test_fm_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
 
     await down_q.put("Focus on statistical trends.")
@@ -318,15 +298,14 @@ async def test_pause_and_resume_simulated_fm(monkeypatch):
 
     # Start result() while still paused – it should await
     res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done(), "result() must block while paused"
+    await _assert_blocks_while_paused(res_task)
 
     # Resume execution
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
     # Now result() should finish
-    answer = await asyncio.wait_for(res_task, timeout=60)
+    answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
 
     # Each steering method must have been invoked exactly once
