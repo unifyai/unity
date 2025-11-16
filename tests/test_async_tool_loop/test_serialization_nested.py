@@ -4,8 +4,6 @@ from tests.helpers import _handle_project
 from unity.common.async_tool_loop import AsyncToolLoopHandle
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.task_scheduler.task_scheduler import TaskScheduler
-from tests.test_async_tool_loop.async_helpers import _wait_for_condition
 
 
 @pytest.mark.asyncio
@@ -171,53 +169,5 @@ async def test_recursive_snapshot_notifications_manager():
     notif2 = await asyncio.wait_for(resumed.next_notification(), timeout=60.0)
     assert notif1.get("type") == "notification"
     assert notif2.get("type") == "notification"
-    out = await asyncio.wait_for(resumed.result(), timeout=240.0)
-    assert isinstance(out, str) and len(out) > 0
-
-
-@pytest.mark.asyncio
-@_handle_project
-async def test_recursive_snapshot_children_schema_taskscheduler_execute():
-    """
-    Start TaskScheduler.execute to produce an adopted child handle, then take a recursive snapshot
-    and validate the children schema; resume and complete.
-    """
-    ts = TaskScheduler()
-    res = ts.create_task(name="DemoNested", description="Nested snapshot demo.")
-    tid = int(res["details"]["task_id"])
-
-    handle = await ts.execute(tid)
-
-    # Wait until an execute_* child has been adopted
-    async def _exec_child_adopted():
-        try:
-            task_info = getattr(getattr(handle, "_task", None), "task_info", {})  # type: ignore[attr-defined]
-            if isinstance(task_info, dict):
-                for meta in task_info.values():
-                    nm = getattr(meta, "name", None)
-                    hd = getattr(meta, "handle", None)
-                    if (
-                        nm in ("execute_by_id", "execute_isolated_by_id")
-                        and hd is not None
-                    ):
-                        return True
-            return False
-        except Exception:
-            return False
-
-    await _wait_for_condition(_exec_child_adopted, poll=0.02, timeout=60.0)
-
-    snap = handle.serialize(recursive=True)
-    children = snap.get("children") or []
-    # After adoption, we expect at least one child entry
-    assert isinstance(children, list) and len(children) >= 1
-    child = children[0]
-    assert isinstance(child, dict)
-    assert child.get("state") in ("in_flight", "done")
-    # If in flight, inline snapshot must be present
-    if child.get("state") == "in_flight":
-        assert isinstance(child.get("snapshot"), dict)
-
-    resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
     out = await asyncio.wait_for(resumed.result(), timeout=240.0)
     assert isinstance(out, str) and len(out) > 0

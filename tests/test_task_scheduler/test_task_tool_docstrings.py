@@ -2,6 +2,10 @@ from __future__ import annotations
 
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
+from tests.assertion_helpers import first_diff_block
+import sys
+import subprocess
+import textwrap
 
 
 def _unwrap_callable(tool):
@@ -37,3 +41,71 @@ def test_all_update_tools_have_sufficient_docstrings():
         assert (
             len(doc) >= 100
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
+
+
+def _build_tools_schema_in_subprocess(method: str) -> str:
+    """
+    Build tools→schema JSON in a fresh Python process to catch cross-session drift.
+    """
+    assert method in {"ask", "update"}
+    code = textwrap.dedent(
+        f"""
+		import os, sys, json
+		sys.path.insert(0, os.getcwd())
+		from unity.common.llm_helpers import method_to_schema
+		def _unwrap_callable(tool):
+			return getattr(tool, "fn", tool)
+		from unity.task_scheduler.task_scheduler import TaskScheduler
+		ts = TaskScheduler()
+		tools = ts.get_tools("{method}")
+		if not tools:
+			raise AssertionError("TaskScheduler.{method} should expose at least one tool")
+		mapping = {{
+			name: method_to_schema(_unwrap_callable(value), name)
+			for name, value in tools.items()
+		}}
+		sys.stdout.write(json.dumps(mapping, sort_keys=True, indent=2))
+		""",
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+    return proc.stdout
+
+
+def test_ask_tool_schemas_are_stable_across_python_sessions():
+    p1 = _build_tools_schema_in_subprocess("ask")
+    p2 = _build_tools_schema_in_subprocess("ask")
+    if p1 != p2:
+        snippet = first_diff_block(
+            p1,
+            p2,
+            context=3,
+            label_a="First JSON",
+            label_b="Second JSON",
+        )
+        raise AssertionError(
+            "Tool schemas for ask-tools changed between separate Python sessions.\n\n"
+            + snippet,
+        )
+
+
+def test_update_tool_schemas_are_stable_across_python_sessions():
+    p1 = _build_tools_schema_in_subprocess("update")
+    p2 = _build_tools_schema_in_subprocess("update")
+    if p1 != p2:
+        snippet = first_diff_block(
+            p1,
+            p2,
+            context=3,
+            label_a="First JSON",
+            label_b="Second JSON",
+        )
+        raise AssertionError(
+            "Tool schemas for update-tools changed between separate Python sessions.\n\n"
+            + snippet,
+        )

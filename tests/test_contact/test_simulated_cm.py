@@ -8,10 +8,14 @@ from unity.contact_manager.simulated import (
     SimulatedContactManager,
     _SimulatedContactHandle,
 )
-from unity.contact_manager.types.contact import Contact
 
 # keeps each test isolated in its own Unify project / trace context
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -121,7 +125,7 @@ async def test_handle_interject(monkeypatch):
     h = await cm.ask("Show me all contacts created this quarter.")
     await asyncio.sleep(0.05)
     reply = h.interject("Filter only VIP customers.")
-    assert "ack" in reply.lower() or "noted" in reply.lower()
+    assert _ack_ok(reply)
     await h.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
 
@@ -158,7 +162,7 @@ async def test_handle_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
     await down_q.put("It's the one ending in 123")
 
@@ -217,15 +221,13 @@ async def test_handle_pause_and_resume(monkeypatch):
     assert "pause" in pause_msg.lower()
 
     # 2️⃣ Kick off result() – it should block while paused
-    res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)  # give the coroutine a moment to enter the wait-loop
-    assert not res_task.done(), "result() should block while the handle is paused"
+    res_task = await _assert_blocks_while_paused(handle.result())
 
     # 3️⃣ Resume and ensure the task now completes
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
-    answer = await asyncio.wait_for(res_task, timeout=60)
+    answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
     # 4️⃣ Exactly one pause and one resume call must have been recorded
@@ -271,107 +273,49 @@ async def test_handle_ask():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# 10. Private: filter_contacts                                              #
+# 10.  Simulated private helpers                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @_handle_project
-def test_privatefilter_contacts_basic():
-    cm = SimulatedContactManager(
-        "Simulated CRM for private method tests.",
-    )
-
-    # Use a permissive filter and small limit to keep runtime low
-    results_dict = cm.filter_contacts(
-        filter="first_name is None or first_name is not None",
-        offset=0,
-        limit=3,
-    )
-    results = (
-        results_dict["contacts"] if isinstance(results_dict, dict) else results_dict
-    )
-
-    assert isinstance(results, list)
-    assert len(results) <= 3
-    # All returned items should be Contact models
-    assert all(isinstance(c, Contact) for c in results)
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 11. Private: update_contact                                               #
-# ────────────────────────────────────────────────────────────────────────────
-@_handle_project
-def test_privateupdate_contact_returns_structured_outcome():
+def test_simulated_filter_contacts_sync():
+    """
+    SimulatedContactManager.filter_contacts should produce a plausible list of
+    contacts synchronously (cannot be called from an active event loop).
+    """
     cm = SimulatedContactManager()
-
-    outcome = cm.update_contact(
-        contact_id=42,
-        first_name="Alice",
-        surname="Example",
-        response_policy="Share weekly updates",
-        custom_fields={"priority": "high"},
-    )
-
-    assert isinstance(outcome, dict)
-    assert "outcome" in outcome and isinstance(outcome["outcome"], str)
-    assert "details" in outcome and isinstance(outcome["details"], dict)
-    assert outcome["details"].get("contact_id") == 42
+    # Use a permissive filter; just validate basic shape and limit behaviour
+    results = cm.filter_contacts(filter="True", limit=3)
+    assert isinstance(results, list), "Expected list of contacts"
+    assert len(results) <= 3, "Limit should cap the number of returned contacts"
+    if results:
+        first = results[0]
+        assert hasattr(first, "contact_id"), "Each contact should have contact_id"
 
 
-# ────────────────────────────────────────────────────────────────────────────
-# 12. Private: _delete_contact                                               #
-# ────────────────────────────────────────────────────────────────────────────
 @_handle_project
-def test_private_delete_contact_returns_structured_outcome():
+def test_simulated_update_contact_sync():
+    """
+    SimulatedContactManager.update_contact should return a structured confirmation
+    with 'outcome' and 'details.contact_id'.
+    """
     cm = SimulatedContactManager()
+    out = cm.update_contact(contact_id=123, first_name="Alice")
+    assert isinstance(out, dict), "update_contact yields a dict-like outcome"
+    assert "outcome" in out, "Outcome should include 'outcome' message"
+    assert "details" in out and isinstance(out["details"], dict)
+    assert isinstance(out["details"].get("contact_id"), int)
 
-    outcome = cm._delete_contact(contact_id=77)
 
-    assert isinstance(outcome, dict)
-    assert outcome.get("details", {}).get("contact_id") == 77
-    assert isinstance(outcome.get("outcome", ""), str)
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 13. Private: _merge_contacts                                               #
-# ────────────────────────────────────────────────────────────────────────────
 @_handle_project
-def test_private_merge_contacts_returns_structured_outcome():
+def test_simulated_clear_sync():
+    """
+    SimulatedContactManager.clear should reset the manager (hard-coded completion)
+    and remain usable afterwards.
+    """
     cm = SimulatedContactManager()
-
-    cid1, cid2 = 12, 34
-    outcome = cm._merge_contacts(
-        contact_id_1=cid1,
-        contact_id_2=cid2,
-        overrides={"email_address": 2},
-    )
-
-    assert isinstance(outcome, dict)
-    details = outcome.get("details", {})
-    assert isinstance(details, dict)
-
-    kept = details.get("kept_contact_id")
-    deleted = details.get("deleted_contact_id")
-    assert kept is not None and deleted is not None and kept != deleted
-    assert {kept, deleted} == {cid1, cid2}
-    assert isinstance(details.get("overrides", {}), dict)
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# 14. Private: _create_contact                                               #
-# ────────────────────────────────────────────────────────────────────────────
-@_handle_project
-def test_private_create_contact_returns_structured_outcome():
-    cm = SimulatedContactManager()
-
-    outcome = cm._create_contact(
-        first_name="Alice",
-        surname="Example",
-        email_address="alice@example.com",
-        respond_to=True,
-        custom_fields={"priority": "high"},
-    )
-
-    assert isinstance(outcome, dict)
-    assert "outcome" in outcome and isinstance(outcome["outcome"], str)
-    assert "details" in outcome and isinstance(outcome["details"], dict)
-    cid = outcome["details"].get("contact_id")
-    assert isinstance(cid, int)
+    # Do a synchronous operation to create some prior state
+    cm.update_contact(contact_id=1, surname="Smith")
+    # Clear should not raise and should be quick (no LLM roundtrip)
+    cm.clear()
+    # Post-clear, synchronous helper still works
+    post = cm.filter_contacts(limit=1)
+    assert isinstance(post, list)

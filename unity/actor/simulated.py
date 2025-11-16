@@ -1,18 +1,23 @@
 import asyncio
-import os
-import json
 import threading
 import time
 
 import unify
-import logging
-from .base import BaseActor
+from .base import BaseActor, BaseActorHandle
+import functools
 from typing import Optional
-from unity.common.async_tool_loop import SteerableToolHandle
 from unity.function_manager.function_manager import FunctionManager
+from unity.constants import LOGGER
+from unity.common.simulated import (
+    SimulatedLineage,
+    SimulatedLog,
+    simulated_llm_roundtrip,
+    SimulatedHandleMixin,
+)
+from unity.common.llm_client import new_llm_client
 
 
-class SimulatedActorHandle(SteerableToolHandle):
+class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     """
     A lightweight, actor-scoped handle for simulating execution of a series of actions.
 
@@ -24,6 +29,9 @@ class SimulatedActorHandle(SteerableToolHandle):
     - result() -> str (async)
     - done() -> bool
     """
+
+    # Per-run file sink for simulated LLM I/O logs (request/response)
+    _SIM_ACT_LLM_IO_DIR: "str | None" = None
 
     def __init__(
         self,
@@ -40,6 +48,8 @@ class SimulatedActorHandle(SteerableToolHandle):
         # Optional: function entrypoint context and prebaked result
         entrypoint_info: dict | None = None,
         planned_result: str | None = None,
+        # New: optional session suffix to reuse across simulated logs
+        session_suffix: "str | None" = None,
     ) -> None:
         self._llm = llm
         self._description = description
@@ -71,6 +81,19 @@ class SimulatedActorHandle(SteerableToolHandle):
         self._stop_event = threading.Event()
         self._monitor_thread: threading.Thread | None = None
 
+        # Human-friendly log label derived from current lineage. Reuse a provided session suffix when present.
+        # "<outer...>->SimulatedActor.act(abcd)"
+        try:
+            if session_suffix:
+                self._log_label = SimulatedLineage.make_label_with_suffix(
+                    "SimulatedActor.act",
+                    session_suffix,
+                )
+            else:
+                self._log_label = SimulatedLineage.make_label("SimulatedActor.act")
+        except Exception:
+            self._log_label = "SimulatedActor.act"
+
         self._start()
 
     @property
@@ -86,17 +109,32 @@ class SimulatedActorHandle(SteerableToolHandle):
             while True:
                 if self._requests_clarification:
                     try:
-                        self._clarification_up_q.put_nowait(
-                            "Can you please clarify what exactly you'd like me to do?",
+                        q_text = (
+                            "Can you please clarify what exactly you'd like me to do?"
                         )
+                        self._clarification_up_q.put_nowait(q_text)
+                        try:
+                            SimulatedLog.log_clarification_request(
+                                self._log_label,
+                                q_text,
+                            )
+                        except Exception:
+                            pass
                     except asyncio.QueueFull:
                         pass
                     while True:
+                        # Allow immediate termination while waiting for a clarification
+                        if self._stop_event.is_set():
+                            return
                         try:
                             answer: str = self._clarification_down_q.get_nowait()
                             break
                         except asyncio.QueueEmpty:
                             time.sleep(0.05)
+                    try:
+                        SimulatedLog.log_clarification_answer(self._log_label, answer)
+                    except Exception:
+                        pass
                     self._complete(f"Clarification received: {answer}")
                     return
                 if self._stop_event.is_set():
@@ -150,7 +188,7 @@ class SimulatedActorHandle(SteerableToolHandle):
                         rem = self.get_remaining_duration_seconds()
                         if rem is not None:
                             self._emit_status(
-                                f"⏳ SimulatedActor Duration remaining: {max(0.0, rem):.1f}s",
+                                f"⏳ Duration remaining: {max(0.0, rem):.1f}s",
                             )
                         # Sleep in small chunks to be responsive to done-event (~20s total)
                         for _ in range(200):
@@ -165,6 +203,11 @@ class SimulatedActorHandle(SteerableToolHandle):
 
     def _complete(self, message: str) -> None:
         if not self._done_event.is_set():
+            # Ensure any waiting threads (e.g., paused waits) are released
+            try:
+                self._pause_event.set()
+            except Exception:
+                pass
             self._stop_event.set()
             self._result_str = message
             self._done_event.set()
@@ -195,7 +238,7 @@ class SimulatedActorHandle(SteerableToolHandle):
             try:
                 if self._steps is not None:
                     remaining = max(0, int(self._steps) - int(self._steps_taken))
-                    self._emit_status(f"🪜 SimulatedActor Steps remaining: {remaining}")
+                    self._emit_status(f"🪜 Steps remaining: {remaining}")
             except Exception:
                 pass
 
@@ -214,6 +257,16 @@ class SimulatedActorHandle(SteerableToolHandle):
         if not self._description:
             raise Exception("No actions are currently being performed.")
         msg = f"Stopped '{self._description}' for reason: {reason}"
+        try:
+            suffix = f" – reason: {reason}" if reason else ""
+            LOGGER.info(f"🛑 [{self._log_label}] Stop requested{suffix}")
+        except Exception:
+            pass
+        # Unpause immediately so the action loop can observe the stop signal
+        try:
+            self._pause_event.set()
+        except Exception:
+            pass
         self._complete(msg)
         return msg
 
@@ -226,6 +279,9 @@ class SimulatedActorHandle(SteerableToolHandle):
         if not self._description:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
+
+        # Human-facing interject log (lineage-aligned)
+        self._log_interject(message)
 
         # Build a content list for a user message that includes the instruction and any attached images.
         # Images are resolved to handles and added as image_url blocks (data URLs or signed URLs where available).
@@ -398,7 +454,7 @@ class SimulatedActorHandle(SteerableToolHandle):
         except Exception:
             pass
 
-        # Preserve prior behavior: kick the LLM once to acknowledge the interjection and advance the simulation.
+        # Compose prompt (kept consistent with previous behaviour)
         if self._entrypoint_info:
             fn = self._entrypoint_info
             prompt = (
@@ -413,7 +469,21 @@ class SimulatedActorHandle(SteerableToolHandle):
                 f"Current simulated actions:\n{self._description}\n\n"
                 "Use any images attached in the most recent user message as ground truth for visual details."
             )
-        await self._llm.generate(prompt)
+        # Unified LLM roundtrip (includes timing, gated body, and optional dumps)
+        try:
+            _sys = getattr(self._llm, "system_message", None)
+        except Exception:
+            _sys = None
+        answer = await simulated_llm_roundtrip(
+            self._llm,
+            label=self._log_label,
+            prompt=prompt,
+            sys_for_dump=_sys,
+            request_dump_body={
+                "model": getattr(self._llm, "model", None),
+                "messages": [{"role": "user", "content": content_blocks}],
+            },
+        )
 
     def pause(self) -> str:
         if not self._description:
@@ -428,6 +498,7 @@ class SimulatedActorHandle(SteerableToolHandle):
             self._remaining_duration = max(0.0, self._remaining_duration - elapsed)
             self._last_started_at = None
         self.simulate_step()
+        self._log_pause()
         return f"Paused '{self._description}'."
 
     def resume(self) -> str:
@@ -441,12 +512,23 @@ class SimulatedActorHandle(SteerableToolHandle):
         if self._remaining_duration is not None:
             self._last_started_at = time.monotonic()
         self.simulate_step()
+        self._log_resume()
         return f"Resumed '{self._description}'."
 
     async def ask(self, question: str) -> str:
         if not self._description:
             raise Exception("No actions are currently being performed.")
         self.simulate_step()
+        # Build a concise child label consistent with simulated scheduler
+        try:
+            q_label = SimulatedLineage.question_label(self._log_label)
+        except Exception:
+            q_label = f"Question({getattr(self, '_log_label', 'SimulatedActor.act')})"
+        try:
+            SimulatedLog.log_request("ask", q_label, question)
+        except Exception:
+            pass
+
         if self._entrypoint_info:
             fn = self._entrypoint_info
             prompt = (
@@ -461,7 +543,21 @@ class SimulatedActorHandle(SteerableToolHandle):
                 f"You are working on simulating these actions:\n{self._description}\n\n"
                 f"User asks: {question}"
             )
-        return await self._llm.generate(prompt)
+        try:
+            _sys = getattr(self._llm, "system_message", None)
+        except Exception:
+            _sys = None
+        answer = await simulated_llm_roundtrip(
+            self._llm,
+            label=q_label,
+            prompt=prompt,
+            sys_for_dump=_sys,
+            request_dump_body={
+                "model": getattr(self._llm, "model", None),
+                "messages": [{"role": "user", "content": question}],
+            },
+        )
+        return answer
 
     def done(self) -> bool:
         return self._done_event.is_set()
@@ -472,8 +568,9 @@ class SimulatedActorHandle(SteerableToolHandle):
     def _emit_status(self, message: str) -> None:
         """Emit a status line to the central logger so it reaches the broadcast port."""
         try:
-            # Use a dedicated logger name for simulation status so console filters can exclude it
-            logging.getLogger("unity.simulated_actor").info(message)
+            LOGGER.info(
+                f"[{getattr(self, '_log_label', 'SimulatedActor.act')}] {message}",
+            )
         except Exception:
             pass
 
@@ -543,6 +640,10 @@ class SimulatedActorHandle(SteerableToolHandle):
             # Fall back to the generic message
             pass
 
+        try:
+            SimulatedLog.log_notification(self._log_label, message)
+        except Exception:
+            pass
         return {
             "type": "notification",
             "tool_name": "simulated_actor",
@@ -587,14 +688,7 @@ class SimulatedActor(BaseActor):
         self._sim_guidance: Optional[str] = simulation_guidance
 
         # One shared, memory-retaining LLM for all activities
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            stateful=True,
-        )
+        self._llm = new_llm_client(stateful=True)
         # Compose a system message that preserves default behaviour while
         # allowing optional simulation guidance to influence simulated responses.
         _base_sys = (
@@ -609,6 +703,7 @@ class SimulatedActor(BaseActor):
             )
         self._llm.set_system_message(_base_sys)
 
+    @functools.wraps(BaseActor.act, updated=())
     async def act(
         self,
         description: str,
@@ -618,8 +713,39 @@ class SimulatedActor(BaseActor):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         # optional function entrypoint id
         entrypoint: Optional[int] = None,
+        # New: optional session suffix to reuse across simulated logs
+        session_suffix: Optional[str] = None,
         **kwargs,
     ) -> SimulatedActorHandle:
+        # Emit a scheduler-like nested log for starting an action
+        try:
+            parts = SimulatedLineage.parent_lineage()
+        except Exception:
+            parts = []
+        try:
+            if session_suffix:
+                _act_label = SimulatedLineage.make_label_with_suffix(
+                    "SimulatedActor.act",
+                    session_suffix,
+                )
+            else:
+                _act_label = SimulatedLineage.make_label("SimulatedActor.act")
+        except Exception:
+            _act_label = "SimulatedActor.act"
+        # Tool-style scheduled log (only when no parent lineage)
+        try:
+            from unity.common.simulated import (  # noqa: WPS433
+                maybe_tool_log_scheduled_with_label as _log_sched,
+            )
+
+            _log_sched(
+                _act_label,
+                "act",
+                {"description": description},
+            )
+        except Exception:
+            pass
+
         entrypoint_info: dict | None = None
         planned_result: str | None = None
 
@@ -672,4 +798,5 @@ class SimulatedActor(BaseActor):
             log_mode=self._log_mode,
             entrypoint_info=entrypoint_info,
             planned_result=planned_result,
+            session_suffix=session_suffix,
         )

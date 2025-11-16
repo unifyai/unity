@@ -10,7 +10,13 @@ from unity.guidance_manager.simulated import (
 )
 
 # keeps each test isolated in its own Unify project / trace context
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+    _unique_token,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -57,11 +63,9 @@ async def test_gm_stateful_memory_serial_asks():
     Two consecutive .ask() calls share context because the manager keeps a
     stateful LLM.
     """
-    import uuid
-
     gm = SimulatedGuidanceManager()
 
-    token = f"GUIDE-{uuid.uuid4()}"
+    token = _unique_token("GUIDE")
     h1 = await gm.ask(
         "Please generate a short guidance snippet and include this exact token verbatim: "
         + token,
@@ -121,7 +125,7 @@ async def test_handle_interject(monkeypatch):
     h = await gm.ask("Summarize our onboarding guidance.")
     await asyncio.sleep(0.05)
     reply = h.interject("Focus on European enterprise scenarios.")
-    assert "ack" in reply.lower() or "noted" in reply.lower()
+    assert _ack_ok(reply)
     await h.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
 
@@ -158,7 +162,7 @@ async def test_handle_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
     await down_q.put("Focus on onboarding flows and mobile breakpoints.")
 
@@ -216,15 +220,13 @@ async def test_handle_pause_and_resume(monkeypatch):
     assert "pause" in pause_msg.lower()
 
     # 2️⃣ Kick off result() – it should block while paused
-    res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)  # give the coroutine a moment to enter the wait-loop
-    assert not res_task.done(), "result() should block while the handle is paused"
+    res_task = await _assert_blocks_while_paused(handle.result())
 
     # 3️⃣ Resume and ensure the task now completes
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
-    answer = await asyncio.wait_for(res_task, timeout=60)
+    answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip(), "Answer should be non-empty"
 
     # 4️⃣ Exactly one pause and one resume call must have been recorded
@@ -267,3 +269,28 @@ async def test_handle_ask():
     assert isinstance(handle_answer, str) and handle_answer.strip(), (
         "Handle should still yield a non-empty answer after nested ask",
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 10.  Clear – reset and remain usable                                        #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_clear():
+    """
+    SimulatedGuidanceManager.clear should reset the manager and remain usable.
+    """
+    gm = SimulatedGuidanceManager()
+    # Create some prior state in the stateful LLM
+    upd = await gm.update("Create a temporary guidance entry about onboarding.")
+    await asyncio.wait_for(upd.result(), timeout=DEFAULT_TIMEOUT)
+
+    # Clear should not raise and should be quick
+    gm.clear()
+
+    # Post-clear, an ask should still work
+    h = await gm.ask("List our guidance focus areas.")
+    answer = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
+    assert (
+        isinstance(answer, str) and answer.strip()
+    ), "Answer should be non-empty after clear()"

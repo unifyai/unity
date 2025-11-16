@@ -14,7 +14,33 @@ from unity.web_searcher.simulated import (
 )
 
 # keeps each test isolated in its own Unify project / trace context
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 0.  Doc-string inheritance                                                 #
+# ────────────────────────────────────────────────────────────────────────────
+def test_simulated_ws_docstrings_match_base():
+    """
+    Public methods in SimulatedWebSearcher should copy the real
+    BaseWebSearcher doc-strings one-for-one (via functools.wraps).
+    """
+    from unity.web_searcher.base import BaseWebSearcher
+    from unity.web_searcher.simulated import SimulatedWebSearcher
+
+    assert (
+        BaseWebSearcher.ask.__doc__.strip() in SimulatedWebSearcher.ask.__doc__.strip()
+    ), ".ask doc-string was not copied correctly"
+
+    assert (
+        BaseWebSearcher.update.__doc__.strip()
+        in SimulatedWebSearcher.update.__doc__.strip()
+    ), ".update doc-string was not copied correctly"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -83,7 +109,7 @@ async def test_handle_interject(monkeypatch):
     h = await ws.ask("Summarize latest announcements from major vendors.")
     await asyncio.sleep(0.05)
     reply = h.interject("Prefer primary sources and release notes.")
-    assert "ack" in reply.lower() or "noted" in reply.lower()
+    assert _ack_ok(reply)
     await h.result()
     assert calls["interject"] == 1, ".interject should be invoked exactly once"
 
@@ -120,7 +146,7 @@ async def test_handle_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
     await down_q.put(
         "Let's focus on Twitter, and let me know if the most recent was a tweet or a retweet.",
@@ -174,8 +200,7 @@ async def test_handle_pause_and_resume(monkeypatch):
     assert "pause" in pause_msg.lower()
 
     res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done()
+    await _assert_blocks_while_paused(res_task)
 
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
@@ -249,3 +274,20 @@ def test_simulated_web_searcher_clear_reinitialises():
     # After clear, llm handle should be replaced and tools still present
     assert getattr(sim, "_llm", None) is not None and sim._llm is not old_llm
     assert isinstance(sim._ask_tools, dict) and sim._ask_tools
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 9.  Update – basic completion                                              #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_update_basic_completion():
+    """
+    SimulatedWebSearcher.update should return a live handle that completes.
+    """
+    ws = SimulatedWebSearcher()
+    h = await ws.update(
+        "Create a website entry for host=example.com with tags ['docs', 'security']",
+    )
+    answer = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(answer, str) and answer.strip()

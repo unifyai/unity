@@ -788,13 +788,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         if self._cancel_event.is_set():
             return
 
-        # Only the root/top-level handle logs the stop request
-        if getattr(self, "_is_root_handle", False):
-            _label = getattr(self, "_log_label", None) or self._loop_id
-            LOGGER.info(
-                f"🛑 [{_label}] Stop requested"
-                + (f" – reason: {reason}" if reason else ""),
-            )
+        # Stop request is logged centrally in the loop via mirror path
 
         # Record steer event (best-effort). Functional forwarding happens via mirror path.
         try:
@@ -808,6 +802,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             )
         except Exception:
             pass
+        # Ensure the loop is not paused so the inner loop can observe and process the stop immediately
+        with suppress(Exception):
+            self._pause_event.set()
         # Mirror as synthetic helper tool_call (no LLM step) before signalling cancel/stop
         try:
             self._queue.put_nowait(
@@ -1411,7 +1408,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Best-effort quiesce: cancel the loop after snapshotting to avoid races on resume.
         try:
             if not self.done():
-                self.stop(reason="serialize snapshot")
+                # Request stop and attach a generic after-first-LLM banner for readability
+                self.stop(
+                    reason="serialize snapshot",
+                    _after_first_llm_banner={
+                        "text": "Serialization complete",
+                        "prefix": "📦",
+                    },
+                )
         except Exception:
             pass
 
@@ -1898,8 +1902,6 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                 children = spec.get("children")
                 if isinstance(children, list):
                     children_count = len(children)
-                elif isinstance(children, dict):
-                    children_count = len(children)
         except Exception:
             steps_count, children_count = 0, 0
         LOGGER.info(
@@ -1909,6 +1911,7 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
         pass
 
     results: dict = {"applied": [], "skipped": []}
+    outer_handle = handle
 
     # ───── shared canonicalization helpers (mirror nested_structure) ─────────
     def _canon_name(name: str) -> str:
@@ -2173,6 +2176,7 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
         node: dict | None,
         path: list[str],
     ) -> dict:
+        outer_self = outer_handle
         node = node or {}
         steps = node.get("steps") or []
         attempted_local = False
@@ -2211,6 +2215,78 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                             call_args=call_args,
                             fallback_positional_keys=(),
                         )
+                        # NEW: Synthesize helper tool_calls in the OUTER transcript for child steps,
+                        #      without triggering an immediate LLM turn and without re-executing the child.
+                        try:
+                            if h is not outer_self:
+                                # Resolve child identity from outer task_info
+                                target_call_id = None
+                                try:
+                                    ti = getattr(outer_self._task, "task_info", {})  # type: ignore[attr-defined]
+                                    if isinstance(ti, dict):
+                                        for _meta in ti.values():
+                                            if getattr(_meta, "handle", None) is h:
+                                                target_call_id = getattr(
+                                                    _meta,
+                                                    "call_id",
+                                                    None,
+                                                )
+                                                try:
+                                                    target_tool_name = getattr(
+                                                        _meta,
+                                                        "name",
+                                                        None,
+                                                    )
+                                                except Exception:
+                                                    target_tool_name = None
+                                                break
+                                except Exception:
+                                    target_call_id = None
+                                # Build kwargs for helper readability (e.g., interject content)
+                                mirror_kwargs = dict(call_kwargs or {})
+                                if (
+                                    isinstance(method, str)
+                                    and method.lower().strip() == "interject"
+                                    and "content" not in mirror_kwargs
+                                    and "message" not in mirror_kwargs
+                                ):
+                                    if (
+                                        isinstance(call_args, (list, tuple))
+                                        and call_args
+                                    ):
+                                        mirror_kwargs["content"] = call_args[0]
+                                # Provide a stable helper label for transcript when the target is absent
+                                helper_label = None
+                                try:
+                                    if target_tool_name:
+                                        helper_label = str(target_tool_name)
+                                except Exception:
+                                    helper_label = None
+                                if not helper_label:
+                                    try:
+                                        # Fall back to canonicalized 'tool' or handle chain
+                                        lbl = _tool_of(h)
+                                        if not lbl:
+                                            lbl = _handle_chain_of(h)
+                                        helper_label = lbl
+                                    except Exception:
+                                        helper_label = None
+                                if helper_label:
+                                    mirror_kwargs["helper_label"] = helper_label
+                                # Inject-only (no second execution)
+                                mirror_kwargs["_inject_only"] = True
+                                # Enqueue mirror sentinel with explicit policy: no LLM turn on outer
+                                await outer_self._queue.put(
+                                    {
+                                        "_mirror": {
+                                            "method": str(method or ""),
+                                            "kwargs": mirror_kwargs,
+                                        },
+                                        "_llm_turn": "none",
+                                    },
+                                )
+                        except Exception:
+                            pass
                         try:
                             results["applied"].append(
                                 {"path": list(path), "method": method},
@@ -2237,9 +2313,9 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                     pass
 
         # 2) Recurse into matched children (structure-based)
-        children_specs = node.get("children") or []
-        if not isinstance(children_specs, list):
-            children_specs = []
+        # Children specs – strict list[dict] only
+        children_raw = node.get("children") or []
+        children_specs = children_raw if isinstance(children_raw, list) else []
 
         live_children = _discover_children(h)
         per_child_nodes: dict[str, list[dict]] = {}
@@ -2259,6 +2335,7 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
 
                 is_match = False
                 if isinstance(target_tool, str) and target_tool:
+                    # Exact tool match only
                     is_match = live_tool == target_tool
                 elif isinstance(target_handle, str) and target_handle:
                     is_match = live_handle_base == target_handle

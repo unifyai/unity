@@ -675,7 +675,10 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                                 _imgs = _item.get("images")
                             else:
                                 _m, _imgs = _item, None
-                            await self._current_handle.interject(_m, images=_imgs)
+                            if _imgs is None:
+                                await self._current_handle.interject(_m)
+                            else:
+                                await self._current_handle.interject(_m, images=_imgs)
                         except Exception:
                             pass
                 except Exception:
@@ -702,7 +705,10 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         if self._should_passthrough():
             if not (message or "").strip():
                 return
-            await self._current_handle.interject(message, images=images)
+            if images is None:
+                await self._current_handle.interject(message)
+            else:
+                await self._current_handle.interject(message, images=images)
             return
 
         # Fast path: empty/whitespace → no-op
@@ -741,7 +747,10 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                 except Exception:
                     pass
                 return
-            await self._current_handle.interject(message, images=images)
+            if images is None:
+                await self._current_handle.interject(message)
+            else:
+                await self._current_handle.interject(message, images=images)
             return
 
         if not hasattr(self, "_queued_interjections"):
@@ -1103,6 +1112,25 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                 return None
 
         return _AnswerHandle(answer)
+
+    # ----------------------------
+    # Nested steer (tests/helper)
+    # ----------------------------
+    async def nested_steer(self, spec: dict) -> dict:
+        """
+        Apply a nested steering spec starting from this ActiveQueue.
+
+        This mirrors the AsyncToolLoopHandle.nested_steer surface so tests and
+        higher‑level orchestrators can target inner handles (ActiveTask/Actor).
+        """
+        try:
+            from ..common.async_tool_loop import (  # local import to avoid cycles
+                _nested_steer_on as _ns,
+            )
+        except Exception:
+            # If the helper cannot be imported, behave as a no‑op
+            return {"applied": [], "skipped": [], "status": {}}
+        return await _ns(self, spec or {})
 
     # ----------------------------
     # Queue steering: append tail

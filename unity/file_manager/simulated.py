@@ -15,18 +15,21 @@ from .prompt_builders import (
     build_ask_prompt,
     build_simulated_method_prompt,
 )
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
+from ..common.simulated import (
+    mirror_file_manager_tools,
+    SimulatedLineage,
+    SimulatedLog,
+    simulated_llm_roundtrip,
+    SimulatedHandleMixin,
+    maybe_tool_log_scheduled,
 )
-from ..common.simulated import mirror_file_manager_tools
+from ..constants import LOGGER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper handle
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedFileHandle(SteerableToolHandle):
+class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
     """
     Handle returned by SimulatedFileManager.ask.
     """
@@ -54,12 +57,23 @@ class _SimulatedFileHandle(SteerableToolHandle):
             )
         self._needs_clar = _requests_clarification
 
+        # Human-friendly log label derived from current lineage, mirroring other simulated managers:
+        # "<outer...>->SimulatedFileManager.ask(abcd)"
+        self._log_label = SimulatedLineage.make_label("SimulatedFileManager.ask")
+
         # fire clarification question immediately if queues supplied
         if self._needs_clar:
             try:
-                self._clar_up_q.put_nowait(
-                    "Could you clarify your file-related request?",
-                )
+                q_text = "Could you clarify your file-related request?"
+                self._clar_up_q.put_nowait(q_text)
+                try:
+                    SimulatedLog.log_clarification_request(self._log_label, q_text)
+                except Exception:
+                    pass
+                try:
+                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                except Exception:
+                    pass
             except asyncio.QueueFull:
                 pass
 
@@ -84,11 +98,39 @@ class _SimulatedFileHandle(SteerableToolHandle):
 
         if not self._done_event.is_set():
             if self._needs_clar:
+                try:
+                    LOGGER.info(
+                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                    )
+                except Exception:
+                    pass
                 clar = await self._clar_down_q.get()
                 self._extra_msgs.append(f"Clarification: {clar}")
+                try:
+                    SimulatedLog.log_clarification_answer(self._log_label, clar)
+                except Exception:
+                    pass
+                try:
+                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                except Exception:
+                    pass
 
             prompt = "\n\n---\n\n".join([self._initial] + self._extra_msgs)
-            answer = await self._llm.generate(prompt)
+            # Unified simulated LLM roundtrip with lineage-aware logging and gated response preview
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            answer = await simulated_llm_roundtrip(
+                self._llm,
+                label=self._log_label,
+                prompt=prompt,
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
             self._answer = answer
             self._messages = [
                 {"role": "user", "content": prompt},
@@ -103,10 +145,12 @@ class _SimulatedFileHandle(SteerableToolHandle):
     def interject(self, message: str) -> str:
         if self._cancelled:
             return "Interaction stopped."
+        self._log_interject(message)
         self._extra_msgs.append(message)
         return "Acknowledged."
 
     def stop(self, reason: str | None = None) -> str:
+        self._log_stop(reason)
         self._cancelled = True
         self._done_event.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
@@ -114,12 +158,14 @@ class _SimulatedFileHandle(SteerableToolHandle):
     def pause(self) -> str:
         if self._paused:
             return "Already paused."
+        self._log_pause()
         self._paused = True
         return "Paused."
 
     def resume(self) -> str:
         if not self._paused:
             return "Already running."
+        self._log_resume()
         self._paused = False
         return "Resumed."
 
@@ -139,7 +185,7 @@ class _SimulatedFileHandle(SteerableToolHandle):
             + [f"Question to answer (as a reminder!): {question}"],
         )
 
-        return _SimulatedFileHandle(
+        handle = _SimulatedFileHandle(
             self._llm,
             follow_up_prompt,
             _return_reasoning_steps=self._want_steps,
@@ -147,6 +193,17 @@ class _SimulatedFileHandle(SteerableToolHandle):
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
         )
+        # Align with other simulated components: concise "Question(<parent_label>)" label
+        try:
+            handle._log_label = SimulatedLineage.question_label(self._log_label)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        # Emit a human-facing log for the nested ask
+        try:
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), question)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        return handle
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
@@ -279,23 +336,10 @@ class SimulatedFileManager(BaseFileManager):
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
         rolling_summary_in_prompts: Optional[bool] = None,
-        _call_id: Optional[str] = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
-        call_id = _call_id
-
-        if should_log:
-            if call_id is None:
-                call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "FileManager",
-                "ask",
-                phase="incoming",
-                filename=filename,
-                question=question,
-            )
+        call_id = None  # No EventBus publishing for simulated managers
 
         # Check if file exists in simulated storage
         if filename not in self._files:
@@ -320,13 +364,16 @@ class SimulatedFileManager(BaseFileManager):
             clarification_down_q=_clarification_down_q,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "FileManager",
-                "ask",
-            )
+        # Tool-style scheduled log (only when no parent lineage)
+        maybe_tool_log_scheduled(
+            "SimulatedFileManager.ask",
+            "ask",
+            {
+                "filename": filename,
+                "question": question,
+                "requests_clarification": _requests_clarification,
+            },
+        )
 
         return handle
 

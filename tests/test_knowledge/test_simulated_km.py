@@ -10,7 +10,12 @@ from unity.knowledge_manager.simulated import (
 )
 
 # helper that wraps each test in its own Unify project / trace context
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -154,7 +159,7 @@ async def test_interject_simulated_km(monkeypatch):
     handle = await km.ask("Show me all facts about Zebulon.")
     await asyncio.sleep(0.05)
     reply = handle.interject("Only include historical facts.")
-    assert "ack" in reply.lower() or "noted" in reply.lower()
+    assert _ack_ok(reply)
     await handle.result()
     assert calls["interject"] == 1, ".interject should be called exactly once"
 
@@ -191,7 +196,7 @@ async def test_km_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
 
     await down_q.put("Focus on scientific facts.")
@@ -249,16 +254,14 @@ async def test_pause_and_resume_simulated_km(monkeypatch):
     assert "pause" in pause_msg.lower() or "paused" in pause_msg.lower()
 
     # Start result() while still paused – it should await
-    res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done(), "result() must block while paused"
+    res_task = await _assert_blocks_while_paused(handle.result())
 
     # Resume execution
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
     # Now result() should finish
-    answer = await asyncio.wait_for(res_task, timeout=60)
+    answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
 
     # Each steering method must have been invoked exactly once
@@ -298,3 +301,29 @@ async def test_handle_ask():
     assert isinstance(handle_answer, str) and handle_answer.strip(), (
         "Handle should still yield a non-empty answer after nested ask",
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 11. Clear – reset and remain usable                                         #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_clear():
+    """
+    SimulatedKnowledgeManager.clear should reset the manager (hard-coded completion)
+    and remain usable afterwards.
+    """
+    km = SimulatedKnowledgeManager()
+    # Seed some prior state via an update call
+    h_store = await km.update("Add a temporary fact about Project Phoenix.")
+    await asyncio.wait_for(h_store.result(), timeout=DEFAULT_TIMEOUT)
+
+    # Clear should not raise and should be quick (no LLM roundtrip requirement)
+    km.clear()
+
+    # Post-clear, an ask should still work
+    h_q = await km.ask("List any knowledge stored today.")
+    answer = await asyncio.wait_for(h_q.result(), timeout=DEFAULT_TIMEOUT)
+    assert (
+        isinstance(answer, str) and answer.strip()
+    ), "Answer should be non-empty after clear()"

@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "BaseActor",
+    "BaseActorHandle",
     "PhoneCallHandle",
     "BrowserSessionHandle",
     "ComsManager",
@@ -19,6 +20,17 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 # BaseActor
 # --------------------------------------------------------------------------- #
+
+
+class BaseActorHandle(SteerableToolHandle, ABC):
+    """
+    Marker base class for all actor handles returned by Actor.act().
+
+    This provides a common nominal type across actor implementations while
+    preserving the unified steerable surface inherited from SteerableToolHandle.
+    Implementations are free to add additional helpers or properties, but the
+    core pause/resume/stop/interject/ask/result interface must remain intact.
+    """
 
 
 class BaseActor(ABC):

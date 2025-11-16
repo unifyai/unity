@@ -67,8 +67,8 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
 
     monkeypatch.setattr(SimulatedActorHandle, "ask", spy_ask, raising=True)
 
-    # Use a long-running simulated actor so the task does not auto-complete too soon
-    actor = SimulatedActor(steps=50)
+    # Use a non-completing simulated actor; we will explicitly stop on cleanup
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Create a single task and start it (queue semantics by default)
@@ -224,7 +224,10 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
     class _Short(SimulatedActor):  # type: ignore[misc]
         def __init__(self, *a, **kw):
             kw.pop("duration", None)
-            super().__init__(steps=1, duration=None, *a, **kw)
+            # Use 2 steps so result()’s auto-consumed step does not immediately complete the task.
+            # This leaves the second step to be consumed by the explicit interject, ensuring the
+            # defer interjection on B is applied before auto-completion.
+            super().__init__(steps=2, duration=None, *a, **kw)
 
     monkeypatch.setattr("unity.actor.simulated.SimulatedActor", _Short, raising=True)
     monkeypatch.setattr(
@@ -464,13 +467,24 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
 
     # Spy: record interjections delivered to each task; avoid networked LLM
     calls: list[tuple[str, str]] = []
+    last_desc: list[str] = [""]
 
-    async def spy_interject(self, instruction: str):  # type: ignore[override]
+    async def spy_interject(self, instruction: str, *, images=None):  # type: ignore[override]
         try:
-            desc = getattr(self, "_description", None) or ""
+            desc_val = getattr(self, "_description", None)
+            desc = (
+                str(desc_val)
+                if desc_val is not None and str(desc_val)
+                else (last_desc[0] or "")
+            )
         except Exception:
-            desc = ""
+            desc = last_desc[0] or ""
         calls.append((str(desc), str(instruction)))
+        try:
+            if desc:
+                last_desc[0] = desc
+        except Exception:
+            pass
         try:
             self.simulate_step()
         except Exception:
@@ -569,10 +583,10 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
     questions can be answered about the whole queue, not just the active task.
     """
 
-    # Step-based actor to avoid wall-clock races
+    # Non-completing actor; we'll explicitly stop on cleanup
     class _StepOnly(SimulatedActor):  # type: ignore[misc]
         def __init__(self, *a, **kw):
-            kw["steps"] = 2
+            kw["steps"] = None
             kw["duration"] = None
             super().__init__(*a, **kw)
 
@@ -1113,8 +1127,8 @@ async def test_active_queue_interject_image_seen_by_simulation(monkeypatch):
         ],
     )
 
-    # Use a step-based actor so interject + ask + result completes deterministically
-    actor = SimulatedActor(steps=3, duration=None)
+    # Use a non-completing actor; we'll explicitly stop before awaiting final result
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Build a singleton queue
@@ -1156,6 +1170,8 @@ async def test_active_queue_interject_image_seen_by_simulation(monkeypatch):
     assert isinstance(reply, str) and reply.strip()
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
+    # Explicitly stop to ensure clean shutdown without hang
+    h.stop(cancel=False)
     await h.result()
 
 
@@ -1242,7 +1258,7 @@ async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
             pass
         return "OK"
 
-    async def spy_actor_interject(self, instruction: str):  # type: ignore[override]
+    async def spy_actor_interject(self, instruction: str, *, images=None):  # type: ignore[override]
         interject_calls["count"] += 1
         try:
             self.simulate_step()

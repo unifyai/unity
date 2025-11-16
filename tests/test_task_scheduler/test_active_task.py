@@ -38,7 +38,7 @@ async def test_active_task_ask(monkeypatch):
     """
     `ActiveTask.ask` should forward to the wrapped plan exactly once.
     """
-    actor = SimulatedActor(steps=1)
+    actor = SimulatedActor(steps=None, duration=None)
     calls: Dict[str, int] = {"ask": 0}
 
     original_ask = SimulatedActorHandle.ask
@@ -57,8 +57,9 @@ async def test_active_task_ask(monkeypatch):
 
     # Trigger a single ask call that should propagate to the active task.
     await task.ask("Do we have any early metrics?")
-    # Give the background worker a beat and await completion.
+    # Give the background worker a beat and then stop explicitly.
     await asyncio.sleep(0.2)
+    task.stop(cancel=False)
     await task.result()
 
     assert calls["ask"] == 1, "ask must be called exactly once"
@@ -75,15 +76,15 @@ async def test_active_task_interject(monkeypatch):
     """
     `ActiveTask.interject` should forward to the wrapped plan exactly once.
     """
-    actor = SimulatedActor(steps=2)
+    actor = SimulatedActor(steps=None, duration=None)
     calls: Dict[str, int] = {"interject": 0}
 
     original_interject = SimulatedActorHandle.interject
 
     @functools.wraps(original_interject)
-    async def spy_interject(self, instruction: str) -> str:  # type: ignore[override]
+    async def spy_interject(self, instruction: str, *, images=None) -> None:  # type: ignore[override]
         calls["interject"] += 1
-        return await original_interject(self, instruction)
+        return await original_interject(self, instruction, images=images)
 
     monkeypatch.setattr(SimulatedActorHandle, "interject", spy_interject, raising=True)
 
@@ -113,7 +114,7 @@ async def test_active_task_pause_resume(monkeypatch):
     """
     The wrapper should transparently forward `pause` and `resume`.
     """
-    actor = SimulatedActor(steps=2)
+    actor = SimulatedActor(steps=None, duration=None)
     counts: Dict[str, int] = {"pause": 0, "resume": 0}
 
     orig_pause = SimulatedActorHandle.pause
@@ -158,7 +159,10 @@ async def test_active_task_stop(monkeypatch):
     """
     Calling `ActiveTask.stop` should proxy to the plan and mark it done.
     """
-    actor = SimulatedActor(steps=5)  # value doesn't matter, we stop early
+    actor = SimulatedActor(
+        steps=None,
+        duration=None,
+    )  # value doesn't matter, we stop early
     called = {"stop": 0}
 
     orig_stop = SimulatedActorHandle.stop
@@ -193,18 +197,19 @@ async def test_active_task_result_and_done():
     """
     A normal workflow should complete once enough steps have been taken.
     """
-    actor = SimulatedActor(steps=1)  # finishes after a single steering op
+    actor = SimulatedActor(steps=None, duration=None)
     task = await ActiveTask.create(
         actor,
         task_description="Compile coverage metrics.",
     )
 
-    # One interjection increments the internal step counter to fulfil `_steps`.
+    # Perform one interjection for activity, then stop explicitly
     await task.interject("Provide initial outline first.")
+    task.stop(cancel=False)
     result = await task.result()
 
-    assert "completed" in result.lower()
-    assert task.done(), "`done()` must return True after natural completion"
+    assert "stopped" in result.lower()
+    assert task.done(), "`done()` must return True after explicit stop"
 
 
 # --------------------------------------------------------------------------- #
@@ -300,7 +305,7 @@ def simulate_linkedin_sales_leads() -> str:
     )
     assert isinstance(fid, int)
 
-    actor = SimulatedActor(steps=2, duration=None)
+    actor = SimulatedActor(steps=None, duration=None)
     task = await ActiveTask.create(
         actor,
         task_description="Search sales leads.",
@@ -314,6 +319,8 @@ def simulate_linkedin_sales_leads() -> str:
     assert isinstance(reply, str) and reply.strip(), "Expected a non-empty reply"
     assert "linkedin" in reply.lower(), f"Expected LinkedIn mention in: {reply!r}"
 
+    # Ensure clean shutdown to avoid relying on natural step completion
+    task.stop(cancel=False)
     await task.result()
 
 
@@ -349,7 +356,7 @@ async def test_active_task_interject_image_guides_simulation_to_spreadsheet(
         ],
     )
 
-    actor = SimulatedActor(steps=3, duration=None)
+    actor = SimulatedActor(steps=None, duration=None)
     task = await ActiveTask.create(
         actor,
         task_description=(
@@ -376,4 +383,6 @@ async def test_active_task_interject_image_guides_simulation_to_spreadsheet(
     assert isinstance(reply, str) and reply.strip()
     assert "sheet" in reply.lower(), f"Expected 'sheet' mention in: {reply!r}"
 
+    # Ensure clean shutdown to avoid relying on natural step completion
+    task.stop(cancel=False)
     await task.result()

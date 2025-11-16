@@ -10,7 +10,6 @@ actor‐instance into the scheduler via an `ActiveQueue` public handle.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import functools
 from typing import Dict, List
 from datetime import datetime, timezone
@@ -36,7 +35,8 @@ from tests.helpers import _handle_project
 
 async def _make_scheduler_with_task(description: str, *, steps: int = 1):
     """Return *(scheduler, handle)* where *handle* is the active task."""
-    actor = SimulatedActor(steps=steps)
+    # Always keep the simulated actor alive indefinitely; tests will stop explicitly
+    actor = SimulatedActor(steps=None, duration=None)
     scheduler = TaskScheduler(actor=actor)
 
     task_id = scheduler._create_task(name=description, description=description)[
@@ -95,16 +95,15 @@ async def test_execute_ask(monkeypatch):
 
     _scheduler, task = await _make_scheduler_with_task(
         "Analyse new product launch performance.",
-        steps=3,
     )
 
     # Perform a read-only ask on the returned handle – should delegate once
     ask_h = await task.ask("Do we have any early metrics?")
     await ask_h.result()
 
-    # Let the outer execute loop finish naturally (best‑effort).
-    with contextlib.suppress(Exception):
-        await asyncio.wait_for(task.result(), timeout=10.0)
+    # Explicitly stop to avoid relying on step-based completion
+    task.stop(cancel=False)
+    await task.result()
 
     assert calls["ask"] == 1, "ask must be called exactly once"
 
@@ -124,15 +123,14 @@ async def test_execute_interject(monkeypatch):
     original_interject = SimulatedActorHandle.interject
 
     @functools.wraps(original_interject)
-    async def spy_interject(self, instruction: str) -> str:  # type: ignore[override]
+    async def spy_interject(self, instruction: str, *, images=None) -> str:  # type: ignore[override]
         calls["interject"] += 1
-        return await original_interject(self, instruction)
+        return await original_interject(self, instruction, images=images)
 
     monkeypatch.setattr(SimulatedActorHandle, "interject", spy_interject, raising=True)
 
     _scheduler, task = await _make_scheduler_with_task(
         "Investigate competitor pricing.",
-        steps=2,
     )
 
     await task.interject("First gather public filings.")
@@ -175,7 +173,6 @@ async def test_execute_pause_resume(monkeypatch):
 
     _scheduler, task = await _make_scheduler_with_task(
         "Run SEO audit for the website.",
-        steps=2,
     )
 
     # Pause, wait a moment to ensure the thread blocks, then resume.
@@ -212,7 +209,6 @@ async def test_execute_stop(monkeypatch):
 
     _scheduler, task = await _make_scheduler_with_task(
         "Extract sentiment from reviews.",
-        steps=5,
     )
 
     task.stop(cancel=False)
@@ -235,15 +231,15 @@ async def test_execute_result_and_done():
 
     _scheduler, task = await _make_scheduler_with_task(
         "Compile coverage metrics.",
-        steps=1,
     )
 
-    # One interjection increments the internal step counter to fulfil `_steps`.
+    # Perform an interjection for activity, then stop explicitly
     await task.interject("Provide initial outline first.")
+    task.stop(cancel=False)
     result = await task.result()
 
-    assert "completed" in result.lower()
-    assert task.done(), "`done()` must return True after natural completion"
+    assert "stopped" in result.lower()
+    assert task.done(), "`done()` must return True after explicit stop"
 
 
 # --------------------------------------------------------------------------- #
@@ -263,7 +259,7 @@ async def test_execute_returns_handle_with_append_to_queue_introspection():
 
     # Immediate completion per task to avoid timing races; we don't need to
     # exercise the loop, only to obtain the handle for introspection.
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Create a single runnable task and start it by id
@@ -292,27 +288,133 @@ async def test_execute_returns_handle_with_append_to_queue_introspection():
     assert "append" in doc.lower() and "task" in doc.lower()
 
     # Cleanup: ensure any background work is finalised quickly
+    handle.stop(cancel=False)
+    await handle.result()
+
+
+# --------------------------------------------------------------------------- #
+#  6.2. End‑to‑end: async tool loop can call dynamic append_to_queue           #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_async_tool_loop_can_call_append_to_queue_helper():
+    """
+    End-to-end: An outer async tool loop (proxying the Conductor) should be able to:
+      1) call TaskScheduler.execute to start a task, and then
+      2) call the dynamically exposed helper whose name starts with `append_to_queue_`
+         to append another task while the first is running.
+    """
+    # Localized imports to mirror other async tool loop tests
+    import unify  # type: ignore
+    from unity.common.async_tool_loop import start_async_tool_loop
+    from tests.helpers import SETTINGS  # reuse cache/tracing settings
+    from tests.test_async_tool_loop.async_helpers import (  # wait helpers
+        _wait_for_tool_request,
+        _wait_for_assistant_call_prefix,
+        _wait_for_tool_message_prefix,
+        _wait_for_condition,
+    )
+
+    # Keep the actor alive (no auto-complete by steps/time)
+    actor = SimulatedActor(steps=None, duration=None)
+    ts = TaskScheduler(actor=actor)
+
+    # Create a singleton queue with one task A, and a standalone task B to append
+    (a_id,) = tuple(await _make_ordered_queue(ts, ["ATask"]))  # type: ignore[misc]
+    b_id = ts._create_task(name="BTask", description="BTask")["details"]["task_id"]  # type: ignore[index]
+
+    # Tool that starts execution and returns the steerable ActiveQueue handle
+    @unify.traced
+    async def scheduler_execute(*, task_id: int) -> "object":
+        return await ts.execute(task_id=task_id)
+
+    # LLM client configured like other async tool loop tests
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+
+    # Clear, step-by-step instructions to the model:
+    #  1) call `scheduler_execute(task_id=a_id)`
+    #  2) once running, call helper starting with `append_to_queue_` with task_id=b_id
+    client.set_system_message(
+        "You are orchestrating a running task.\n"
+        "First, start the task by calling the tool `scheduler_execute` with the provided task_id.\n"
+        "After it is in-flight, call the helper whose name starts with `append_to_queue_` and pass\n"
+        f"task_id={int(b_id)} to append that task to the current queue.\n"
+        "Do not invent tool names; use exactly the provided names. Finish with a short OK.",
+    )
+
+    outer = start_async_tool_loop(
+        client,
+        message=f"Start the task {int(a_id)} now, then append {int(b_id)} to its queue.",
+        tools={"scheduler_execute": scheduler_execute},
+        max_steps=30,
+        timeout=300,
+    )
+
+    # 1) Wait deterministically until `scheduler_execute` has been requested
+    await _wait_for_tool_request(client, "scheduler_execute")
+
+    # Ensure the tool-result placeholder for scheduler_execute is appended so the
+    # loop is fully between turns (prevents double logging on immediate interjection).
+    await _wait_for_tool_message_prefix(client, "scheduler_execute")
+
+    # 2) The loop won't produce another assistant turn until a tool finishes or we interject.
+    #    Prompt the model explicitly to call the dynamic helper whose name starts with `append_to_queue_`.
+    await outer.interject(
+        f"Now append task_id={int(b_id)} to the current queue using the helper whose name starts with 'append_to_queue_'.",
+    )
+
+    # 3) Next, wait until the assistant calls a dynamic helper whose name starts with append_to_queue_
+    await _wait_for_assistant_call_prefix(client, "append_to_queue_")
+    # And wait until the tool result message for the append helper is recorded
+    await _wait_for_tool_message_prefix(client, "append_to_queue_")
+
+    # Verify that B was appended behind A in the live queue (wait deterministically)
+    async def _has_appended() -> bool:
+        live_local = ts._get_queue_for_task(task_id=a_id)
+        ids_local = [getattr(r, "task_id", None) for r in (live_local or [])]
+        try:
+            return bool(
+                ids_local
+                and ids_local[0] == a_id
+                and (b_id in ids_local)
+                and ids_local.index(b_id) == len(ids_local) - 1,
+            )
+        except Exception:
+            return False
+
+    await _wait_for_condition(_has_appended, poll=0.01, timeout=60.0)
+
+    # Proactively stop the running task inside the scheduler to avoid hanging on
+    # a never-ending simulated actor (steps=None, duration=None).
     try:
-        await handle.result()
+        active = getattr(ts, "_active_task", None)
+        if active is not None:
+            active.stop(cancel=False)
     except Exception:
         pass
 
+    # Also stop the outer async tool loop; the end-to-end goal (append helper) is verified.
+    try:
+        outer.stop("test cleanup")
+    except Exception:
+        pass
 
-# --------------------------------------------------------------------------- #
-#  6.2. (removed: dynamic helper append_to_queue end-to-end via outer loop)   #
-# --------------------------------------------------------------------------- #
-
-
-# --------------------------------------------------------------------------- #
-#  7. Clarification request for unknown id                                    #
-# --------------------------------------------------------------------------- #
-
-
-@pytest.mark.skip(
-    reason="Clarification via free‑form execute removed; execute(task_id: int) only.",
-)
-def test_execute_requests_clarification_for_unknown_id():  # pragma: no cover
-    pass
+    # Allow the outer loop to finish cleanly
+    try:
+        final = await asyncio.wait_for(outer.result(), timeout=120)
+        assert isinstance(final, str)
+    except Exception:
+        # Best-effort cleanup if the model doesn't finish on its own
+        outer.stop("cleanup")
+        await asyncio.wait_for(asyncio.shield(outer.result()), timeout=120)
 
 
 # --------------------------------------------------------------------------- #
@@ -325,7 +427,7 @@ def test_execute_requests_clarification_for_unknown_id():  # pragma: no cover
 async def test_execute_sets_activated_by_explicit():
     """Starting a task explicitly via execute should set activated_by='explicit'."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Seed a simple queued task
@@ -334,6 +436,7 @@ async def test_execute_sets_activated_by_explicit():
 
     # Start by id (fast-path)
     handle = await ts.execute(task_id=task_id)
+    handle.stop(cancel=False)
     await handle.result()
 
     # Verify activated_by on the activated instance (may already be completed)
@@ -346,7 +449,7 @@ async def test_execute_sets_activated_by_explicit():
 async def test_update_status_cannot_force_active_and_does_not_set_activation_metadata():
     """Direct status updates cannot set 'active' and should not set 'activated_by'."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Create a normal queued task
@@ -374,7 +477,7 @@ async def test_update_status_cannot_force_active_and_does_not_set_activation_met
 async def test_tasks_table_has_activated_by_column():
     """The Tasks context should include the activated_by column based on the Task model."""
 
-    actor = SimulatedActor(steps=0)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
 
     # Create any task to ensure context exists

@@ -10,15 +10,25 @@ from .base import BaseSecretManager
 from .types import Secret
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.async_tool_loop import SteerableToolHandle
+from ..common.simulated import (
+    mirror_secret_manager_tools,
+    SimulatedLineage,
+    SimulatedLog,
+    simulated_llm_roundtrip,
+    SimulatedHandleMixin,
+    build_followup_prompt,
+    maybe_tool_log_scheduled,
+    maybe_tool_log_completed,
+)
 from ..events.manager_event_logging import (
     new_call_id,
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..common.simulated import mirror_secret_manager_tools
+from ..constants import LOGGER
 
 
-class _SimulatedSecretHandle(SteerableToolHandle):
+class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
     """Minimal LLM-backed handle used by SimulatedSecretManager.ask / update."""
 
     def __init__(
@@ -26,6 +36,7 @@ class _SimulatedSecretHandle(SteerableToolHandle):
         llm: unify.Unify,
         initial_text: str,
         *,
+        mode: str,
         _return_reasoning_steps: bool,
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
@@ -33,6 +44,7 @@ class _SimulatedSecretHandle(SteerableToolHandle):
     ) -> None:
         self._llm = llm
         self._initial = initial_text
+        self._mode = str(mode or "ask")
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
@@ -44,11 +56,24 @@ class _SimulatedSecretHandle(SteerableToolHandle):
             )
         self._needs_clar = _requests_clarification
 
+        # Human-friendly lineage-aware label:
+        # "<outer...>->SimulatedSecretManager.<mode>(abcd)"
+        self._log_label = SimulatedLineage.make_label(
+            f"SimulatedSecretManager.{self._mode}",
+        )
+
         if self._needs_clar:
             try:
-                self._clar_up_q.put_nowait(
-                    "Could you clarify your request about secrets?",
-                )
+                q_text = "Could you clarify your request about secrets?"
+                self._clar_up_q.put_nowait(q_text)
+                try:
+                    SimulatedLog.log_clarification_request(self._log_label, q_text)
+                except Exception:
+                    pass
+                try:
+                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                except Exception:
+                    pass
             except asyncio.QueueFull:
                 pass
 
@@ -67,13 +92,41 @@ class _SimulatedSecretHandle(SteerableToolHandle):
             await asyncio.sleep(0.05)
 
         if not self._done.is_set():
-            extra = []
+            extra: list[str] = []
             if self._needs_clar and self._clar_down_q is not None:
+                try:
+                    LOGGER.info(
+                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                    )
+                except Exception:
+                    pass
                 clar = await self._clar_down_q.get()
                 extra.append(f"Clarification: {clar}")
+                try:
+                    SimulatedLog.log_clarification_answer(self._log_label, clar)
+                except Exception:
+                    pass
+                try:
+                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                except Exception:
+                    pass
 
             prompt = "\n\n---\n\n".join([self._initial] + self._extra_msgs + extra)
-            answer = await self._llm.generate(prompt)
+            # Unified simulated roundtrip with lineage-aware logging and gated response preview
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            answer = await simulated_llm_roundtrip(
+                self._llm,
+                label=self._log_label,
+                prompt=prompt,
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
             self._answer = answer
             self._messages = [
                 {"role": "user", "content": prompt},
@@ -88,10 +141,12 @@ class _SimulatedSecretHandle(SteerableToolHandle):
     def interject(self, message: str) -> str:
         if self._cancelled:
             return "Interaction stopped."
+        self._log_interject(message)
         self._extra_msgs.append(message)
         return "Acknowledged."
 
     def stop(self, reason: str | None = None) -> str:
+        self._log_stop(reason)
         self._cancelled = True
         try:
             self._done.set()
@@ -102,12 +157,14 @@ class _SimulatedSecretHandle(SteerableToolHandle):
     def pause(self) -> str:
         if self._paused:
             return "Already paused."
+        self._log_pause()
         self._paused = True
         return "Paused."
 
     def resume(self) -> str:
         if not self._paused:
             return "Already running."
+        self._log_resume()
         self._paused = False
         return "Resumed."
 
@@ -147,25 +204,30 @@ class _SimulatedSecretHandle(SteerableToolHandle):
         return tools
 
     async def ask(self, question: str) -> "SteerableToolHandle":
-        q_msg = (
-            f"Your only task is to simulate an answer to the following question: {question}\n\n"
-            "However, there is also an ongoing simulated process with the instructions given below. "
-            "Please make your answer realistic and consistent with the provided context."
+        follow_up_prompt = build_followup_prompt(
+            question=question,
+            initial_instruction=self._initial,
+            extra_messages=list(self._extra_msgs),
         )
-        follow_up_prompt = "\n\n---\n\n".join(
-            [q_msg]
-            + [self._initial]
-            + self._extra_msgs
-            + [f"Question (as a reminder): {question}"],
-        )
-        return _SimulatedSecretHandle(
+        handle = _SimulatedSecretHandle(
             self._llm,
             follow_up_prompt,
+            mode=self._mode,
             _return_reasoning_steps=self._want_steps,
             _requests_clarification=False,
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
         )
+        # Align with other simulated components: concise "Question(<parent>)" label
+        try:
+            handle._log_label = SimulatedLineage.question_label(self._log_label)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), question)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        return handle
 
 
 class SimulatedSecretManager(BaseSecretManager):
@@ -217,6 +279,11 @@ class SimulatedSecretManager(BaseSecretManager):
 
     @functools.wraps(BaseSecretManager.clear, updated=())
     def clear(self) -> None:
+        sched = maybe_tool_log_scheduled(
+            "SimulatedSecretManager.clear",
+            "clear",
+            {},
+        )
         type(self).__init__(
             self,
             description=getattr(
@@ -227,6 +294,9 @@ class SimulatedSecretManager(BaseSecretManager):
             log_events=getattr(self, "_log_events", False),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
         )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(label, cid, "clear", {"outcome": "reset"}, t0)
 
     @functools.wraps(BaseSecretManager.ask, updated=())
     async def ask(
@@ -242,6 +312,13 @@ class SimulatedSecretManager(BaseSecretManager):
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
         call_id = None
+
+        # Tool-style scheduled log (only when no parent lineage)
+        maybe_tool_log_scheduled(
+            "SimulatedSecretManager.ask",
+            "ask",
+            {"text": text, "requests_clarification": _requests_clarification},
+        )
 
         if should_log:
             call_id = new_call_id()
@@ -267,6 +344,7 @@ class SimulatedSecretManager(BaseSecretManager):
         handle = _SimulatedSecretHandle(
             self._llm,
             instruction,
+            mode="ask",
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
@@ -369,6 +447,13 @@ class SimulatedSecretManager(BaseSecretManager):
         should_log = self._log_events or log_events
         call_id = None
 
+        # Tool-style scheduled log (only when no parent lineage)
+        maybe_tool_log_scheduled(
+            "SimulatedSecretManager.update",
+            "update",
+            {"text": text, "requests_clarification": _requests_clarification},
+        )
+
         if should_log:
             call_id = new_call_id()
             await publish_manager_method_event(
@@ -392,6 +477,7 @@ class SimulatedSecretManager(BaseSecretManager):
         handle = _SimulatedSecretHandle(
             self._llm,
             instruction,
+            mode="update",
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,

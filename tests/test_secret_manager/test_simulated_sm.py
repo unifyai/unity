@@ -10,6 +10,13 @@ from unity.secret_manager.simulated import (
     _SimulatedSecretHandle,
 )
 
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.  Doc-string inheritance
@@ -33,6 +40,7 @@ def test_simulated_sm_docstrings_match_base():
 # 2.  Basic start-and-ask
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@_handle_project
 async def test_start_and_ask_simulated_sm():
     sm = SimulatedSecretManager("Demo Secret Manager for unit-tests.")
     h = await sm.ask("List all secret keys.")
@@ -44,6 +52,7 @@ async def test_start_and_ask_simulated_sm():
 # 3.  Stateful memory – serial asks
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@_handle_project
 async def test_sm_stateful_memory_serial_asks():
     sm = SimulatedSecretManager()
 
@@ -66,6 +75,7 @@ async def test_sm_stateful_memory_serial_asks():
 # 4.  Update then ask – state carries through
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
+@_handle_project
 async def test_sm_stateful_update_then_ask():
     sm = SimulatedSecretManager()
 
@@ -88,6 +98,7 @@ async def test_sm_stateful_update_then_ask():
 
 # 5.  Interject
 @pytest.mark.asyncio
+@_handle_project
 async def test_handle_interject_sm(monkeypatch):
     calls = {"interject": 0}
     orig = _SimulatedSecretHandle.interject
@@ -103,13 +114,14 @@ async def test_handle_interject_sm(monkeypatch):
     h = await sm.ask("Show me recent secret activity.")
     await asyncio.sleep(0.05)
     reply = h.interject("Also mention any new keys created today.")
-    assert "ack" in reply.lower() or "noted" in reply.lower()
+    assert _ack_ok(reply)
     await h.result()
     assert calls["interject"] == 1
 
 
 # 6.  Stop
 @pytest.mark.asyncio
+@_handle_project
 async def test_handle_stop_sm():
     sm = SimulatedSecretManager()
     h = await sm.ask("Generate a summary of configured secrets.")
@@ -122,6 +134,7 @@ async def test_handle_stop_sm():
 
 # 7.  Clarification handshake
 @pytest.mark.asyncio
+@_handle_project
 async def test_handle_requests_clarification_sm():
     sm = SimulatedSecretManager()
 
@@ -135,7 +148,7 @@ async def test_handle_requests_clarification_sm():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
     await down_q.put("I mean the one named db_password.")
 
@@ -146,6 +159,7 @@ async def test_handle_requests_clarification_sm():
 
 # 8.  Pause → Resume round-trip
 @pytest.mark.asyncio
+@_handle_project
 async def test_handle_pause_and_resume_sm(monkeypatch):
     call_counts = {"pause": 0, "resume": 0}
 
@@ -181,8 +195,7 @@ async def test_handle_pause_and_resume_sm(monkeypatch):
     assert "resume" in tools_after_pause and "pause" not in tools_after_pause
 
     res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done()
+    await _assert_blocks_while_paused(res_task)
 
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
@@ -190,7 +203,77 @@ async def test_handle_pause_and_resume_sm(monkeypatch):
     tools_after_resume = handle.valid_tools
     assert "pause" in tools_after_resume and "resume" not in tools_after_resume
 
-    answer = await asyncio.wait_for(res_task, timeout=60)
+    answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
 
     assert call_counts == {"pause": 1, "resume": 1}
+
+
+# 9.  Nested ask on handle
+@pytest.mark.asyncio
+@_handle_project
+async def test_handle_ask_nested():
+    """
+    The internal handle returned by SimulatedSecretManager.ask exposes a
+    dynamic ask() method that should produce a nested handle whose result can
+    be awaited independently of the parent.
+    """
+    sm = SimulatedSecretManager()
+
+    # Start an initial ask to obtain the live handle
+    handle = await sm.ask("Summarize current secret placeholders used in the system.")
+
+    # Add extra context to ensure nested prompt includes it
+    handle.interject("Focus on API and database related placeholders.")
+
+    # Invoke the dynamic ask on the running handle
+    nested = await handle.ask("Which placeholders are most critical to rotate?")
+
+    nested_answer = await nested.result()
+    assert isinstance(nested_answer, str) and nested_answer.strip()
+
+    # The original handle should still be awaitable and produce an answer
+    handle_answer = await handle.result()
+    assert isinstance(handle_answer, str) and handle_answer.strip()
+
+
+# 10.  Clear – reset and remain usable
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_clear():
+    """
+    SimulatedSecretManager.clear should reset the manager and remain usable afterwards.
+    """
+    sm = SimulatedSecretManager()
+    # Do an update/ask to create some prior state in the stateful LLM
+    h_upd = await sm.update("Create a temporary secret named temp_token.")
+    await h_upd.result()
+
+    # Clear should not raise and should be quick (no LLM roundtrip requirement)
+    sm.clear()
+
+    # Post-clear, an ask should still work
+    h_q = await sm.ask("List any secret placeholders referenced in the system.")
+    answer = await h_q.result()
+    assert isinstance(answer, str) and answer.strip()
+
+
+# 11.  Placeholder conversion helpers
+@pytest.mark.asyncio
+@_handle_project
+async def test_from_and_to_placeholder_roundtrip():
+    """
+    Verify the public placeholder conversion helpers round-trip as expected.
+    """
+    sm = SimulatedSecretManager()
+    original = "Use ${api_key} for requests and ${db_password} for DB."
+
+    # Convert to opaque value tokens
+    to_values = await sm.from_placeholder(original)
+    assert "<value:api_key>" in to_values
+    assert "<value:db_password>" in to_values
+
+    # Convert back to placeholders
+    back_to_placeholders = await sm.to_placeholder(to_values)
+    assert "${api_key}" in back_to_placeholders
+    assert "${db_password}" in back_to_placeholders

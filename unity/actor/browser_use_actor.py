@@ -16,7 +16,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
 )
 from ..task_scheduler.base import BaseActiveTask
-from .base import BaseActor
+from .base import BaseActor, BaseActorHandle
 from unify import AsyncUnify
 import unify
 
@@ -39,7 +39,7 @@ class _BrowserActorState(enum.Enum):
     ERROR = enum.auto()
 
 
-class BrowserUsePlan(BaseActiveTask):
+class BrowserUsePlan(BaseActiveTask, BaseActorHandle):
     """
     Represents an active plan being executed by the BrowserUseActor.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.

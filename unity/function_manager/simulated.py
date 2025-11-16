@@ -3,13 +3,18 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-import os
 from typing import Any, Dict, List, Optional
 
-import unify
 
 from .base import BaseFunctionManager
 from .types.function import Function
+from ..common.simulated import (
+    SimulatedLineage,
+    simulated_llm_roundtrip,
+    maybe_tool_log_scheduled,
+    maybe_tool_log_completed,
+)
+from ..common.llm_client import new_llm_client
 
 
 class SimulatedFunctionManager(BaseFunctionManager):
@@ -35,14 +40,7 @@ class SimulatedFunctionManager(BaseFunctionManager):
         self._simulation_guidance = simulation_guidance
 
         # One shared, *stateful* LLM for the simulation
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        self._llm = new_llm_client(stateful=True)
 
         columns = [{k: str(v.annotation)} for k, v in Function.model_fields.items()]
 
@@ -144,6 +142,16 @@ class SimulatedFunctionManager(BaseFunctionManager):
         preconditions: Optional[Dict[str, Dict]] = None,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
+        sched = maybe_tool_log_scheduled(
+            "SimulatedFunctionManager.add_functions",
+            "add_functions",
+            {
+                "implementations_count": (
+                    len(implementations) if isinstance(implementations, list) else 1
+                ),
+                "has_preconditions": bool(preconditions),
+            },
+        )
         # No persistence – acknowledge each function name with a simulated status
         if isinstance(implementations, str):
             implementations = [implementations]
@@ -159,6 +167,15 @@ class SimulatedFunctionManager(BaseFunctionManager):
             except Exception:
                 pass
             results[name] = "added (simulated)"
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "add_functions",
+                {"total": len(results)},
+                t0,
+            )
         return results
 
     @functools.wraps(BaseFunctionManager.list_functions, updated=())
@@ -170,6 +187,11 @@ class SimulatedFunctionManager(BaseFunctionManager):
     ) -> Dict[str, Dict[str, Any]]:
         # Ask the stateful LLM to produce a catalogue snapshot aligned to guidance
         guidance = self._guidance_hint()
+        sched = maybe_tool_log_scheduled(
+            "SimulatedFunctionManager.list_functions",
+            "list_functions",
+            {"include_implementations": include_implementations},
+        )
         prompt = (
             "Simulate FunctionManager.list_functions. Return ONLY a JSON object mapping "
             "function name -> {function_id, argspec, docstring"
@@ -180,13 +202,45 @@ class SimulatedFunctionManager(BaseFunctionManager):
         )
 
         def _call() -> str:
-            return self._run_async_sync(self._llm.generate(prompt))
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            # Prefer scheduled label when available for consistent logging
+            label = (
+                sched[0]
+                if sched is not None and isinstance(sched, tuple) and len(sched) >= 1
+                else SimulatedLineage.make_label(
+                    "SimulatedFunctionManager.list_functions",
+                )
+            )
+            return self._run_async_sync(
+                simulated_llm_roundtrip(
+                    self._llm,
+                    label=label,
+                    prompt=prompt,
+                    sys_for_dump=sys_msg,
+                    request_dump_body={
+                        "model": getattr(self._llm, "model", None),
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                ),
+            )
 
         raw = _call()
         data = self._extract_json(raw)
         if not isinstance(data, dict):
             raise ValueError(
                 "list_functions: expected a JSON object mapping name -> metadata",
+            )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "list_functions",
+                {"total": len(data)},
+                t0,
             )
         return data
 
@@ -197,8 +251,23 @@ class SimulatedFunctionManager(BaseFunctionManager):
         function_name: str,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
+        sched = maybe_tool_log_scheduled(
+            "SimulatedFunctionManager.get_precondition",
+            "get_precondition",
+            {"function_name": function_name},
+        )
         # Simulate that no explicit preconditions are stored
-        return None
+        result = None
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "get_precondition",
+                {"present": result is not None},
+                t0,
+            )
+        return result
 
     @functools.wraps(BaseFunctionManager.delete_function, updated=())
     def delete_function(
@@ -208,8 +277,17 @@ class SimulatedFunctionManager(BaseFunctionManager):
         delete_dependents: bool = True,
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, str]:
+        sched = maybe_tool_log_scheduled(
+            "SimulatedFunctionManager.delete_function",
+            "delete_function",
+            {"function_id": function_id, "delete_dependents": delete_dependents},
+        )
         # Acknowledge deletion without side effects
-        return {f"id={function_id}": "deleted (simulated)"}
+        result = {f"id={function_id}": "deleted (simulated)"}
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(label, cid, "delete_function", result, t0)
+        return result
 
     @functools.wraps(BaseFunctionManager.search_functions, updated=())
     def search_functions(
@@ -221,6 +299,11 @@ class SimulatedFunctionManager(BaseFunctionManager):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         guidance = self._guidance_hint()
+        sched = maybe_tool_log_scheduled(
+            "SimulatedFunctionManager.search_functions",
+            "search_functions",
+            {"filter": filter, "offset": offset, "limit": limit},
+        )
         prompt = (
             "Simulate FunctionManager.search_functions. Return ONLY a JSON array of objects "
             "with fields name, function_id, argspec, docstring. "
@@ -231,13 +314,44 @@ class SimulatedFunctionManager(BaseFunctionManager):
         )
 
         def _call() -> str:
-            return self._run_async_sync(self._llm.generate(prompt))
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            label = (
+                sched[0]
+                if sched is not None and isinstance(sched, tuple) and len(sched) >= 1
+                else SimulatedLineage.make_label(
+                    "SimulatedFunctionManager.search_functions",
+                )
+            )
+            return self._run_async_sync(
+                simulated_llm_roundtrip(
+                    self._llm,
+                    label=label,
+                    prompt=prompt,
+                    sys_for_dump=sys_msg,
+                    request_dump_body={
+                        "model": getattr(self._llm, "model", None),
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                ),
+            )
 
         raw = _call()
         data = self._extract_json(raw)
         if not isinstance(data, list):
             raise ValueError(
                 "search_functions: expected a JSON array of function records",
+            )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "search_functions",
+                {"total": len(data)},
+                t0,
             )
         return data
 
@@ -250,6 +364,11 @@ class SimulatedFunctionManager(BaseFunctionManager):
         _parent_chat_context: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         guidance = self._guidance_hint()
+        sched = maybe_tool_log_scheduled(
+            "SimulatedFunctionManager.search_functions_by_similarity",
+            "search_functions_by_similarity",
+            {"query": query, "n": n},
+        )
         prompt = (
             "Simulate FunctionManager.search_functions_by_similarity. Given the natural-language query, "
             "invent up to n plausible functions that would exist in the current catalogue. "
@@ -259,7 +378,29 @@ class SimulatedFunctionManager(BaseFunctionManager):
         )
 
         def _call() -> str:
-            return self._run_async_sync(self._llm.generate(prompt))
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            label = (
+                sched[0]
+                if sched is not None and isinstance(sched, tuple) and len(sched) >= 1
+                else SimulatedLineage.make_label(
+                    "SimulatedFunctionManager.search_functions_by_similarity",
+                )
+            )
+            return self._run_async_sync(
+                simulated_llm_roundtrip(
+                    self._llm,
+                    label=label,
+                    prompt=prompt,
+                    sys_for_dump=sys_msg,
+                    request_dump_body={
+                        "model": getattr(self._llm, "model", None),
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                ),
+            )
 
         raw = _call()
         data = self._extract_json(raw)
@@ -267,10 +408,24 @@ class SimulatedFunctionManager(BaseFunctionManager):
             raise ValueError(
                 "search_functions_by_similarity: expected a JSON array of function records with scores",
             )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "search_functions_by_similarity",
+                {"total": len(data)},
+                t0,
+            )
         return data
 
     @functools.wraps(BaseFunctionManager.clear, updated=())
     def clear(self) -> None:
+        sched = maybe_tool_log_scheduled(
+            "SimulatedFunctionManager.clear",
+            "clear",
+            {},
+        )
         type(self).__init__(
             self,
             description=getattr(
@@ -286,3 +441,6 @@ class SimulatedFunctionManager(BaseFunctionManager):
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
         )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(label, cid, "clear", {"outcome": "reset"}, t0)

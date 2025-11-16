@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import functools
 import threading
 from typing import List, Dict, Any, Optional
@@ -21,13 +19,24 @@ from ..events.manager_event_logging import (
     publish_manager_method_event,
     wrap_handle_with_logging,
 )
-from ..common.simulated import mirror_knowledge_manager_tools
+from ..common.simulated import (
+    mirror_knowledge_manager_tools,
+    SimulatedLineage,
+    SimulatedLog,
+    simulated_llm_roundtrip,
+    SimulatedHandleMixin,
+    build_followup_prompt,
+    maybe_tool_log_scheduled,
+    maybe_tool_log_completed,
+)
+from ..constants import LOGGER
+from ..common.llm_client import new_llm_client
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedKnowledgeHandle(SteerableToolHandle):
+class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
     """
     Handle returned by SimulatedKnowledgeManager.store / retrieve.
     """
@@ -37,6 +46,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         llm: unify.Unify,
         initial_text: str,
         *,
+        mode: str,
         _return_reasoning_steps: bool,
         _requests_clarification: bool = False,
         clarification_up_q: asyncio.Queue[str] | None,
@@ -44,6 +54,7 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
     ):
         self._llm = llm
         self._initial = initial_text
+        self._mode = str(mode or "ask")
         self._want_steps = _return_reasoning_steps
         self._clar_up_q = clarification_up_q
         self._clar_down_q = clarification_down_q
@@ -55,12 +66,25 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
             )
         self._needs_clar = _requests_clarification
 
-        # fire clarification question immediately if queues supplied
+        # Human-friendly log label derived from current lineage:
+        # "<outer...>->SimulatedKnowledgeManager.<mode>(abcd)"
+        self._log_label = SimulatedLineage.make_label(
+            f"SimulatedKnowledgeManager.{self._mode}",
+        )
+
+        # fire clarification request immediately if queues supplied
         if self._needs_clar:
             try:
-                self._clar_up_q.put_nowait(
-                    "Could you clarify your knowledge request?",
-                )
+                q_text = "Could you clarify your knowledge request?"
+                self._clar_up_q.put_nowait(q_text)
+                try:
+                    SimulatedLog.log_clarification_request(self._log_label, q_text)
+                except Exception:
+                    pass
+                try:
+                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                except Exception:
+                    pass
             except asyncio.QueueFull:
                 pass
 
@@ -85,11 +109,39 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
 
         if not self._done_event.is_set():
             if self._needs_clar:
-                clar = await self._clar_down_q.get()
+                try:
+                    LOGGER.info(
+                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                    )
+                except Exception:
+                    pass
+                clar = await self._clar_down_q.get()  # wait for answer
                 self._extra_msgs.append(f"Clarification: {clar}")
+                try:
+                    SimulatedLog.log_clarification_answer(self._log_label, clar)
+                except Exception:
+                    pass
+                try:
+                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                except Exception:
+                    pass
 
             prompt = "\n\n---\n\n".join([self._initial] + self._extra_msgs)
-            answer = await self._llm.generate(prompt)
+            # Unified LLM roundtrip for consistent simulated logging and optional dumps
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            answer = await simulated_llm_roundtrip(
+                self._llm,
+                label=self._log_label,
+                prompt=prompt,
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
             self._answer = answer
             self._messages = [
                 {"role": "user", "content": prompt},
@@ -104,10 +156,12 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
     def interject(self, message: str) -> str:
         if self._cancelled:
             return "Interaction stopped."
+        self._log_interject(message)
         self._extra_msgs.append(message)
         return "Acknowledged."
 
     def stop(self, reason: str | None = None) -> str:
+        self._log_stop(reason)
         self._cancelled = True
         self._done_event.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
@@ -115,12 +169,14 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
     def pause(self) -> str:
         if self._paused:
             return "Already paused."
+        self._log_pause()
         self._paused = True
         return "Paused."
 
     def resume(self) -> str:
         if not self._paused:
             return "Already running."
+        self._log_resume()
         self._paused = False
         return "Resumed."
 
@@ -128,26 +184,32 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle):
         return self._done_event.is_set()
 
     async def ask(self, question: str) -> "SteerableToolHandle":
-        q_msg = (
-            f"Your only task is to simulate an answer to the following question: {question}\n\n"
-            "However, there is a also ongoing simulated process which had the instructions given below. "
-            "Please make your answer realastic and conceivable given the provided context of the simulated taks."
-        )
-        follow_up_prompt = "\n\n---\n\n".join(
-            [q_msg]
-            + [self._initial]
-            + self._extra_msgs
-            + [f"Question to answer (as a reminder!): {question}"],
+        follow_up_prompt = build_followup_prompt(
+            question=question,
+            initial_instruction=self._initial,
+            extra_messages=list(self._extra_msgs),
         )
 
-        return _SimulatedKnowledgeHandle(
+        handle = _SimulatedKnowledgeHandle(
             self._llm,
             follow_up_prompt,
+            mode=self._mode,
             _return_reasoning_steps=self._want_steps,
             _requests_clarification=False,
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
         )
+        # Align with other simulated components: concise "Question(<parent>)" label
+        try:
+            handle._log_label = SimulatedLineage.question_label(self._log_label)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        # Emit a human-facing log for the nested ask
+        try:
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), question)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        return handle
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
@@ -192,15 +254,8 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
         self._simulation_guidance = simulation_guidance
 
-        # One shared, memory-retaining LLM
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        # One shared, memory-retaining LLM (reuse common client for fast init/clear)
+        self._llm = new_llm_client(stateful=True)
         # Mirror the real knowledge manager's tool exposure for prompts
         ref_tools = mirror_knowledge_manager_tools("refactor")
         upd_tools = mirror_knowledge_manager_tools("update")
@@ -256,6 +311,13 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         should_log = self._log_events or log_events
         call_id = None
 
+        # Tool-style scheduled log (only when no parent lineage)
+        maybe_tool_log_scheduled(
+            "SimulatedKnowledgeManager.refactor",
+            "refactor",
+            {"text": text if isinstance(text, str) else repr(text)},
+        )
+
         if should_log:
             call_id = new_call_id()
             await publish_manager_method_event(
@@ -274,6 +336,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         handle = _SimulatedKnowledgeHandle(
             self._llm,
             instruction,
+            mode="refactor",
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=False,
             clarification_up_q=_clarification_up_q,
@@ -308,6 +371,16 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         should_log = self._log_events or log_events
         call_id = None
 
+        # Tool-style scheduled log (only when no parent lineage)
+        maybe_tool_log_scheduled(
+            "SimulatedKnowledgeManager.update",
+            "update",
+            {
+                "text": text if isinstance(text, str) else repr(text),
+                "requests_clarification": _requests_clarification,
+            },
+        )
+
         if should_log:
             call_id = new_call_id()
             await publish_manager_method_event(
@@ -331,6 +404,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         handle = _SimulatedKnowledgeHandle(
             self._llm,
             instruction,
+            mode="update",
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
@@ -365,6 +439,16 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         should_log = self._log_events or log_events
         call_id = None
 
+        # Tool-style scheduled log (only when no parent lineage)
+        maybe_tool_log_scheduled(
+            "SimulatedKnowledgeManager.ask",
+            "ask",
+            {
+                "text": text if isinstance(text, str) else repr(text),
+                "requests_clarification": _requests_clarification,
+            },
+        )
+
         if should_log:
             call_id = new_call_id()
             await publish_manager_method_event(
@@ -383,6 +467,7 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
         handle = _SimulatedKnowledgeHandle(
             self._llm,
             instruction,
+            mode="ask",
             _return_reasoning_steps=_return_reasoning_steps,
             _requests_clarification=_requests_clarification,
             clarification_up_q=_clarification_up_q,
@@ -401,6 +486,12 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
 
     @functools.wraps(BaseKnowledgeManager.clear, updated=())
     def clear(self) -> None:
+        # Tool-style scheduled log (only when no parent lineage)
+        sched = maybe_tool_log_scheduled(
+            "SimulatedKnowledgeManager.clear",
+            "clear",
+            {},
+        )
         type(self).__init__(
             self,
             description=getattr(
@@ -416,3 +507,6 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
         )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(label, cid, "clear", {"outcome": "reset"}, t0)

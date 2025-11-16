@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import functools
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 
 import unify
 
@@ -14,20 +14,26 @@ from .prompt_builders import (
     build_ask_prompt,
     build_simulated_method_prompt,
 )
-from ..events.manager_event_logging import (
-    new_call_id,
-    publish_manager_method_event,
-    wrap_handle_with_logging,
+from ..common.simulated import (
+    mirror_transcript_manager_tools,
+    SimulatedLineage,
+    SimulatedLog,
+    simulated_llm_roundtrip,
+    SimulatedHandleMixin,
+    build_followup_prompt,
+    maybe_tool_log_scheduled,
+    maybe_tool_log_completed,
 )
-from ..common.simulated import mirror_transcript_manager_tools
 from .types.message import Message
+from .types.exchange import Exchange
 from ..common.llm_client import new_llm_client
+from ..constants import LOGGER
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helper
 # ─────────────────────────────────────────────────────────────────────────────
-class _SimulatedTranscriptHandle(SteerableToolHandle):
+class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
     """
     A very small, LLM-backed handle used by SimulatedTranscriptManager.ask.
     """
@@ -54,13 +60,25 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
                 "Clarification queues must be provided when _requests_clarification is True",
             )
         self._needs_clar = _requests_clarification
+        # Human-friendly log label derived from current lineage, mirroring other simulated managers:
+        # "<outer...>->SimulatedTranscriptManager.ask(abcd)"
+        self._log_label = SimulatedLineage.make_label("SimulatedTranscriptManager.ask")
 
         # fire clarification immediately if queues supplied
         if self._needs_clar:
             try:
-                self._clar_up_q.put_nowait(
-                    "Could you clarify your information-need around the transcripts?",
+                q_text = (
+                    "Could you clarify your information-need around the transcripts?"
                 )
+                self._clar_up_q.put_nowait(q_text)
+                try:
+                    SimulatedLog.log_clarification_request(self._log_label, q_text)
+                except Exception:
+                    pass
+                try:
+                    LOGGER.info(f"❓ [{self._log_label}] Clarification requested")
+                except Exception:
+                    pass
             except asyncio.QueueFull:
                 pass
 
@@ -72,6 +90,7 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         self._answer: Optional[str] = None
         self._msgs: List[Dict[str, Any]] = []
         self._paused = False
+        # label already set above
 
     # ──  API expected by SteerableToolHandle  ──────────────────────────────
     async def result(self):
@@ -84,11 +103,39 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         if not self._done.is_set():
             # wait for clarification reply if requested
             if self._needs_clar:
+                try:
+                    LOGGER.info(
+                        f"⏳ [{self._log_label}] Waiting for clarification answer…",
+                    )
+                except Exception:
+                    pass
                 clar_reply = await self._clar_down_q.get()
                 self._extra_user_msgs.append(f"Clarification: {clar_reply}")
+                try:
+                    SimulatedLog.log_clarification_answer(self._log_label, clar_reply)
+                except Exception:
+                    pass
+                try:
+                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
+                except Exception:
+                    pass
 
             prompt = "\n\n---\n\n".join([self._initial] + self._extra_user_msgs)
-            answer = await self._llm.generate(prompt)
+            # Unified simulated LLM roundtrip (with conditional response logging and optional dumps)
+            try:
+                sys_msg = getattr(self._llm, "system_message", None)
+            except Exception:
+                sys_msg = None
+            answer = await simulated_llm_roundtrip(
+                self._llm,
+                label=self._log_label,
+                prompt=prompt,
+                sys_for_dump=sys_msg,
+                request_dump_body={
+                    "model": getattr(self._llm, "model", None),
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
             self._answer = answer
             self._msgs = [
                 {"role": "user", "content": prompt},
@@ -103,10 +150,12 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
     def interject(self, message: str) -> str:
         if self._cancelled:
             return "Interaction has been stopped."
+        self._log_interject(message)
         self._extra_user_msgs.append(message)
         return "Acknowledged."
 
     def stop(self, reason: Optional[str] = None) -> str:
+        self._log_stop(reason)
         self._cancelled = True
         self._done.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
@@ -114,12 +163,14 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
     def pause(self) -> str:
         if self._paused:
             return "Already paused."
+        self._log_pause()
         self._paused = True
         return "Paused."
 
     def resume(self) -> str:
         if not self._paused:
             return "Already running."
+        self._log_resume()
         self._paused = False
         return "Resumed."
 
@@ -127,19 +178,13 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
         return self._done.is_set()
 
     async def ask(self, question: str) -> "SteerableToolHandle":
-        q_msg = (
-            f"Your only task is to simulate an answer to the following question: {question}\n\n"
-            "However, there is a also ongoing simulated process which had the instructions given below. "
-            "Please make your answer realastic and conceivable given the provided context of the simulated taks."
-        )
-        follow_up_prompt = "\n\n---\n\n".join(
-            [q_msg]
-            + [self._initial]
-            + self._extra_user_msgs
-            + [f"Question to answer (as a reminder!): {question}"],
+        follow_up_prompt = build_followup_prompt(
+            question=question,
+            initial_instruction=self._initial,
+            extra_messages=list(self._extra_user_msgs),
         )
 
-        return _SimulatedTranscriptHandle(
+        handle = _SimulatedTranscriptHandle(
             self._llm,
             follow_up_prompt,
             _return_reasoning_steps=self._want_steps,
@@ -147,6 +192,17 @@ class _SimulatedTranscriptHandle(SteerableToolHandle):
             clarification_up_q=self._clar_up_q,
             clarification_down_q=self._clar_down_q,
         )
+        # Align with other simulated components: concise "Question(<parent_label>)" label
+        try:
+            handle._log_label = SimulatedLineage.question_label(self._log_label)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        # Emit a human-facing log for the nested ask
+        try:
+            SimulatedLog.log_request("ask", getattr(handle, "_log_label", ""), question)  # type: ignore[arg-type]
+        except Exception:
+            pass
+        return handle
 
     # --- event APIs required by SteerableToolHandle ---------------------
     async def next_clarification(self) -> dict:
@@ -194,6 +250,11 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
 
         # Shared, *stateful* **asynchronous** LLM (reusing common client)
         self._llm = new_llm_client(stateful=True)
+        # Minimal in-memory simulation store for programmatic helpers
+        self._sim_next_message_id: int = 1
+        self._sim_next_exchange_id: int = 1
+        self._sim_messages: List[Message] = []
+        self._sim_exchanges: Dict[int, Exchange] = {}
         # Use shared helper to mirror the real TranscriptManager's tools
         tools_for_prompt = mirror_transcript_manager_tools()
         # Provide placeholder counts/columns for the simulated environment
@@ -235,20 +296,24 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         _requests_clarification: bool = False,
         _clarification_up_q: asyncio.Queue[str] | None = None,
         _clarification_down_q: asyncio.Queue[str] | None = None,
+        images: object | None = None,
         log_events: bool = False,
     ) -> SteerableToolHandle:
         should_log = self._log_events or log_events
         call_id = None
 
-        if should_log:
-            call_id = new_call_id()
-            await publish_manager_method_event(
-                call_id,
-                "TranscriptManager",
-                "ask",
-                phase="incoming",
-                question=text,
-            )
+        # No EventBus publishing for simulated managers
+        call_id = None
+
+        # Tool-style scheduled log (no parent-lineage)
+        maybe_tool_log_scheduled(
+            "SimulatedTranscriptManager.ask",
+            "ask",
+            {
+                "text": text if isinstance(text, str) else repr(text),
+                "requests_clarification": _requests_clarification,
+            },
+        )
 
         instruction = build_simulated_method_prompt(
             "ask",
@@ -264,17 +329,18 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             clarification_down_q=_clarification_down_q,
         )
 
-        if should_log and call_id is not None:
-            handle = wrap_handle_with_logging(
-                handle,
-                call_id,
-                "TranscriptManager",
-                "ask",
-            )
+        # Do not emit ❓ Ask requested here; tool-style scheduled log above already captures inputs
+
+        # No EventBus publishing for simulated managers
         return handle
 
     @functools.wraps(BaseTranscriptManager.clear, updated=())
     def clear(self) -> None:
+        sched = maybe_tool_log_scheduled(
+            "SimulatedTranscriptManager.clear",
+            "clear",
+            {},
+        )
         type(self).__init__(
             self,
             description=getattr(
@@ -290,3 +356,407 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
             ),
             simulation_guidance=getattr(self, "_simulation_guidance", None),
         )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(label, cid, "clear", {"outcome": "reset"}, t0)
+
+    # ------------------------------------------------------------------ #
+    # Programmatic helpers (simulated, non-LLM or lightly structured)    #
+    # ------------------------------------------------------------------ #
+    @functools.wraps(BaseTranscriptManager.log_messages, updated=())
+    def log_messages(
+        self,
+        messages: Union[
+            Union[Dict[str, Any], Message],
+            List[Union[Dict[str, Any], Message]],
+        ],
+        synchronous: bool = False,
+    ) -> List[Message]:
+        """
+        Simulated message logging: validates inputs, assigns ids, and stores in-memory.
+        """
+        sched = maybe_tool_log_scheduled(
+            "SimulatedTranscriptManager.log_messages",
+            "log_messages",
+            {
+                "count": (len(messages) if isinstance(messages, list) else 1),
+                "synchronous": synchronous,
+            },
+        )
+
+        if not messages:
+            if sched:
+                label, cid, t0 = sched
+                maybe_tool_log_completed(label, cid, "log_messages", {"created": 0}, t0)
+            return []
+
+        batch = messages if isinstance(messages, list) else [messages]
+        created: List[Message] = []
+        for raw in batch:
+            payload = (
+                raw.model_dump(mode="python") if isinstance(raw, Message) else dict(raw)
+            )
+            # Require receiver_ids
+            if "receiver_ids" not in payload:
+                raise ValueError("Each message must include 'receiver_ids'.")
+            # Require an explicit exchange_id (use log_first_message_in_new_exchange for new)
+            exid = payload.get("exchange_id", None)
+            if exid is None or int(exid) < 0:
+                raise ValueError(
+                    "exchange_id is required in simulated log_messages; use log_first_message_in_new_exchange to start a new thread.",
+                )
+            # Assign message_id when missing/unassigned
+            try:
+                mid = int(payload.get("message_id", -1))
+            except Exception:
+                mid = -1
+            if mid < 0:
+                mid = self._sim_next_message_id
+                self._sim_next_message_id += 1
+            payload["message_id"] = mid
+            # Normalise model and persist to in-memory store
+            msg = Message(**payload)
+            created.append(msg)
+            self._sim_messages.append(msg)
+            # Ensure an exchange row exists
+            exid_int = int(getattr(msg, "exchange_id"))
+            if exid_int not in self._sim_exchanges:
+                try:
+                    medium = str(getattr(msg, "medium", ""))  # best-effort
+                except Exception:
+                    medium = ""
+                self._sim_exchanges[exid_int] = Exchange(
+                    exchange_id=exid_int,
+                    metadata={},
+                    medium=medium,
+                )
+
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "log_messages",
+                {"created": len(created)},
+                t0,
+            )
+        return created
+
+    def join_published(self) -> None:
+        """
+        No-op in simulation; included for API compatibility.
+        """
+        sched = maybe_tool_log_scheduled(
+            "SimulatedTranscriptManager.join_published",
+            "join_published",
+            {},
+        )
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "join_published",
+                {"outcome": "no-op"},
+                t0,
+            )
+
+    @staticmethod
+    @functools.wraps(BaseTranscriptManager.build_plain_transcript, updated=())
+    def build_plain_transcript(
+        messages: list[dict],
+        *,
+        contact_manager: Optional[Any] = None,
+    ) -> str:
+        """
+        Return a plain-text transcript ("Full Name: content") for provided messages.
+        """
+        # Local import avoids widening module deps at import time
+        from unity.contact_manager.contact_manager import (
+            ContactManager as _CM,
+        )  # noqa: WPS433
+
+        cm = contact_manager or _CM()
+        name_cache: dict[int, str] = {}
+
+        def _name_for_cid(cid: int) -> str:
+            if cid in name_cache:
+                return name_cache[cid]
+            try:
+                recs = cm.filter_contacts(filter=f"contact_id == {cid}", limit=1)
+                if recs:
+                    rec = recs[0]
+                    full = " ".join(
+                        p for p in [rec.first_name, rec.surname] if p
+                    ).strip()
+                    if not full:
+                        full = (rec.first_name or "").strip()
+                    if full:
+                        name_cache[cid] = full
+                        return full
+            except Exception:
+                pass
+            name_cache[cid] = str(cid)
+            return name_cache[cid]
+
+        lines: list[str] = []
+        for itm in messages:
+            if "kind" in itm:
+                if itm.get("kind") != "message":
+                    continue
+                data = itm.get("data", {})
+                sender_val = data.get("sender_id")
+                content_val = data.get("content", "")
+                if sender_val is None:
+                    continue
+                sender_name = _name_for_cid(int(sender_val))
+            else:
+                # Sandbox-style dicts: {"sender": "...", "content": "..."} or {"sender_id": 3, ...}
+                if "sender" in itm:
+                    sender_name = str(itm.get("sender"))
+                else:
+                    sid = itm.get("sender_id")
+                    sender_name = (
+                        _name_for_cid(int(sid)) if sid is not None else "Unknown"
+                    )
+                content_val = str(itm.get("content", ""))
+            lines.append(f"{sender_name}: {content_val}")
+        return "\n".join(lines)
+
+    def update_contact_id(
+        self,
+        *,
+        original_contact_id: int,
+        new_contact_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Simulated in-place contact id substitution across the in-memory messages.
+        """
+        sched = maybe_tool_log_scheduled(
+            "SimulatedTranscriptManager.update_contact_id",
+            "update_contact_id",
+            {"from": original_contact_id, "to": new_contact_id},
+        )
+        if original_contact_id == new_contact_id:
+            raise ValueError("original_contact_id and new_contact_id must differ.")
+        updated_count = 0
+        for i, msg in enumerate(list(self._sim_messages)):
+            changed = False
+            if int(msg.sender_id) == original_contact_id:
+                msg = msg.model_copy(update={"sender_id": new_contact_id})
+                changed = True
+            if any(rid == original_contact_id for rid in msg.receiver_ids):
+                new_rids = [
+                    new_contact_id if rid == original_contact_id else rid
+                    for rid in msg.receiver_ids
+                ]
+                # Preserve order; best-effort de-dup
+                seen: set[int] = set()
+                deduped: list[int] = []
+                for rid in new_rids:
+                    if rid not in seen:
+                        seen.add(rid)
+                        deduped.append(rid)
+                msg = msg.model_copy(update={"receiver_ids": deduped})
+                changed = True
+            if changed:
+                self._sim_messages[i] = msg
+                updated_count += 1
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "update_contact_id",
+                {
+                    "outcome": "contact ids updated",
+                    "details": {
+                        "old_contact_id": original_contact_id,
+                        "new_contact_id": new_contact_id,
+                        "updated_messages": updated_count,
+                    },
+                },
+                t0,
+            )
+        return {
+            "outcome": "contact ids updated",
+            "details": {
+                "old_contact_id": original_contact_id,
+                "new_contact_id": new_contact_id,
+                "updated_messages": updated_count,
+            },
+        }
+
+    def get_exchange_metadata(self, exchange_id: int) -> Exchange:
+        """
+        Simulated fetch of exchange metadata from in-memory exchanges.
+        """
+        sched = maybe_tool_log_scheduled(
+            "SimulatedTranscriptManager.get_exchange_metadata",
+            "get_exchange_metadata",
+            {"exchange_id": exchange_id},
+        )
+        ex = self._sim_exchanges.get(int(exchange_id))
+        if ex is None:
+            # Create a plausible default record
+            ex = Exchange(exchange_id=int(exchange_id), metadata={}, medium="")
+            self._sim_exchanges[int(exchange_id)] = ex
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "get_exchange_metadata",
+                {
+                    "exchange_id": ex.exchange_id,
+                    "medium": ex.medium,
+                    "metadata_keys": list(ex.metadata.keys()),
+                },
+                t0,
+            )
+        return ex
+
+    def update_exchange_metadata(
+        self,
+        exchange_id: int,
+        metadata: Dict[str, Any],
+    ) -> Exchange:
+        """
+        Simulated upsert of exchange metadata in the in-memory store.
+        """
+        sched = maybe_tool_log_scheduled(
+            "SimulatedTranscriptManager.update_exchange_metadata",
+            "update_exchange_metadata",
+            {
+                "exchange_id": exchange_id,
+                "metadata_keys": list((metadata or {}).keys()),
+            },
+        )
+        cur = self._sim_exchanges.get(int(exchange_id))
+        if cur is None:
+            cur = Exchange(
+                exchange_id=int(exchange_id),
+                metadata=dict(metadata or {}),
+                medium="",
+            )
+        else:
+            cur = Exchange(
+                exchange_id=cur.exchange_id,
+                metadata=dict(metadata or {}),
+                medium=cur.medium,
+            )
+        self._sim_exchanges[int(exchange_id)] = cur
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "update_exchange_metadata",
+                {
+                    "exchange_id": cur.exchange_id,
+                    "metadata_keys": list(cur.metadata.keys()),
+                },
+                t0,
+            )
+        return cur
+
+    @functools.wraps(
+        BaseTranscriptManager.log_first_message_in_new_exchange,
+        updated=(),
+    )
+    def log_first_message_in_new_exchange(
+        self,
+        message: Union[Dict[str, Any], Message],
+        *,
+        exchange_initial_metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """
+        Start a new exchange, assign a fresh id, log the first message, and upsert metadata.
+        """
+        sched = maybe_tool_log_scheduled(
+            "SimulatedTranscriptManager.log_first_message_in_new_exchange",
+            "log_first_message_in_new_exchange",
+            {"has_metadata": exchange_initial_metadata is not None},
+        )
+        payload = (
+            message.model_dump(mode="python")
+            if isinstance(message, Message)
+            else dict(message)
+        )
+        if payload.get("exchange_id") is not None:
+            raise ValueError(
+                "exchange_id must NOT be provided when starting a new exchange; use log_messages for existing threads.",
+            )
+        new_exid = self._sim_next_exchange_id
+        self._sim_next_exchange_id += 1
+        # Seed exchange record
+        self._sim_exchanges[new_exid] = Exchange(
+            exchange_id=new_exid,
+            metadata=dict(exchange_initial_metadata or {}),
+            medium=str(payload.get("medium") or ""),
+        )
+        # Log first message
+        payload["exchange_id"] = new_exid
+        # Let log_messages validate and store
+        self.log_messages(payload, synchronous=True)
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "log_first_message_in_new_exchange",
+                {"exchange_id": new_exid},
+                t0,
+            )
+        return new_exid
+
+    @functools.wraps(BaseTranscriptManager.filter_exchanges, updated=())
+    def filter_exchanges(
+        self,
+        *,
+        filter: Optional[str] = None,
+        offset: int = 0,
+        limit: int | None = 100,
+    ) -> Dict[str, Any]:
+        """
+        Simulated filter over the in-memory exchanges using a restricted eval.
+        """
+        sched = maybe_tool_log_scheduled(
+            "SimulatedTranscriptManager.filter_exchanges",
+            "filter_exchanges",
+            {"filter": filter, "offset": offset, "limit": limit},
+        )
+        exchanges = list(self._sim_exchanges.values())
+        if filter:
+            filtered: list[Exchange] = []
+            for ex in exchanges:
+                env = {
+                    "exchange_id": ex.exchange_id,
+                    "medium": ex.medium,
+                    "metadata": ex.metadata,
+                }
+                try:
+                    ok = bool(
+                        eval(str(filter), {"__builtins__": {}}, env),
+                    )  # noqa: S307
+                except Exception:
+                    ok = True  # best-effort fallback
+                if ok:
+                    filtered.append(ex)
+            exchanges = filtered
+        # Apply slicing
+        if offset:
+            exchanges = exchanges[offset:]
+        if limit is not None:
+            exchanges = exchanges[: int(limit)]
+        out = {"exchanges": exchanges}
+        if sched:
+            label, cid, t0 = sched
+            maybe_tool_log_completed(
+                label,
+                cid,
+                "filter_exchanges",
+                {"count": len(exchanges), "offset": offset, "limit": limit},
+                t0,
+            )
+        return out

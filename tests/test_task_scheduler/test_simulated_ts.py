@@ -1,7 +1,6 @@
 # tests/test_simulated_task_scheduler.py
 from __future__ import annotations
 
-import re
 import asyncio
 import pytest
 import functools
@@ -12,7 +11,13 @@ from unity.task_scheduler.simulated import (
 )
 
 # Helper identical to the one used elsewhere in the test-suite
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+    _normalize_alnum_lower,
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -66,13 +71,13 @@ async def test_ts_stateful_memory_serial_asks():
         "Respond with only the **single-word** codename and **nothing else**.",
     )
     codename = await h1.result()
-    codename = re.sub(r"\W+", "", codename.strip().lower().replace("codename", ""))
+    codename = _normalize_alnum_lower(codename.replace("codename", ""))
     assert codename, "Codename should not be empty"
 
     # 2) Ask what codename was suggested
     h2 = await ts.ask("Great. What codename did you propose earlier?")
     answer2 = (await h2.result()).lower()
-    answer2 = re.sub(r"\W+", "", answer2.strip().lower().replace("codename", ""))
+    answer2 = _normalize_alnum_lower(answer2.replace("codename", ""))
 
     assert (codename in answer2) or (
         answer2 in codename
@@ -135,7 +140,7 @@ async def test_interject_simulated_ts(monkeypatch):
     # Send a follow-up while it is “running”
     await asyncio.sleep(0.05)
     reply = handle.interject("Also include any deadlines, please.")
-    assert "noted" in reply.lower()
+    assert _ack_ok(reply)
 
     await handle.result()
     assert counts["interject"] == 1, ".interject should be called exactly once"
@@ -173,7 +178,7 @@ async def test_ts_requests_clarification():
         _requests_clarification=True,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=300)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
 
     await down_q.put("Yes – prioritise according to deadlines.")
@@ -230,14 +235,12 @@ async def test_pause_and_resume_simulated_ts(monkeypatch):
     pause_reply = handle.pause()
     assert "pause" in pause_reply.lower()
 
-    res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done(), "result() should block while the handle is paused"
+    res_task = await _assert_blocks_while_paused(handle.result())
 
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
 
-    answer = await asyncio.wait_for(res_task, timeout=300)
+    answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
 
     assert counts == {
@@ -263,19 +266,98 @@ async def test_handle_ask():
     handle = await ts.ask("Summarize all tasks due this week.")
 
     # Add extra context to ensure nested prompt includes it
-    handle.interject("Focus on European enterprise accounts.")
+    handle.interject("Focus on emails that need to be sent.")
 
     # Invoke the dynamic ask on the running handle
-    nested = await handle.ask("What is the key task to prioritize?")
+    nested = await handle.ask("What is the key task to prioritize within this summary?")
 
     nested_answer = await nested.result()
     assert isinstance(nested_answer, str) and nested_answer.strip(), (
         "Nested ask() should yield a non-empty string answer",
     )
-    assert "europe" in nested_answer.lower()
+    assert "email" in nested_answer.lower()
 
     # The original handle should still be awaitable and produce an answer
     handle_answer = await handle.result()
     assert isinstance(handle_answer, str) and handle_answer.strip(), (
         "Handle should still yield a non-empty answer after nested ask",
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 10.  Execute – basic completion                                             #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_basic_completion():
+    """
+    SimulatedTaskScheduler.execute should return a live handle that completes.
+    Keep the inner actor alive indefinitely; stop explicitly to finish.
+    """
+    ts = SimulatedTaskScheduler(actor_steps=None, actor_duration=None)
+    handle = await ts.execute("Prepare slides for kickoff")
+    # Explicitly stop to avoid relying on step-based completion
+    handle.stop(cancel=False)
+    answer = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(answer, str) and answer.strip()
+    # The simulated actor should report it was stopped
+    assert "stopped" in answer.lower()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
+# 11.  Execute – clarification handshake                                      #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_execute_requests_clarification():
+    """
+    When _requests_clarification=True, execute should request clarification via queues.
+    """
+    ts = SimulatedTaskScheduler(actor_steps=None, actor_duration=None)
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    handle = await ts.execute(
+        "Run the data export",
+        _requests_clarification=True,
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+    )
+
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
+    assert "clarify" in question.lower()
+    await down_q.put("Export only records updated in the last 24 hours.")
+
+    answer = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(answer, str) and answer.strip()
+    # The simulated actor completes immediately after clarification
+    assert "clarification" in answer.lower()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 12.  Clear – reset and remain usable                                        #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_simulated_clear():
+    """
+    SimulatedTaskScheduler.clear should reset the manager (hard-coded completion)
+    and remain usable afterwards.
+    """
+    ts = SimulatedTaskScheduler()
+    # Do an update to create some prior state in the stateful LLM
+    h_upd = await ts.update(
+        "Create a temporary task called 'Temp Task' with low priority.",
+    )
+    await asyncio.wait_for(h_upd.result(), timeout=DEFAULT_TIMEOUT)
+
+    # Clear should not raise and should be quick (no LLM roundtrip)
+    ts.clear()
+
+    # Post-clear, an ask should still work
+    h_q = await ts.ask("List any tasks scheduled for today.")
+    answer = await asyncio.wait_for(h_q.result(), timeout=DEFAULT_TIMEOUT)
+    assert (
+        isinstance(answer, str) and answer.strip()
+    ), "Answer should be non-empty after clear()"

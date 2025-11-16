@@ -1,7 +1,7 @@
 # conductor/conductor.py
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, TYPE_CHECKING
 
 import asyncio
 import json
@@ -22,8 +22,14 @@ from ..common.llm_helpers import (
     ToolSpec,
     short_id,
 )
+from ..common.llm_helpers import (
+    canonicalize_handle_class_name as _canon_handle_name,
+)
 from ..common.async_tool_loop import start_async_tool_loop
 from ..common.async_tool_loop import AsyncToolLoopHandle
+from ..common.async_tool_loop import (
+    SteerableToolHandle as _SteerableBase,
+)
 from .request_handle import ConductorRequestHandle
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
@@ -42,10 +48,12 @@ from ..skill_manager.base import BaseSkillManager
 from ..skill_manager.skill_manager import SkillManager
 from ..task_scheduler.base import BaseTaskScheduler
 from ..task_scheduler.task_scheduler import TaskScheduler
+from ..task_scheduler.active_queue import ActiveQueue
 from ..web_searcher.base import BaseWebSearcher
 from ..web_searcher.web_searcher import WebSearcher
 from ..actor.base import BaseActor
 from ..actor.hierarchical_actor import HierarchicalActor
+from ..actor.base import BaseActorHandle
 from ..secret_manager.base import BaseSecretManager
 from ..secret_manager.secret_manager import SecretManager
 from ..events.manager_event_logging import (
@@ -55,6 +63,9 @@ from ..events.manager_event_logging import (
 )
 from ..constants import is_semantic_cache_enabled
 from .concurrency_guard import ActiveSessionRegistry
+
+if TYPE_CHECKING:  # type hints only
+    from ..image_manager.types.image_refs import ImageRefs
 
 
 class Conductor(BaseConductor):
@@ -482,7 +493,7 @@ class Conductor(BaseConductor):
                             "type": "function",
                             "function": {
                                 "name": exec_tool_name,
-                                "arguments": json.dumps({"text": str(task_id_int)}),
+                                "arguments": json.dumps({"task_id": task_id_int}),
                             },
                         },
                     ],
@@ -682,8 +693,13 @@ class Conductor(BaseConductor):
     async def task_handle(self) -> Optional[ConductorRequestHandle]:
         """
         Return the live Conductor.request handle when a TaskScheduler.execute is active,
-        detected purely via `nested_structure()` (presence of ActiveQueue/ActiveTask).
+        detected purely via `nested_structure()` using a dynamically canonicalized handle prefix.
         """
+        # Build the canonical handle label prefix dynamically (e.g., "ActiveQueue(")
+        try:
+            queue_prefix = f"{_canon_handle_name(ActiveQueue)}("
+        except Exception:
+            queue_prefix = "ActiveQueue("
         for h in list(getattr(self, "_live_requests", [])):
             try:
                 if hasattr(h, "done") and h.done():
@@ -691,9 +707,126 @@ class Conductor(BaseConductor):
                 tree = await h.nested_structure()
             except Exception:
                 continue
-            if self._tree_has_any(tree, ("ActiveQueue(", "ActiveTask(")):
+            if self._tree_has_any(tree, (queue_prefix,)):
                 return h  # type: ignore[return-value]
         return None  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------ #
+    #  High-level steering helpers                                       #
+    # ------------------------------------------------------------------ #
+    async def pause_actor(
+        self,
+        reason: str,
+        images: "ImageRefs | list | None" = None,
+    ) -> dict:
+        """
+        Pause any in-flight interactive execution and announce the pause.
+        """
+        # Prefer a running TaskScheduler execution; else fall back to a direct Actor session
+        target_handle = await self.task_handle()
+        if target_handle is not None:
+            target_tool = _canon_handle_name(ActiveQueue)
+            interject_sig_source = ActiveQueue
+        else:
+            target_handle = await self.actor_handle()
+            target_tool = _canon_handle_name(BaseActorHandle)
+            interject_sig_source = BaseActorHandle
+        if target_handle is None:
+            return {"applied": [], "skipped": [], "status": {}}
+
+        # Dynamic method names from abstract handle
+        pause_name = getattr(_SteerableBase, "pause").__name__
+        interject_name = getattr(_SteerableBase, "interject").__name__
+
+        # Resolve images kwarg name dynamically from the concrete signature
+        images_kw: str | None = None
+        try:
+            sig = inspect.signature(interject_sig_source.interject)  # type: ignore[attr-defined]
+            for pname, param in sig.parameters.items():
+                if pname in ("self", "message"):
+                    continue
+                if pname.lower() == "images":
+                    images_kw = pname
+                    break
+        except Exception:
+            images_kw = None
+
+        child_message = f"<execution was paused due to {reason}>"
+        interject_call: Dict[str, object] = {
+            "method": interject_name,
+            "args": child_message,
+        }
+        if images is not None and images_kw:
+            interject_call["kwargs"] = {images_kw: images}
+        spec: Dict[str, object] = {
+            "children": [
+                {
+                    "tool": target_tool,
+                    "steps": [
+                        {"method": pause_name},
+                        interject_call,
+                    ],
+                },
+            ],
+        }
+        return await target_handle.nested_steer(spec)  # type: ignore[attr-defined]
+
+    async def resume_actor(
+        self,
+        reason: str,
+        images: "ImageRefs | list | None" = None,
+    ) -> dict:
+        """
+        Resume any in-flight interactive execution and announce the resume.
+        """
+        # Prefer a running TaskScheduler execution; else fall back to a direct Actor session
+        target_handle = await self.task_handle()
+        if target_handle is not None:
+            target_tool = _canon_handle_name(ActiveQueue)
+            interject_sig_source = ActiveQueue
+        else:
+            target_handle = await self.actor_handle()
+            target_tool = _canon_handle_name(BaseActorHandle)
+            interject_sig_source = BaseActorHandle
+        if target_handle is None:
+            return {"applied": [], "skipped": [], "status": {}}
+
+        # Dynamic method names from abstract handle
+        resume_name = getattr(_SteerableBase, "resume").__name__
+        interject_name = getattr(_SteerableBase, "interject").__name__
+
+        # Resolve images kwarg name dynamically from the concrete signature
+        images_kw: str | None = None
+        try:
+            sig = inspect.signature(interject_sig_source.interject)  # type: ignore[attr-defined]
+            for pname, param in sig.parameters.items():
+                if pname in ("self", "message"):
+                    continue
+                if pname.lower() == "images":
+                    images_kw = pname
+                    break
+        except Exception:
+            images_kw = None
+
+        child_message = f"<execution was resumed due to {reason}>"
+        interject_call: Dict[str, object] = {
+            "method": interject_name,
+            "args": child_message,
+        }
+        if images is not None and images_kw:
+            interject_call["kwargs"] = {images_kw: images}
+        spec: Dict[str, object] = {
+            "children": [
+                {
+                    "tool": target_tool,
+                    "steps": [
+                        interject_call,
+                        {"method": resume_name},
+                    ],
+                },
+            ],
+        }
+        return await target_handle.nested_steer(spec)  # type: ignore[attr-defined]
 
     async def actor_handle(self) -> Optional[ConductorRequestHandle]:
         """
@@ -703,6 +836,11 @@ class Conductor(BaseConductor):
         th = await self.task_handle()
         if th is not None:
             return th
+        # Build the canonical handle label prefix dynamically (e.g., "ActorHandle(")
+        try:
+            actor_prefix = f"{_canon_handle_name(BaseActorHandle)}("
+        except Exception:
+            actor_prefix = "ActorHandle("
         for h in list(getattr(self, "_live_requests", [])):
             try:
                 if hasattr(h, "done") and h.done():
@@ -710,7 +848,7 @@ class Conductor(BaseConductor):
                 tree = await h.nested_structure()
             except Exception:
                 continue
-            if self._tree_has_any(tree, ("ActorHandle(",)):
+            if self._tree_has_any(tree, (actor_prefix,)):
                 return h  # type: ignore[return-value]
         return None  # type: ignore[return-value]
 

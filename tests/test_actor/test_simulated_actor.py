@@ -3,7 +3,11 @@ import functools
 import pytest
 
 from unity.actor.simulated import SimulatedActor, SimulatedActorHandle
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+)
 from unity.function_manager.function_manager import FunctionManager
 from unity.image_manager.image_manager import ImageManager
 from unity.image_manager.types import RawImageRef, AnnotatedImageRef
@@ -111,7 +115,7 @@ async def test_handle_requests_clarification():
         _clarification_down_q=down_q,
     )
 
-    question = await asyncio.wait_for(up_q.get(), timeout=60)
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
     assert "clarify" in question.lower()
 
     await down_q.put("Yes, please compile the Q1 report now.")
@@ -162,14 +166,12 @@ async def test_handle_pause_and_resume(monkeypatch):
     pause_reply = handle.pause()
     assert "pause" in pause_reply.lower()
 
-    res = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res.done(), "result() must wait while paused"
+    res = await _assert_blocks_while_paused(handle.result())
 
     resume_reply = handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
 
-    answer = await asyncio.wait_for(res, timeout=60)
+    answer = await asyncio.wait_for(res, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
     assert counts == {"pause": 1, "resume": 1}
 
@@ -342,7 +344,7 @@ async def test_next_notification_emits_and_consumes_step():
     assert isinstance(before, int) and before == 2
 
     # next_notification should return a real event and consume one step
-    evt = await asyncio.wait_for(handle.next_notification(), timeout=30)
+    evt = await asyncio.wait_for(handle.next_notification(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(evt, dict)
     assert evt.get("type") == "notification"
     assert evt.get("tool_name") == "simulated_actor"
@@ -353,5 +355,76 @@ async def test_next_notification_emits_and_consumes_step():
 
     # Complete the simulation and ensure result is available
     handle.simulate_step()
-    res = await asyncio.wait_for(handle.result(), timeout=30)
+    res = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(res, str) and res.strip()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 12.  Stop while paused should finish immediately                           #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_paused_finishes_immediately():
+    actor = SimulatedActor(steps=5, duration=None)
+    handle = await actor.act("A long-running simulated activity.")
+
+    # Pause quickly to freeze the worker thread
+    await asyncio.sleep(0.05)
+    handle.pause()
+
+    # Give the worker enough time to enter the paused wait state before stopping
+    await asyncio.sleep(0.2)
+
+    # Stopping should unpause and complete immediately
+    handle.stop("cancelled by user")
+    result = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(result, str) and "stopped" in result.lower()
+    assert handle.done()
+    # Verify the worker thread terminates promptly (would hang pre-fix)
+    for _ in range(100):
+        th = getattr(handle, "_action_thread", None)
+        if th is None or not getattr(th, "is_alive", lambda: False)():
+            break
+        await asyncio.sleep(0.01)
+    th = getattr(handle, "_action_thread", None)
+    assert (
+        th is None or not th.is_alive()
+    ), "Action thread should terminate after stop()"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 13.  Stop while waiting for clarification should finish immediately         #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_waiting_for_clarification_finishes_immediately():
+    # Configure the actor to request a clarification at the start of work
+    actor = SimulatedActor(steps=None, duration=None, _requests_clarification=True)
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+
+    handle = await actor.act(
+        "Compile the annual report",
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+    )
+
+    # Wait until the clarification question is asked
+    question = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(question, str) and "clarify" in question.lower()
+
+    # Without answering, issue stop and ensure result returns promptly
+    handle.stop("no longer needed")
+    result = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(result, str) and "stopped" in result.lower()
+    assert handle.done()
+    # Verify the worker thread terminates promptly (would spin-wait pre-fix)
+    for _ in range(100):
+        th = getattr(handle, "_action_thread", None)
+        if th is None or not getattr(th, "is_alive", lambda: False)():
+            break
+        await asyncio.sleep(0.01)
+    th = getattr(handle, "_action_thread", None)
+    assert (
+        th is None or not th.is_alive()
+    ), "Action thread should terminate after stop()"

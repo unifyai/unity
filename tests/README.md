@@ -1,14 +1,14 @@
 ## Run Python tests in parallel with tmux
 
-This helper script launches one tmux session per Python file it finds and runs `pytest` for each file in its own window. It searches recursively and can also be restricted to specific folders or files.
+This helper script launches one tmux session per Python file it finds (or per targeted test when a node id is provided, or when per-test mode is enabled) and runs `pytest` in its own window. It searches recursively and can also be restricted to specific folders, files, or specific tests.
 
 When a session starts, it executes roughly:
 
 ```bash
 export UNIFY_TESTS_RAND_PROJ=True
 export UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True
-source ~/unity/.unity/bin/activate
-pytest <that_file.py>
+source ~/unity/.venv/bin/activate
+pytest <target>
 ```
 
 ## Live status and auto-close
@@ -29,7 +29,7 @@ chmod +x .parallel_run.sh
 ## Requirements
 
 - **tmux** and **pytest** must be installed (e.g., `brew install tmux`).
-- **Virtualenv** is assumed to live at `~/unity/.unity/`. If yours differs, update the `source ~/unity/.unity/bin/activate` line inside the script.
+- **Virtualenv** is assumed to live at `~/unity/.venv/`. If yours differs, update the `source ~/unity/.venv/bin/activate` line inside the script.
 - Optional: create an `.env` file at the repository root (i.e., `~/unity/.env`). Both helper scripts will auto-load it if present via `tests/../.env`.
 
 ## Basic usage
@@ -55,7 +55,7 @@ tmux attach -t <session-name>          # attach to a session
 tmux switch-client -t <session-name>   # switch sessions (when already inside tmux)
 ```
 
-## Targeting specific folders/files
+## Targeting specific folders/files/tests
 
 Limit the search by passing directories and/or `.py` files. Examples:
 
@@ -69,6 +69,15 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Specific files
 ./.parallel_run.sh tests/foo_test.py tests/bar_test.py
 
+# Specific tests (pytest node ids)
+./.parallel_run.sh tests/foo_test.py::TestClass::test_something tests/bar_test.py::test_case
+
+# Per-test mode (create a session per test for all inputs)
+./.parallel_run.sh -t                         # per-test across the whole repo
+./.parallel_run.sh -t tests                   # per-test across a folder
+./.parallel_run.sh -t tests/foo_test.py       # per-test across a single file
+./.parallel_run.sh -t tests tests/foo_test.py # mix folders and files, all per-test
+
 # Mix files and directories
 ./.parallel_run.sh tests/api tests/db/test_migrations.py
 ```
@@ -77,13 +86,46 @@ How it interprets arguments:
 
 - **Directories**: Recursed (respecting excludes) to find `*.py`.
 - **Files**: Run exactly as provided (no recursion).
+- **Tests**: Pytest node ids like `path/to/test_file.py::TestClass::test_case` or `path/to/test_file.py::test_case` are run exactly as provided (one session per node id).
+  - If you specify individual tests, only those tests are run (one session per test).
+  - When you do not specify individual tests, the script creates one session per file.
+  - With `-t/--per-test`, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
+
+## Match tests by filename (glob-style)
+
+Use `-m/--match` to run tests whose basenames match a simple glob pattern. The pattern is matched against the filename only (not the full path). Quote the pattern to prevent your shell from expanding it.
+
+Examples:
+
+```bash
+# Run all "docstring" focused tests (each in its own tmux session)
+./.parallel_run.sh -m "*_tool_docstring*"
+```
+
+This one-liner matches files such as:
+
+- `tests/test_contact/test_contact_tool_docstrings.py`
+- `tests/test_transcript_manager/test_transcript_tool_docstrings.py`
+- `tests/test_task_scheduler/test_task_tool_docstrings.py`
+- `tests/test_conductor/test_conductor_tool_docstrings.py`
+- `tests/test_file_manager/test_file_tool_docstrings.py`
+- `tests/test_guidance/test_guidance_tool_docstring.py`
+- `tests/test_knowledge/test_knowledge_tool_docstrings.py`
+- `tests/test_secret_manager/test_secret_manager_tool_docstrings.py`
+- `tests/test_skill_manager/test_skill_tool_docstrings.py`
+- `tests/test_web_searcher/test_web_tool_docstrings.py`
+
+Notes:
+
+- `*` means “anything before/after” in the filename. You can combine it with other characters (e.g., `test_*_tool_docstring*.py`).
+- When using `-m/--match`, the default behavior still applies: one tmux session per matching test file.
 
 ## Defaults & conventions
 
 - **Environment**:
   - If `../.env` exists relative to the `tests` directory (i.e., `~/unity/.env`), it will be sourced automatically so you can define `UNIFY_KEY`, `UNIFY_BASE_URL`, or other variables once.
   - Exports `UNIFY_TESTS_RAND_PROJ=True` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True` inside each session so it works whether or not a tmux server is already running.
-- **Virtualenv**: Assumes `~/unity/.unity/bin/activate`.
+- **Virtualenv**: Assumes `~/unity/.venv/bin/activate`.
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
 - **Names**:
