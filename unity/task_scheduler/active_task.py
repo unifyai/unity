@@ -297,8 +297,13 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
             self._clear_active_pointer()
             return
 
-        # No stop/defer/cancel intent ⇒ forward interjection to the actor (with images).
-        await self._actor_handle.interject(message, images=images)  # type: ignore[arg-type]
+        # No stop/defer/cancel intent ⇒ forward interjection to the actor.
+        # Avoid passing images kwarg when None to preserve compatibility with wrappers
+        # that don't declare the images kwarg (e.g., some test monkeypatches).
+        if images is None:
+            await self._actor_handle.interject(message)  # type: ignore[arg-type]
+        else:
+            await self._actor_handle.interject(message, images=images)  # type: ignore[arg-type]
 
     @functools.wraps(BaseActiveTask.stop, updated=())
     def stop(

@@ -16,13 +16,16 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from ..common.async_tool_loop import SteerableToolHandle
 from ..singleton_registry import SingletonABCMeta
 from ..common.global_docstrings import CLEAR_METHOD_DOCSTRING
 from ..common.state_managers import BaseStateManager
 from .types import StateManager
+
+if TYPE_CHECKING:  # type hints only
+    from ..image_manager.types.image_refs import ImageRefs
 
 
 class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
@@ -130,6 +133,70 @@ class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
         SteerableToolHandle
             A live handle representing the running execution, suitable for
             awaiting completion or steering mid-flight.
+        """
+
+    # ------------------------------------------------------------------ #
+    #  pause_actor / resume_actor – steer any in‑flight interactive run   #
+    # ------------------------------------------------------------------ #
+    @abstractmethod
+    async def pause_actor(
+        self,
+        reason: str,
+        images: "ImageRefs | list | None" = None,
+    ) -> dict:
+        """
+        Pause any in‑flight interactive execution started via this Conductor and
+        announce the pause.
+
+        Behaviour
+        ---------
+        - If a live interactive session is active, applies a pause to the
+          current child execution and emits a concise interjection explaining
+          the reason for the pause.
+        - If no interactive session is active, returns a benign no‑op summary.
+        - When images are provided, they are forwarded alongside the interjection(s).
+
+        Parameters
+        ----------
+        reason : str
+            Human‑readable reason attached to the interjection(s).
+        images : optional
+            Optional image references to forward with interjections.
+
+        Returns
+        -------
+        dict
+            Summary object describing which operations were applied or skipped.
+        """
+
+    @abstractmethod
+    async def resume_actor(
+        self,
+        reason: str,
+        images: "ImageRefs | list | None" = None,
+    ) -> dict:
+        """
+        Resume any in‑flight interactive execution started via this Conductor and
+        announce the resume.
+
+        Behaviour
+        ---------
+        - If a live interactive session is active, emits a concise interjection
+          explaining the reason and then resumes the current child execution.
+        - If no interactive session is active, returns a benign no‑op summary.
+        - When images are provided, they are forwarded alongside the interjection(s).
+
+        Parameters
+        ----------
+        reason : str
+            Human‑readable reason attached to the interjection(s).
+        images : optional
+            Optional image references to forward with interjections.
+
+        Returns
+        -------
+        dict
+            Summary object describing which operations were applied or skipped.
         """
 
     # ------------------------------------------------------------------ #
