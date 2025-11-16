@@ -693,8 +693,13 @@ class Conductor(BaseConductor):
     async def task_handle(self) -> Optional[ConductorRequestHandle]:
         """
         Return the live Conductor.request handle when a TaskScheduler.execute is active,
-        detected purely via `nested_structure()` (presence of ActiveQueue).
+        detected purely via `nested_structure()` using a dynamically canonicalized handle prefix.
         """
+        # Build the canonical handle label prefix dynamically (e.g., "ActiveQueue(")
+        try:
+            queue_prefix = f"{_canon_handle_name(ActiveQueue)}("
+        except Exception:
+            queue_prefix = "ActiveQueue("
         for h in list(getattr(self, "_live_requests", [])):
             try:
                 if hasattr(h, "done") and h.done():
@@ -702,7 +707,7 @@ class Conductor(BaseConductor):
                 tree = await h.nested_structure()
             except Exception:
                 continue
-            if self._tree_has_any(tree, ("ActiveQueue(",)):
+            if self._tree_has_any(tree, (queue_prefix,)):
                 return h  # type: ignore[return-value]
         return None  # type: ignore[return-value]
 
@@ -831,6 +836,11 @@ class Conductor(BaseConductor):
         th = await self.task_handle()
         if th is not None:
             return th
+        # Build the canonical handle label prefix dynamically (e.g., "ActorHandle(")
+        try:
+            actor_prefix = f"{_canon_handle_name(SimulatedActorHandle)}("
+        except Exception:
+            actor_prefix = "ActorHandle("
         for h in list(getattr(self, "_live_requests", [])):
             try:
                 if hasattr(h, "done") and h.done():
@@ -838,7 +848,7 @@ class Conductor(BaseConductor):
                 tree = await h.nested_structure()
             except Exception:
                 continue
-            if self._tree_has_any(tree, ("ActorHandle(",)):
+            if self._tree_has_any(tree, (actor_prefix,)):
                 return h  # type: ignore[return-value]
         return None  # type: ignore[return-value]
 
