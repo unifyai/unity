@@ -788,13 +788,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         if self._cancel_event.is_set():
             return
 
-        # Only the root/top-level handle logs the stop request
-        if getattr(self, "_is_root_handle", False):
-            _label = getattr(self, "_log_label", None) or self._loop_id
-            LOGGER.info(
-                f"🛑 [{_label}] Stop requested"
-                + (f" – reason: {reason}" if reason else ""),
-            )
+        # Stop request is logged centrally in the loop via mirror path
 
         # Record steer event (best-effort). Functional forwarding happens via mirror path.
         try:
@@ -1411,7 +1405,14 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Best-effort quiesce: cancel the loop after snapshotting to avoid races on resume.
         try:
             if not self.done():
-                self.stop(reason="serialize snapshot")
+                # Request stop and attach a generic after-first-LLM banner for readability
+                self.stop(
+                    reason="serialize snapshot",
+                    _after_first_llm_banner={
+                        "text": "Serialization complete",
+                        "prefix": "📦",
+                    },
+                )
         except Exception:
             pass
 
