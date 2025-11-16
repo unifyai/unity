@@ -22,8 +22,14 @@ from ..common.llm_helpers import (
     ToolSpec,
     short_id,
 )
+from ..common.llm_helpers import (
+    canonicalize_handle_class_name as _canon_handle_name,
+)
 from ..common.async_tool_loop import start_async_tool_loop
 from ..common.async_tool_loop import AsyncToolLoopHandle
+from ..common.async_tool_loop import (
+    SteerableToolHandle as _SteerableBase,
+)
 from .request_handle import ConductorRequestHandle
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
@@ -42,10 +48,12 @@ from ..skill_manager.base import BaseSkillManager
 from ..skill_manager.skill_manager import SkillManager
 from ..task_scheduler.base import BaseTaskScheduler
 from ..task_scheduler.task_scheduler import TaskScheduler
+from ..task_scheduler.active_queue import ActiveQueue
 from ..web_searcher.base import BaseWebSearcher
 from ..web_searcher.web_searcher import WebSearcher
 from ..actor.base import BaseActor
 from ..actor.hierarchical_actor import HierarchicalActor
+from ..actor.simulated import SimulatedActorHandle
 from ..secret_manager.base import BaseSecretManager
 from ..secret_manager.secret_manager import SecretManager
 from ..events.manager_event_logging import (
@@ -711,24 +719,47 @@ class Conductor(BaseConductor):
         """
         # Prefer a running TaskScheduler execution; else fall back to a direct Actor session
         target_handle = await self.task_handle()
-        target_tool = "ActiveQueue"
-        if target_handle is None:
+        if target_handle is not None:
+            target_tool = _canon_handle_name(ActiveQueue)
+            interject_sig_source = ActiveQueue
+        else:
             target_handle = await self.actor_handle()
-            target_tool = "ActorHandle"
+            target_tool = _canon_handle_name(SimulatedActorHandle)
+            interject_sig_source = SimulatedActorHandle
         if target_handle is None:
             return {"applied": [], "skipped": [], "status": {}}
 
+        # Dynamic method names from abstract handle
+        pause_name = getattr(_SteerableBase, "pause").__name__
+        interject_name = getattr(_SteerableBase, "interject").__name__
+
+        # Resolve images kwarg name dynamically from the concrete signature
+        images_kw: str | None = None
+        try:
+            sig = inspect.signature(interject_sig_source.interject)  # type: ignore[attr-defined]
+            for pname, param in sig.parameters.items():
+                if pname in ("self", "message"):
+                    continue
+                if pname.lower() == "images":
+                    images_kw = pname
+                    break
+        except Exception:
+            images_kw = None
+
         child_message = f"<execution was paused due to {reason}>"
-        interject_kwargs = {"args": child_message}
-        if images is not None:
-            interject_kwargs["kwargs"] = {"images": images}
+        interject_call: Dict[str, object] = {
+            "method": interject_name,
+            "args": child_message,
+        }
+        if images is not None and images_kw:
+            interject_call["kwargs"] = {images_kw: images}
         spec: Dict[str, object] = {
             "children": [
                 {
                     "tool": target_tool,
                     "steps": [
-                        {"method": "pause"},
-                        {"method": "interject", **interject_kwargs},
+                        {"method": pause_name},
+                        interject_call,
                     ],
                 },
             ],
@@ -745,24 +776,47 @@ class Conductor(BaseConductor):
         """
         # Prefer a running TaskScheduler execution; else fall back to a direct Actor session
         target_handle = await self.task_handle()
-        target_tool = "ActiveQueue"
-        if target_handle is None:
+        if target_handle is not None:
+            target_tool = _canon_handle_name(ActiveQueue)
+            interject_sig_source = ActiveQueue
+        else:
             target_handle = await self.actor_handle()
-            target_tool = "ActorHandle"
+            target_tool = _canon_handle_name(SimulatedActorHandle)
+            interject_sig_source = SimulatedActorHandle
         if target_handle is None:
             return {"applied": [], "skipped": [], "status": {}}
 
+        # Dynamic method names from abstract handle
+        resume_name = getattr(_SteerableBase, "resume").__name__
+        interject_name = getattr(_SteerableBase, "interject").__name__
+
+        # Resolve images kwarg name dynamically from the concrete signature
+        images_kw: str | None = None
+        try:
+            sig = inspect.signature(interject_sig_source.interject)  # type: ignore[attr-defined]
+            for pname, param in sig.parameters.items():
+                if pname in ("self", "message"):
+                    continue
+                if pname.lower() == "images":
+                    images_kw = pname
+                    break
+        except Exception:
+            images_kw = None
+
         child_message = f"<execution was resumed due to {reason}>"
-        interject_kwargs = {"args": child_message}
-        if images is not None:
-            interject_kwargs["kwargs"] = {"images": images}
+        interject_call: Dict[str, object] = {
+            "method": interject_name,
+            "args": child_message,
+        }
+        if images is not None and images_kw:
+            interject_call["kwargs"] = {images_kw: images}
         spec: Dict[str, object] = {
             "children": [
                 {
                     "tool": target_tool,
                     "steps": [
-                        {"method": "interject", **interject_kwargs},
-                        {"method": "resume"},
+                        interject_call,
+                        {"method": resume_name},
                     ],
                 },
             ],
