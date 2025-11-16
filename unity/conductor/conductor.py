@@ -493,7 +493,7 @@ class Conductor(BaseConductor):
                             "type": "function",
                             "function": {
                                 "name": exec_tool_name,
-                                "arguments": json.dumps({"text": str(task_id_int)}),
+                                "arguments": json.dumps({"task_id": task_id_int}),
                             },
                         },
                     ],
