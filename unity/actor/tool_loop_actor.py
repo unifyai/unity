@@ -22,7 +22,7 @@ from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
 from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 from ..task_scheduler.base import BaseActiveTask
-from .base import BaseActor
+from .base import BaseActor, BaseActorHandle
 from unity.controller.controller import Controller, ActionFailedError
 from unify import AsyncUnify
 import unify
@@ -182,7 +182,7 @@ JSON
 """
 
 
-class ToolLoopPlan(BaseActiveTask):
+class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
     """
     Represents an active plan being executed by the ToolLoopActor.
     Inherits from SteerableToolHandle to provide a consistent interface for interaction.

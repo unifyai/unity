@@ -34,6 +34,7 @@ from unity.common.async_tool_loop import (
 from unity.function_manager.function_manager import FunctionManager
 from unity.actor.base import (
     BaseActor,
+    BaseActorHandle,
 )
 from unity.task_scheduler.base import BaseActiveTask
 from unity.actor.action_provider import ActionProvider
@@ -1755,7 +1756,7 @@ class _ActionProviderProxy:
         return async_wrapper if inspect.iscoroutinefunction(real_attr) else sync_wrapper
 
 
-class HierarchicalPlan(BaseActiveTask):
+class HierarchicalPlan(BaseActiveTask, BaseActorHandle):
     """
     Represents and executes a single, dynamically generated hierarchical plan.
 

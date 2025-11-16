@@ -3,10 +3,9 @@ import threading
 import time
 
 import unify
-from .base import BaseActor
+from .base import BaseActor, BaseActorHandle
 import functools
 from typing import Optional
-from unity.common.async_tool_loop import SteerableToolHandle
 from unity.function_manager.function_manager import FunctionManager
 from unity.constants import LOGGER
 from unity.common.simulated import (
@@ -18,7 +17,7 @@ from unity.common.simulated import (
 from unity.common.llm_client import new_llm_client
 
 
-class SimulatedActorHandle(SteerableToolHandle, SimulatedHandleMixin):
+class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
     """
     A lightweight, actor-scoped handle for simulating execution of a series of actions.
 
