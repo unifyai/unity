@@ -1415,6 +1415,10 @@ async def async_tool_loop_inner(
     # Set to *True* whenever the loop must grant the LLM an immediate turn
     # before waiting again (user interjection, clarification answer, etc.).
     llm_turn_required = False
+    # When a patient interjection (trigger_immediate_llm_turn=False) arrives while
+    # the LLM is already thinking, remember to grant exactly one extra LLM step
+    # after the current step completes (unless another event already triggers a turn).
+    deferred_llm_turn = False
 
     # Loop returns immediately upon the final assistant message (no persist mode)
 
@@ -1651,6 +1655,11 @@ async def async_tool_loop_inner(
                 # LLM generation should be cancelled (handled in the LLM
                 # thinking branch below), not whether to schedule a turn.
                 llm_turn_required = True
+                # Consuming an interjection here satisfies any previously deferred turn.
+                try:
+                    deferred_llm_turn = False
+                except Exception:
+                    pass
                 # Mirrored steering sentinel: synthesize helper tool_calls immediately
                 try:
                     if isinstance(extra, dict) and "_mirror" in extra:
@@ -2213,6 +2222,11 @@ async def async_tool_loop_inner(
                             await asyncio.gather(llm_task, return_exceptions=True)
                         continue  # top of loop
                     # Patient mode: allow the in-flight LLM call to finish organically
+                    # and ensure we schedule exactly one subsequent LLM turn after completion.
+                    try:
+                        deferred_llm_turn = True
+                    except Exception:
+                        pass
 
                 # 2️⃣ clarification bubbled up while the LLM was thinking →
                 #    cancel current LLM step, surface the clarification request,
@@ -2936,6 +2950,15 @@ async def async_tool_loop_inner(
             #     assistant message; nothing more to do – return it.
             if tools_data.pending:  # still running
                 continue  # wait for completions, then prompt LLM
+
+            # If a patient interjection arrived during the last LLM step, or if there
+            # are unprocessed interjections queued, process them before returning.
+            try:
+                if deferred_llm_turn or not interject_queue.empty():
+                    deferred_llm_turn = False
+                    continue  # drain interjections at top-of-loop; grants one extra LLM turn
+            except Exception:
+                pass
 
             # ── timeout guard (final turn) ──────────────────────────────────
             if timer.has_exceeded_time():
