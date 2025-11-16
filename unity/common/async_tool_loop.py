@@ -1898,8 +1898,6 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                 children = spec.get("children")
                 if isinstance(children, list):
                     children_count = len(children)
-                elif isinstance(children, dict):
-                    children_count = len(children)
         except Exception:
             steps_count, children_count = 0, 0
         LOGGER.info(
@@ -2237,9 +2235,9 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                     pass
 
         # 2) Recurse into matched children (structure-based)
-        children_specs = node.get("children") or []
-        if not isinstance(children_specs, list):
-            children_specs = []
+        # Children specs – strict list[dict] only
+        children_raw = node.get("children") or []
+        children_specs = children_raw if isinstance(children_raw, list) else []
 
         live_children = _discover_children(h)
         per_child_nodes: dict[str, list[dict]] = {}
@@ -2259,6 +2257,7 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
 
                 is_match = False
                 if isinstance(target_tool, str) and target_tool:
+                    # Exact tool match only
                     is_match = live_tool == target_tool
                 elif isinstance(target_handle, str) and target_handle:
                     is_match = live_handle_base == target_handle

@@ -685,7 +685,7 @@ class Conductor(BaseConductor):
     async def task_handle(self) -> Optional[ConductorRequestHandle]:
         """
         Return the live Conductor.request handle when a TaskScheduler.execute is active,
-        detected purely via `nested_structure()` (presence of ActiveQueue/ActiveTask).
+        detected purely via `nested_structure()` (presence of ActiveQueue).
         """
         for h in list(getattr(self, "_live_requests", [])):
             try:
@@ -694,7 +694,7 @@ class Conductor(BaseConductor):
                 tree = await h.nested_structure()
             except Exception:
                 continue
-            if self._tree_has_any(tree, ("ActiveQueue(", "ActiveTask(")):
+            if self._tree_has_any(tree, ("ActiveQueue(",)):
                 return h  # type: ignore[return-value]
         return None  # type: ignore[return-value]
 
@@ -709,55 +709,31 @@ class Conductor(BaseConductor):
         """
         Pause any in-flight interactive execution and announce the pause.
         """
-        handle = await self.actor_handle()
-        if handle is None:
+        # Prefer a running TaskScheduler execution; else fall back to a direct Actor session
+        target_handle = await self.task_handle()
+        target_tool = "ActiveQueue"
+        if target_handle is None:
+            target_handle = await self.actor_handle()
+            target_tool = "ActorHandle"
+        if target_handle is None:
             return {"applied": [], "skipped": [], "status": {}}
 
         child_message = f"<execution was paused due to {reason}>"
-        message = f"<Actor has been paused due to {reason}>"
         interject_kwargs = {"args": child_message}
         if images is not None:
             interject_kwargs["kwargs"] = {"images": images}
         spec: Dict[str, object] = {
             "children": [
                 {
-                    "handle": "ActiveQueue",
+                    "tool": target_tool,
                     "steps": [
                         {"method": "pause"},
                         {"method": "interject", **interject_kwargs},
-                    ],
-                },
-                {
-                    "handle": "ActiveTask",
-                    "steps": [
-                        {"method": "pause"},
-                        {"method": "interject", **interject_kwargs},
-                    ],
-                },
-                {
-                    "handle": "ActorHandle",
-                    "steps": [
-                        {"method": "pause"},
-                        {"method": "interject", **interject_kwargs},
-                    ],
-                },
-            ],
-            "conditions": [
-                {
-                    "when": {
-                        "any": [
-                            {"child": {"handle": "ActiveQueue"}, "status": "full"},
-                            {"child": {"handle": "ActiveTask"}, "status": "full"},
-                            {"child": {"handle": "ActorHandle"}, "status": "full"},
-                        ],
-                    },
-                    "then": [
-                        {"method": "interject", "args": message, **interject_kwargs},
                     ],
                 },
             ],
         }
-        return await handle.nested_steer(spec)  # type: ignore[attr-defined]
+        return await target_handle.nested_steer(spec)  # type: ignore[attr-defined]
 
     async def resume_actor(
         self,
@@ -767,55 +743,31 @@ class Conductor(BaseConductor):
         """
         Resume any in-flight interactive execution and announce the resume.
         """
-        handle = await self.actor_handle()
-        if handle is None:
+        # Prefer a running TaskScheduler execution; else fall back to a direct Actor session
+        target_handle = await self.task_handle()
+        target_tool = "ActiveQueue"
+        if target_handle is None:
+            target_handle = await self.actor_handle()
+            target_tool = "ActorHandle"
+        if target_handle is None:
             return {"applied": [], "skipped": [], "status": {}}
 
         child_message = f"<execution was resumed due to {reason}>"
-        message = f"<Actor has been resumed due to {reason}>"
         interject_kwargs = {"args": child_message}
         if images is not None:
             interject_kwargs["kwargs"] = {"images": images}
         spec: Dict[str, object] = {
             "children": [
                 {
-                    "handle": "ActiveQueue",
+                    "tool": target_tool,
                     "steps": [
                         {"method": "interject", **interject_kwargs},
                         {"method": "resume"},
-                    ],
-                },
-                {
-                    "handle": "ActiveTask",
-                    "steps": [
-                        {"method": "interject", **interject_kwargs},
-                        {"method": "resume"},
-                    ],
-                },
-                {
-                    "handle": "ActorHandle",
-                    "steps": [
-                        {"method": "interject", **interject_kwargs},
-                        {"method": "resume"},
-                    ],
-                },
-            ],
-            "conditions": [
-                {
-                    "when": {
-                        "any": [
-                            {"child": {"handle": "ActiveQueue"}, "status": "full"},
-                            {"child": {"handle": "ActiveTask"}, "status": "full"},
-                            {"child": {"handle": "ActorHandle"}, "status": "full"},
-                        ],
-                    },
-                    "then": [
-                        {"method": "interject", "args": message, **interject_kwargs},
                     ],
                 },
             ],
         }
-        return await handle.nested_steer(spec)  # type: ignore[attr-defined]
+        return await target_handle.nested_steer(spec)  # type: ignore[attr-defined]
 
     async def actor_handle(self) -> Optional[ConductorRequestHandle]:
         """
