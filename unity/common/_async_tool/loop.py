@@ -76,6 +76,8 @@ class LoopLogger:
     def __init__(self, cfg: LoopConfig, log_steps: bool | str) -> None:
         self._label = cfg.label
         self._log_steps = log_steps
+        self._first_llm_logged = False
+        self._defer_after_first_llm: list[tuple[str, str]] = []
 
     @property
     def log_steps(self):
@@ -92,6 +94,29 @@ class LoopLogger:
     def error(self, msg, prefix=""):
         txt = f"{prefix} [{self._label}] {msg}"
         LOGGER.error(txt)
+
+    def mark_llm_thinking(self) -> None:
+        if not self._first_llm_logged:
+            self._first_llm_logged = True
+            for p, m in self._defer_after_first_llm:
+                self.info(m, prefix=p)
+            self._defer_after_first_llm.clear()
+
+    def defer_after_first_llm(self, msg: str, prefix: str = "") -> None:
+        if self._first_llm_logged:
+            self.info(msg, prefix=prefix)
+        else:
+            self._defer_after_first_llm.append((prefix, msg))
+
+
+def _via(replay_origin: str | None) -> str:
+    if not replay_origin:
+        return ""
+    return (
+        " – via deserialize 📦"
+        if replay_origin == "deserialize"
+        else f" – via {replay_origin}"
+    )
 
 
 class _LoopToolFailureTracker:
@@ -467,23 +492,28 @@ async def async_tool_loop_inner(
             logger.info(f"System Message: {client.system_message}", prefix="📋")
         # Combine user message + any aligned images into a single log entry
         try:
-            combined_lines = [f"User Message: {message}"]
-            logs = get_image_log_entries()
-            if logs:
-                for _iid, _annotation in logs:
-                    combined_lines.append(
-                        f"🖼️ Image id={_iid}, annotation={_annotation!r}",
-                    )
-                # mark images up to current length as already logged
-                image_log_last_len = len(logs)
-            # If this loop is resuming from a snapshot, annotate this initial message log
-            suffix = f" – via {replay_origin}" if replay_origin else ""
-            if suffix:
-                combined_lines[0] = combined_lines[0] + suffix
-            logger.info("\n".join(combined_lines), prefix="🧑‍💻")
+            # Avoid dumping a whole list when resuming with a seeded batch; per-item logs are emitted below.
+            if isinstance(message, list):
+                pass
+            else:
+                combined_lines = [f"User Message: {message}"]
+                logs = get_image_log_entries()
+                if logs:
+                    for _iid, _annotation in logs:
+                        combined_lines.append(
+                            f"🖼️ Image id={_iid}, annotation={_annotation!r}",
+                        )
+                    # mark images up to current length as already logged
+                    image_log_last_len = len(logs)
+                # If this loop is resuming from a snapshot, annotate this initial message log
+                suffix = _via(replay_origin)
+                if suffix:
+                    combined_lines[0] = combined_lines[0] + suffix
+                logger.info("\n".join(combined_lines), prefix="🧑‍💻")
         except Exception:
-            suffix = f" – via {replay_origin}" if replay_origin else ""
-            logger.info(f"User Message: {message}{suffix}", prefix="🧑‍💻")
+            suffix = _via(replay_origin)
+            if not isinstance(message, list):
+                logger.info(f"User Message: {message}{suffix}", prefix="🧑‍💻")
 
     # ── 0-a. Inject **system** header with broader context ───────────────────
     #
@@ -530,8 +560,8 @@ async def async_tool_loop_inner(
                     n_msgs = len(seeded_batch or [])
                 try:
                     logger.info(
-                        f"Replaying {n_msgs} message(s) – via {replay_origin}",
-                        prefix="🔁",
+                        f"Deserializing {n_msgs} Message(s)…",
+                        prefix="📦",
                     )
                 except Exception:
                     pass
@@ -546,26 +576,55 @@ async def async_tool_loop_inner(
                         continue
                     _role = _m.get("role")
                     if _role == "assistant":
-                        try:
-                            _msg_for_logging = _copy.deepcopy(_m) if _copy else dict(_m)
-                            for _tc in _msg_for_logging.get("tool_calls") or []:
-                                try:
-                                    _fn = _tc.get("function", {})
-                                    if isinstance(_fn, dict) and "arguments" in _fn:
-                                        _fn["arguments"] = _try_parse_json(
-                                            _fn.get("arguments"),
-                                        )
-                                except Exception:
-                                    continue
+                        # Content-only assistant replay log; summarize tool_calls if no content
+                        _content = _m.get("content")
+                        if isinstance(_content, str) and _content.strip():
                             logger.info(
-                                "Assistant turn replayed – via {origin}".format(
-                                    origin=replay_origin,
-                                ),
+                                f"Assistant: {_content}{_via(replay_origin)}",
                                 prefix="🤖",
                             )
-                            logger.info(f"{json.dumps(_msg_for_logging, indent=4)}")
-                        except Exception:
-                            pass
+                        else:
+                            try:
+                                names = [
+                                    str(tc.get("function", {}).get("name"))
+                                    for tc in (_m.get("tool_calls") or [])
+                                    if isinstance(tc, dict)
+                                ]
+                                names = [n for n in names if n and n != "None"]
+                                if names:
+                                    logger.info(
+                                        f"Assistant scheduled: {', '.join(names)}{_via(replay_origin)}",
+                                        prefix="🤖",
+                                    )
+                                else:
+                                    logger.info(
+                                        f"Assistant (replayed){_via(replay_origin)}",
+                                        prefix="🤖",
+                                    )
+                            except Exception:
+                                logger.info(
+                                    f"Assistant (replayed){_via(replay_origin)}",
+                                    prefix="🤖",
+                                )
+                    elif _role == "user":
+                        # Content-only user replay log
+                        _content = _m.get("content")
+                        if isinstance(_content, str):
+                            logger.info(
+                                f"User Message: {_content}{_via(replay_origin)}",
+                                prefix="🧑‍💻",
+                            )
+                        else:
+                            try:
+                                logger.info(
+                                    f"User Message: {json.dumps(_content, indent=2)}{_via(replay_origin)}",
+                                    prefix="🧑‍💻",
+                                )
+                            except Exception:
+                                logger.info(
+                                    f"User Message (replayed){_via(replay_origin)}",
+                                    prefix="🧑‍💻",
+                                )
                     elif _role == "tool":
                         try:
                             _tool_for_logging = (
@@ -579,9 +638,7 @@ async def async_tool_loop_inner(
                             except Exception:
                                 pass
                             logger.info(
-                                "ToolCall Completed (replayed) – via {origin}".format(
-                                    origin=replay_origin,
-                                ),
+                                f"ToolCall Completed (replayed){_via(replay_origin)}",
                                 prefix="✅  ",
                             )
                             logger.info(f"{json.dumps(_tool_for_logging, indent=4)}")
@@ -590,6 +647,12 @@ async def async_tool_loop_inner(
             except Exception:
                 # Never let replay logging break the loop
                 pass
+        # Emit end-of-deserialization banner after replayed messages
+        try:
+            if replay_origin == "deserialize":
+                logger.info("Deserialization complete", prefix="📦")
+        except Exception:
+            pass
         # Inject an initial snapshot of live images (if any) immediately by
         # appending assistant→tool messages directly to the client transcript.
         try:
@@ -1126,6 +1189,52 @@ async def async_tool_loop_inner(
         steering to the target child handles. This does NOT call the LLM.
         """
         payload = payload or {}
+
+        # Generic: allow special banner deferral sentinels without tool acks
+        base_name = ""
+        try:
+            base_name = str(method or "").lower().strip()
+        except Exception:
+            base_name = ""
+        if base_name == "_banner_after_first_llm":
+            text = ""
+            prefix = ""
+            try:
+                text = str((payload or {}).get("text") or "")
+                prefix = str((payload or {}).get("prefix") or "")
+            except Exception:
+                text, prefix = "", ""
+            if text:
+                try:
+                    logger.defer_after_first_llm(text, prefix=prefix)
+                except Exception:
+                    pass
+            return
+
+        # Defer stop log (and optional banner) until after first LLM thinking
+        if base_name == "stop":
+            reason_txt = ""
+            try:
+                r = payload.get("reason")
+                if isinstance(r, str) and r:
+                    reason_txt = r
+            except Exception:
+                reason_txt = ""
+            suffix = f" – reason: {reason_txt}" if reason_txt else ""
+            try:
+                logger.defer_after_first_llm(f"Stop requested{suffix}", prefix="🛑")
+            except Exception:
+                pass
+            # Optional generic banner payload to chain after stop (e.g., "Serialization complete")
+            try:
+                banner = payload.get("_after_first_llm_banner")
+                if isinstance(banner, dict):
+                    btxt = str(banner.get("text") or "")
+                    bpf = str(banner.get("prefix") or "")
+                    if btxt:
+                        logger.defer_after_first_llm(btxt, prefix=bpf)
+            except Exception:
+                pass
 
         # Select targets via central policy
         targets: list[Tuple[asyncio.Task, ToolCallMetadata]] = _select_steering_targets(
@@ -2084,6 +2193,7 @@ async def async_tool_loop_inner(
             # ── D.  Ask the LLM what to do next  ────────────────────────────
             if log_steps:
                 logger.info(f"LLM thinking…", prefix="🔄")
+                logger.mark_llm_thinking()
 
             if interrupt_llm_with_interjections:
                 # ––––– new *pre-emptive* mode ––––––––––––––––––––––––––––
