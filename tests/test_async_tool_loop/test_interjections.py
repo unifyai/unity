@@ -251,6 +251,93 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
+async def test_patient_interjection_during_llm_triggers_deferred_turn(
+    monkeypatch,
+) -> None:
+    """
+    A patient interjection (trigger_immediate_llm_turn=False) that arrives while the LLM
+    is already thinking must trigger exactly one extra LLM turn after the current one
+    completes, so the interjection is processed (without cancelling the in-flight LLM).
+    """
+    client = new_client()
+
+    from unity.common._async_tool import loop as _loop
+
+    llm_started = asyncio.Event()
+    release_first = asyncio.Event()
+    call_count = {"n": 0}
+    was_cancelled = {"value": False}
+    orig_gwp = _loop.generate_with_preprocess
+
+    async def _fake_gwp(_client, preprocess_msgs, **gen_kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            llm_started.set()
+            try:
+                # Wait until the test interjects in patient mode
+                await release_first.wait()
+                # First assistant turn (no tools)
+                _client.messages.append(
+                    {"role": "assistant", "content": "first", "tool_calls": None},
+                )
+                return {"ok": True}
+            except asyncio.CancelledError:
+                was_cancelled["value"] = True
+                raise
+        # Second LLM turn – should occur due to deferred turn after patient interjection
+        _client.messages.append(
+            {"role": "assistant", "content": "second", "tool_calls": None},
+        )
+        return {"ok": True}
+
+    monkeypatch.setattr(_loop, "generate_with_preprocess", _fake_gwp, raising=True)
+
+    h = start_async_tool_loop(
+        client=client,
+        message="Say hello (no tools).",
+        tools={},
+        interrupt_llm_with_interjections=True,
+        timeout=120,
+        max_steps=10,
+    )
+
+    # Ensure first LLM thinking has begun, then interject in patient mode
+    await asyncio.wait_for(llm_started.wait(), timeout=30.0)
+    await h.interject("please consider this later", trigger_immediate_llm_turn=False)  # type: ignore[arg-type]
+    # Allow the in-flight LLM to complete naturally
+    release_first.set()
+
+    final = await h.result()
+
+    # The first LLM call must not have been cancelled in patient mode
+    assert was_cancelled["value"] is False
+
+    # There should be two assistant messages: the original and the deferred one
+    assistant_msgs = [m for m in client.messages if m.get("role") == "assistant"]
+    assert len(assistant_msgs) >= 2
+
+    # Verify the system interjection message is present and appears between the two assistant turns
+    sys_indices = [
+        i
+        for i, m in enumerate(client.messages)
+        if m.get("role") == "system"
+        and "please consider this later" in (m.get("content") or "")
+    ]
+    assert sys_indices, "Expected a system interjection message in the transcript"
+    idx_first_asst = client.messages.index(assistant_msgs[0])
+    idx_second_asst = client.messages.index(assistant_msgs[-1])
+    assert any(idx_first_asst < si < idx_second_asst for si in sys_indices)
+
+    # Final answer should be from the second turn
+    assert isinstance(final, str) and final.strip()
+    assert "second" in final or len(assistant_msgs) >= 2
+
+    # Cleanup: restore original generator
+    monkeypatch.setattr(_loop, "generate_with_preprocess", orig_gwp, raising=True)
+
+
+@pytest.mark.asyncio
+@_handle_project
 async def test_interjection_patient_does_not_cancel_inflight_llm(monkeypatch) -> None:
     """
     When the LLM is currently thinking, a patient interjection
