@@ -696,7 +696,10 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                                 _imgs = _item.get("images")
                             else:
                                 _m, _imgs = _item, None
-                            await self._current_handle.interject(_m, images=_imgs)
+                            if _imgs is None:
+                                await self._current_handle.interject(_m)
+                            else:
+                                await self._current_handle.interject(_m, images=_imgs)
                         except Exception:
                             pass
                 except Exception:
@@ -723,7 +726,10 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         if self._should_passthrough():
             if not (message or "").strip():
                 return
-            await self._current_handle.interject(message, images=images)
+            if images is None:
+                await self._current_handle.interject(message)
+            else:
+                await self._current_handle.interject(message, images=images)
             return
 
         # Fast path: empty/whitespace → no-op
@@ -762,7 +768,10 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                 except Exception:
                     pass
                 return
-            await self._current_handle.interject(message, images=images)
+            if images is None:
+                await self._current_handle.interject(message)
+            else:
+                await self._current_handle.interject(message, images=images)
             return
 
         if not hasattr(self, "_queued_interjections"):

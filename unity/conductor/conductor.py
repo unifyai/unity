@@ -1,7 +1,7 @@
 # conductor/conductor.py
 from __future__ import annotations
 
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, TYPE_CHECKING
 
 import asyncio
 import json
@@ -55,6 +55,9 @@ from ..events.manager_event_logging import (
 )
 from ..constants import is_semantic_cache_enabled
 from .concurrency_guard import ActiveSessionRegistry
+
+if TYPE_CHECKING:  # type hints only
+    from ..image_manager.types.image_refs import ImageRefs
 
 
 class Conductor(BaseConductor):
@@ -694,6 +697,125 @@ class Conductor(BaseConductor):
             if self._tree_has_any(tree, ("ActiveQueue(", "ActiveTask(")):
                 return h  # type: ignore[return-value]
         return None  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------ #
+    #  High-level steering helpers                                       #
+    # ------------------------------------------------------------------ #
+    async def pause_actor(
+        self,
+        reason: str,
+        images: "ImageRefs | list | None" = None,
+    ) -> dict:
+        """
+        Pause any in-flight interactive execution and announce the pause.
+        """
+        handle = await self.actor_handle()
+        if handle is None:
+            return {"applied": [], "skipped": [], "status": {}}
+
+        child_message = f"<execution was paused due to {reason}>"
+        message = f"<Actor has been paused due to {reason}>"
+        interject_kwargs = {"args": child_message}
+        if images is not None:
+            interject_kwargs["kwargs"] = {"images": images}
+        spec: Dict[str, object] = {
+            "children": [
+                {
+                    "handle": "ActiveQueue",
+                    "steps": [
+                        {"method": "pause"},
+                        {"method": "interject", **interject_kwargs},
+                    ],
+                },
+                {
+                    "handle": "ActiveTask",
+                    "steps": [
+                        {"method": "pause"},
+                        {"method": "interject", **interject_kwargs},
+                    ],
+                },
+                {
+                    "handle": "ActorHandle",
+                    "steps": [
+                        {"method": "pause"},
+                        {"method": "interject", **interject_kwargs},
+                    ],
+                },
+            ],
+            "conditions": [
+                {
+                    "when": {
+                        "any": [
+                            {"child": {"handle": "ActiveQueue"}, "status": "full"},
+                            {"child": {"handle": "ActiveTask"}, "status": "full"},
+                            {"child": {"handle": "ActorHandle"}, "status": "full"},
+                        ],
+                    },
+                    "then": [
+                        {"method": "interject", "args": message, **interject_kwargs},
+                    ],
+                },
+            ],
+        }
+        return await handle.nested_steer(spec)  # type: ignore[attr-defined]
+
+    async def resume_actor(
+        self,
+        reason: str,
+        images: "ImageRefs | list | None" = None,
+    ) -> dict:
+        """
+        Resume any in-flight interactive execution and announce the resume.
+        """
+        handle = await self.actor_handle()
+        if handle is None:
+            return {"applied": [], "skipped": [], "status": {}}
+
+        child_message = f"<execution was resumed due to {reason}>"
+        message = f"<Actor has been resumed due to {reason}>"
+        interject_kwargs = {"args": child_message}
+        if images is not None:
+            interject_kwargs["kwargs"] = {"images": images}
+        spec: Dict[str, object] = {
+            "children": [
+                {
+                    "handle": "ActiveQueue",
+                    "steps": [
+                        {"method": "interject", **interject_kwargs},
+                        {"method": "resume"},
+                    ],
+                },
+                {
+                    "handle": "ActiveTask",
+                    "steps": [
+                        {"method": "interject", **interject_kwargs},
+                        {"method": "resume"},
+                    ],
+                },
+                {
+                    "handle": "ActorHandle",
+                    "steps": [
+                        {"method": "interject", **interject_kwargs},
+                        {"method": "resume"},
+                    ],
+                },
+            ],
+            "conditions": [
+                {
+                    "when": {
+                        "any": [
+                            {"child": {"handle": "ActiveQueue"}, "status": "full"},
+                            {"child": {"handle": "ActiveTask"}, "status": "full"},
+                            {"child": {"handle": "ActorHandle"}, "status": "full"},
+                        ],
+                    },
+                    "then": [
+                        {"method": "interject", "args": message, **interject_kwargs},
+                    ],
+                },
+            ],
+        }
+        return await handle.nested_steer(spec)  # type: ignore[attr-defined]
 
     async def actor_handle(self) -> Optional[ConductorRequestHandle]:
         """
