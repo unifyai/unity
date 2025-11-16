@@ -1646,8 +1646,11 @@ async def async_tool_loop_inner(
                         )
                 except Exception:
                     _is_immediate = True
-                if _is_immediate:
-                    llm_turn_required = True
+                # Always grant the next LLM turn for any interjection.
+                # The `_is_immediate` flag only controls whether an in‑flight
+                # LLM generation should be cancelled (handled in the LLM
+                # thinking branch below), not whether to schedule a turn.
+                llm_turn_required = True
                 # Mirrored steering sentinel: synthesize helper tool_calls immediately
                 try:
                     if isinstance(extra, dict) and "_mirror" in extra:
