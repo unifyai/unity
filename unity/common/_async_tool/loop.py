@@ -960,6 +960,42 @@ async def async_tool_loop_inner(
         base = str(method or "").lower().strip()
         payload = payload or {}
         selected: list[Tuple[asyncio.Task, ToolCallMetadata]] = []
+        # NEW: explicit overrides by call_id and/or handle object id
+        try:
+            _t_call_ids = payload.get("_target_call_ids") or []
+            target_call_ids = {str(x) for x in _t_call_ids if isinstance(x, (str, int))}
+        except Exception:
+            target_call_ids = set()
+        try:
+            _t_handle_ids = payload.get("_target_handle_ids") or []
+            target_handle_ids = set()
+            for x in _t_handle_ids:
+                try:
+                    target_handle_ids.add(int(x))
+                except Exception:
+                    # attempt id() string format like '139285...' → int
+                    try:
+                        target_handle_ids.add(int(str(x)))
+                    except Exception:
+                        continue
+        except Exception:
+            target_handle_ids = set()
+        if target_call_ids or target_handle_ids:
+            for t, inf in list(tools_data.info.items()):
+                try:
+                    is_call_match = (
+                        target_call_ids and str(inf.call_id) in target_call_ids
+                    )
+                except Exception:
+                    is_call_match = False
+                try:
+                    hid = id(getattr(inf, "handle", None))
+                    is_handle_match = target_handle_ids and (hid in target_handle_ids)
+                except Exception:
+                    is_handle_match = False
+                if is_call_match or is_handle_match:
+                    selected.append((t, inf))
+            return selected
         # Clarify always targets a single child by id
         if base == "clarify":
             try:
@@ -1189,6 +1225,12 @@ async def async_tool_loop_inner(
         steering to the target child handles. This does NOT call the LLM.
         """
         payload = payload or {}
+        # NEW: allow "inject-only" mode so we do not double-execute child steering
+        inject_only = False
+        try:
+            inject_only = bool(payload.get("_inject_only"))
+        except Exception:
+            inject_only = False
 
         # Generic: allow special banner deferral sentinels without tool acks
         base_name = ""
@@ -1336,9 +1378,10 @@ async def async_tool_loop_inner(
                         msg_dispatcher=_msg_dispatcher,
                     )
                 # Forward steering to child handle or channels
-                # Centralized steering dispatch
-                base = str(method or "").lower().strip()
-                await _dispatch_steering_to_child(base, args, inf)
+                # Centralized steering dispatch (unless inject-only)
+                if not inject_only:
+                    base = str(method or "").lower().strip()
+                    await _dispatch_steering_to_child(base, args, inf)
             except Exception:
                 continue
 
@@ -1750,25 +1793,28 @@ async def async_tool_loop_inner(
                 except asyncio.QueueEmpty:
                     break
 
-                # Respect per-interjection scheduling preference (default immediate)
-                _is_immediate = True
+                # NEW: Optional policy override for LLM turn scheduling
+                llm_policy = "immediate"
                 try:
                     if isinstance(extra, dict):
-                        _is_immediate = bool(
-                            extra.get("trigger_immediate_llm_turn", True),
-                        )
+                        llm_policy = str(extra.get("_llm_turn") or "immediate")
                 except Exception:
-                    _is_immediate = True
-                # Always grant the next LLM turn for any interjection.
-                # The `_is_immediate` flag only controls whether an in‑flight
-                # LLM generation should be cancelled (handled in the LLM
-                # thinking branch below), not whether to schedule a turn.
-                llm_turn_required = True
-                # Consuming an interjection here satisfies any previously deferred turn.
-                try:
-                    deferred_llm_turn = False
-                except Exception:
+                    llm_policy = "immediate"
+                if llm_policy == "none":
+                    # Do not schedule an LLM turn
                     pass
+                elif llm_policy == "deferred":
+                    try:
+                        deferred_llm_turn = True
+                    except Exception:
+                        pass
+                else:
+                    # Default immediate: schedule a turn and clear any prior deferral
+                    llm_turn_required = True
+                    try:
+                        deferred_llm_turn = False
+                    except Exception:
+                        pass
                 # Mirrored steering sentinel: synthesize helper tool_calls immediately
                 try:
                     if isinstance(extra, dict) and "_mirror" in extra:

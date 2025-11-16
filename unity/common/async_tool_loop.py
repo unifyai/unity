@@ -1908,6 +1908,7 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
         pass
 
     results: dict = {"applied": [], "skipped": []}
+    outer_handle = handle
 
     # ───── shared canonicalization helpers (mirror nested_structure) ─────────
     def _canon_name(name: str) -> str:
@@ -2172,6 +2173,7 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
         node: dict | None,
         path: list[str],
     ) -> dict:
+        outer_self = outer_handle
         node = node or {}
         steps = node.get("steps") or []
         attempted_local = False
@@ -2210,6 +2212,65 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                             call_args=call_args,
                             fallback_positional_keys=(),
                         )
+                        # NEW: Synthesize helper tool_calls in the OUTER transcript for child steps,
+                        #      without triggering an immediate LLM turn and without re-executing the child.
+                        try:
+                            if h is not outer_self:
+                                # Resolve child identity from outer task_info
+                                target_call_id = None
+                                try:
+                                    ti = getattr(outer_self._task, "task_info", {})  # type: ignore[attr-defined]
+                                    if isinstance(ti, dict):
+                                        for _meta in ti.values():
+                                            if getattr(_meta, "handle", None) is h:
+                                                target_call_id = getattr(
+                                                    _meta,
+                                                    "call_id",
+                                                    None,
+                                                )
+                                                break
+                                except Exception:
+                                    target_call_id = None
+                                # Build kwargs for helper readability (e.g., interject content)
+                                mirror_kwargs = dict(call_kwargs or {})
+                                if (
+                                    isinstance(method, str)
+                                    and method.lower().strip() == "interject"
+                                    and "content" not in mirror_kwargs
+                                    and "message" not in mirror_kwargs
+                                ):
+                                    if (
+                                        isinstance(call_args, (list, tuple))
+                                        and call_args
+                                    ):
+                                        mirror_kwargs["content"] = call_args[0]
+                                # Target by call_id when available; always include handle id
+                                if target_call_id is not None:
+                                    mirror_kwargs.setdefault(
+                                        "_target_call_ids",
+                                        [],
+                                    ).append(str(target_call_id))
+                                try:
+                                    mirror_kwargs.setdefault(
+                                        "_target_handle_ids",
+                                        [],
+                                    ).append(int(id(h)))
+                                except Exception:
+                                    pass
+                                # Inject-only (no second execution)
+                                mirror_kwargs["_inject_only"] = True
+                                # Enqueue mirror sentinel with explicit policy: no LLM turn on outer
+                                await outer_self._queue.put(
+                                    {
+                                        "_mirror": {
+                                            "method": str(method or ""),
+                                            "kwargs": mirror_kwargs,
+                                        },
+                                        "_llm_turn": "none",
+                                    },
+                                )
+                        except Exception:
+                            pass
                         try:
                             results["applied"].append(
                                 {"path": list(path), "method": method},
