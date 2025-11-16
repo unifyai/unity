@@ -123,6 +123,9 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
                     except asyncio.QueueFull:
                         pass
                     while True:
+                        # Allow immediate termination while waiting for a clarification
+                        if self._stop_event.is_set():
+                            return
                         try:
                             answer: str = self._clarification_down_q.get_nowait()
                             break
@@ -200,6 +203,11 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
 
     def _complete(self, message: str) -> None:
         if not self._done_event.is_set():
+            # Ensure any waiting threads (e.g., paused waits) are released
+            try:
+                self._pause_event.set()
+            except Exception:
+                pass
             self._stop_event.set()
             self._result_str = message
             self._done_event.set()
@@ -252,6 +260,11 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         try:
             suffix = f" – reason: {reason}" if reason else ""
             LOGGER.info(f"🛑 [{self._log_label}] Stop requested{suffix}")
+        except Exception:
+            pass
+        # Unpause immediately so the action loop can observe the stop signal
+        try:
+            self._pause_event.set()
         except Exception:
             pass
         self._complete(msg)

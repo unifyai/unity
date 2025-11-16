@@ -802,6 +802,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             )
         except Exception:
             pass
+        # Ensure the loop is not paused so the inner loop can observe and process the stop immediately
+        with suppress(Exception):
+            self._pause_event.set()
         # Mirror as synthetic helper tool_call (no LLM step) before signalling cancel/stop
         try:
             self._queue.put_nowait(
