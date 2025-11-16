@@ -57,8 +57,10 @@ cd "$REPO_ROOT"
 # Build the command to run in each tmux session
 run_cmd() {
   local target="$1"   # pytest target (file path or node id)
-  # Run pytest; then change ONLY the leading status prefix on the current tmux session:
-  printf "bash -lc 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.venv/bin/activate && cd %q && pytest %q; status=\$?; sname=\$(tmux display-message -p -t \"\$TMUX_PANE\" \"#{session_name}\"); base=\"\$sname\"; case \"\$sname\" in \"o ✅ \"*) base=\"\${sname#o ✅ }\" ;; \"x ❌ \"*) base=\"\${sname#x ❌ }\" ;; \"? ⏳ \"*) base=\"\${sname#? ⏳ }\" ;; \"✅ \"*) base=\"\${sname#✅ }\" ;; \"❌ \"*) base=\"\${sname#❌ }\" ;; \"⏳ \"*) base=\"\${sname#⏳ }\" ;; esac; if [ \$status -eq 0 ]; then pfx=\"o ✅\"; else pfx=\"x ❌\"; fi; tmux rename-session -t \"\$sname\" \"\$pfx \$base\"; if [ \$status -eq 0 ]; then sid=\$(tmux display-message -p -t \"\$TMUX_PANE\" \"#{session_id}\"); (sleep 10; tmux kill-session -t \"\$sid\") >/dev/null 2>&1 & disown; echo \"All tests passed. This tmux session will close in 10s...\"; fi; echo; echo \"pytest exited with code: \$status\"; echo \"(You are now in a shell. Press Ctrl-D to close this window.)\"; exec bash -l'" "$REPO_ROOT" "$target"
+  # Build the inner script first with safe %q for path/target, then quote the whole script with %q
+  local inner
+  inner=$(printf 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.venv/bin/activate && cd %q && pytest %q; status=$?; sname=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; "✅ "*) base="${sname#✅ }" ;; "❌ "*) base="${sname#❌ }" ;; "⏳ "*) base="${sname#⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; tmux rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(tmux display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; tmux kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$REPO_ROOT" "$target")
+  printf 'bash -lc %q' "$inner"
 }
 
 # Ensure we don't collide with existing sessions
@@ -302,11 +304,11 @@ for target in "${files[@]}"; do
   wname="${fname%.py}"
 
   # Create the session first (no command), set remain-on-exit, then send the command.
-  tmux new-session -d -s "$session" -n "$wname"
+  cmd="$(run_cmd "$target")"
+  tmux new-session -d -s "$session" -n "$wname" "$cmd"
   pending_name="$(unique_session_name "? ⏳ $session")"
   tmux rename-session -t "$session" "$pending_name"
   session="$pending_name"
-  tmux send-keys -t "$session:" "$(run_cmd "$target")" C-m
 
   made_sessions+=( "$session" )
 done
