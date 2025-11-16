@@ -528,9 +528,9 @@ async def test_resume_actor_image_guides_simulation_to_spreadsheet_actor_path(
 
     # Explicitly pause the actor via nested steer to match the resume scenario
     pause_spec = {
-        "children": {
-            "Actor.act": {"steps": [{"method": "pause"}]},
-        },
+        "children": [
+            {"tool": "ActorHandle", "steps": [{"method": "pause"}]},
+        ],
     }
     await handle.nested_steer(pause_spec)  # type: ignore[attr-defined]
     await asyncio.wait_for(paused_evt.wait(), timeout=5.0)
