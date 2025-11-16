@@ -472,21 +472,25 @@ async def test_deserialize_replay_logs_and_events_single_manager(caplog):
         has_origin_deser
     ), "No ToolLoop events found with origin == 'deserialize' after resume"
 
-    # Logs: expect a replay banner, a user replay suffix, and either assistant/tool replay for ContactManager.ask
+    # Logs: expect a deserialize banner, a user replay suffix, and an assistant scheduled marker for ContactManager.ask
     text = caplog.text
-    banner_re = r"🔁 \[ContactManager\.ask\([0-9a-f]{4}\)\] Replaying \d+ message\(s\) – via deserialize"
-    assistant_re = r"\[ContactManager\.ask\([0-9a-f]{4}\)\] Assistant turn replayed – via deserialize"
-    tool_re = r"\[ContactManager\.ask\([0-9a-f]{4}\)\] ToolCall Completed \(replayed\) – via deserialize"
-    user_re = r"🧑‍💻 \[ContactManager\.ask\([0-9a-f]{4}\)\] User Message: .* – via deserialize"
-    assert re.search(banner_re, text), "Expected replay banner for ContactManager.ask"
+    banner_re = (
+        r"📦 \[ContactManager\.ask\([0-9a-f]{4}\)\] Deserializing \d+ Message\(s\)…"
+    )
+    assistant_scheduled_re = r"🤖 \[ContactManager\.ask\([0-9a-f]{4}\)\] Assistant scheduled: .* – via deserialize(?: 📦)?"
+    user_re = r"🧑‍💻 \[ContactManager\.ask\([0-9a-f]{4}\)\] User Message: .* – via deserialize(?: 📦)?"
+    assert re.search(
+        banner_re,
+        text,
+    ), "Expected deserialize banner for ContactManager.ask"
     assert re.search(
         user_re,
         text,
     ), "Expected 'User Message: ... – via deserialize' for ContactManager.ask loop"
-    assert re.search(assistant_re, text) or re.search(
-        tool_re,
+    assert re.search(
+        assistant_scheduled_re,
         text,
-    ), "Expected replay log lines with ContactManager.ask label and 'via deserialize' marker"
+    ), "Expected assistant scheduled replay log with ContactManager.ask label and 'via deserialize' marker"
 
 
 @pytest.mark.asyncio
@@ -530,15 +534,15 @@ async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog
     resumed = AsyncToolLoopHandle.deserialize(snap)
     await resumed.result()
 
-    # Logs: tighten to require nested replay banner, nested user replay suffix, and nested assistant replay marker
+    # Logs: tighten to require nested deserialize banner, nested user replay suffix, and nested assistant scheduled marker
     text = caplog.text
-    nested_banner = r"🔁 \[ContactManager\.update->ContactManager\.ask\([0-9a-f]{4}\)\] Replaying \d+ message\(s\) – via deserialize"
-    nested_user = r"🧑‍💻 \[ContactManager\.update->ContactManager\.ask\([0-9a-f]{4}\)\] User Message: .* – via deserialize"
-    nested_assistant = r"🤖 \[ContactManager\.update->ContactManager\.ask\([0-9a-f]{4}\)\] Assistant turn replayed – via deserialize"
+    nested_banner = r"📦 \[ContactManager\.update->ContactManager\.ask\([0-9a-f]{4}\)\] Deserializing \d+ Message\(s\)…"
+    nested_user = r"🧑‍💻 \[ContactManager\.update->ContactManager\.ask\([0-9a-f]{4}\)\] User Message: .* – via deserialize(?: 📦)?"
+    nested_assistant = r"🤖 \[ContactManager\.update->ContactManager\.ask\([0-9a-f]{4}\)\] Assistant scheduled: .* – via deserialize(?: 📦)?"
     assert re.search(
         nested_banner,
         text,
-    ), "Expected nested child replay banner for ContactManager.update->ContactManager.ask"
+    ), "Expected nested child deserialize banner for ContactManager.update->ContactManager.ask"
     assert re.search(
         nested_user,
         text,
@@ -546,7 +550,7 @@ async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog
     assert re.search(
         nested_assistant,
         text,
-    ), "Expected nested child assistant replay marker line"
+    ), "Expected nested child assistant scheduled replay marker line"
 
     # Events: at least one nested ToolLoop event with origin == 'deserialize'
     events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=400)
