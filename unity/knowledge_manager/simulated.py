@@ -95,6 +95,8 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._answer: str | None = None
         self._messages: List[Dict[str, Any]] = []
         self._paused = False
+        # Async cancellation signal to break clarification waits
+        self._cancel_event: asyncio.Event = asyncio.Event()
 
     # --------------------------------------------------------------------- #
     # SteerableToolHandle API
@@ -115,7 +117,25 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
                     )
                 except Exception:
                     pass
-                clar = await self._clar_down_q.get()  # wait for answer
+                clar: str | None = None
+                get_task = asyncio.create_task(self._clar_down_q.get())
+                cancel_task = asyncio.create_task(self._cancel_event.wait())
+                done, pending = await asyncio.wait(
+                    {get_task, cancel_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                if cancel_task in done:
+                    self._done_event.set()
+                    return "processed stopped early, no result"
+                try:
+                    clar = get_task.result()
+                except Exception:
+                    clar = None
+                if clar is None:
+                    self._done_event.set()
+                    return "processed stopped early, no result"
                 self._extra_msgs.append(f"Clarification: {clar}")
                 try:
                     SimulatedLog.log_clarification_answer(self._log_label, clar)
@@ -163,6 +183,10 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
     def stop(self, reason: str | None = None) -> str:
         self._log_stop(reason)
         self._cancelled = True
+        try:
+            self._cancel_event.set()
+        except Exception:
+            pass
         self._done_event.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
 
