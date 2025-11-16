@@ -71,7 +71,6 @@ dev = [
     "hypothesis>=6.135.29",
     "viztracer>=1.0.4",
     "pytest-dotenv>=0.5.2",
-    "pytype>=2024.10.11",
 ]
 
 [tool.setuptools.packages.find]
