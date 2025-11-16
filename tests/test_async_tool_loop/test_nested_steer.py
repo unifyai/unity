@@ -140,6 +140,44 @@ async def test_nested_steer_targets_child_and_applies_method():
             )
             for item in (res.get("applied") or [])
         ), "nested_steer did not report applying pause to the child path"
+
+        # New assertions: the OUTER transcript should include a synthetic helper tool_call
+        # for the child-level pause, targeted to the specific in-flight tool (Outer_spawn).
+        def _find_helper(prefix: str, tool_name: str):
+            msgs = client.messages
+            for idx, m in enumerate(msgs):
+                if m.get("role") != "assistant":
+                    continue
+                tcs = m.get("tool_calls") or []
+                if not tcs:
+                    continue
+                for tc in tcs:
+                    fn = (tc.get("function") or {}).get("name") or ""
+                    if isinstance(fn, str) and fn.startswith(f"{prefix}_{tool_name}_"):
+                        return idx, fn, m
+            return None
+
+        # Wait until the helper appears (mirror is async but fast)
+        async def _helper_present():
+            return _find_helper("pause", "Outer_spawn") is not None
+
+        await _wait_for_condition(_helper_present, poll=0.01, timeout=30.0)
+        found = _find_helper("pause", "Outer_spawn")
+        assert (
+            found is not None
+        ), "Expected synthetic pause_* helper tool_call in outer transcript"
+        helper_asst_idx, helper_name, helper_asst_msg = found
+
+        # The acknowledgement tool message must be directly after the assistant helper
+        # with the same helper tool name, containing a standard pause acknowledgement.
+        msgs = client.messages
+        mm = msgs[helper_asst_idx + 1]
+        assert (
+            mm.get("role") == "tool" and mm.get("name") == helper_name
+        ), "Expected immediate tool ack after helper"
+        assert "Pause request acknowledged." in str(
+            mm.get("content", ""),
+        ), "Pause acknowledgement content mismatch"
     finally:
         # Ensure both outer and inner are stopped and finished to avoid pending tasks
         try:
@@ -260,6 +298,22 @@ async def test_nested_steer_noop_when_child_selector_does_not_match():
             and (item["child"].get("handle") == "IGNORED")
             for item in (res.get("skipped") or [])
         ), "Expected non-matching selector to be recorded as skipped with the correct path"
+
+        # Also ensure NO helper pause_* was injected for Wrapper_run (no target match)
+        def _any_helper(prefix: str, tool_name: str) -> bool:
+            for m in client.messages:
+                if m.get("role") != "assistant":
+                    continue
+                for tc in m.get("tool_calls") or []:
+                    fn = (tc.get("function") or {}).get("name") or ""
+                    if isinstance(fn, str) and fn.startswith(f"{prefix}_{tool_name}_"):
+                        return True
+            return False
+
+        assert not _any_helper(
+            "pause",
+            "Wrapper_run",
+        ), "Helper pause_* should not be injected for a non-matching child"
     finally:
         # Ensure both outer and inner are stopped and finished to avoid pending tasks
         try:
@@ -354,6 +408,56 @@ async def test_nested_steer_applies_serial_steps_on_child():
         assert inner.paused >= 1, "pause step did not apply"
         assert inner.resumed >= 1, "resume step did not apply"
         assert msg in inner.interjections, "interject step did not apply"
+
+        # Assert that helper tool_calls for pause, resume and interject were injected and acknowledged
+        def _find_helpers(prefix: str, tool_name: str) -> list[tuple[int, str]]:
+            out: list[tuple[int, str]] = []
+            msgs2 = client.messages
+            for idx, m in enumerate(msgs2):
+                if m.get("role") != "assistant":
+                    continue
+                tcs = m.get("tool_calls") or []
+                if not tcs:
+                    continue
+                for tc in tcs:
+                    fn = (tc.get("function") or {}).get("name") or ""
+                    if isinstance(fn, str) and fn.startswith(f"{prefix}_{tool_name}_"):
+                        out.append((idx, fn))
+            return out
+
+        # Wait until helpers appear (mirrors are async relative to nested_steer return)
+        async def _helpers_present():
+            return (
+                len(_find_helpers("pause", "Outer_spawn")) > 0
+                and len(_find_helpers("resume", "Outer_spawn")) > 0
+                and len(_find_helpers("interject", "Outer_spawn")) > 0
+            )
+
+        await _wait_for_condition(_helpers_present, poll=0.01, timeout=30.0)
+
+        helpers_pause = _find_helpers("pause", "Outer_spawn")
+        helpers_resume = _find_helpers("resume", "Outer_spawn")
+        helpers_interject = _find_helpers("interject", "Outer_spawn")
+
+        assert (
+            helpers_pause
+        ), "Expected synthetic pause_* helper tool_call in outer transcript"
+        assert (
+            helpers_resume
+        ), "Expected synthetic resume_* helper tool_call in outer transcript"
+        assert (
+            helpers_interject
+        ), "Expected synthetic interject_* helper tool_call in outer transcript"
+
+        # Check acknowledgement for interject is immediately after helper and includes the message content
+        ii_idx, ii_name = helpers_interject[-1]
+        mm = client.messages[ii_idx + 1]
+        assert (
+            mm.get("role") == "tool" and mm.get("name") == ii_name
+        ), "Expected immediate interject ack after helper"
+        assert msg in str(
+            mm.get("content", ""),
+        ), "Interject acknowledgement should include the interjection content"
     finally:
         try:
             outer.stop("cleanup")
