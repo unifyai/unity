@@ -2228,6 +2228,14 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                                                     "call_id",
                                                     None,
                                                 )
+                                                try:
+                                                    target_tool_name = getattr(
+                                                        _meta,
+                                                        "name",
+                                                        None,
+                                                    )
+                                                except Exception:
+                                                    target_tool_name = None
                                                 break
                                 except Exception:
                                     target_call_id = None
@@ -2244,19 +2252,24 @@ async def _nested_steer_on(handle: Any, spec: dict) -> dict:
                                         and call_args
                                     ):
                                         mirror_kwargs["content"] = call_args[0]
-                                # Target by call_id when available; always include handle id
-                                if target_call_id is not None:
-                                    mirror_kwargs.setdefault(
-                                        "_target_call_ids",
-                                        [],
-                                    ).append(str(target_call_id))
+                                # Provide a stable helper label for transcript when the target is absent
+                                helper_label = None
                                 try:
-                                    mirror_kwargs.setdefault(
-                                        "_target_handle_ids",
-                                        [],
-                                    ).append(int(id(h)))
+                                    if target_tool_name:
+                                        helper_label = str(target_tool_name)
                                 except Exception:
-                                    pass
+                                    helper_label = None
+                                if not helper_label:
+                                    try:
+                                        # Fall back to canonicalized 'tool' or handle chain
+                                        lbl = _tool_of(h)
+                                        if not lbl:
+                                            lbl = _handle_chain_of(h)
+                                        helper_label = lbl
+                                    except Exception:
+                                        helper_label = None
+                                if helper_label:
+                                    mirror_kwargs["helper_label"] = helper_label
                                 # Inject-only (no second execution)
                                 mirror_kwargs["_inject_only"] = True
                                 # Enqueue mirror sentinel with explicit policy: no LLM turn on outer

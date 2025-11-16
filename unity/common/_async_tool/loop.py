@@ -960,42 +960,6 @@ async def async_tool_loop_inner(
         base = str(method or "").lower().strip()
         payload = payload or {}
         selected: list[Tuple[asyncio.Task, ToolCallMetadata]] = []
-        # NEW: explicit overrides by call_id and/or handle object id
-        try:
-            _t_call_ids = payload.get("_target_call_ids") or []
-            target_call_ids = {str(x) for x in _t_call_ids if isinstance(x, (str, int))}
-        except Exception:
-            target_call_ids = set()
-        try:
-            _t_handle_ids = payload.get("_target_handle_ids") or []
-            target_handle_ids = set()
-            for x in _t_handle_ids:
-                try:
-                    target_handle_ids.add(int(x))
-                except Exception:
-                    # attempt id() string format like '139285...' → int
-                    try:
-                        target_handle_ids.add(int(str(x)))
-                    except Exception:
-                        continue
-        except Exception:
-            target_handle_ids = set()
-        if target_call_ids or target_handle_ids:
-            for t, inf in list(tools_data.info.items()):
-                try:
-                    is_call_match = (
-                        target_call_ids and str(inf.call_id) in target_call_ids
-                    )
-                except Exception:
-                    is_call_match = False
-                try:
-                    hid = id(getattr(inf, "handle", None))
-                    is_handle_match = target_handle_ids and (hid in target_handle_ids)
-                except Exception:
-                    is_handle_match = False
-                if is_call_match or is_handle_match:
-                    selected.append((t, inf))
-            return selected
         # Clarify always targets a single child by id
         if base == "clarify":
             try:
@@ -1278,6 +1242,67 @@ async def async_tool_loop_inner(
             except Exception:
                 pass
 
+        # Minimal transcript-only path: when a helper label is provided, synthesize
+        # a single helper tool_call and acknowledgement, then return (no dispatch).
+        try:
+            helper_label = payload.get("helper_label")
+        except Exception:
+            helper_label = None
+        if isinstance(helper_label, str) and helper_label:
+            try:
+                base = str(method or "").lower().strip()
+            except Exception:
+                base = ""
+            if base:
+                try:
+                    call_id = f"mirror_{short_id(6)}"
+                except Exception:
+                    call_id = "mirror_unknown"
+                # Minimal args for readability
+                args_json: dict[str, Any] = {}
+                try:
+                    if base == "interject":
+                        msg = payload.get("message") or payload.get("content")
+                        if msg is not None:
+                            args_json["content"] = msg
+                        if "images" in payload:
+                            args_json["images_present"] = True
+                    elif base == "stop" and "reason" in payload:
+                        args_json["reason"] = payload.get("reason")
+                except Exception:
+                    pass
+                helper_name = f"{base}_{helper_label}_{str(call_id)[-6:]}"
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": helper_name,
+                                "arguments": json.dumps(args_json or {}),
+                            },
+                        },
+                    ],
+                }
+                await _msg_dispatcher.append_msgs([assistant_msg])
+                with suppress(Exception):
+                    await to_event_bus(assistant_msg, cfg)
+                assistant_meta[id(assistant_msg)] = {"results_count": 0}
+                # Ack
+                with suppress(Exception):
+                    await acknowledge_helper_call(  # type: ignore[name-defined]
+                        assistant_msg,
+                        call_id,
+                        helper_name,
+                        json.dumps(args_json or {}),
+                        assistant_meta=assistant_meta,
+                        client=client,
+                        msg_dispatcher=_msg_dispatcher,
+                    )
+            return
+
         # Select targets via central policy
         targets: list[Tuple[asyncio.Task, ToolCallMetadata]] = _select_steering_targets(
             method,
@@ -1340,7 +1365,6 @@ async def async_tool_loop_inner(
                 args_by_id[call_id] = (helper_name, forward_args, inf)
             except Exception:
                 continue
-
         if not tool_calls:
             return
 
@@ -1364,7 +1388,7 @@ async def async_tool_loop_inner(
                 if not isinstance(cid, str):
                     continue
                 name, args, inf = args_by_id.get(cid, (None, None, None))
-                if not isinstance(name, str) or inf is None:
+                if not isinstance(name, str):
                     continue
                 # Ack message
                 with suppress(Exception):
@@ -1379,7 +1403,7 @@ async def async_tool_loop_inner(
                     )
                 # Forward steering to child handle or channels
                 # Centralized steering dispatch (unless inject-only)
-                if not inject_only:
+                if (not inject_only) and (inf is not None):
                     base = str(method or "").lower().strip()
                     await _dispatch_steering_to_child(base, args, inf)
             except Exception:
