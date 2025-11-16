@@ -68,8 +68,8 @@ async def test_pause_actor_propagates_immediately_actor_path(monkeypatch):
         raising=True,
     )
 
-    # Use a running simulated actor (no step auto-complete) so the session remains in-flight
-    actor = SimulatedActor(steps=None, duration=20)
+    # Keep the actor alive for the whole test; complete only on explicit stop
+    actor = SimulatedActor(steps=None, duration=None)
     cond = SimulatedConductor(actor=actor)
 
     handle = await cond.request(
@@ -82,7 +82,7 @@ async def test_pause_actor_propagates_immediately_actor_path(monkeypatch):
     await asyncio.sleep(0.2)
 
     # Invoke the new nested steer helper; assert the actor's pause is hit immediately
-    result = await handle.pause_actor("test")
+    result = await cond.pause_actor("test")
 
     # The pause must be observed without LLM turns (tight timeout)
     await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
@@ -159,7 +159,7 @@ async def test_pause_actor_propagates_immediately_task_scheduler_path(monkeypatc
     )
 
     # Create a scheduler with the simulated actor and seed a runnable task
-    actor = SimulatedActor(steps=None, duration=20)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
     name = "Prepare the monthly analytics dashboard"
     ts._create_task(name=name, description=name)
@@ -175,7 +175,7 @@ async def test_pause_actor_propagates_immediately_task_scheduler_path(monkeypatc
     # Briefly allow adoption of the nested handle in the outer loop
     await asyncio.sleep(0.4)
 
-    result = await handle.pause_actor("maintenance")
+    result = await cond.pause_actor("maintenance")
 
     # Confirm the pause reached the actor quickly (no extra LLM steps)
     await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
@@ -261,7 +261,7 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
         raising=True,
     )
 
-    actor = SimulatedActor(steps=None, duration=20)
+    actor = SimulatedActor(steps=None, duration=None)
     cond = SimulatedConductor(actor=actor)
     handle = await cond.request(
         "Open a browser window so we can walk through the setup together.",
@@ -272,20 +272,19 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
 
     # Explicitly pause using nested_steer (independent of pause_actor)
     pause_spec = {
-        "steps": [
-            {"method": "interject", "args": "<Pausing actor for resume tests>"},
+        "steps": [{"method": "interject", "args": "<Pausing actor for resume tests>"}],
+        "children": [
+            {"handle": "ActiveQueue", "steps": [{"method": "pause"}]},
+            {"handle": "ActiveTask", "steps": [{"method": "pause"}]},
+            {"handle": "ActorHandle", "steps": [{"method": "pause"}]},
         ],
-        "children": {
-            "TaskScheduler.execute": {"steps": [{"method": "pause"}]},
-            "Actor.act": {"steps": [{"method": "pause"}]},
-        },
     }
     await handle.nested_steer(pause_spec)
 
     await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
 
     # Now resume via the high-level helper; should be immediate
-    result = await handle.resume_actor("test-resume")
+    result = await cond.resume_actor("test-resume")
     # Interjection to child should occur before resume
     await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
     await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
@@ -370,7 +369,7 @@ async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch
         raising=True,
     )
 
-    actor = SimulatedActor(steps=None, duration=20)
+    actor = SimulatedActor(steps=None, duration=None)
     ts = TaskScheduler(actor=actor)
     name = "Prepare the monthly analytics dashboard"
     ts._create_task(name=name, description=name)
@@ -383,20 +382,19 @@ async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch
 
     # Explicitly pause using nested_steer (independent of pause_actor)
     pause_spec = {
-        "steps": [
-            {"method": "interject", "args": "<Pausing actor for resume tests>"},
+        "steps": [{"method": "interject", "args": "<Pausing actor for resume tests>"}],
+        "children": [
+            {"handle": "ActiveQueue", "steps": [{"method": "pause"}]},
+            {"handle": "ActiveTask", "steps": [{"method": "pause"}]},
+            {"handle": "ActorHandle", "steps": [{"method": "pause"}]},
         ],
-        "children": {
-            "TaskScheduler.execute": {"steps": [{"method": "pause"}]},
-            "Actor.act": {"steps": [{"method": "pause"}]},
-        },
     }
     await handle.nested_steer(pause_spec)
 
     await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
 
     # Now resume via the high-level helper; should be immediate
-    result = await handle.resume_actor("maintenance-resume")
+    result = await cond.resume_actor("maintenance-resume")
     await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
     await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
 
@@ -435,7 +433,7 @@ async def test_pause_actor_no_interjection_for_read_only_contact_query():
 
     # Invoke pause_actor – since no Actor/TaskScheduler execution is in flight,
     # the conditional interjection should not occur.
-    result = await handle.pause_actor("read-only")
+    result = await cond.pause_actor("read-only")
 
     # Ensure no interjection was applied at the root level
     assert not any(
@@ -516,8 +514,8 @@ async def test_resume_actor_image_guides_simulation_to_spreadsheet_actor_path(
         raising=True,
     )
 
-    # Long-running simulated actor so the session remains in flight
-    actor = SimulatedActor(steps=None, duration=20)
+    # Keep the actor alive for the whole test; complete only on explicit stop
+    actor = SimulatedActor(steps=None, duration=None)
     cond = SimulatedConductor(actor=actor)
 
     handle = await cond.request(
@@ -538,7 +536,7 @@ async def test_resume_actor_image_guides_simulation_to_spreadsheet_actor_path(
     await asyncio.wait_for(paused_evt.wait(), timeout=5.0)
 
     # Now resume with an annotated image pointing to the rota spreadsheet
-    await handle.resume_actor(
+    await cond.resume_actor(
         "visual update",
         images=[
             AnnotatedImageRef(
