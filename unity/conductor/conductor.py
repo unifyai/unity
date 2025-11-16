@@ -53,7 +53,7 @@ from ..web_searcher.base import BaseWebSearcher
 from ..web_searcher.web_searcher import WebSearcher
 from ..actor.base import BaseActor
 from ..actor.hierarchical_actor import HierarchicalActor
-from ..actor.simulated import SimulatedActorHandle
+from ..actor.base import BaseActorHandle
 from ..secret_manager.base import BaseSecretManager
 from ..secret_manager.secret_manager import SecretManager
 from ..events.manager_event_logging import (
@@ -729,8 +729,8 @@ class Conductor(BaseConductor):
             interject_sig_source = ActiveQueue
         else:
             target_handle = await self.actor_handle()
-            target_tool = _canon_handle_name(SimulatedActorHandle)
-            interject_sig_source = SimulatedActorHandle
+            target_tool = _canon_handle_name(BaseActorHandle)
+            interject_sig_source = BaseActorHandle
         if target_handle is None:
             return {"applied": [], "skipped": [], "status": {}}
 
@@ -786,8 +786,8 @@ class Conductor(BaseConductor):
             interject_sig_source = ActiveQueue
         else:
             target_handle = await self.actor_handle()
-            target_tool = _canon_handle_name(SimulatedActorHandle)
-            interject_sig_source = SimulatedActorHandle
+            target_tool = _canon_handle_name(BaseActorHandle)
+            interject_sig_source = BaseActorHandle
         if target_handle is None:
             return {"applied": [], "skipped": [], "status": {}}
 
@@ -838,7 +838,7 @@ class Conductor(BaseConductor):
             return th
         # Build the canonical handle label prefix dynamically (e.g., "ActorHandle(")
         try:
-            actor_prefix = f"{_canon_handle_name(SimulatedActorHandle)}("
+            actor_prefix = f"{_canon_handle_name(BaseActorHandle)}("
         except Exception:
             actor_prefix = "ActorHandle("
         for h in list(getattr(self, "_live_requests", [])):
