@@ -674,14 +674,11 @@ class LocalTaskView:
             except Exception:
                 logs = []
             for lg in logs:
-                try:
-                    tid = lg.entries.get("task_id")
-                    lid = lg.id
-                    if tid is not None and lid is not None:
-                        resolved_by_tid[tid] = lid
-                        self.cache_log_id(task_id=tid, log_id=lid)
-                except Exception:
-                    continue
+                tid = lg.entries.get("task_id")
+                lid = lg.id
+                if tid is not None and lid is not None:
+                    resolved_by_tid[tid] = lid
+                    self.cache_log_id(task_id=tid, log_id=lid)
 
         out: List[int] = []
         for tid in ids_list:
@@ -787,13 +784,10 @@ class LocalTaskView:
         )
         by_tid_to_log_id: Dict[int, int] = {}
         for lg in logs or []:
-            try:
-                task_id = lg.entries.get("task_id")
-                log_id = lg.id
-                if task_id is not None and log_id is not None:
-                    by_tid_to_log_id[task_id] = log_id
-            except Exception:
-                continue
+            task_id = lg.entries.get("task_id")
+            log_id = lg.id
+            if task_id is not None and log_id is not None:
+                by_tid_to_log_id[task_id] = log_id
 
         log_ids: List[int] = []
         entries_list: List[Dict[str, Any]] = []
