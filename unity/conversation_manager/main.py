@@ -30,10 +30,6 @@ def signal_handler(signum, frame):
         + str(signum)
         + ", shutting down gracefully...",
     )
-    if conversation_manager:
-        print("Cleaning up conversation manager...")
-        conversation_manager.cleanup()
-        print("Cleanup finished")
     # Set the stop event to trigger graceful shutdown in main()
     # This ensures cleanup happens only once, in the main async function
     if stop:
