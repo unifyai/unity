@@ -277,3 +277,40 @@ async def test_from_and_to_placeholder_roundtrip():
     back_to_placeholders = await sm.to_placeholder(to_values)
     assert "${api_key}" in back_to_placeholders
     assert "${db_password}" in back_to_placeholders
+
+
+# 12.  Stop while paused should finish immediately
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_paused_finishes_immediately_sm():
+    sm = SimulatedSecretManager()
+    h = await sm.ask("Produce a long secrets audit.")
+    h.pause()
+    res_task = asyncio.create_task(h.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done()
+    h.stop("cancelled by user")
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
+    assert h.done()
+
+
+# 13.  Stop while waiting for clarification should finish immediately
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_waiting_for_clarification_finishes_immediately_sm():
+    sm = SimulatedSecretManager()
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+    h = await sm.ask(
+        "Confirm placeholder names.",
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+        _requests_clarification=True,
+    )
+    q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
+    assert "clarify" in q.lower()
+    h.stop("no longer needed")
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
+    assert h.done()
