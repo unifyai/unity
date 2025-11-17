@@ -649,13 +649,10 @@ class LocalTaskView:
             )
             # Opportunistically memoize task_id -> log_id
             for lg in logs:
-                try:
-                    tid = lg.entries.get("task_id")
-                    lid = lg.id
-                    if tid is not None and lid is not None:
-                        self.cache_log_id(task_id=tid, log_id=lid)
-                except Exception:
-                    continue
+                tid = lg.entries.get("task_id")
+                lid = lg.id
+                if tid is not None and lid is not None:
+                    self.cache_log_id(task_id=tid, log_id=lid)
             return logs
 
         # return_ids_only=True path
