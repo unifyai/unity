@@ -292,6 +292,10 @@ async def initialized_conversation_manager(conversation_manager_process, redis_s
         voice_id="test_voice",
     )
 
+    # wait for the conversation manager to initialize
+    print("Waiting for initialization to complete...")
+    await asyncio.sleep(50)
+
     # Wait for CM to subscribe to channels by checking for active pattern subscriptions
     print("⏳ Waiting for conversation manager to subscribe to Redis channels...")
     max_wait = 30
