@@ -2027,7 +2027,7 @@ class TaskScheduler(BaseTaskScheduler):
             seen.add(current_task.task_id)
 
             # Strip stale activation metadata on non-active rows
-            ordered.append(self._sanitize_activation_task(current_task))
+            ordered.append(self._sanitize_activation(current_task))
 
             next_task = current_task.schedule_next
             if next_task is None:
@@ -2075,7 +2075,7 @@ class TaskScheduler(BaseTaskScheduler):
                 break
             seen.add(task_id)
             # Strip stale activation metadata on non-active rows
-            ordered.append(self._sanitize_activation_task(current_task))
+            ordered.append(self._sanitize_activation(current_task))
             next_id = current_task.schedule_next
             if next_id is None:
                 break
@@ -4250,24 +4250,28 @@ class TaskScheduler(BaseTaskScheduler):
             "response_policy",
         ]
 
-    def _sanitize_activation(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Drop `activated_by` unless the row is currently active to keep
-        payloads clean and Pydantic construction predictable.
-        """
-        try:
-            if to_status(row.get("status")) != Status.active:  # type: ignore[arg-type]
-                row.pop("activated_by", None)
-        except Exception:
-            if str(row.get("status")) != str(Status.active):
-                row.pop("activated_by", None)
-        return row
+    @overload
+    def _sanitize_activation(self, task: Dict[str, Any]) -> Dict[str, Any]: ...
 
-    def _sanitize_activation_task(self, task: Task) -> Task:
+    @overload
+    def _sanitize_activation(self, task: Task) -> Task: ...
+
+    def _sanitize_activation(
+        self,
+        task: Union[Dict[str, Any], Task],
+    ) -> Union[Dict[str, Any], Task]:
         """
         Drop `activated_by` unless the row is currently active to keep
         payloads clean and Pydantic construction predictable.
         """
-        if task.status != Status.active:
-            task.activated_by = None
+        if isinstance(task, Task):
+            if task.status != Status.active:
+                task.activated_by = None
+            return task
+        try:
+            if to_status(task.get("status")) != Status.active:  # type: ignore[arg-type]
+                task.pop("activated_by", None)
+        except Exception:
+            if str(task.get("status")) != str(Status.active):
+                task.pop("activated_by", None)
         return task
