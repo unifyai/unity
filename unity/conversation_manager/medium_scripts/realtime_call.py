@@ -60,6 +60,7 @@ from pathlib import Path
 
 event_broker = get_event_broker()
 
+contact_id = ""
 contact_first_name = ""
 contact_surname = ""
 contact_is_boss_user = ""
@@ -100,6 +101,14 @@ async def entrypoint(ctx: JobContext) -> None:
     """
     logger.info("connecting to LiveKit room...")
     await ctx.connect()  # ensures ctx.room is usable
+    contact = {
+        "contact_id": contact_id,
+        "first_name": contact_first_name,
+        "surname": contact_surname,
+        "email_address": contact_email,
+        "phone_number": os.environ["CALL_FROM_NUMBER"],
+        "is_boss": is_boss_user,
+    }
 
     # Configure the OpenAI Realtime model. The default model is 'gpt-realtime', so the
     # explicit model= parameter here is optional, but shown for clarity.
@@ -139,12 +148,9 @@ async def entrypoint(ctx: JobContext) -> None:
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""  # reliably the final text
         if role == "user":
-            event = PhoneUtterance(os.environ["CALL_FROM_NUMBER"], content=text)
+            event = PhoneUtterance(contact, content=text)
         else:
-            event = AssistantPhoneUtterance(
-                os.environ["CALL_FROM_NUMBER"],
-                content=text,
-            )
+            event = AssistantPhoneUtterance(contact, content=text)
         asyncio.create_task(
             event_broker.publish("app:comms:phone_utterance", event.to_json()),
         )
@@ -185,7 +191,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await event_broker.publish(
         "app:comms:phone_call_started",
-        PhoneCallStarted(contact=os.environ["CALL_FROM_NUMBER"]).to_json(),
+        PhoneCallStarted(contact=contact).to_json(),
     )
 
     async def wait_for_nudges():
@@ -235,7 +241,7 @@ if __name__ == "__main__":
     outbound = "False"
     print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 15:
+    if len(sys.argv) > 16:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
@@ -245,20 +251,22 @@ if __name__ == "__main__":
 
         # realtime specific stff
         is_boss_user = sys.argv[8]
-        contact_first_name = sys.argv[9]
-        contact_surname = sys.argv[10]
-        contact_email = sys.argv[11]
+        contact_id = sys.argv[9]
+        contact_first_name = sys.argv[10]
+        contact_surname = sys.argv[11]
+        contact_email = sys.argv[12]
 
         # boss details
-        boss_first_name = sys.argv[12]
-        boss_surname = sys.argv[13]
-        boss_phone_number = sys.argv[14]
-        boss_email = sys.argv[15]
+        boss_first_name = sys.argv[13]
+        boss_surname = sys.argv[14]
+        boss_phone_number = sys.argv[15]
+        boss_email = sys.argv[16]
 
         os.environ["BOSS_FIRST_NAME"] = boss_first_name
         os.environ["BOSS_SURNAME"] = boss_surname
         os.environ["BOSS_PHONE_NUMBER"] = boss_phone_number
         os.environ["BOSS_EMAIL"] = boss_email
+        os.environ["CONTACT_ID"] = contact_id
         os.environ["CONTACT_FIRST_NAME"] = contact_first_name
         os.environ["CONTACT_SURNAME"] = contact_surname
         os.environ["CONTACT_EMAIL"] = contact_email

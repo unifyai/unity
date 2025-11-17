@@ -39,6 +39,18 @@ event_broker = get_event_broker()
 chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
 
+# Globals for contact and boss details
+contact_id = ""
+contact_first_name = ""
+contact_surname = ""
+contact_is_boss_user = ""
+contact_email = ""
+boss_first_name = ""
+boss_surname = ""
+boss_phone_number = ""
+boss_email = ""
+is_boss_user = ""
+
 # Globals initialized lazily or via prewarm to avoid duplicate heavy init
 STT = None
 LLM = None
@@ -91,7 +103,14 @@ class Assistant(Agent):
         await event_broker.publish(
             "app:comms:phone_utterance",
             PhoneUtterance(
-                contact=os.environ["CALL_FROM_NUMBER"],
+                contact={
+                    "contact_id": contact_id,
+                    "first_name": contact_first_name,
+                    "surname": contact_surname,
+                    "email_address": contact_email,
+                    "phone_number": os.environ["CALL_FROM_NUMBER"],
+                    "is_boss": is_boss_user,
+                },
                 content=new_message.text_content,
             ).to_json(),
         )
@@ -133,6 +152,14 @@ async def entrypoint(ctx: agents.JobContext):
     voice_id = os.environ.get("VOICE_ID", "")
     # to_number = os.environ.get("CALL_TO_NUMBER", "")
     outbound = os.environ.get("OUTBOUND", "False") == "True"
+    contact = {
+        "contact_id": contact_id,
+        "first_name": contact_first_name,
+        "surname": contact_surname,
+        "email_address": contact_email,
+        "phone_number": from_number,
+        "is_boss": is_boss_user,
+    }
 
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
@@ -166,7 +193,7 @@ async def entrypoint(ctx: agents.JobContext):
         # Send end call event before cleaning tasks and closing connection
         await event_broker.publish(
             "app:comms:phone_call_ended",
-            PhoneCallEnded(contact=os.environ["CALL_FROM_NUMBER"]).to_json(),
+            PhoneCallEnded(contact=contact).to_json(),
         )
         print("End call event sent")
 
@@ -243,7 +270,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     await event_broker.publish(
         "app:comms:phone_call_started",
-        PhoneCallStarted(contact=os.environ["CALL_FROM_NUMBER"]).to_json(),
+        PhoneCallStarted(contact=contact).to_json(),
     )
 
     async def response_task():
@@ -355,13 +382,37 @@ if __name__ == "__main__":
     outbound = "False"
     print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 7:
+    if len(sys.argv) > 16:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
         voice_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
         voice_id = sys.argv[5]
         outbound = sys.argv[7]
+
+        # contact details
+        is_boss_user = sys.argv[8]
+        contact_id = sys.argv[9]
+        contact_first_name = sys.argv[10]
+        contact_surname = sys.argv[11]
+        contact_email = sys.argv[12]
+
+        # boss details
+        boss_first_name = sys.argv[13]
+        boss_surname = sys.argv[14]
+        boss_phone_number = sys.argv[15]
+        boss_email = sys.argv[16]
+
+        os.environ["BOSS_FIRST_NAME"] = boss_first_name
+        os.environ["BOSS_SURNAME"] = boss_surname
+        os.environ["BOSS_PHONE_NUMBER"] = boss_phone_number
+        os.environ["BOSS_EMAIL"] = boss_email
+        os.environ["CONTACT_ID"] = contact_id
+        os.environ["CONTACT_FIRST_NAME"] = contact_first_name
+        os.environ["CONTACT_SURNAME"] = contact_surname
+        os.environ["CONTACT_EMAIL"] = contact_email
+        os.environ["IS_BOSS_USER"] = is_boss_user
+
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 
     # Store phone numbers in environment variables to be accessed by entrypoint

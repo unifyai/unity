@@ -56,23 +56,25 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         # update state
         message_content = None
         notif_content = None
+        boss = cm.contact_index.get_contact(contact_id=1)
         match event:
             case PhoneCallReceived() as e:
-                contact, boss = None, None
-                if cm.call_manager.realtime:
-                    contact = cm.contact_index.get_contact(
-                        phone_number=e.contact["phone_number"]
+                if not os.getenv("TEST"):
+                    cm.call_manager.start_call(
+                        e.contact["phone_number"], event.contact, boss
                     )
-                    boss = cm.contact_index.get_contact(contact_id=1)
-                cm.call_manager.start_call(e.contact["phone_number"], contact, boss)
                 message_content = "<Recvieving Call...>"
                 notif_content = f"Call received from {e.contact['first_name']}"
             case PhoneCallSent() as e:
-                cm.call_manager.start_call(e.contact["phone_number"])
+                if not os.getenv("TEST"):
+                    cm.call_manager.start_call(
+                        e.contact["phone_number"], event.contact, boss
+                    )
                 message_content = "<Sending Call...>"
                 notif_content = f"Call sent to {e.contact['first_name']}"
             case UnifyCallReceived() as e:
-                cm.call_manager.start_unify_call(e.agent_name, e.room_name)
+                if not os.getenv("TEST"):
+                    cm.call_manager.start_unify_call(e.agent_name, e.room_name)
                 message_content = "<Recieving Call...>"
                 notif_content = f"Call received from {e.contact['first_name']}"
 
@@ -99,7 +101,7 @@ async def _(
 ):
     if isinstance(event, PhoneCallStarted):
         cm.mode = "call"
-        phone_number = event.contact
+        phone_number = event.contact["phone_number"]
         contact = cm.contact_index.get_contact(phone_number=phone_number)
     else:
         cm.mode = "unify_call"
@@ -130,7 +132,8 @@ async def _(event: PhoneCallEnded, cm: "ConversationManager", *args, **kwargs):
     # publish transcript
     # asyncio.create_task(managers_utils.log_message(cm, event))
     if isinstance(event, (PhoneUtterance, AssistantPhoneUtterance)):
-        contact = cm.contact_index.get_contact(phone_number=event.contact)
+        phone_number = event.contact["phone_number"]
+        contact = cm.contact_index.get_contact(phone_number=phone_number)
         cm.contact_index.push_message(
             contact,
             "phone",
@@ -158,7 +161,7 @@ async def _(
         cm.call_contact = None
     elif isinstance(event, UnifyCallEnded):
         cm.unify_call_contact = None
-    contact = cm.contact_index.get_contact(phone_number=event.contact)
+    contact = cm.contact_index.get_contact(phone_number=event.contact["phone_number"])
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
     cm.call_manager.cleanup_call_proc()
     await cm.cancel_filler()
