@@ -279,9 +279,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 @EventHandler.register(GetContactsResponse)
 async def _(event: GetContactsResponse, cm: "ConversationManager", *args, **kwargs):
     print("recieved and setting contacts")
-    cm.contact_index.contacts = {
-        c["contact_id"]: {**c, "is_boss": c["contact_id"] == 1} for c in event.contacts
-    }
+    cm.contact_index.set_contacts(event.contacts)
     print(cm.contact_index.contacts)
 
 

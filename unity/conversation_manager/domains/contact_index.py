@@ -51,7 +51,13 @@ class ContactIndex:
     @property
     def boss_contact(self):
         # this will have empty threads
-        return Contact(**self.contacts.get(1))
+        return self.contacts.get(1)
+
+    def set_contacts(self, contacts: list[dict]):
+        self.contacts = {
+            c["contact_id"]: Contact(**c, is_boss=c["contact_id"] == 1)
+            for c in contacts
+        }
 
     # is this supposed to fail for any reason?
     def push_message(
@@ -90,14 +96,14 @@ class ContactIndex:
     # should check if the contact exists
     def get_contact(
         self, contact_id: str = None, phone_number=None, email=None
-    ) -> Contact:
+    ) -> dict:
         c = None
         if contact_id:
             c = self.contacts.get(contact_id)
         elif phone_number:
             c = next(
-                c for c in self.contacts.values() if c["phone_number"] == phone_number
+                c for c in self.contacts.values() if c.phone_number == phone_number
             )
         elif email:
-            c = next(c for c in self.contacts.values() if c["email_address"] == email)
-        return c
+            c = next(c for c in self.contacts.values() if c.email_address == email)
+        return c.model_dump() if c else None
