@@ -1826,24 +1826,15 @@ class TaskScheduler(BaseTaskScheduler):
         if summaries:
             out_fast: list[Dict[str, Any]] = []
             for s in summaries:
-                try:
-                    qid = s.queue_id
-                    order = s.order
-                    if not order:
-                        continue
-                    head_id = order[0]
-                    start_at = s.start_at
-                    out_fast.append(
-                        {
-                            "queue_id": qid,
-                            "queue_label": f"Q{qid}",
-                            "head_id": head_id,
-                            "size": len(order),
-                            "start_at": start_at,
-                        },
-                    )
-                except Exception:
-                    continue
+                out_fast.append(
+                    {
+                        "queue_id": s.queue_id,
+                        "queue_label": f"Q{s.queue_id}",
+                        "head_id": s.order[0],
+                        "size": len(s.order),
+                        "start_at": s.start_at,
+                    },
+                )
             if out_fast:
                 return out_fast
 
