@@ -26,8 +26,8 @@ async def test_actor_handle_present_for_direct_actor(monkeypatch):
     after completion.
     """
 
-    # Step-based actor with enough steps so it won't auto-complete before assertions
-    actor = SimulatedActor(steps=5, duration=None)
+    # Keep actor session alive until explicitly stopped in cleanup
+    actor = SimulatedActor(steps=None, duration=None)
     c = Conductor(actor=actor)
 
     # Start a live request that clearly implies an interactive session (Actor.act)
@@ -37,59 +37,61 @@ async def test_actor_handle_present_for_direct_actor(monkeypatch):
             "and show a quick demo. Act now inside this chat."
         ),
     )
+    try:
+        # Wait deterministically until the assistant has requested Actor_act
+        client = getattr(h, "_client", None)  # internal test-only access
+        assert (
+            client is not None
+        ), "Expected AsyncToolLoopHandle to expose its client for tests"
+        await _wait_for_tool_request(client, "Actor_act")
 
-    # Wait deterministically until the assistant has requested Actor_act
-    client = getattr(h, "_client", None)  # internal test-only access
-    assert (
-        client is not None
-    ), "Expected AsyncToolLoopHandle to expose its client for tests"
-    await _wait_for_tool_request(client, "Actor_act")
+        # Wait until the actor handle is actually registered and visible via nested_structure
+        async def _actor_child_adopted():
+            try:
+                tree = await h.nested_structure()
 
-    # Wait until the actor handle is actually registered and visible via nested_structure
-    async def _actor_child_adopted():
-        try:
-            tree = await h.nested_structure()
-
-            def _has_actor(node: dict) -> bool:
-                try:
-                    label = str(node.get("handle", "")).strip()
-                except Exception:
-                    label = ""
-                if label.startswith("ActorHandle("):
-                    return True
-                for ch in node.get("children", []) or []:
-                    if _has_actor(ch):
+                def _has_actor(node: dict) -> bool:
+                    try:
+                        label = str(node.get("handle", "")).strip()
+                    except Exception:
+                        label = ""
+                    if label.startswith("ActorHandle("):
                         return True
+                    for ch in node.get("children", []) or []:
+                        if _has_actor(ch):
+                            return True
+                    return False
+
+                return _has_actor(tree)
+            except Exception:
                 return False
 
-            return _has_actor(tree)
-        except Exception:
-            return False
+        await _wait_for_condition(_actor_child_adopted, poll=0.02, timeout=60.0)
 
-    await _wait_for_condition(_actor_child_adopted, poll=0.02, timeout=60.0)
+        # Now also confirm Conductor exposes the handle
+        async def _actor_handle_visible():
+            try:
+                return (await c.actor_handle()) is not None
+            except Exception:
+                return False
 
-    # Now also confirm Conductor exposes the handle
-    async def _actor_handle_visible():
-        try:
-            return (await c.actor_handle()) is not None
-        except Exception:
-            return False
+        await _wait_for_condition(_actor_handle_visible, poll=0.02, timeout=60.0)
 
-    await _wait_for_condition(_actor_handle_visible, poll=0.02, timeout=60.0)
+        # After the child is visible, the handle method should return non-None
+        assert await c.actor_handle() is not None
 
-    # After the child is visible, the handle method should return non-None
-    assert await c.actor_handle() is not None
+        # Method should return the same live request handle during execution
+        assert await c.actor_handle() is h
 
-    # Method should return the same live request handle during execution
-    assert await c.actor_handle() is h
+        # Drive two steps to complete deterministically
+        h.pause()
+        h.resume()
+        await asyncio.wait_for(h.result(), timeout=30)
 
-    # Drive two steps to complete deterministically
-    h.pause()
-    h.resume()
-    await asyncio.wait_for(h.result(), timeout=30)
-
-    # After completion, the handle should clear
-    assert await c.actor_handle() is None
+        # After completion, the handle should clear
+        assert await c.actor_handle() is None
+    finally:
+        h.stop("cleanup")
 
 
 @pytest.mark.asyncio
@@ -100,8 +102,8 @@ async def test_actor_handle_present_with_active_task(monkeypatch):
     same object as task_handle.
     """
 
-    # Keep the execute session alive long enough to assert handle presence
-    actor = SimulatedActor(steps=5, duration=None)
+    # Keep the execute session alive until explicit cleanup
+    actor = SimulatedActor(steps=None, duration=None)
     c = Conductor(actor=actor)
 
     # Clean tasks and create one
@@ -111,51 +113,55 @@ async def test_actor_handle_present_with_active_task(monkeypatch):
 
     # Start by snapshot helper – registers automatically inside start_task
     h = await c.start_task(task_id=int(tid), trigger_reason="test-actor-has-task")
+    try:
+        # Wait deterministically until the assistant has requested TaskScheduler_execute
+        client = getattr(h, "_client", None)  # internal test-only access
+        assert (
+            client is not None
+        ), "Expected AsyncToolLoopHandle to expose its client for tests"
+        await _wait_for_tool_request(client, "TaskScheduler_execute")
 
-    # Wait deterministically until the assistant has requested TaskScheduler_execute
-    client = getattr(h, "_client", None)  # internal test-only access
-    assert (
-        client is not None
-    ), "Expected AsyncToolLoopHandle to expose its client for tests"
-    await _wait_for_tool_request(client, "TaskScheduler_execute")
+        # Ensure the nested structure has adopted the ActiveQueue/ActiveTask child
+        async def _execute_child_adopted():
+            try:
+                tree = await h.nested_structure()
 
-    # Ensure the nested structure has adopted the ActiveQueue/ActiveTask child
-    async def _execute_child_adopted():
-        try:
-            tree = await h.nested_structure()
-
-            def _has_exec(node: dict) -> bool:
-                try:
-                    label = str(node.get("handle", "")).strip()
-                except Exception:
-                    label = ""
-                if label.startswith("ActiveQueue(") or label.startswith("ActiveTask("):
-                    return True
-                for ch in node.get("children", []) or []:
-                    if _has_exec(ch):
+                def _has_exec(node: dict) -> bool:
+                    try:
+                        label = str(node.get("handle", "")).strip()
+                    except Exception:
+                        label = ""
+                    if label.startswith("ActiveQueue(") or label.startswith(
+                        "ActiveTask(",
+                    ):
                         return True
+                    for ch in node.get("children", []) or []:
+                        if _has_exec(ch):
+                            return True
+                    return False
+
+                return _has_exec(tree)
+            except Exception:
                 return False
 
-            return _has_exec(tree)
-        except Exception:
-            return False
+        await _wait_for_condition(_execute_child_adopted, poll=0.02, timeout=60.0)
 
-    await _wait_for_condition(_execute_child_adopted, poll=0.02, timeout=60.0)
+        # Both task_handle and actor_handle should exist and be the same
+        th = await c.task_handle()
+        ah = await c.actor_handle()
+        assert th is not None
+        assert ah is not None
+        assert th is ah is h
 
-    # Both task_handle and actor_handle should exist and be the same
-    th = await c.task_handle()
-    ah = await c.actor_handle()
-    assert th is not None
-    assert ah is not None
-    assert th is ah is h
+        # Complete deterministically
+        h.pause()
+        h.resume()
+        await asyncio.wait_for(h.result(), timeout=30)
 
-    # Complete deterministically
-    h.pause()
-    h.resume()
-    await asyncio.wait_for(h.result(), timeout=30)
-
-    assert await c.actor_handle() is None
-    assert await c.task_handle() is None
+        assert await c.actor_handle() is None
+        assert await c.task_handle() is None
+    finally:
+        h.stop("cleanup")
 
 
 @pytest.mark.asyncio
@@ -201,8 +207,10 @@ async def test_actor_handle_absent_for_read_only_request():
 
     h = AsyncToolLoopHandle.deserialize(snapshot)
     c._live_requests.add(h)  # type: ignore[attr-defined]
+    try:
+        # No actor_handle expected for read-only flows
+        assert await c.actor_handle() is None
 
-    # No actor_handle expected for read-only flows
-    assert await c.actor_handle() is None
-
-    await asyncio.wait_for(h.result(), timeout=30)
+        await asyncio.wait_for(h.result(), timeout=30)
+    finally:
+        h.stop("cleanup")
