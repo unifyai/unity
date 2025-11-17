@@ -382,7 +382,8 @@ class ConversationManager:
         """Clean up any running call processes"""
         print(f"Marking job {self.job_name} done")
         self.call_manager.cleanup_call_proc()
-        mark_job_done(self.job_name)
+        if self.job_name:
+            mark_job_done(self.job_name)
         self.stop.set()
 
     async def run_filler_once(self):
