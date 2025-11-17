@@ -159,6 +159,9 @@ class _SimulatedFileHandle(SteerableToolHandle, SimulatedHandleMixin):
             ]
             self._done_event.set()
 
+        # If cancellation happened after the coroutine started, return a stable post-cancel value.
+        if self._cancelled:
+            return "processed stopped early, no result"
         if self._want_steps:
             return self._answer, self._messages
         return self._answer

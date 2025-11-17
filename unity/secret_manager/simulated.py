@@ -154,6 +154,9 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
             ]
             self._done.set()
 
+        # If cancellation happened after the coroutine started, raise consistently.
+        if self._cancelled:
+            raise asyncio.CancelledError()
         if self._want_steps:
             return self._answer, self._messages
         return self._answer
