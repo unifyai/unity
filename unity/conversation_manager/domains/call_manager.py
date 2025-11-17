@@ -45,14 +45,14 @@ class LivekitCallManager:
             if not contact or not boss:
                 raise ValueError("Contact and boss are required for realtime calls")
             args += [
-                contact.is_boss,
-                contact.first_name,
-                contact.surname,
-                contact.email_address,
-                boss.first_name,
-                boss.surname,
-                boss.phone_number,
-                boss.email_address,
+                str(contact["is_boss"]),
+                contact["first_name"],
+                contact["surname"],
+                contact["email_address"],
+                boss["first_name"],
+                boss["surname"],
+                boss["phone_number"],
+                boss["email_address"],
             ]
         else:
             target_path = target_path / "call.py"
