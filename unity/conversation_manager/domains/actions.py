@@ -323,7 +323,7 @@ async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs
         )
     else:
         response = {"success": True}
-    if response["successs"]:
+    if response["success"]:
         contact = cm.contact_index.get_contact(
             contact_id=contact_id, phone_number=to_number
         )
