@@ -16,6 +16,9 @@ import os
 
 import unify
 
+from unity.task_scheduler.types.queue_summary import QueueSummary
+import datetime
+from pydantic import BaseModel
 from .types.task import Task
 from .types.status import Status
 
@@ -124,6 +127,7 @@ class TasksStore:
         limit: int = 100,
         return_ids_only: bool = False,
         exclude_fields: Optional[List[str]] = None,
+        include_fields: Optional[List[str]] = None,
     ) -> Union[List[int], List[unify.Log]]:
         return unify.get_logs(
             context=self._ctx,
@@ -131,27 +135,9 @@ class TasksStore:
             offset=offset,
             limit=limit,
             return_ids_only=return_ids_only,
-            exclude_fields=exclude_fields or [],
+            exclude_fields=exclude_fields,
+            from_fields=include_fields,
         )
-
-    def get_entries(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-        exclude_fields: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        return [
-            log.entries
-            for log in self.get_rows(
-                filter=filter,
-                offset=offset,
-                limit=limit,
-                return_ids_only=False,
-                exclude_fields=exclude_fields,
-            )
-        ]
 
     def get_logs_by_task_ids(
         self,
@@ -189,7 +175,7 @@ class TasksStore:
 
         Only the requested fields are returned in each row's entries payload to
         reduce payload size and backend processing time. The returned objects
-        still include their underlying log ids.
+        still include their underlying log ids. The log always includes task_id.
         """
         singular = isinstance(task_ids, int)
         original_id = task_ids if singular else None
@@ -214,47 +200,30 @@ class TasksStore:
 
         return logs
 
+    @staticmethod
+    def _norm(v: Any) -> Any:
+        # Normalize enums to their underlying values
+        if isinstance(v, Enum):
+            return v.value
+        # Datetime family → ISO-8601 strings
+        if isinstance(v, (datetime.datetime, datetime.date, datetime.time)):
+            return v.isoformat()
+        # Pydantic models → plain dict (JSON mode for consistent strings)
+        if isinstance(v, BaseModel):
+            return TasksStore._norm(v.model_dump(mode="json"))
+        if isinstance(v, dict):
+            return {k: TasksStore._norm(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [TasksStore._norm(x) for x in v]
+        return v
+
     # ------------------------------- Writes --------------------------------
     def update(
         self,
         *,
         logs: Union[int, unify.Log, List[Union[int, unify.Log]]],
         entries: Union[Dict[str, Any], List[Dict[str, Any]]],
-        overwrite: bool = True,
     ) -> Dict[str, str]:
-        def _norm(v: Any) -> Any:
-            # Normalize enums to their underlying values
-            if isinstance(v, Enum):
-                try:
-                    from enum import StrEnum  # py311+
-
-                    if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return v.value
-                except Exception:
-                    pass
-                return v.value
-            # Datetime family → ISO-8601 strings
-            try:
-                import datetime as _dt
-
-                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
-                    return v.isoformat()
-            except Exception:
-                pass
-            # Pydantic models → plain dict (JSON mode for consistent strings)
-            try:
-                from pydantic import BaseModel as _BM  # type: ignore
-
-                if isinstance(v, _BM):
-                    return _norm(v.model_dump(mode="json"))
-            except Exception:
-                pass
-            if isinstance(v, dict):
-                return {k: _norm(x) for k, x in v.items()}
-            if isinstance(v, list):
-                return [_norm(x) for x in v]
-            return v
-
         def _strip_nones(value: Any, *, top_level: bool) -> Any:
             """
             Remove None values from nested structures so we don't accidentally
@@ -283,7 +252,7 @@ class TasksStore:
                 ]
             return value
 
-        norm_entries = _strip_nones(_norm(entries), top_level=True)
+        norm_entries = _strip_nones(TasksStore._norm(entries), top_level=True)
         return unify.update_logs(
             logs=logs,
             context=self._ctx,
@@ -292,40 +261,7 @@ class TasksStore:
         )
 
     def log(self, *, entries: Dict[str, Any], new: bool = True) -> unify.Log:
-        def _norm(v: Any) -> Any:
-            # Normalize enums to their underlying values
-            if isinstance(v, Enum):
-                try:
-                    from enum import StrEnum  # py311+
-
-                    if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return v.value
-                except Exception:
-                    pass
-                return v.value
-            # Datetime family → ISO-8601 strings
-            try:
-                import datetime as _dt
-
-                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
-                    return v.isoformat()
-            except Exception:
-                pass
-            # Pydantic models → plain dict (JSON mode for consistent strings)
-            try:
-                from pydantic import BaseModel as _BM  # type: ignore
-
-                if isinstance(v, _BM):
-                    return _norm(v.model_dump(mode="json"))
-            except Exception:
-                pass
-            if isinstance(v, dict):
-                return {k: _norm(x) for k, x in v.items()}
-            if isinstance(v, list):
-                return [_norm(x) for x in v]
-            return v
-
-        norm_entries = _norm(entries)
+        norm_entries = TasksStore._norm(entries)
         # Create with expanded fields so auto-counting applies when ids are omitted
         return unify.log(context=self._ctx, new=new, **norm_entries)
 
@@ -338,38 +274,7 @@ class TasksStore:
         with auto-incremented row identifiers.
         """
 
-        # Normalise all payloads consistently with the single-log path
-        def _norm(v: Any) -> Any:
-            if isinstance(v, Enum):
-                try:
-                    from enum import StrEnum  # py311+
-
-                    if isinstance(v, StrEnum):  # type: ignore[arg-type]
-                        return v.value
-                except Exception:
-                    pass
-                return v.value
-            try:
-                import datetime as _dt
-
-                if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
-                    return v.isoformat()
-            except Exception:
-                pass
-            try:
-                from pydantic import BaseModel as _BM  # type: ignore
-
-                if isinstance(v, _BM):
-                    return _norm(v.model_dump(mode="json"))
-            except Exception:
-                pass
-            if isinstance(v, dict):
-                return {k: _norm(x) for k, x in v.items()}
-            if isinstance(v, list):
-                return [_norm(x) for x in v]
-            return v
-
-        normalised = [{**_norm(e)} for e in entries_list]
+        normalised = [{**TasksStore._norm(e)} for e in entries_list]
         try:
             return unify.create_logs(context=self._ctx, entries=normalised)
         except Exception:
@@ -378,7 +283,7 @@ class TasksStore:
             for e in normalised:
                 lg = unify.log(context=self._ctx, new=True, **e)
                 try:
-                    log_ids.append(int(getattr(lg, "id", None)))
+                    log_ids.append(lg.id)
                 except Exception:
                     pass
             return {"log_event_ids": log_ids}
@@ -456,6 +361,7 @@ class LocalTaskView:
         limit: int = 100,
         return_ids_only: Literal[True],
         exclude_fields: Optional[List[str]] = None,
+        include_fields: Optional[List[str]] = None,
     ) -> List[int]: ...
 
     @overload
@@ -465,8 +371,9 @@ class LocalTaskView:
         filter: Optional[str] = None,
         offset: int = 0,
         limit: int = 100,
-        return_ids_only: Literal[False],
+        return_ids_only: Literal[False] = False,
         exclude_fields: Optional[List[str]] = None,
+        include_fields: Optional[List[str]] = None,
     ) -> List[unify.Log]: ...
 
     def get_rows(
@@ -477,6 +384,7 @@ class LocalTaskView:
         limit: int = 100,
         return_ids_only: bool = False,
         exclude_fields: Optional[List[str]] = None,
+        include_fields: Optional[List[str]] = None,
     ) -> Union[List[int], List[unify.Log]]:
         """
         Pass-through to the underlying store for general row retrieval.
@@ -490,33 +398,10 @@ class LocalTaskView:
             limit=limit,
             return_ids_only=return_ids_only,
             exclude_fields=exclude_fields,
-        )
-
-    def get_entries(
-        self,
-        *,
-        filter: Optional[str] = None,
-        offset: int = 0,
-        limit: int = 100,
-        exclude_fields: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Pass-through to the underlying store for entry dictionaries.
-
-        Exists here so that TaskScheduler and helpers route all generic reads
-        through LocalTaskView for consistency and easier optimisation later.
-        """
-        return self._store.get_entries(
-            filter=filter,
-            offset=offset,
-            limit=limit,
-            exclude_fields=exclude_fields,
+            include_fields=include_fields,
         )
 
     # ----------------------------- Queue index -----------------------------
-    def queue_index_is_fresh(self) -> bool:
-        return (not self._queue_index_stale) and (not self._cache_disabled())
-
     def mark_queue_changed(self) -> None:
         self._queue_index_stale = True
 
@@ -598,7 +483,7 @@ class LocalTaskView:
     def rebuild_queue_index(self) -> None:
         """Fetch minimal rows from storage and rebuild the queue index."""
         try:
-            rows = self._store.get_entries(
+            rows = self._store.get_rows(
                 filter=(
                     "schedule is not None and "
                     "status not in ('completed','cancelled','failed')"
@@ -606,7 +491,7 @@ class LocalTaskView:
             )
         except Exception:
             rows = []
-        self.refresh_queue_index_from_rows([Task(**r) for r in rows])
+        self.refresh_queue_index_from_rows([Task(**r.entries) for r in rows])
 
     def get_member_ids(self, queue_id: int) -> List[int]:
         try:
@@ -633,7 +518,7 @@ class LocalTaskView:
         except Exception:
             return None
 
-    def get_all_queue_summaries(self) -> List[Dict[str, Any]]:
+    def get_all_queue_summaries(self) -> List[QueueSummary]:
         """
         Return cached summaries for all runnable queues.
 
@@ -642,16 +527,16 @@ class LocalTaskView:
         try:
             if self._cache_disabled() or self._queue_index_stale:
                 self.rebuild_queue_index()
-            out: List[Dict[str, Any]] = []
+            out: List[QueueSummary] = []
             for qid, order in self._queue_index.items():
                 if not order:
                     continue
                 out.append(
-                    {
-                        "queue_id": int(qid),
-                        "order": list(order),
-                        "start_at": self._queue_head_start_at.get(int(qid)),
-                    },
+                    QueueSummary(
+                        queue_id=int(qid),
+                        order=list(order),
+                        start_at=self._queue_head_start_at.get(int(qid)),
+                    ),
                 )
             return out
         except Exception:
@@ -686,25 +571,6 @@ class LocalTaskView:
             order=list(new_order),
             head_start_at=head_start_at,
         )
-
-    def on_tasks_removed_from_queue(
-        self,
-        *,
-        queue_id: int,
-        removed_ids: List[int],
-    ) -> None:
-        try:
-            for t in removed_ids:
-                self._task_to_queue.pop(int(t), None)
-            # If we know the queue, also drop removed ids from the forward index
-            if isinstance(queue_id, int):
-                cur = list(self._queue_index.get(int(queue_id)) or [])
-                if cur:
-                    self._queue_index[int(queue_id)] = [
-                        x for x in cur if x not in removed_ids
-                    ]
-        except Exception:
-            pass
 
     # ------------------------ Queue id allocation -------------------------
     def allocate_new_queue_id(self) -> int:
@@ -778,36 +644,26 @@ class LocalTaskView:
 
         if not return_ids_only:
             logs = self._store.get_logs_by_task_ids(
-                task_ids=ids_list if not singular else ids_list[0],
+                task_ids=ids_list,
                 return_ids_only=False,
             )
             # Opportunistically memoize task_id -> log_id
-            try:
-                for lg in logs or []:
-                    try:
-                        e = getattr(lg, "entries", {}) or {}
-                        tid = e.get("task_id")
-                        lid = getattr(lg, "id", None)
-                        if isinstance(tid, int) and isinstance(lid, int):
-                            self.cache_log_id(task_id=int(tid), log_id=int(lid))
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+            for lg in logs:
+                tid = lg.entries.get("task_id")
+                lid = lg.id
+                if tid is not None and lid is not None:
+                    self.cache_log_id(task_id=tid, log_id=lid)
             return logs
 
         # return_ids_only=True path
         resolved_by_tid: Dict[int, int] = {}
         missing: List[int] = []
         for tid in ids_list:
-            try:
-                lid = self._task_log_id_cache.get(int(tid))
-                if isinstance(lid, int):
-                    resolved_by_tid[int(tid)] = int(lid)
-                else:
-                    missing.append(int(tid))
-            except Exception:
-                continue
+            lid = self._task_log_id_cache.get(int(tid))
+            if lid is not None:
+                resolved_by_tid[int(tid)] = int(lid)
+            else:
+                missing.append(int(tid))
 
         if missing:
             try:
@@ -817,21 +673,17 @@ class LocalTaskView:
                 )
             except Exception:
                 logs = []
-            for lg in logs or []:
-                try:
-                    e = getattr(lg, "entries", {}) or {}
-                    tid = e.get("task_id")
-                    lid = getattr(lg, "id", None)
-                    if isinstance(tid, int) and isinstance(lid, int):
-                        resolved_by_tid[int(tid)] = int(lid)
-                        self.cache_log_id(task_id=int(tid), log_id=int(lid))
-                except Exception:
-                    continue
+            for lg in logs:
+                tid = lg.entries.get("task_id")
+                lid = lg.id
+                if tid is not None and lid is not None:
+                    resolved_by_tid[tid] = lid
+                    self.cache_log_id(task_id=tid, log_id=lid)
 
         out: List[int] = []
         for tid in ids_list:
             lid = resolved_by_tid.get(int(tid))
-            if isinstance(lid, int):
+            if lid is not None:
                 out.append(int(lid))
         return out
 
@@ -859,11 +711,10 @@ class LocalTaskView:
         """
         log_obj = self._store.log(entries=entries, new=new)
         try:
-            e = getattr(log_obj, "entries", {}) or {}
-            tid = e.get("task_id")
-            lid = getattr(log_obj, "id", None)
-            if isinstance(tid, int) and isinstance(lid, int):
-                self.cache_log_id(task_id=int(tid), log_id=int(lid))
+            task_id = log_obj.entries.get("task_id")
+            log_id = log_obj.id
+            if task_id is not None and log_id is not None:
+                self.cache_log_id(task_id=task_id, log_id=log_id)
         except Exception:
             pass
         try:
@@ -889,11 +740,10 @@ class LocalTaskView:
             if isinstance(result, list):
                 for lg in result:
                     try:
-                        e = getattr(lg, "entries", {}) or {}
-                        tid = e.get("task_id")
-                        lid = getattr(lg, "id", None)
-                        if isinstance(tid, int) and isinstance(lid, int):
-                            self.cache_log_id(task_id=int(tid), log_id=int(lid))
+                        task_id = lg.entries.get("task_id")
+                        log_id = lg.id
+                        if task_id is not None and log_id is not None:
+                            self.cache_log_id(task_id=task_id, log_id=log_id)
                     except Exception:
                         continue
         except Exception:
@@ -934,22 +784,18 @@ class LocalTaskView:
         )
         by_tid_to_log_id: Dict[int, int] = {}
         for lg in logs or []:
-            try:
-                e = getattr(lg, "entries", {}) or {}
-                tid = e.get("task_id")
-                lid = getattr(lg, "id", None)
-                if isinstance(tid, int) and isinstance(lid, int):
-                    by_tid_to_log_id[int(tid)] = int(lid)
-            except Exception:
-                continue
+            task_id = lg.entries.get("task_id")
+            log_id = lg.id
+            if task_id is not None and log_id is not None:
+                by_tid_to_log_id[task_id] = log_id
 
         log_ids: List[int] = []
         entries_list: List[Dict[str, Any]] = []
-        for tid in target_tids:
-            lid = by_tid_to_log_id.get(int(tid))
-            if isinstance(lid, int):
-                log_ids.append(int(lid))
-                entries_list.append(entries_by_tid[int(tid)])
+        for task_id in target_tids:
+            log_id = by_tid_to_log_id.get(task_id)
+            if log_id is not None:
+                log_ids.append(log_id)
+                entries_list.append(entries_by_tid[task_id])
 
         if not log_ids:
             return {"detail": "No matching task_ids resolved"}
@@ -961,7 +807,6 @@ class LocalTaskView:
         *,
         logs: Union[int, unify.Log, List[Union[int, unify.Log]]],
         entries: Union[Dict[str, Any], List[Dict[str, Any]]],
-        overwrite: bool = True,
     ) -> Dict[str, str]:
         """
         Pass-through write with light cache maintenance.
@@ -984,7 +829,7 @@ class LocalTaskView:
         except Exception:
             touches_lifecycle = True
 
-        result = self._store.update(logs=logs, entries=entries, overwrite=overwrite)
+        result = self._store.update(logs=logs, entries=entries)
 
         if touches_lifecycle:
             # We do not try to micro-update here; the caller can provide
@@ -1004,10 +849,7 @@ class LocalTaskView:
         try:
             result = self._store.delete(logs=logs)
         finally:
-            try:
-                self._queue_index_stale = True
-            except Exception:
-                pass
+            self._queue_index_stale = True
         return result
 
     # ------------------------------- Metrics -------------------------------

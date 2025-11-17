@@ -13,37 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from .types.status import Status
-
-
-def _to_status(value: Any) -> Status:
-    if isinstance(value, Status):
-        return value
-    try:
-        return Status(value)
-    except Exception:
-        # Fallback: treat unknown as queued to avoid raising inside planning
-        return Status.queued
-
-
-def _sched_prev(sched: Any) -> Optional[int]:
-    if sched is None:
-        return None
-    if isinstance(sched, dict):
-        return sched.get("prev_task")
-    return getattr(sched, "prev_task", None)
-
-
-def _sched_start_at(sched: Any) -> Optional[str]:
-    if sched is None:
-        return None
-    if isinstance(sched, dict):
-        return sched.get("start_at")
-    # Pydantic model: accept datetime/str and leave conversion to caller
-    try:
-        return getattr(sched, "start_at", None)
-    except Exception:
-        return None
+from .types.status import Status, to_status
+from .types.schedule import sched_prev, sched_start_at
 
 
 def derive_status_after_queue_edit(
@@ -60,7 +31,7 @@ def derive_status_after_queue_edit(
     - If the task is the head and has a start_at timestamp, set "scheduled".
     - Otherwise keep the current status, except a non-head "scheduled" becomes "queued".
     """
-    current = _to_status(existing_status)
+    current = to_status(existing_status)
     if current == Status.active:
         return Status.active
     if is_head and head_has_start_at:
@@ -75,7 +46,6 @@ def plan_reorder_queue(
     *,
     new_order: List[int],
     rows_by_id: Dict[int, Dict[str, Any]],
-    queue_id: Optional[int],
 ) -> Dict[int, Dict[str, Any]]:
     """
     Compute the invariant-preserving updates required to reorder a queue to match
@@ -89,8 +59,8 @@ def plan_reorder_queue(
     try:
         for r in rows_by_id.values():
             sched = r.get("schedule") or {}
-            if _sched_prev(sched) is None:
-                ts = _sched_start_at(sched)
+            if sched_prev(sched) is None:
+                ts = sched_start_at(sched)
                 if ts is not None:
                     queue_start_ts = ts
                     break
@@ -122,7 +92,7 @@ def plan_reorder_queue(
             desired_status = Status.queued
 
         payload: Dict[str, Any] = {"schedule": sched_payload}
-        if _to_status(existing_status) != desired_status:
+        if to_status(existing_status) != desired_status:
             payload["status"] = desired_status
 
         updates[tid] = payload
