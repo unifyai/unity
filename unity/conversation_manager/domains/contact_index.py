@@ -106,4 +106,4 @@ class ContactIndex:
             )
         elif email:
             c = next(c for c in self.contacts.values() if c.email_address == email)
-        return c.model_dump() if c else None
+        return c.model_dump(exclude={"threads"}) if c else None
