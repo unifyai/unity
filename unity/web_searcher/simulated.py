@@ -80,6 +80,8 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._answer: str | None = None
         self._messages: List[Dict[str, Any]] = []
         self._paused = False
+        # Async cancellation signal to break clarification waits
+        self._cancel_event: asyncio.Event = asyncio.Event()
 
     async def result(self):
         if self._cancelled:
@@ -96,7 +98,25 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
                     )
                 except Exception:
                     pass
-                clar = await self._clar_down_q.get()
+                clar: str | None = None
+                get_task = asyncio.create_task(self._clar_down_q.get())
+                cancel_task = asyncio.create_task(self._cancel_event.wait())
+                done, pending = await asyncio.wait(
+                    {get_task, cancel_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                if cancel_task in done:
+                    self._done.set()
+                    return "processed stopped early, no result"
+                try:
+                    clar = get_task.result()
+                except Exception:
+                    clar = None
+                if clar is None:
+                    self._done.set()
+                    return "processed stopped early, no result"
                 self._extra_msgs.append(f"Clarification: {clar}")
                 try:
                     SimulatedLog.log_clarification_answer(self._log_label, clar)
@@ -131,6 +151,9 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
             ]
             self._done.set()
 
+        # If cancellation happened after the coroutine started, return a stable post-cancel value.
+        if self._cancelled:
+            return "processed stopped early, no result"
         if self._want_steps:
             return self._answer, self._messages
         return self._answer
@@ -145,6 +168,10 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
     def stop(self, reason: str | None = None) -> str:
         self._log_stop(reason)
         self._cancelled = True
+        try:
+            self._cancel_event.set()
+        except Exception:
+            pass
         self._done.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
 

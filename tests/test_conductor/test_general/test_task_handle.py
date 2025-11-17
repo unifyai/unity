@@ -26,8 +26,8 @@ async def test_task_handle_present_with_deserialized_execute(monkeypatch):
     while the execution is in-flight, and None after completion.
     """
 
-    # Use step-based actor with enough steps so the task does not complete before we can assert
-    actor = SimulatedActor(steps=5, duration=None)
+    # Keep actor session alive until explicitly stopped in cleanup
+    actor = SimulatedActor(steps=None, duration=None)
     c = Conductor(actor=actor)
 
     # Ensure a clean task table
@@ -38,49 +38,53 @@ async def test_task_handle_present_with_deserialized_execute(monkeypatch):
     tid = ts._create_task(name="X", description="X")["details"]["task_id"]  # type: ignore[index]
 
     h = await c.start_task(task_id=int(tid), trigger_reason="test")
+    try:
+        # Wait deterministically until the assistant has requested TaskScheduler_execute
+        client = getattr(h, "_client", None)  # internal test-only access
+        assert (
+            client is not None
+        ), "Expected AsyncToolLoopHandle to expose its client for tests"
+        await _wait_for_tool_request(client, "TaskScheduler_execute")
 
-    # Wait deterministically until the assistant has requested TaskScheduler_execute
-    client = getattr(h, "_client", None)  # internal test-only access
-    assert (
-        client is not None
-    ), "Expected AsyncToolLoopHandle to expose its client for tests"
-    await _wait_for_tool_request(client, "TaskScheduler_execute")
+        # Ensure the nested structure has adopted the ActiveQueue/ActiveTask child
+        async def _execute_child_adopted():
+            try:
+                tree = await h.nested_structure()
 
-    # Ensure the nested structure has adopted the ActiveQueue/ActiveTask child
-    async def _execute_child_adopted():
-        try:
-            tree = await h.nested_structure()
-
-            def _has_exec(node: dict) -> bool:
-                try:
-                    label = str(node.get("handle", "")).strip()
-                except Exception:
-                    label = ""
-                if label.startswith("ActiveQueue(") or label.startswith("ActiveTask("):
-                    return True
-                for ch in node.get("children", []) or []:
-                    if _has_exec(ch):
+                def _has_exec(node: dict) -> bool:
+                    try:
+                        label = str(node.get("handle", "")).strip()
+                    except Exception:
+                        label = ""
+                    if label.startswith("ActiveQueue(") or label.startswith(
+                        "ActiveTask(",
+                    ):
                         return True
+                    for ch in node.get("children", []) or []:
+                        if _has_exec(ch):
+                            return True
+                    return False
+
+                return _has_exec(tree)
+            except Exception:
                 return False
 
-            return _has_exec(tree)
-        except Exception:
-            return False
+        await _wait_for_condition(_execute_child_adopted, poll=0.02, timeout=60.0)
 
-    await _wait_for_condition(_execute_child_adopted, poll=0.02, timeout=60.0)
+        # Method should expose the same live request handle during execution
+        assert await c.task_handle() is not None
+        # The handle should point to the same object (logging wrappers are not used here)
+        assert await c.task_handle() is h
 
-    # Method should expose the same live request handle during execution
-    assert await c.task_handle() is not None
-    # The handle should point to the same object (logging wrappers are not used here)
-    assert await c.task_handle() is h
+        # Drive two steps (pause/resume) to complete deterministically
+        h.pause()
+        h.resume()
 
-    # Drive two steps (pause/resume) to complete deterministically
-    h.pause()
-    h.resume()
-
-    # Completion clears the handle
-    await asyncio.wait_for(h.result(), timeout=30)
-    assert await c.task_handle() is None
+        # Completion clears the handle
+        await asyncio.wait_for(h.result(), timeout=30)
+        assert await c.task_handle() is None
+    finally:
+        h.stop("cleanup")
 
 
 @pytest.mark.asyncio
@@ -142,9 +146,11 @@ async def test_task_handle_none_with_deserialized_non_execute():
     # Register with Conductor so properties scan this live request
     # (tests are allowed to use private attributes as in other suites)
     c._live_requests.add(h)  # type: ignore[attr-defined]
+    try:
+        # During this read-only request, there must be no task_handle
+        assert await c.task_handle() is None
 
-    # During this read-only request, there must be no task_handle
-    assert await c.task_handle() is None
-
-    # Finish the loop to avoid background tasks lingering
-    await asyncio.wait_for(h.result(), timeout=30)
+        # Finish the loop to avoid background tasks lingering
+        await asyncio.wait_for(h.result(), timeout=30)
+    finally:
+        h.stop("cleanup")

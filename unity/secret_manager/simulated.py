@@ -83,6 +83,8 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._paused = False
         self._answer: str | None = None
         self._messages: list[dict[str, Any]] = []
+        # Async cancellation signal to break clarification waits
+        self._cancel_event: asyncio.Event = asyncio.Event()
 
     async def result(self):
         if self._cancelled:
@@ -100,16 +102,34 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
                     )
                 except Exception:
                     pass
-                clar = await self._clar_down_q.get()
-                extra.append(f"Clarification: {clar}")
+                # Race clarification against cancellation
+                get_task = asyncio.create_task(self._clar_down_q.get())
+                cancel_task = asyncio.create_task(self._cancel_event.wait())
+                done, pending = await asyncio.wait(
+                    {get_task, cancel_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                if cancel_task in done:
+                    # Preserve semantic: result raises when cancelled
+                    raise asyncio.CancelledError()
                 try:
-                    SimulatedLog.log_clarification_answer(self._log_label, clar)
+                    clar = get_task.result()
                 except Exception:
-                    pass
-                try:
-                    LOGGER.info(f"💬 [{self._log_label}] Clarification answer received")
-                except Exception:
-                    pass
+                    clar = None
+                if clar is not None:
+                    extra.append(f"Clarification: {clar}")
+                    try:
+                        SimulatedLog.log_clarification_answer(self._log_label, clar)
+                    except Exception:
+                        pass
+                    try:
+                        LOGGER.info(
+                            f"💬 [{self._log_label}] Clarification answer received",
+                        )
+                    except Exception:
+                        pass
 
             prompt = "\n\n---\n\n".join([self._initial] + self._extra_msgs + extra)
             # Unified simulated roundtrip with lineage-aware logging and gated response preview
@@ -134,6 +154,9 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
             ]
             self._done.set()
 
+        # If cancellation happened after the coroutine started, raise consistently.
+        if self._cancelled:
+            raise asyncio.CancelledError()
         if self._want_steps:
             return self._answer, self._messages
         return self._answer
@@ -148,6 +171,10 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
     def stop(self, reason: str | None = None) -> str:
         self._log_stop(reason)
         self._cancelled = True
+        try:
+            self._cancel_event.set()
+        except Exception:
+            pass
         try:
             self._done.set()
         except Exception:

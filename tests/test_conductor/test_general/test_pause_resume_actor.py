@@ -75,35 +75,37 @@ async def test_pause_actor_propagates_immediately_actor_path(monkeypatch):
     handle = await cond.request(
         "Open a browser window so we can walk through the setup together.",
     )
+    try:
+        # Wait for the actor to be scheduled
+        await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
+        # Give the outer loop a brief moment to adopt the nested handle
+        await asyncio.sleep(0.2)
 
-    # Wait for the actor to be scheduled
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
-    # Give the outer loop a brief moment to adopt the nested handle
-    await asyncio.sleep(0.2)
+        # Invoke the new nested steer helper; assert the actor's pause is hit immediately
+        result = await cond.pause_actor("test")
 
-    # Invoke the new nested steer helper; assert the actor's pause is hit immediately
-    result = await cond.pause_actor("test")
+        # The pause must be observed without LLM turns (tight timeout)
+        await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
 
-    # The pause must be observed without LLM turns (tight timeout)
-    await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
+        # The child interjection should arrive promptly after pausing
+        await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
 
-    # The child interjection should arrive promptly after pausing
-    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
+        # Verify child-level interjection content
+        assert any(
+            "execution was paused due to test" in m for m in captured_msgs
+        ), "Expected child interjection after pause"
 
-    # Verify child-level interjection content
-    assert any(
-        "execution was paused due to test" in m for m in captured_msgs
-    ), "Expected child interjection after pause"
-
-    # Sanity: the nested steer summary should record a pause application
-    assert any(rec.get("method") == "pause" for rec in (result.get("applied") or []))
-    # Interjection should be applied when pause actually applied to a child
-    assert any(
-        rec.get("method") == "interject" for rec in (result.get("applied") or [])
-    )
-
-    handle.stop("done")
-    await handle.result()
+        # Sanity: the nested steer summary should record a pause application
+        assert any(
+            rec.get("method") == "pause" for rec in (result.get("applied") or [])
+        )
+        # Interjection should be applied when pause actually applied to a child
+        assert any(
+            rec.get("method") == "interject" for rec in (result.get("applied") or [])
+        )
+    finally:
+        handle.stop("done")
+        await handle.result()
 
 
 @pytest.mark.asyncio
@@ -169,34 +171,36 @@ async def test_pause_actor_propagates_immediately_task_scheduler_path(monkeypatc
     handle = await cond.request(
         f"Run the task named '{name}' now.",
     )
+    try:
+        # Wait until the actor has started under the scheduler
+        await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
+        # Briefly allow adoption of the nested handle in the outer loop
+        await asyncio.sleep(0.4)
 
-    # Wait until the actor has started under the scheduler
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
-    # Briefly allow adoption of the nested handle in the outer loop
-    await asyncio.sleep(0.4)
+        result = await cond.pause_actor("maintenance")
 
-    result = await cond.pause_actor("maintenance")
+        # Confirm the pause reached the actor quickly (no extra LLM steps)
+        await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
 
-    # Confirm the pause reached the actor quickly (no extra LLM steps)
-    await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
+        # Confirm the child interjection arrived shortly after
+        await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
 
-    # Confirm the child interjection arrived shortly after
-    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
+        # Verify child-level interjection content
+        assert any(
+            "execution was paused due to maintenance" in m for m in captured_msgs
+        ), "Expected child interjection after pause (scheduler path)"
 
-    # Verify child-level interjection content
-    assert any(
-        "execution was paused due to maintenance" in m for m in captured_msgs
-    ), "Expected child interjection after pause (scheduler path)"
-
-    # Sanity: the nested steer summary should include a pause application
-    assert any(rec.get("method") == "pause" for rec in (result.get("applied") or []))
-    # Interjection should be applied when pause actually applied to a child
-    assert any(
-        rec.get("method") == "interject" for rec in (result.get("applied") or [])
-    )
-
-    handle.stop("done")
-    await handle.result()
+        # Sanity: the nested steer summary should include a pause application
+        assert any(
+            rec.get("method") == "pause" for rec in (result.get("applied") or [])
+        )
+        # Interjection should be applied when pause actually applied to a child
+        assert any(
+            rec.get("method") == "interject" for rec in (result.get("applied") or [])
+        )
+    finally:
+        handle.stop("done")
+        await handle.result()
 
 
 @pytest.mark.asyncio
@@ -266,45 +270,47 @@ async def test_resume_actor_after_explicit_pause_actor_path(monkeypatch):
     handle = await cond.request(
         "Open a browser window so we can walk through the setup together.",
     )
+    try:
+        await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
+        await asyncio.sleep(0.2)
 
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
-    await asyncio.sleep(0.2)
+        # Explicitly pause using nested_steer (independent of pause_actor)
+        pause_spec = {
+            "steps": [
+                {"method": "interject", "args": "<Pausing actor for resume tests>"},
+            ],
+            "children": [
+                {"handle": "ActiveQueue", "steps": [{"method": "pause"}]},
+                {"handle": "ActiveTask", "steps": [{"method": "pause"}]},
+                {"handle": "ActorHandle", "steps": [{"method": "pause"}]},
+            ],
+        }
+        await handle.nested_steer(pause_spec)
 
-    # Explicitly pause using nested_steer (independent of pause_actor)
-    pause_spec = {
-        "steps": [{"method": "interject", "args": "<Pausing actor for resume tests>"}],
-        "children": [
-            {"handle": "ActiveQueue", "steps": [{"method": "pause"}]},
-            {"handle": "ActiveTask", "steps": [{"method": "pause"}]},
-            {"handle": "ActorHandle", "steps": [{"method": "pause"}]},
-        ],
-    }
-    await handle.nested_steer(pause_spec)
+        await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
 
-    await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
+        # Now resume via the high-level helper; should be immediate
+        result = await cond.resume_actor("test-resume")
+        # Interjection to child should occur before resume
+        await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
+        await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
 
-    # Now resume via the high-level helper; should be immediate
-    result = await cond.resume_actor("test-resume")
-    # Interjection to child should occur before resume
-    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
-    await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
+        # Interjection should be applied when resume actually applied to a child
+        assert any(
+            rec.get("method") == "interject" for rec in (result.get("applied") or [])
+        )
 
-    # Interjection should be applied when resume actually applied to a child
-    assert any(
-        rec.get("method") == "interject" for rec in (result.get("applied") or [])
-    )
-
-    # Verify child-level interjection content and ordering (interject before resume)
-    assert any(
-        "execution was resumed due to test-resume" in m for m in captured_msgs
-    ), "Expected child interjection before resume"
-    if "interject" in timestamps and "resume" in timestamps:
-        assert (
-            timestamps["interject"] <= timestamps["resume"]
-        ), "Child interjection should precede resume"
-
-    handle.stop("done")
-    await handle.result()
+        # Verify child-level interjection content and ordering (interject before resume)
+        assert any(
+            "execution was resumed due to test-resume" in m for m in captured_msgs
+        ), "Expected child interjection before resume"
+        if "interject" in timestamps and "resume" in timestamps:
+            assert (
+                timestamps["interject"] <= timestamps["resume"]
+            ), "Child interjection should precede resume"
+    finally:
+        handle.stop("done")
+        await handle.result()
 
 
 @pytest.mark.asyncio
@@ -376,44 +382,47 @@ async def test_resume_actor_after_explicit_pause_task_scheduler_path(monkeypatch
 
     cond = SimulatedConductor(task_scheduler=ts, actor=actor)
     handle = await cond.request(f"Run the task named '{name}' now.")
+    try:
+        await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
+        await asyncio.sleep(0.4)
 
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
-    await asyncio.sleep(0.4)
+        # Explicitly pause using nested_steer (independent of pause_actor)
+        pause_spec = {
+            "steps": [
+                {"method": "interject", "args": "<Pausing actor for resume tests>"},
+            ],
+            "children": [
+                {"handle": "ActiveQueue", "steps": [{"method": "pause"}]},
+                {"handle": "ActiveTask", "steps": [{"method": "pause"}]},
+                {"handle": "ActorHandle", "steps": [{"method": "pause"}]},
+            ],
+        }
+        await handle.nested_steer(pause_spec)
 
-    # Explicitly pause using nested_steer (independent of pause_actor)
-    pause_spec = {
-        "steps": [{"method": "interject", "args": "<Pausing actor for resume tests>"}],
-        "children": [
-            {"handle": "ActiveQueue", "steps": [{"method": "pause"}]},
-            {"handle": "ActiveTask", "steps": [{"method": "pause"}]},
-            {"handle": "ActorHandle", "steps": [{"method": "pause"}]},
-        ],
-    }
-    await handle.nested_steer(pause_spec)
+        await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
 
-    await asyncio.wait_for(paused_evt.wait(), timeout=1.0)
+        # Now resume via the high-level helper; should be immediate
+        result = await cond.resume_actor("maintenance-resume")
+        await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
+        await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
 
-    # Now resume via the high-level helper; should be immediate
-    result = await cond.resume_actor("maintenance-resume")
-    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
-    await asyncio.wait_for(resumed_evt.wait(), timeout=1.0)
+        # Interjection should be applied when resume actually applied to a child
+        assert any(
+            rec.get("method") == "interject" for rec in (result.get("applied") or [])
+        )
 
-    # Interjection should be applied when resume actually applied to a child
-    assert any(
-        rec.get("method") == "interject" for rec in (result.get("applied") or [])
-    )
-
-    # Verify child-level interjection content and ordering (interject before resume)
-    assert any(
-        "execution was resumed due to maintenance-resume" in m for m in captured_msgs
-    ), "Expected child interjection before resume (scheduler path)"
-    if "interject" in timestamps and "resume" in timestamps:
-        assert (
-            timestamps["interject"] <= timestamps["resume"]
-        ), "Child interjection should precede resume (scheduler path)"
-
-    handle.stop("done")
-    await handle.result()
+        # Verify child-level interjection content and ordering (interject before resume)
+        assert any(
+            "execution was resumed due to maintenance-resume" in m
+            for m in captured_msgs
+        ), "Expected child interjection before resume (scheduler path)"
+        if "interject" in timestamps and "resume" in timestamps:
+            assert (
+                timestamps["interject"] <= timestamps["resume"]
+            ), "Child interjection should precede resume (scheduler path)"
+    finally:
+        handle.stop("done")
+        await handle.result()
 
 
 @pytest.mark.asyncio
@@ -430,18 +439,18 @@ async def test_pause_actor_no_interjection_for_read_only_contact_query():
     handle = await cond.request(
         "How many contacts are stored in my address book? Keep it brief.",
     )
+    try:
+        # Invoke pause_actor – since no Actor/TaskScheduler execution is in flight,
+        # the conditional interjection should not occur.
+        result = await cond.pause_actor("read-only")
 
-    # Invoke pause_actor – since no Actor/TaskScheduler execution is in flight,
-    # the conditional interjection should not occur.
-    result = await cond.pause_actor("read-only")
-
-    # Ensure no interjection was applied at the root level
-    assert not any(
-        rec.get("method") == "interject" for rec in (result.get("applied") or [])
-    ), "Interjection should not be emitted for read-only ContactManager.ask flows"
-
-    handle.stop("done")
-    await handle.result()
+        # Ensure no interjection was applied at the root level
+        assert not any(
+            rec.get("method") == "interject" for rec in (result.get("applied") or [])
+        ), "Interjection should not be emitted for read-only ContactManager.ask flows"
+    finally:
+        handle.stop("done")
+        await handle.result()
 
 
 @pytest.mark.asyncio
@@ -521,54 +530,56 @@ async def test_resume_actor_image_guides_simulation_to_spreadsheet_actor_path(
     handle = await cond.request(
         "Open a browser window so we can walk through the setup together.",
     )
-
-    # Wait for actor to start and adopt the nested handle
-    await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
-    await asyncio.sleep(0.2)
-
-    # Explicitly pause the actor via nested steer to match the resume scenario
-    pause_spec = {
-        "children": [
-            {"tool": "ActorHandle", "steps": [{"method": "pause"}]},
-        ],
-    }
-    await handle.nested_steer(pause_spec)  # type: ignore[attr-defined]
-    await asyncio.wait_for(paused_evt.wait(), timeout=5.0)
-
-    # Now resume with an annotated image pointing to the rota spreadsheet
-    await cond.resume_actor(
-        "visual update",
-        images=[
-            AnnotatedImageRef(
-                raw_image_ref=RawImageRef(image_id=int(img_id)),
-                annotation="this is the file you need to edit",
-            ),
-        ],
-    )
-
-    # Ensure the child interjection (with image) was delivered
-    await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
-
-    # Locate the inner SimulatedActor handle and ask about the file type
-    inner_handle = None
     try:
-        ti = getattr(handle._task, "task_info", {})  # type: ignore[attr-defined]
-        if isinstance(ti, dict):
-            for _t, meta in ti.items():
-                h = getattr(meta, "handle", None)
-                if isinstance(h, SimulatedActorHandle):
-                    inner_handle = h
-                    break
-    except Exception:
+        # Wait for actor to start and adopt the nested handle
+        await asyncio.wait_for(scheduled_evt.wait(), timeout=300)
+        await asyncio.sleep(0.2)
+
+        # Explicitly pause the actor via nested steer to match the resume scenario
+        pause_spec = {
+            "children": [
+                {"tool": "ActorHandle", "steps": [{"method": "pause"}]},
+            ],
+        }
+        await handle.nested_steer(pause_spec)  # type: ignore[attr-defined]
+        await asyncio.wait_for(paused_evt.wait(), timeout=5.0)
+
+        # Now resume with an annotated image pointing to the rota spreadsheet
+        await cond.resume_actor(
+            "visual update",
+            images=[
+                AnnotatedImageRef(
+                    raw_image_ref=RawImageRef(image_id=int(img_id)),
+                    annotation="this is the file you need to edit",
+                ),
+            ],
+        )
+
+        # Ensure the child interjection (with image) was delivered
+        await asyncio.wait_for(interjected_evt.wait(), timeout=5.0)
+
+        # Locate the inner SimulatedActor handle and ask about the file type
         inner_handle = None
+        try:
+            ti = getattr(handle._task, "task_info", {})  # type: ignore[attr-defined]
+            if isinstance(ti, dict):
+                for _t, meta in ti.items():
+                    h = getattr(meta, "handle", None)
+                    if isinstance(h, SimulatedActorHandle):
+                        inner_handle = h
+                        break
+        except Exception:
+            inner_handle = None
 
-    assert inner_handle is not None, "Expected inner SimulatedActorHandle to be adopted"
+        assert (
+            inner_handle is not None
+        ), "Expected inner SimulatedActorHandle to be adopted"
 
-    resp = await inner_handle.ask(
-        "What type of file is shown in the screenshot we just sent during resume? Answer briefly.",
-    )
-    assert isinstance(resp, str) and resp.strip()
-    assert "sheet" in resp.lower(), f"Expected 'sheet' mention in: {resp!r}"
-
-    handle.stop("done")
-    await handle.result()
+        resp = await inner_handle.ask(
+            "What type of file is shown in the screenshot we just sent during resume? Answer briefly.",
+        )
+        assert isinstance(resp, str) and resp.strip()
+        assert "sheet" in resp.lower(), f"Expected 'sheet' mention in: {resp!r}"
+    finally:
+        handle.stop("done")
+        await handle.result()
