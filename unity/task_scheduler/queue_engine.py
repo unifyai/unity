@@ -14,26 +14,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from .types.status import Status, to_status
-
-
-def _sched_prev(sched: Any) -> Optional[int]:
-    if sched is None:
-        return None
-    if isinstance(sched, dict):
-        return sched.get("prev_task")
-    return getattr(sched, "prev_task", None)
-
-
-def _sched_start_at(sched: Any) -> Optional[str]:
-    if sched is None:
-        return None
-    if isinstance(sched, dict):
-        return sched.get("start_at")
-    # Pydantic model: accept datetime/str and leave conversion to caller
-    try:
-        return getattr(sched, "start_at", None)
-    except Exception:
-        return None
+from .types.schedule import sched_prev, sched_start_at
 
 
 def derive_status_after_queue_edit(
@@ -78,8 +59,8 @@ def plan_reorder_queue(
     try:
         for r in rows_by_id.values():
             sched = r.get("schedule") or {}
-            if _sched_prev(sched) is None:
-                ts = _sched_start_at(sched)
+            if sched_prev(sched) is None:
+                ts = sched_start_at(sched)
                 if ts is not None:
                     queue_start_ts = ts
                     break

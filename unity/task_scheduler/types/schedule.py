@@ -52,3 +52,16 @@ def sched_next(sched: Union[Schedule, dict, None]) -> Optional[int]:
     if isinstance(sched, dict):
         return sched.get("next_task")
     return getattr(sched, "next_task", None)
+
+
+def sched_start_at(sched: Union[Schedule, dict, None]) -> Optional[str]:
+    """Return `start_at` from a `Schedule` or dict."""
+    if sched is None:
+        return None
+    if isinstance(sched, dict):
+        return sched.get("start_at")
+    # Pydantic model: accept datetime/str and leave conversion to caller
+    try:
+        return getattr(sched, "start_at", None)
+    except Exception:
+        return None
