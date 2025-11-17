@@ -235,23 +235,25 @@ if __name__ == "__main__":
     outbound = "False"
     print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 7:
+    if len(sys.argv) > 15:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
-        outbound = sys.argv[4]
+        voice_provider = sys.argv[4]
+        voice_id = sys.argv[5]
+        outbound = sys.argv[7]
 
         # realtime specific stff
-        is_boss_user = sys.argv[5]
-        contact_first_name = sys.argv[6]
-        contact_surname = sys.argv[7]
-        contact_email = sys.argv[8]
+        is_boss_user = sys.argv[8]
+        contact_first_name = sys.argv[9]
+        contact_surname = sys.argv[10]
+        contact_email = sys.argv[11]
 
         # boss details
-        boss_first_name = sys.argv[9]
-        boss_surname = sys.argv[10]
-        boss_phone_number = sys.argv[11]
-        boss_email = sys.argv[12]
+        boss_first_name = sys.argv[12]
+        boss_surname = sys.argv[13]
+        boss_phone_number = sys.argv[14]
+        boss_email = sys.argv[15]
 
         os.environ["BOSS_FIRST_NAME"] = boss_first_name
         os.environ["BOSS_SURNAME"] = boss_surname
