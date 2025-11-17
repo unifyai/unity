@@ -2198,7 +2198,9 @@ async def async_tool_loop_inner(
             # Inject `final_answer` tool automatically whenever a `response_format` is
             # supplied. The tool accepts a single `answer` argument whose schema matches
             # the provided Pydantic model.
-            if response_format is not None:
+            # IMPORTANT: Only expose `final_answer` when there are NO in‑flight tools,
+            # to ensure the loop cannot terminate while work is still pending.
+            if response_format is not None and not tools_data.pending:
                 try:
                     _answer_schema = _check_valid_response_format(response_format)
 
