@@ -273,6 +273,52 @@ async def test_handle_ask():
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# 11.  Stop while paused should finish immediately                           #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_paused_finishes_immediately_cm():
+    cm = SimulatedContactManager()
+    h = await cm.ask("Produce a long contact export.")
+    # Enter paused state
+    h.pause()
+    # result() should be blocked while paused
+    res_task = asyncio.create_task(h.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done()
+    # Stop should unblock and complete promptly
+    h.stop("cancelled by user")
+    out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
+    assert isinstance(out, str)
+    assert h.done()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 12.  Stop while waiting for clarification should finish immediately         #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_waiting_for_clarification_finishes_immediately_cm():
+    cm = SimulatedContactManager()
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+    h = await cm.ask(
+        "Find David's phone number.",
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+        _requests_clarification=True,
+    )
+    # Wait until a clarification is requested
+    q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
+    assert "clarify" in q.lower()
+    # Stop without answering; should return promptly
+    h.stop("no longer needed")
+    out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(out, str)
+    assert h.done()
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # 10.  Simulated private helpers                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @_handle_project

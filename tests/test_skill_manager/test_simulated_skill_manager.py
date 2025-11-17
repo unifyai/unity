@@ -129,3 +129,21 @@ async def test_handle_ask_simulated_skill_manager():
     # The original handle should still be awaitable and produce an answer
     handle_answer = await asyncio.wait_for(handle.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(handle_answer, str) and handle_answer.strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7.  Stop while paused should finish immediately                              #
+# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_paused_finishes_immediately_skill_manager():
+    sm = SimulatedSkillManager()
+    handle = await sm.ask("Generate a very long catalogue overview.")
+    handle.pause()
+    res_task = asyncio.create_task(handle.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done()
+    handle.stop("cancelled")
+    out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
+    assert isinstance(out, str)
+    assert handle.done()

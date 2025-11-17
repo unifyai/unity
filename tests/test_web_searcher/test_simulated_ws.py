@@ -291,3 +291,44 @@ async def test_update_basic_completion():
     )
     answer = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 10.  Stop while paused should finish immediately                           #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_paused_finishes_immediately_ws():
+    ws = SimulatedWebSearcher()
+    h = await ws.ask("Generate a very long market report.")
+    h.pause()
+    res_task = asyncio.create_task(h.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done()
+    h.stop("cancelled")
+    out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
+    assert isinstance(out, str)
+    assert h.done()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 11.  Stop while waiting for clarification should finish immediately         #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_waiting_for_clarification_finishes_immediately_ws():
+    ws = SimulatedWebSearcher()
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+    h = await ws.ask(
+        "Find recent coverage.",
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+        _requests_clarification=True,
+    )
+    q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
+    assert "clarify" in q.lower()
+    h.stop("no longer needed")
+    out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(out, str)
+    assert h.done()

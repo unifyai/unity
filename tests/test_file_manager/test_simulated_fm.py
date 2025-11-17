@@ -354,6 +354,52 @@ async def test_handle_ask():
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# 12a.  Stop while paused should finish immediately                          #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_paused_finishes_immediately_fm():
+    fm = SimulatedFileManager()
+    fm.add_simulated_file("pause.txt", records=[{"content": "x"}])
+    h = await fm.ask("pause.txt", "Generate a very long analysis.")
+    # Pause then ensure result blocks
+    h.pause()
+    res_task = asyncio.create_task(h.result())
+    await asyncio.sleep(0.1)
+    assert not res_task.done()
+    # Stop should unblock and complete promptly
+    h.stop("cancelled")
+    out = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
+    assert isinstance(out, str)
+    assert h.done()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 12b.  Stop while waiting for clarification should finish immediately        #
+# ────────────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+@_handle_project
+async def test_stop_while_waiting_for_clarification_finishes_immediately_fm():
+    fm = SimulatedFileManager()
+    fm.add_simulated_file("clar.txt", records=[{"content": "y"}])
+    up_q: asyncio.Queue[str] = asyncio.Queue()
+    down_q: asyncio.Queue[str] = asyncio.Queue()
+    h = await fm.ask(
+        "clar.txt",
+        "Please analyze with detailed metrics.",
+        _clarification_up_q=up_q,
+        _clarification_down_q=down_q,
+        _requests_clarification=True,
+    )
+    q = await asyncio.wait_for(up_q.get(), timeout=DEFAULT_TIMEOUT)
+    assert "clarify" in q.lower()
+    h.stop("no longer needed")
+    out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
+    assert isinstance(out, str)
+    assert h.done()
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # 10. Reasoning steps toggle                                                 #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
