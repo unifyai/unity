@@ -210,7 +210,9 @@ class ReintegrationManager:
             prev_task=final_prev,
             next_task=final_next,
             head_start_at=(
-                cur_sched.start_at.isoformat() if final_prev is None else None
+                cur_sched.start_at.isoformat()
+                if final_prev is None and cur_sched.start_at is not None
+                else None
             ),
             err_prefix=f"While reinstating task {tid}:",
         )
