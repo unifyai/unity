@@ -29,13 +29,9 @@ class LivekitCallManager:
         self.conference_name = ""
 
     # TODO: support unify calls and clean up boss data passage
-    def start_call(self, contact_phone_number):
+    def start_call(self, contact_phone_number, contact=None, boss=None):
         # start the process here
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
-        if self.realtime:
-            target_path = target_path / "realtime_call.py"
-        else:
-            target_path = target_path / "call.py"
         args = [
             contact_phone_number,
             self.assistant_number,
@@ -44,6 +40,22 @@ class LivekitCallManager:
             "None",
             str(False),
         ]
+        if self.realtime:
+            target_path = target_path / "realtime_call.py"
+            if not contact or not boss:
+                raise ValueError("Contact and boss are required for realtime calls")
+            args += [
+                contact.is_boss,
+                contact.first_name,
+                contact.surname,
+                contact.email_address,
+                boss.first_name,
+                boss.surname,
+                boss.phone_number,
+                boss.email_address,
+            ]
+        else:
+            target_path = target_path / "call.py"
         print(f"target_path: {target_path}, args: {args}")
         if not os.getenv("TEST"):
             self.call_proc = run_script(str(target_path), "dev", *args)

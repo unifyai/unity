@@ -58,7 +58,13 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         notif_content = None
         match event:
             case PhoneCallReceived() as e:
-                cm.call_manager.start_call(e.contact["phone_number"])
+                contact, boss = None, None
+                if cm.call_manager.realtime:
+                    contact = cm.contact_index.get_contact(
+                        phone_number=e.contact["phone_number"]
+                    )
+                    boss = cm.contact_index.get_contact(contact_id=1)
+                cm.call_manager.start_call(e.contact["phone_number"], contact, boss)
                 message_content = "<Recvieving Call...>"
                 notif_content = f"Call received from {e.contact['first_name']}"
             case PhoneCallSent() as e:
