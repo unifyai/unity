@@ -207,14 +207,7 @@ class ConversationManager:
             email_address=boss_contact.email_address,
         )
 
-        # Use dynamic response models (set_details must be called before run_llm)
-        dynamic_response_models = build_dynamic_response_models(
-            include_email=self.assistant_email not in [None, ""],
-            include_sms=self.assistant_number not in [None, ""],
-            include_call=self.assistant_number not in [None, ""],
-            realtime=self.call_manager.realtime,
-        )
-        response_model = dynamic_response_models[self.mode]
+        response_model = self.dynamic_response_models[self.mode]
         out = await self.llm.run(
             system_prompt=system_prompt,
             messages=self.chat_history + [input_message],
@@ -284,6 +277,7 @@ class ConversationManager:
             )
 
             if self.assistant_id:
+                self.build_response_model()
                 # asyncio.create_task(self.publish_startup())
 
                 # this feels like it should be its own method really buts its really big
@@ -377,6 +371,14 @@ class ConversationManager:
             "user_email": self.user_email,
             "assistant_email": self.assistant_email,
         }
+
+    def build_response_model(self):
+        self.dynamic_response_models = build_dynamic_response_models(
+            include_email=self.assistant_email not in [None, ""],
+            include_sms=self.assistant_number not in [None, ""],
+            include_call=self.assistant_number not in [None, ""],
+            realtime=self.call_manager.realtime,
+        )
 
     def cleanup(self):
         """Clean up any running call processes"""
