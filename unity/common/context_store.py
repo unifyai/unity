@@ -43,16 +43,17 @@ class TableStore:
 
         # Always attempt creation; tolerate pre-existence
         try:
-            unify.get_context
-            unify.create_context(
-                self._ctx,
-                unique_keys=self._unique_keys or None,
-                auto_counting=self._auto_counting or None,
-                description=self._description,
-            )
+            unify.get_context(self._ctx, project=self._project)
+            return
         except Exception:
-            # Best-effort – treat as already exists
             pass
+
+        unify.create_context(
+            self._ctx,
+            unique_keys=self._unique_keys or None,
+            auto_counting=self._auto_counting or None,
+            description=self._description,
+        )
 
         # Ensure required fields exist (idempotent per-field)
         if self._fields:
