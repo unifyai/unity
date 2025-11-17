@@ -2166,10 +2166,7 @@ class TaskScheduler(BaseTaskScheduler):
         """
         # Resolve current membership once (prefer local index; fallback to storage)
         queue_id_exists = queue_id is not None
-        try:
-            member_ids = self._view.get_member_ids(queue_id) if queue_id_exists else []
-        except Exception:
-            member_ids = []
+        member_ids = self._view.get_member_ids(queue_id) if queue_id_exists else []
 
         in_queue_tasks: list[Task] = []
         if not member_ids:
@@ -2330,11 +2327,8 @@ class TaskScheduler(BaseTaskScheduler):
         # Allocate target queue id when requested (new queue)
         target_qid = queue_id if queue_id is not None else self._allocate_new_queue_id()
         # Keep monotonic allocator in sync when caller specifies a higher id
-        try:
-            if target_qid is not None:
-                self._view.sync_max_queue_id_seen(target_qid)
-        except Exception:
-            pass
+        if target_qid is not None:
+            self._view.sync_max_queue_id_seen(target_qid)
 
         # Build target queue's existing order once (prefer local index)
         try:
@@ -2834,10 +2828,7 @@ class TaskScheduler(BaseTaskScheduler):
                 "schedule": sch,
                 **({"queue_id": int(top_qid)} if isinstance(top_qid, int) else {}),
             }
-            try:
-                if existing_status != to_status(desired_status):  # type: ignore[arg-type]
-                    entries["status"] = desired_status
-            except Exception:
+            if existing_status != to_status(desired_status):
                 entries["status"] = desired_status
 
             self._validated_write(
