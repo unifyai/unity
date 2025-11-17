@@ -1,6 +1,6 @@
 """Schedule relationships and start-time constraints for tasks in a queue."""
 
-from typing import Optional
+from typing import Optional, Union
 from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 
@@ -33,3 +33,35 @@ class Schedule(BaseModel):
                 "Place the timestamp on the queue head instead.",
             )
         return data
+
+
+def sched_prev(sched: Union[Schedule, dict, None]) -> Optional[int]:
+    """Return `prev_task` from a `Schedule` or dict."""
+    if sched is None:
+        return None
+    if isinstance(sched, dict):
+        return sched.get("prev_task")
+    # Read attribute from Schedule model
+    return getattr(sched, "prev_task", None)
+
+
+def sched_next(sched: Union[Schedule, dict, None]) -> Optional[int]:
+    """Return `next_task` from a `Schedule` or dict."""
+    if sched is None:
+        return None
+    if isinstance(sched, dict):
+        return sched.get("next_task")
+    return getattr(sched, "next_task", None)
+
+
+def sched_start_at(sched: Union[Schedule, dict, None]) -> Optional[str]:
+    """Return `start_at` from a `Schedule` or dict."""
+    if sched is None:
+        return None
+    if isinstance(sched, dict):
+        return sched.get("start_at")
+    # Pydantic model: accept datetime/str and leave conversion to caller
+    try:
+        return getattr(sched, "start_at", None)
+    except Exception:
+        return None

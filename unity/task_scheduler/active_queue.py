@@ -23,6 +23,7 @@ import unify
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.handle_wrappers import HandleWrapperMixin
 from .types.activated_by import ActivatedBy
+from .types.status import to_status
 
 if TYPE_CHECKING:  # avoid import cycles at runtime
     from .task_scheduler import TaskScheduler
@@ -50,9 +51,7 @@ class _InterjectionRouter:
 
             def _safe_dump(value):
                 try:
-                    import json as _json  # local import
-
-                    return _json.dumps(value, default=str)
+                    return json.dumps(value, default=str)
                 except Exception:
                     return str(value)
 
@@ -125,9 +124,7 @@ class _InterjectionRouter:
                 raw = ""
 
             try:
-                import json as _json
-
-                data = _json.loads(raw)
+                data = json.loads(raw)
             except Exception:
                 return [], True
 
@@ -171,23 +168,20 @@ class _QueueSnapshot:
     def build_rows(scheduler: "TaskScheduler", current_task_id: int) -> list[dict]:
         """Build a compact queue snapshot (head→tail) using the scheduler's live view."""
         try:
-            queue = scheduler._get_queue_for_task(task_id=current_task_id) or []
+            queue = scheduler._get_queue_for_task(task_id=current_task_id)
         except Exception:
             queue = []
         out: list[dict] = []
         for t in queue:
-            try:
-                out.append(
-                    {
-                        "task_id": getattr(t, "task_id", None),
-                        "name": getattr(t, "name", None),
-                        "description": getattr(t, "description", None),
-                        "status": getattr(t, "status", None),
-                        "schedule": getattr(t, "schedule", None),
-                    },
-                )
-            except Exception:
-                continue
+            out.append(
+                {
+                    "task_id": t.task_id,
+                    "name": t.name,
+                    "description": t.description,
+                    "status": t.status,
+                    "schedule": t.schedule,
+                },
+            )
         return out
 
     @staticmethod
@@ -207,27 +201,23 @@ class _QueueSnapshot:
             try:
                 _full_chain = (
                     scheduler._walk_queue_from_task(  # type: ignore[attr-defined]
-                        task_id=int(current_task_id),
+                        task_id=current_task_id,
                     )
-                    or []
                 )
             except Exception:
                 _full_chain = []
 
             full_rows: list[dict] = []
             for t in _full_chain:
-                try:
-                    full_rows.append(
-                        {
-                            "task_id": getattr(t, "task_id", None),
-                            "name": getattr(t, "name", None),
-                            "description": getattr(t, "description", None),
-                            "status": getattr(t, "status", None),
-                            "schedule": getattr(t, "schedule", None),
-                        },
-                    )
-                except Exception:
-                    continue
+                full_rows.append(
+                    {
+                        "task_id": t.task_id,
+                        "name": t.name,
+                        "description": t.description,
+                        "status": t.status,
+                        "schedule": t.schedule,
+                    },
+                )
 
             # Compute indices against both views
             total_count_runnable = len(queue_rows)
@@ -249,7 +239,7 @@ class _QueueSnapshot:
             # Count statuses
             def _to_status_str(row: dict) -> str:
                 try:
-                    return str(scheduler._to_status(row.get("status")))
+                    return str(to_status(row.get("status")))
                 except Exception:
                     return str(row.get("status"))
 
@@ -451,10 +441,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             # When the current task is no longer a member of any queue (isolated/detached),
             # treat the queue as a singleton for pass-through purposes.
             try:
-                contains_current = any(
-                    int(getattr(t, "task_id", -1)) == int(self._current_task_id)
-                    for t in (q or [])
-                )
+                contains_current = any(t.task_id == self._current_task_id for t in q)
             except Exception:
                 contains_current = True
             if not contains_current:
@@ -487,19 +474,11 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         current task's stored ``schedule.next_task`` to identify the follower.
         """
         try:
-            live_queue = (
-                self._s._get_queue_for_task(task_id=self._current_task_id) or []
-            )
+            live_queue = self._s._get_queue_for_task(task_id=self._current_task_id)
         except Exception:
             live_queue = []
 
-        ids: list[int] = []
-        for t in live_queue:
-            try:
-                tid_val = int(getattr(t, "task_id", -1))
-            except Exception:
-                continue
-            ids.append(tid_val)
+        ids: list[int] = [t.task_id for t in live_queue]
 
         if not ids:
             return None
@@ -796,19 +775,6 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
                         },
                     )
         return
-
-    async def _route_interjection_llm(
-        self,
-        *,
-        queue_rows: list[dict],
-        message: str,
-    ) -> tuple[list[dict], bool]:
-        # Backwards-compat wrapper; delegate to helper
-        return await _InterjectionRouter.route(
-            queue_rows=queue_rows,
-            message=message,
-            current_task_id=self._current_task_id,
-        )
 
     def stop(self, *, cancel: bool = False, reason: Optional[str] = None) -> Optional[str]:  # type: ignore[override]
         try:
