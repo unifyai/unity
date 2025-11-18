@@ -269,10 +269,15 @@ class ConversationManager:
         self.chat_history.append(input_message)
         self.chat_history.append({"role": "assistant", "content": out})
 
-        if len(self.chat_history) >= int(0.7 * self.max_messages) and not self.is_summarizing:
-           print("summarizing conversation...")
-           await self.event_broker.publish("app:comms:summarize", SummarizeContext().to_json())
-           self.is_summarizing = True
+        if (
+            len(self.chat_history) >= int(0.7 * self.max_messages)
+            and not self.is_summarizing
+        ):
+            print("summarizing conversation...")
+            await self.event_broker.publish(
+                "app:comms:summarize", SummarizeContext().to_json()
+            )
+            self.is_summarizing = True
 
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
@@ -381,9 +386,6 @@ class ConversationManager:
 
     def build_response_model(self):
         self.dynamic_response_models = build_dynamic_response_models(
-            include_email=self.assistant_email not in [None, ""],
-            include_sms=self.assistant_number not in [None, ""],
-            include_call=self.assistant_number not in [None, ""],
             realtime=self.call_manager.realtime,
         )
 

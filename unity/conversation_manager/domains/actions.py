@@ -135,19 +135,12 @@ class SendUnifyMessage(BaseModel):
     contact_id: Literal[1] = 1
 
 
-def build_dynamic_response_models(
-    include_email: bool = True,
-    include_sms: bool = True,
-    include_call: bool = True,
-    realtime=False,
-):
+def build_dynamic_response_models(realtime=False):
     """
-    Dynamically create response models with conditional actions based on available contact info.
+    Create response models.
 
     Args:
-        include_email: Whether SendEmail action should be available
-        include_sms: Whether SendSMS action should be available
-        include_call: Whether MakeCall action should be available
+        realtime: Whether the response model is for realtime mode
 
     Returns:
         dict: Response models for different modes (call, gmeet, text)
@@ -158,14 +151,10 @@ def build_dynamic_response_models(
         ConductorHandleAction,
         WaitForNextEvent,
         SendUnifyMessage,
+        SendEmail,
+        SendSMS,
+        MakeCall,
     ]
-
-    if include_email:
-        available_actions.append(SendEmail)
-    if include_sms:
-        available_actions.append(SendSMS)
-    if include_call:
-        available_actions.append(MakeCall)
 
     # Create dynamic Union of available actions
     ActionsUnion = Union[tuple(available_actions)]
@@ -267,7 +256,11 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
         )
         event = SMSSent(contact=contact, content=message)
     else:
-        event = Error(f"Failed to send sms to {to_number}")
+        if not cm.assistant_number:
+            error_msg = "You don't have a number, please provision one."
+        else:
+            error_msg = f"Failed to send sms to {to_number}"
+        event = Error(error_msg)
     await event_broker.publish("app:comms:sms_sent", event.to_json())
 
 
@@ -308,7 +301,11 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
             contact=contact, body=body, subject=subject, message_id=message_id
         )
     else:
-        event = Error(f"Failed to send email to {to_email}")
+        if not cm.assistant_email:
+            error_msg = "You don't have an email address, please provision one."
+        else:
+            error_msg = f"Failed to send email to {to_email}"
+        event = Error(error_msg)
     await event_broker.publish("app:comms:email_sent", event.to_json())
 
 
@@ -329,7 +326,11 @@ async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs
         )
         event = PhoneCallSent(contact=contact)
     else:
-        event = Error(f"Failed to send call to {to_number}")
+        if not cm.assistant_number:
+            error_msg = "You don't have a number, please provision one."
+        else:
+            error_msg = f"Failed to send call to {to_number}"
+        event = Error(error_msg)
     await event_broker.publish("app:comms:make_call", event.to_json())
 
 
