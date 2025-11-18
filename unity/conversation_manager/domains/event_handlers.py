@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Union
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager.debug_logger import log_job_startup
 from unity.conversation_manager.domains.call_manager import LivekitCallManager
+from unity.conversation_manager.domains.contact_index import Contact
 from unity.conversation_manager.new_events import *
 from unity.conversation_manager.domains import managers_utils
 
@@ -374,3 +375,25 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
 @EventHandler.register(PreHireMessage)
 async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
     asyncio.create_task(managers_utils.log_message(cm, event))
+
+@EventHandler.register(SummarizeContext)
+async def _(event: SummarizeContext, cm: 'ConversationManager', *args, **kwargs):
+    async def summarize_task():
+        res = [(cid, cm.prompt_renderer.render_contact(c, max_messages=25, last_snapshot=cm.last_snapshot))
+                        for cid, c in cm.contact_index.active_conversations.items()]
+        tasks = [
+            cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid)
+            for cid, t in res
+        ]
+        try:
+            await asyncio.gather(*tasks)
+            updated_active_contacts = cm.contact_manager.get_contact_info(contact_id=[cid for cid in cm.contact_index.active_conversations])
+            updated_active_contacts = {cid: Contact(**{**c.model_dump(mode="python"), **uc, "threads": c.threads}) for (cid, c), uc in zip(cm.contact_index.active_conversations.items(), updated_active_contacts.values())}
+            print("updated contact", updated_active_contacts)
+            cm.contact_index.active_conversations = updated_active_contacts
+            cm.is_summarizing = False
+            cm.chat_history = []
+            print("[ManagersWorker] Contact rolling summary updated")
+        except Exception as e:
+            print(f"[ManagersWorker] Error updating contact rolling summary: {e}")
+    asyncio.create_task(summarize_task())
