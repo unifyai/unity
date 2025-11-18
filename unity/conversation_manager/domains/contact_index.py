@@ -13,11 +13,11 @@ class Contact(ContactType):
     on_call: bool = False
     threads: dict[str, deque] = Field(
         default_factory=lambda: {
-            "sms": deque(maxlen=5),
-            "email": deque(maxlen=5),
-            "phone": deque(maxlen=5),
-            "unify_call": deque(maxlen=5),
-            "unify_message": deque(maxlen=5),
+            "sms": deque(maxlen=25),
+            "email": deque(maxlen=25),
+            "phone": deque(maxlen=25),
+            "unify_call": deque(maxlen=25),
+            "unify_message": deque(maxlen=25),
         },
     )
 
