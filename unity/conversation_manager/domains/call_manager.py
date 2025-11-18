@@ -11,6 +11,7 @@ class LivekitCallManager:
     def __init__(
         self,
         assistant_id=None,
+        assistant_bio=None,
         assistant_number=None,
         voice_provider=None,
         voice_id=None,
@@ -18,6 +19,7 @@ class LivekitCallManager:
         realtime: bool = False,
     ):
         self.assistant_id = assistant_id
+        self.assistant_bio = assistant_bio
         self.assistant_number = assistant_number
         self.voice_provider = voice_provider
         self.voice_id = voice_id
@@ -49,6 +51,7 @@ class LivekitCallManager:
             boss["email_address"],
         ]
         if self.realtime:
+            args.append(str(self.assistant_bio))
             target_path = target_path / "realtime_call.py"
         else:
             target_path = target_path / "call.py"

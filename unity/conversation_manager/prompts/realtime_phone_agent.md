@@ -30,6 +30,10 @@
     </important>
 </conversation_manager>
 
+<bio>
+    Here's your bio: {{ bio }}
+</bio>
+
 <boss_details>
     The following are your boss's details:
     First Name: {{ boss_first_name }}
