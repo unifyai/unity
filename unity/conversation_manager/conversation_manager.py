@@ -126,6 +126,7 @@ class ConversationManager:
         # call manager
         self.call_manager = LivekitCallManager(
             self.assistant_id,
+            self.assistant_about,
             self.assistant_number,
             self.voice_provider,
             self.voice_id,
@@ -200,6 +201,7 @@ class ConversationManager:
         input_message = {"role": "user", "content": prompt}
         boss_contact = self.contact_index.boss_contact
         system_prompt = Template(self.system_prompt).render(
+            bio=self.assistant_about,
             contact_id=boss_contact.contact_id,
             first_name=boss_contact.first_name,
             surname=boss_contact.surname,

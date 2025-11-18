@@ -70,6 +70,7 @@ boss_surname = ""
 boss_phone_number = ""
 boss_email = ""
 is_boss_user = ""
+assistant_bio = ""
 
 with open(
     Path(__file__).resolve().parent.parent / "prompts" / "realtime_phone_agent.md",
@@ -174,7 +175,9 @@ async def entrypoint(ctx: JobContext) -> None:
     contact_surname = os.environ.get("CONTACT_SURNAME", "")
     contact_email = os.environ.get("CONTACT_EMAIL", "")
     is_boss_user = os.environ.get("IS_BOSS_USER", "False")
+    assistant_bio = os.environ.get("ASSISTANT_BIO", "")
     system = Template(SYSTEM_PROMPT).render(
+        bio=assistant_bio,
         boss_first_name=boss_first_name,
         boss_surname=boss_surname,
         boss_email_address=boss_email if boss_email != "None" else None,
@@ -241,7 +244,7 @@ if __name__ == "__main__":
     outbound = "False"
     print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 16:
+    if len(sys.argv) > 17:
         # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
         from_number = sys.argv[2]
         assistant_number = sys.argv[3]
@@ -261,6 +264,7 @@ if __name__ == "__main__":
         boss_surname = sys.argv[14]
         boss_phone_number = sys.argv[15]
         boss_email = sys.argv[16]
+        assistant_bio = sys.argv[17]
 
         os.environ["BOSS_FIRST_NAME"] = boss_first_name
         os.environ["BOSS_SURNAME"] = boss_surname
@@ -271,6 +275,7 @@ if __name__ == "__main__":
         os.environ["CONTACT_SURNAME"] = contact_surname
         os.environ["CONTACT_EMAIL"] = contact_email
         os.environ["IS_BOSS_USER"] = is_boss_user
+        os.environ["ASSISTANT_BIO"] = assistant_bio
 
         sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
 

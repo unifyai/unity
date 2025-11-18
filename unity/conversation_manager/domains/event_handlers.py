@@ -265,6 +265,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     cm.set_details(payload)
     cm.call_manager = LivekitCallManager(
         cm.assistant_id,
+        cm.assistant_about,
         cm.assistant_number,
         cm.voice_provider,
         cm.voice_id,
