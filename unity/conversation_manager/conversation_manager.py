@@ -269,9 +269,10 @@ class ConversationManager:
         self.chat_history.append(input_message)
         self.chat_history.append({"role": "assistant", "content": out})
 
-        # if len(self.chat_history) >= int(0.7 * self.max_messages) and not self.is_summarizing:
-        #    print("summarizing conversation...")
-        #    Action.take_action(self, "summarize_conversation")
+        if len(self.chat_history) >= int(0.7 * self.max_messages) and not self.is_summarizing:
+           print("summarizing conversation...")
+           await self.event_broker.publish("app:comms:summarize", SummarizeContext().to_json())
+           self.is_summarizing = True
 
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
