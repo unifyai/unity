@@ -459,3 +459,16 @@ class ConductorResumeActor(Event):
     """Signal to resume any previously paused Actor/TaskScheduler execution for the session."""
 
     reason: str = ""
+
+
+@dataclass
+class LLMUserMessage(Event):
+    content: str
+
+@dataclass
+class LLMAssistantMessage(Event):
+    content: str
+
+@dataclass
+class SummarizeContext(Event):
+    pass
