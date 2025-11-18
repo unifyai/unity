@@ -465,9 +465,11 @@ class ConductorResumeActor(Event):
 class LLMUserMessage(Event):
     content: str
 
+
 @dataclass
 class LLMAssistantMessage(Event):
     content: str
+
 
 @dataclass
 class SummarizeContext(Event):
