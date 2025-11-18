@@ -10,6 +10,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, AsyncIterator, Tuple, Callable
+from functools import cached_property
 from .types.file import File
 
 import unify
@@ -70,16 +71,9 @@ class FileManager(BaseFileManager):
         # Track display names that are registered as protected (read-only from the FileManager's perspective)
         self._protected_display_names: set[str] = set()
         # Use provided parser or create default DoclingParser
-        self._parser: BaseParser = (
-            parser
-            if parser is not None
-            else DoclingParser(
-                use_llm_enrichment=True,
-                extract_images=True,
-                extract_tables=True,
-            )
-        )
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
+        # Lazy parser initialization
+        self.__praser = parser
 
         # ------------------------------------------------------------------ #
         #  Unify context – replicate managers' pattern                        #
@@ -143,6 +137,16 @@ class FileManager(BaseFileManager):
         self.add_tools("ask", ask_tools)
 
         atexit.register(self._cleanup)
+
+    @cached_property
+    def _parser(self) -> BaseParser:
+        if self.__praser is None:
+            self.__praser = DoclingParser(
+                use_llm_enrichment=True,
+                extract_images=True,
+                extract_tables=True,
+            )
+        return self.__praser
 
     @property
     def supported_formats(self) -> List[str]:
