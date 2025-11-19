@@ -37,9 +37,18 @@ from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.filter_utils import normalize_filter_expr
+from ..common.context_handler import TableContext
 
 
 class KnowledgeManager(BaseKnowledgeManager):
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Knowledge",
+                description="Knowledge base for the assistant.",
+            ),
+        ]
+
     def __init__(
         self,
         *,
