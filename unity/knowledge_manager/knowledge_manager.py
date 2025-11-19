@@ -166,18 +166,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             else None
         )
 
-        # Optional: idempotently ensure Contacts exists when linkage enabled
-        if self._contacts_ctx is not None:
-            try:
-                TableStore(
-                    self._contacts_ctx,
-                    unique_keys={"contact_id": "int"},
-                    auto_counting={"contact_id": None},
-                ).ensure_context()
-            except Exception:
-                # Best-effort; KnowledgeManager can still function without immediate Contacts access
-                pass
-
         # Ensure any additional storage requirements are provisioned
         try:
             self._provision_storage()
