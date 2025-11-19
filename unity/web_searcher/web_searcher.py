@@ -29,12 +29,24 @@ from ..common.embed_utils import ensure_vector_column
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k
 from .types.website import Website
+from ..common.context_handler import TableContext
 
 
 class WebSearcher(BaseWebSearcher):
     """
     Manages web search and extraction.
     """
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Websites",
+                description="Catalog of websites of interest for WebSearcher routing/policies.",
+                fields=model_to_fields(Website),
+                unique_keys={"website_id": "int", "host": "str", "name": "str"},
+                auto_counting={"website_id": None},
+            ),
+        ]
 
     def __init__(self):
         super().__init__()
