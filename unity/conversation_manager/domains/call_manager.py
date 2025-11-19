@@ -37,10 +37,10 @@ class LivekitCallManager:
             contact_phone_number,
             self.assistant_number,
             self.voice_provider,
-            self.voice_id if self.voice_id else "None",
-            "None",
-            str(False),
-            str(contact["is_boss"]),
+            self.voice_id,
+            None,
+            False,
+            contact["is_boss"],
             contact["contact_id"],
             contact["first_name"],
             contact["surname"],
@@ -51,16 +51,19 @@ class LivekitCallManager:
             boss["email_address"],
         ]
         if self.realtime:
-            args.append(str(self.assistant_bio))
+            args.append(self.assistant_bio)
             target_path = target_path / "realtime_call.py"
         else:
             target_path = target_path / "call.py"
+        args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
         if not os.getenv("TEST"):
             self.call_proc = run_script(str(target_path), "dev", *args)
 
     def start_unify_call(self, agent_name, room_name=None):
-        target_path = target_path / "unify_call.py"
+        target_path = (
+            Path(__file__).parent.parent.resolve() / "medium_scripts" / "unify_call.py"
+        )
         agent_name = (
             agent_name
             if agent_name
@@ -81,10 +84,11 @@ class LivekitCallManager:
         )
         args = [
             self.voice_provider,
-            self.voice_id if self.voice_id else "",
+            self.voice_id,
             agent_name,
             room_name,
         ]
+        args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
         if not os.getenv("TEST"):
             self.call_proc = run_script(str(target_path), "dev", *args)
