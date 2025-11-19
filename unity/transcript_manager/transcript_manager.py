@@ -54,6 +54,8 @@ from .images import (
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
+from ..common.context_handler import TableContext
+from ..common.model_to_fields import model_to_fields
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -64,6 +66,23 @@ class TranscriptManager(BaseTranscriptManager):
 
     # Vector embedding column names
     _MSG_EMB = "_content_emb"
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Transcripts",
+                description="List of all timestamped messages sent between all contacts across all mediums.",
+                fields=model_to_fields(Message),
+                unique_keys={"message_id": "int"},
+                auto_counting={"message_id": None, "exchange_id": None},
+            ),
+            TableContext(
+                name="Exchanges",
+                description="One row per conversation exchange/thread with optional metadata.",
+                fields=model_to_fields(Exchange),
+                unique_keys={"exchange_id": "int"},
+            ),
+        ]
 
     # ──────────────────────────────────────────────────────────────────────
     #  Construction & tool registration
