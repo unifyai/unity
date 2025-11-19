@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, AsyncIterator, Tuple, Callable
 from functools import cached_property
 from .types.file import File
+from ..common.model_to_fields import model_to_fields
+from ..common.context_handler import TableContext
 
 import unify
 
@@ -58,6 +60,17 @@ class FileManager(BaseFileManager):
     - Provides read-only tools to list/inspect contents.
     - Cleans up all managed files on process exit.
     """
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Files",
+                description="Registry of files received or downloaded during a session.",
+                fields=model_to_fields(File),
+                unique_keys={"file_id": "int"},
+                auto_counting={"file_id": None},
+            ),
+        ]
 
     def __init__(
         self,
