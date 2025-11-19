@@ -311,8 +311,8 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
 
 @Action.register()
 async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs):
+    from_number = cm.assistant_number
     contact_id = kwargs.get("contact_id")
-    from_number = kwargs.get("assistant_number")
     to_number = kwargs.get("phone_number")
     if not os.getenv("TEST"):
         response = await comms_utils.start_call(
