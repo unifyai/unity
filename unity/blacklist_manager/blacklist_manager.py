@@ -12,12 +12,24 @@ from ..common.filter_utils import normalize_filter_expr
 from ..blacklist_manager.types.blacklist import BlackList
 from ..transcript_manager.types.message import Medium
 from .base import BaseBlackListManager
+from ..common.context_handler import TableContext
 
 
 class BlackListManager(BaseBlackListManager):
     """
     Manages a minimal catalogue of blacklisted contact details, keyed by ``blacklist_id``.
     """
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="BlackList",
+                description="List of blacklisted contact details (per medium).",
+                fields=model_to_fields(BlackList),
+                unique_keys={"blacklist_id": "int"},
+                auto_counting={"blacklist_id": None},
+            ),
+        ]
 
     # ------------------------------------------------------------------ #
     # Construction                                                       #
