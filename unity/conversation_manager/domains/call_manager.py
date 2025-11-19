@@ -1,9 +1,9 @@
 import os
 from pathlib import Path
-from typing import Literal
+import sys
 
 from unity.transcript_manager.types.message import UNASSIGNED
-from unity.helpers import run_script, terminate_process
+from unity.helpers import cleanup_dangling_call_processes, run_script, terminate_process
 from unity.conversation_manager.new_events import *
 
 
@@ -96,7 +96,10 @@ class LivekitCallManager:
     def cleanup_call_proc(self):
         print(f"Terminating call process")
         try:
-            terminate_process(self.call_proc, timeout=3)
+            if sys.platform.startswith("win"):
+                terminate_process(self.call_proc, timeout=0.1)
+            else:
+                cleanup_dangling_call_processes()
             self.call_proc = None
             print(f"Call process terminated")
         except Exception as e:

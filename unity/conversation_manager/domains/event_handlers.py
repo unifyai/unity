@@ -58,26 +58,25 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         message_content = None
         notif_content = None
         boss = cm.contact_index.get_contact(contact_id=1)
+        contact = cm.contact_index.get_contact(
+            phone_number=event.contact["phone_number"]
+        )
         match event:
             case PhoneCallReceived() as e:
                 if not os.getenv("TEST"):
-                    cm.call_manager.start_call(
-                        e.contact["phone_number"], event.contact, boss
-                    )
+                    cm.call_manager.start_call(contact["phone_number"], contact, boss)
                 message_content = "<Recvieving Call...>"
-                notif_content = f"Call received from {e.contact['first_name']}"
+                notif_content = f"Call received from {contact['first_name']}"
             case PhoneCallSent() as e:
                 if not os.getenv("TEST"):
-                    cm.call_manager.start_call(
-                        e.contact["phone_number"], event.contact, boss
-                    )
+                    cm.call_manager.start_call(contact["phone_number"], contact, boss)
                 message_content = "<Sending Call...>"
-                notif_content = f"Call sent to {e.contact['first_name']}"
+                notif_content = f"Call sent to {contact['first_name']}"
             case UnifyCallReceived() as e:
                 if not os.getenv("TEST"):
                     cm.call_manager.start_unify_call(e.agent_name, e.room_name)
                 message_content = "<Recieving Call...>"
-                notif_content = f"Call received from {e.contact['first_name']}"
+                notif_content = f"Call received from {contact['first_name']}"
 
         cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
         cm.contact_index.push_message(
