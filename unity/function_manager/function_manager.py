@@ -16,6 +16,7 @@ from ..common.context_store import TableStore
 from ..file_manager.file_manager import FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
+from ..common.context_handler import TableContext
 
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,17 @@ class FunctionManager(BaseFunctionManager):
     can be listed, searched and cleanly deleted (optionally cascading to
     dependants).
     """
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Functions",
+                description="List of functions, with all function details stored.",
+                fields=model_to_fields(Function),
+                unique_keys={"function_id": "int"},
+                auto_counting={"function_id": None},
+            ),
+        ]
 
     # ------------------------------------------------------------------ #
     #  Construction                                                      #
