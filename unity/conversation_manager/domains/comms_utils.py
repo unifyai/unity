@@ -131,22 +131,19 @@ async def send_email_via_address(
             return await response.json()
 
 
-async def start_call(
-    from_number: str,
-    to_number: str,
-) -> str:
+async def start_call(to_number: str) -> str:
     """
     Send a call using the call provider API.
 
     Args:
-        from_number: The sender's phone number
         to_number: The recipient's phone number
 
     Returns:
         str: The response
     """
+    from_number = os.getenv("ASSISTANT_NUMBER")
     print(f"Sending call from {from_number} to {to_number}")
-    if not os.getenv("ASSISTANT_NUMBER"):
+    if not from_number:
         return {"success": False}
 
     async with aiohttp.ClientSession() as session:

@@ -241,7 +241,9 @@ async def wait(cm, action_name, *args, **kwargs):
 
 @Action.register()
 async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs):
-    contact_id = kwargs.get("contact_id")
+    # ToDo: either include contact details in prompt and uncomment this
+    # or remove this altogether
+    # contact_id = kwargs.get("contact_id")
     to_number = kwargs.get("phone_number")
     message = kwargs.get("message")
     if not os.getenv("TEST"):
@@ -251,9 +253,7 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
     else:
         response = {"success": True}
     if response["success"]:
-        contact = cm.contact_index.get_contact(
-            contact_id=contact_id, phone_number=to_number
-        )
+        contact = cm.contact_index.get_contact(phone_number=to_number)
         event = SMSSent(contact=contact, content=message)
     else:
         if not cm.assistant_number:
@@ -284,7 +284,9 @@ async def send_unify_message(
 
 @Action.register()
 async def send_email(cm: "ConversationManager", action_name: str, *args, **kwargs):
-    contact_id = kwargs.get("contact_id")
+    # ToDo: either include contact details in prompt and uncomment this
+    # or remove this altogether
+    # contact_id = kwargs.get("contact_id")
     to_email = kwargs.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
@@ -296,7 +298,7 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
     else:
         response = {"success": True}
     if response["success"]:
-        contact = cm.contact_index.get_contact(contact_id=contact_id, email=to_email)
+        contact = cm.contact_index.get_contact(email=to_email)
         event = EmailSent(
             contact=contact, body=body, subject=subject, message_id=message_id
         )
@@ -311,19 +313,16 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
 
 @Action.register()
 async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs):
-    from_number = cm.assistant_number
-    contact_id = kwargs.get("contact_id")
+    # ToDo: either include contact details in prompt and uncomment this
+    # or remove this altogether
+    # contact_id = kwargs.get("contact_id")
     to_number = kwargs.get("phone_number")
     if not os.getenv("TEST"):
-        response = await comms_utils.start_call(
-            from_number=from_number, to_number=to_number
-        )
+        response = await comms_utils.start_call(to_number=to_number)
     else:
         response = {"success": True}
     if response["success"]:
-        contact = cm.contact_index.get_contact(
-            contact_id=contact_id, phone_number=to_number
-        )
+        contact = cm.contact_index.get_contact(phone_number=to_number)
         event = PhoneCallSent(contact=contact)
     else:
         if not cm.assistant_number:
