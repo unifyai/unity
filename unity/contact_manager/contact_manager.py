@@ -11,6 +11,7 @@ from ..common.tool_spec import read_only, manager_tool
 import unify
 from .types.contact import Contact
 from .base import BaseContactManager
+from ..common.context_handler import TableContext
 from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -20,6 +21,7 @@ from ..common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
+from ..common.model_to_fields import model_to_fields
 from ..events.manager_event_logging import log_manager_call
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
@@ -56,6 +58,17 @@ from .search import (
 
 
 class ContactManager(BaseContactManager):
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Contacts",
+                description="List of contacts, with all contact details stored.",
+                fields=model_to_fields(Contact),
+                unique_keys={"contact_id": "int"},
+                auto_counting={"contact_id": None},
+            ),
+        ]
+
     # ──────────────────────────────────────────────────────────────────────
     #  Class-level constants / configuration
     # ──────────────────────────────────────────────────────────────────────
