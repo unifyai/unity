@@ -33,6 +33,7 @@ from .base import BaseSecretManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k, is_plain_identifier
+from ..common.context_handler import TableContext
 
 
 class SecretManager(BaseSecretManager):
@@ -40,6 +41,17 @@ class SecretManager(BaseSecretManager):
     Manages a fixed-schema table of secrets. Ensures secrets are never exposed
     to LLMs directly. Public methods mirror other managers' design.
     """
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Secrets",
+                description="Key-value secrets with descriptions and embeddings.",
+                fields=model_to_fields(Secret),
+                unique_keys={"secret_id": "int", "name": "str"},
+                auto_counting={"secret_id": None},
+            ),
+        ]
 
     def __init__(self) -> None:
         super().__init__()
