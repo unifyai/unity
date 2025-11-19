@@ -102,6 +102,16 @@ async def entrypoint(ctx: JobContext) -> None:
     """
     logger.info("connecting to LiveKit room...")
     await ctx.connect()  # ensures ctx.room is usable
+
+    boss_first_name = os.environ.get("BOSS_FIRST_NAME", "")
+    boss_surname = os.environ.get("BOSS_SURNAME", "")
+    boss_phone_number = os.environ.get("BOSS_PHONE_NUMBER", "")
+    boss_email = os.environ.get("BOSS_EMAIL", "")
+    contact_first_name = os.environ.get("CONTACT_FIRST_NAME", "")
+    contact_surname = os.environ.get("CONTACT_SURNAME", "")
+    contact_email = os.environ.get("CONTACT_EMAIL", "")
+    is_boss_user = os.environ.get("IS_BOSS_USER", "False")
+    assistant_bio = os.environ.get("ASSISTANT_BIO", "")
     contact = {
         "contact_id": contact_id,
         "first_name": contact_first_name,
@@ -111,12 +121,15 @@ async def entrypoint(ctx: JobContext) -> None:
         "is_boss": is_boss_user,
     }
 
+    voice_provider = os.environ.get("VOICE_PROVIDER", "gpt-realtime")
+    voice_id = os.environ.get("VOICE_ID", "alloy")
+
     # Configure the OpenAI Realtime model. The default model is 'gpt-realtime', so the
     # explicit model= parameter here is optional, but shown for clarity.
     llm = openai_realtime.RealtimeModel(
-        model="gpt-realtime",
+        model=voice_provider,
         # Pick a built-in OpenAI voice; 'alloy' is the default. Try 'marin', 'verse', etc.
-        voice="alloy",
+        voice=voice_id,
         # Example: run in speech-to-speech (audio) + text mode; set ["text"] to drive a separate TTS.
         modalities=["audio"],
         # Example (optional): customize server VAD / interrupt behavior
@@ -157,25 +170,12 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         print(role, text)
 
-    voice_provider = os.environ.get("VOICE_PROVIDER", "cartesia")
-    voice_id = os.environ.get("VOICE_ID", "")
-
     # Lightweight audio I/O options. You can add noise cancellation, custom VAD, etc.
     rio = RoomInputOptions(
         # noise_cancellation=noise_cancellation.BVC(),
     )
 
     # High-level behavior for the assistant.
-    print("HEEEELLOOOOO")
-    boss_first_name = os.environ.get("BOSS_FIRST_NAME", "")
-    boss_surname = os.environ.get("BOSS_SURNAME", "")
-    boss_phone_number = os.environ.get("BOSS_PHONE_NUMBER", "")
-    boss_email = os.environ.get("BOSS_EMAIL", "")
-    contact_first_name = os.environ.get("CONTACT_FIRST_NAME", "")
-    contact_surname = os.environ.get("CONTACT_SURNAME", "")
-    contact_email = os.environ.get("CONTACT_EMAIL", "")
-    is_boss_user = os.environ.get("IS_BOSS_USER", "False")
-    assistant_bio = os.environ.get("ASSISTANT_BIO", "")
     system = Template(SYSTEM_PROMPT).render(
         bio=assistant_bio,
         boss_first_name=boss_first_name,
@@ -238,7 +238,7 @@ if __name__ == "__main__":
     from_number = ""
     assistant_number = ""
     to_number = ""
-    voice_provider = "cartesia"
+    voice_provider = "gpt-realtime"
     voice_id = ""
     meet_id = ""
     outbound = "False"
