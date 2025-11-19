@@ -25,11 +25,23 @@ from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
 from ..common.filter_utils import normalize_filter_expr
 from ..common.data_store import DataStore
+from ..common.context_handler import TableContext
 import itertools
 
 
 class ImageHandle:
     """A lightweight handle around a single stored image."""
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Images",
+                description="Collection of images with timestamps, captions, and raw base64 data.",
+                fields=model_to_fields(Image),
+                unique_keys={"image_id": "int"},
+                auto_counting={"image_id": None},
+            ),
+        ]
 
     def __init__(
         self,
