@@ -33,7 +33,7 @@ from .base import BaseSecretManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k, is_plain_identifier
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 
 
 class SecretManager(BaseSecretManager):
@@ -70,7 +70,8 @@ class SecretManager(BaseSecretManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must match for SecretManager."
-        self._ctx = f"{read_ctx}/Secrets"
+
+        self._ctx = ContextHandler.get_context(self)
 
         # Ensure storage/schema exists deterministically (idempotent)
         self._provision_storage()
@@ -115,7 +116,6 @@ class SecretManager(BaseSecretManager):
             description="Key-value secrets with descriptions and embeddings.",
             fields=model_to_fields(Secret),
         )
-        self._store.ensure_context()
         # Ensure vector for description (best-effort)
         try:
             ensure_vector_column(
