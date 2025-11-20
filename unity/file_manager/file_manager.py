@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Union, AsyncIterator, Tuple, Calla
 from functools import cached_property
 from .types.file import File
 from ..common.model_to_fields import model_to_fields
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 
 import unify
 
@@ -110,25 +110,7 @@ class FileManager(BaseFileManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a FileManager."
 
-        self._ctx = f"{read_ctx}/Files" if read_ctx else "Files"
-
-        if self._ctx not in unify.get_contexts():
-            unify.create_context(
-                self._ctx,
-                unique_keys={"file_id": "int"},
-                auto_counting={"file_id": None},
-                description="Registry of files received or downloaded during a session.",
-            )
-
-            # Derive column specs from the Pydantic File model so schema changes
-            # automatically propagate.
-            from ..common.model_to_fields import model_to_fields
-            from .types.file import File as _FileModel
-
-            unify.create_fields(
-                model_to_fields(_FileModel),
-                context=self._ctx,
-            )
+        self._ctx = ContextHandler.get_context(self)
 
         # ------------------------------------------------------------------ #
         #  Tools exposed to LLM                                               #
