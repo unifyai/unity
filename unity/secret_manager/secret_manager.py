@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import unify
 from unity.common.llm_client import new_llm_client
+import functools
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
@@ -104,6 +105,9 @@ class SecretManager(BaseSecretManager):
             fields=model_to_fields(Secret),
         )
         self._store.ensure_context()
+
+    @functools.cache
+    def _ensure_description_vector(self) -> None:
         # Ensure vector for description (best-effort)
         try:
             ensure_vector_column(
@@ -683,6 +687,7 @@ class SecretManager(BaseSecretManager):
         List[Secret]
             Up to ``k`` redacted Secret models (``value`` is never populated).
         """
+        self._ensure_description_vector()
         # Sanitize references to avoid embedding sensitive fields like "value"
         safe_refs = self._sanitize_secret_references(references)
 
