@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Callable, Optional
 import contextlib
 
-from unity.conversation_manager.debug_logger import mark_job_done
+from unity.conversation_manager import debug_logger
 from unity.conversation_manager.domains.call_manager import LivekitCallManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.event_handlers import EventHandler
@@ -398,7 +398,7 @@ class ConversationManager:
         print(f"Marking job {self.job_name} done")
         self.call_manager.cleanup_call_proc()
         if self.job_name and self.assistant_id:
-            mark_job_done(self.job_name)
+            debug_logger.mark_job_done(self.job_name)
         self.stop.set()
 
     async def run_filler_once(self):

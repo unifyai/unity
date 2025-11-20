@@ -4,7 +4,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.conversation_manager.debug_logger import log_job_startup
+from unity.conversation_manager import debug_logger
 from unity.conversation_manager.domains.call_manager import LivekitCallManager
 from unity.conversation_manager.domains.contact_index import Contact
 from unity.conversation_manager.new_events import *
@@ -72,20 +72,17 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         )
         match event:
             case PhoneCallReceived() as e:
-                if not os.getenv("TEST"):
-                    cm.call_manager.start_call(contact["phone_number"], contact, boss)
+                cm.call_manager.start_call(contact["phone_number"], contact, boss)
                 message_content = "<Recvieving Call...>"
                 notif_content = f"Call received from {contact['first_name']}"
             case PhoneCallSent() as e:
-                if not os.getenv("TEST"):
-                    cm.call_manager.start_call(
-                        contact["phone_number"], contact, boss, outbound=True
-                    )
+                cm.call_manager.start_call(
+                    contact["phone_number"], contact, boss, outbound=True
+                )
                 message_content = "<Sending Call...>"
                 notif_content = f"Call sent to {contact['first_name']}"
             case UnifyCallReceived() as e:
-                if not os.getenv("TEST"):
-                    cm.call_manager.start_unify_call(e.agent_name, e.room_name)
+                cm.call_manager.start_unify_call(e.agent_name, e.room_name)
                 message_content = "<Recieving Call...>"
                 notif_content = f"Call received from {contact['first_name']}"
 
@@ -282,13 +279,12 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         cm.voice_id,
         cm.voice_mode,
     )
-    if not os.getenv("TEST"):
-        kwargs = {
-            "timestamp": payload["timestamp"],
-            "medium": payload["medium"],
-            **cm.get_details(),
-        }
-        asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
+    kwargs = {
+        "timestamp": payload["timestamp"],
+        "medium": payload["medium"],
+        **cm.get_details(),
+    }
+    asyncio.create_task(asyncio.to_thread(debug_logger.log_job_startup, **kwargs))
 
 
 @EventHandler.register(GetContactsResponse)
