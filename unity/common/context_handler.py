@@ -2,6 +2,7 @@ import unify
 from typing import List, Dict
 import time
 from concurrent.futures import ThreadPoolExecutor
+from unity.common.state_managers import BaseStateManager
 from concurrent.futures import as_completed
 from unify import create_context, create_fields
 from pydantic import BaseModel
@@ -18,6 +19,11 @@ class TableContext(BaseModel):
 
 class ContextHandler:
     _setup_complete = False
+    _available_contexts = {}
+
+    @classmethod
+    def get_context(cls, manager: BaseStateManager) -> Optional[str]:
+        return cls._available_contexts.get(manager.__class__.__name__)
 
     @classmethod
     def get_managers(cls):
@@ -60,7 +66,7 @@ class ContextHandler:
         ), "Read and write contexts must be the same"
         for manager in ContextHandler.get_managers():
             all_contexts.extend(
-                ContextHandler.get_contexts_for_manager(
+                cls.get_contexts_for_manager(
                     manager,
                     active_context["read"],
                     context_names,
@@ -73,8 +79,12 @@ class ContextHandler:
         def create_context_wrapper(context: Dict):
             start_time = time.time()
             try:
-                filtered_context = {k: v for k, v in context.items() if k != "fields"}
-                create_context(**filtered_context)
+                create_context(
+                    context["name"],
+                    description=context.get("description", None),
+                    unique_keys=context.get("unique_keys", None),
+                    auto_counting=context.get("auto_counting", None),
+                )
                 if "fields" in context:
                     create_fields(context["fields"], context=context["name"])
             except Exception as e:
@@ -83,6 +93,7 @@ class ContextHandler:
             print(
                 f"Time taken for {context['name']}: {time.time() - start_time} seconds",
             )
+            cls._available_contexts[context["manager"]] = context["name"]
             return context["name"]
 
         with ThreadPoolExecutor() as executor:
@@ -99,8 +110,9 @@ class ContextHandler:
 
         cls._setup_complete = True
 
-    @staticmethod
+    @classmethod
     def get_contexts_for_manager(
+        cls,
         manager,
         current_context: str,
         available_contexts: List[str],
@@ -114,8 +126,10 @@ class ContextHandler:
         for context in manager.Config.required_contexts:
             _context_name = f"{current_context}/{context.name}"
             if _context_name in available_contexts:
+                cls._available_contexts[manager.__class__.__name__] = _context_name
                 continue
             data = {
+                "manager": manager.__class__.__name__,
                 "name": _context_name,
                 "description": context.description,
                 "fields": context.fields if context.fields else None,
