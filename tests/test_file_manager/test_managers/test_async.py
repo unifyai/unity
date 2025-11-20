@@ -57,7 +57,7 @@ async def test_parse_async_with_batch_size(file_manager, supported_file_examples
     imported = [str(ex["path"]) for _, ex in supported_file_examples.items()]
 
     # Parse with small batch size via config
-    from unity.file_manager.types.config import FilePipelineConfig, ParseConfig
+    from unity.file_manager.types import FilePipelineConfig, ParseConfig
 
     cfg = FilePipelineConfig(parse=ParseConfig(batch_size=2))
     results = []
@@ -110,7 +110,7 @@ async def test_parse_async_with_options(file_manager, supported_file_examples: d
     imported = [str(ex["path"]) for _, ex in supported_file_examples.items()]
 
     # Parse with options via config
-    from unity.file_manager.types.config import FilePipelineConfig, ParseConfig
+    from unity.file_manager.types import FilePipelineConfig, ParseConfig
 
     cfg = FilePipelineConfig(
         parse=ParseConfig(
