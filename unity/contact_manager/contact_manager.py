@@ -116,7 +116,7 @@ class ContactManager(BaseContactManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a ContactManager."
-        self._ctx = ContextHandler.get_context(self)
+        self._ctx = ContextHandler.get_context(self, "Contacts")
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("contact_id",))

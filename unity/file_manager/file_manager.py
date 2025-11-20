@@ -110,7 +110,7 @@ class FileManager(BaseFileManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a FileManager."
 
-        self._ctx = ContextHandler.get_context(self)
+        self._ctx = ContextHandler.get_context(self, "Files")
 
         # ------------------------------------------------------------------ #
         #  Tools exposed to LLM                                               #

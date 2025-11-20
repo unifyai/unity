@@ -146,7 +146,7 @@ class FunctionManager(BaseFunctionManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a FunctionManager."
-        self._ctx = ContextHandler.get_context(self)
+        self._ctx = ContextHandler.get_context(self, "Functions")
 
         # Ensure functions context and fields exist deterministically
         self._provision_storage()

@@ -71,7 +71,7 @@ class SecretManager(BaseSecretManager):
             read_ctx == write_ctx
         ), "read and write contexts must match for SecretManager."
 
-        self._ctx = ContextHandler.get_context(self)
+        self._ctx = ContextHandler.get_context(self, "Secrets")
 
         # Ensure storage/schema exists deterministically (idempotent)
         self._provision_storage()

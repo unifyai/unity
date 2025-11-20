@@ -166,7 +166,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a KnowledgeManager."
-        self._ctx = ContextHandler.get_context(self)
+        self._ctx = ContextHandler.get_context(self, "Knowledge")
 
         # Only compute the Contacts context if the caller requested integration.
         self._contacts_ctx = (

@@ -279,7 +279,7 @@ class TaskScheduler(BaseTaskScheduler):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TaskScheduler."
-        self._ctx = ContextHandler.get_context(self)
+        self._ctx = ContextHandler.get_context(self, "Tasks")
 
         # Install storage adapter and ensure context/fields exist
         self._provision_storage()

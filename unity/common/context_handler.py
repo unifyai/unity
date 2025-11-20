@@ -22,8 +22,9 @@ class ContextHandler:
     _available_contexts = {}
 
     @classmethod
-    def get_context(cls, manager: BaseStateManager) -> Optional[str]:
-        return cls._available_contexts.get(manager.__class__.__name__)
+    def get_context(cls, manager: BaseStateManager, ctx_name: str) -> Optional[str]:
+        key = (manager.__class__.__name__, ctx_name)
+        return cls._available_contexts.get(key)
 
     @classmethod
     def get_managers(cls):
@@ -93,7 +94,9 @@ class ContextHandler:
             print(
                 f"Time taken for {context['name']}: {time.time() - start_time} seconds",
             )
-            cls._available_contexts[context["manager"]] = context["name"]
+            cls._available_contexts[(context["manager"], context["name"])] = context[
+                "name"
+            ]
             return context["name"]
 
         with ThreadPoolExecutor() as executor:
@@ -126,7 +129,9 @@ class ContextHandler:
         for context in manager.Config.required_contexts:
             _context_name = f"{current_context}/{context.name}"
             if _context_name in available_contexts:
-                cls._available_contexts[manager.__class__.__name__] = _context_name
+                cls._available_contexts[(manager.__class__.__name__, context.name)] = (
+                    _context_name
+                )
                 continue
             data = {
                 "manager": manager.__class__.__name__,

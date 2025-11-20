@@ -69,7 +69,7 @@ class WebSearcher(BaseWebSearcher):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must match for WebSearcher."
-        self._websites_ctx = ContextHandler.get_context(self)
+        self._websites_ctx = ContextHandler.get_context(self, "Websites")
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
             self._search,

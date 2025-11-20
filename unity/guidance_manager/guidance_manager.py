@@ -71,7 +71,7 @@ class GuidanceManager(BaseGuidanceManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a GuidanceManager."
 
-        self._ctx = ContextHandler.get_context(self)
+        self._ctx = ContextHandler.get_context(self, "Guidance")
 
         # Built-in fields derived from Guidance model
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Guidance.model_fields.keys())
