@@ -11,7 +11,7 @@ from ..common.tool_spec import read_only, manager_tool
 import unify
 from .types.contact import Contact
 from .base import BaseContactManager
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -116,7 +116,7 @@ class ContactManager(BaseContactManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a ContactManager."
-        self._ctx = f"{read_ctx}/Contacts"
+        self._ctx = ContextHandler.get_context(self)
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("contact_id",))
