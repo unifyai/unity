@@ -6,6 +6,7 @@ load_dotenv()
 import os
 import asyncio
 
+from unity.conversation_manager import debug_logger
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.domains import comms_utils
@@ -50,18 +51,6 @@ async def main(project_name: str = "Assistants"):
     print("Checking for dangling call processes from previous runs...")
     cleanup_dangling_call_processes()
 
-    # In test runs, short-circuit external comms side effects so conversation
-    # manager integration tests don't hit real SMS/email/call providers.
-    if os.getenv("TEST"):
-
-        async def _mock_success(*args, **kwargs):
-            return {"success": True}
-
-        comms_utils.send_sms_message_via_number = _mock_success
-        comms_utils.send_unify_message = _mock_success
-        comms_utils.send_email_via_address = _mock_success
-        comms_utils.start_call = _mock_success
-
     stop = asyncio.Event()
 
     # passes events around, uses redis
@@ -90,6 +79,24 @@ async def main(project_name: str = "Assistants"):
         stop=stop,
         user_turn_end_callback=None,
     )
+
+    # Monkeypatch functions for testing
+    if os.getenv("TEST"):
+
+        def _sync_mock_success(*args, **kwargs):
+            return {"success": True}
+
+        async def _async_mock_success(*args, **kwargs):
+            return {"success": True}
+
+        comms_utils.send_sms_message_via_number = _async_mock_success
+        comms_utils.send_unify_message = _async_mock_success
+        comms_utils.send_email_via_address = _async_mock_success
+        comms_utils.start_call = _async_mock_success
+        conversation_manager.call_manager.start_call = _sync_mock_success
+        conversation_manager.call_manager.start_unify_call = _sync_mock_success
+        debug_logger.log_job_startup = _sync_mock_success
+        debug_logger.mark_job_done = _sync_mock_success
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)

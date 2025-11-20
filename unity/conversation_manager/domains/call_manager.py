@@ -57,8 +57,7 @@ class LivekitCallManager:
             target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
-        if not os.getenv("TEST"):
-            self.call_proc = run_script(str(target_path), "dev", *args)
+        self.call_proc = run_script(str(target_path), "dev", *args)
 
     def start_unify_call(self, agent_name, room_name=None):
         target_path = (
@@ -90,8 +89,7 @@ class LivekitCallManager:
         ]
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
-        if not os.getenv("TEST"):
-            self.call_proc = run_script(str(target_path), "dev", *args)
+        self.call_proc = run_script(str(target_path), "dev", *args)
 
     def cleanup_call_proc(self):
         print(f"Terminating call process")
