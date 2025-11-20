@@ -37,7 +37,7 @@ from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.filter_utils import normalize_filter_expr
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -166,7 +166,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a KnowledgeManager."
-        self._ctx = f"{read_ctx}/Knowledge" if read_ctx else "Knowledge"
+        self._ctx = ContextHandler.get_context(self)
 
         # Only compute the Contacts context if the caller requested integration.
         self._contacts_ctx = (
@@ -656,7 +656,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                     self._contacts_ctx,
                     unique_keys={"contact_id": "int"},
                     auto_counting={"contact_id": None},
-                ).ensure_context()
+                )
             except Exception:
                 # Best-effort; absence of Contacts must not break KM initialisation
                 pass
