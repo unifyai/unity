@@ -78,6 +78,11 @@ def resolve_table_ref(self, ref: str) -> str:
             return r
         if _files_root and r.startswith(f"{_files_root}/"):
             return r
+        # Check if ref is already a fully-qualified context path (e.g., temporary join contexts)
+        # Temporary contexts are under FileRecords (e.g., "Assistant/FileRecords/Local/_tmp_mjoin_...")
+        # Check if it starts with the index context prefix (which includes FileRecords)
+        if _index_ctx and r.startswith(_index_ctx + "/"):
+            return r
     if ":" not in ref:
         # Treat as logical name from tables_overview
         return ctx_for_table(self, ref)
@@ -282,27 +287,118 @@ def create_join(
     left_ctx = resolve_table_ref(self, left_ref)
     right_ctx = resolve_table_ref(self, right_ref)
 
-    # Rewrite join/select to fully-qualified contexts
-    # Replace table refs with contexts, but be careful to avoid double-replacement
-    # when refs are substrings of contexts. Replace only complete matches.
+    # Rewrite join/select to use table aliases A. and B. for join expressions
+    # Unify's join_logs API requires column references to be prefixed with A. or B.
     import re
 
-    # Replace refs only when they appear as complete identifiers (not substrings)
-    # Use lookahead/lookbehind to ensure we're not replacing within a larger path
-    # Pattern: start of string or non-word char, then ref, then end of string or non-word char or dot
-    def _safe_replace(text: str, ref: str, ctx: str) -> str:
-        ref_escaped = re.escape(ref)
-        # Match ref only when it's a complete identifier (not part of a path)
-        # Allow ref to be followed by .column_name or end of string
-        pattern = rf"(?<![./\w]){ref_escaped}(?=[.\s]|$)"
-        return re.sub(pattern, ctx, text)
+    # For join expressions, replace column references with aliased versions
+    # Unify requires A. and B. prefixes for columns in join expressions
+    def _rewrite_join_expr_with_aliases(
+        expr: str,
+        left_ref: str,
+        right_ref: str,
+    ) -> str:
+        """
+        Rewrite join expression to use table aliases A. and B.
+        For expressions like 'rid == rid', convert to 'A.rid == B.rid'
+        For expressions like '/path/to/file.row_id == /path/to/file.row_id', convert to 'A.row_id == B.row_id'
+        """
+        # First, replace explicit table refs (including file paths) with aliases
+        left_ref_escaped = re.escape(left_ref)
+        right_ref_escaped = re.escape(right_ref)
 
-    join_expr = _safe_replace(join_expr, left_ref, left_ctx)
-    join_expr = _safe_replace(join_expr, right_ref, right_ctx)
-    select = {
-        _safe_replace(_safe_replace(c, left_ref, left_ctx), right_ref, right_ctx): v
-        for c, v in select.items()
-    }
+        # Replace left_ref.column with A.column (handle paths with /)
+        # Match the full left_ref followed by .column_name
+        expr = re.sub(rf"{left_ref_escaped}\.([a-zA-Z_][a-zA-Z0-9_]*)", r"A.\1", expr)
+        # Replace right_ref.column with B.column (handle paths with /)
+        expr = re.sub(rf"{right_ref_escaped}\.([a-zA-Z_][a-zA-Z0-9_]*)", r"B.\1", expr)
+
+        # For bare column names in join expressions, split by comparison operators
+        # and assign A. to left side, B. to right side
+        # Pattern: column == column, column != column, etc.
+        operators = r"(==|!=|<=|>=|<|>)"
+        parts = re.split(operators, expr)
+
+        if len(parts) >= 3:
+            # We have a comparison: left_expr operator right_expr
+            left_expr = parts[0].strip()
+            op = parts[1]
+            right_expr = parts[2].strip()
+
+            # Add A. prefix to bare column names on left side (but not if already prefixed)
+            # Only match identifiers that aren't already prefixed with A. or B.
+            left_expr = re.sub(
+                r"(?<!\.)\b([a-zA-Z_][a-zA-Z0-9_]*)\b(?!\.)",
+                lambda m: (
+                    f"A.{m.group(1)}"
+                    if not m.group(1).startswith(("A.", "B."))
+                    and m.group(1) not in ("A", "B")
+                    else m.group(1)
+                ),
+                left_expr,
+            )
+            # Add B. prefix to bare column names on right side
+            right_expr = re.sub(
+                r"(?<!\.)\b([a-zA-Z_][a-zA-Z0-9_]*)\b(?!\.)",
+                lambda m: (
+                    f"B.{m.group(1)}"
+                    if not m.group(1).startswith(("A.", "B."))
+                    and m.group(1) not in ("A", "B")
+                    else m.group(1)
+                ),
+                right_expr,
+            )
+
+            # Reconstruct expression
+            remaining = "".join(parts[3:]) if len(parts) > 3 else ""
+            expr = f"{left_expr} {op} {right_expr}{remaining}"
+        else:
+            # No comparison operator found, just add A. prefix to bare columns
+            expr = re.sub(
+                r"(?<!\.)\b([a-zA-Z_][a-zA-Z0-9_]*)\b(?!\.)",
+                lambda m: (
+                    f"A.{m.group(1)}"
+                    if not m.group(1).startswith(("A.", "B."))
+                    and m.group(1) not in ("A", "B")
+                    else m.group(1)
+                ),
+                expr,
+            )
+
+        return expr
+
+    # Rewrite join expression to use aliases
+    join_expr = _rewrite_join_expr_with_aliases(join_expr, left_ref, right_ref)
+
+    # For select, replace table refs with aliases
+    def _rewrite_select_with_aliases(
+        select_dict: Dict[str, str],
+        left_ref: str,
+        right_ref: str,
+    ) -> Dict[str, str]:
+        result = {}
+        left_ref_escaped = re.escape(left_ref)
+        right_ref_escaped = re.escape(right_ref)
+        for col_expr, alias in select_dict.items():
+            # Replace left_ref.column with A.column (handle paths with /)
+            col_expr = re.sub(
+                rf"{left_ref_escaped}\.([a-zA-Z_][a-zA-Z0-9_]*)",
+                r"A.\1",
+                col_expr,
+            )
+            # Replace right_ref.column with B.column (handle paths with /)
+            col_expr = re.sub(
+                rf"{right_ref_escaped}\.([a-zA-Z_][a-zA-Z0-9_]*)",
+                r"B.\1",
+                col_expr,
+            )
+            # For bare column names, assume left table (A.)
+            if "." not in col_expr and col_expr.strip() not in ("A", "B"):
+                col_expr = f"A.{col_expr}"
+            result[col_expr] = alias
+        return result
+
+    select = _rewrite_select_with_aliases(select, left_ref, right_ref)
 
     unify.join_logs(
         pair_of_args=(
@@ -532,7 +628,11 @@ def filter_multi_join(
             if right_ref in ("$prev", "__prev__", "_"):
                 right_ref = prev_ctx
 
-        tmp_ctx = f"{self._ctx}/_tmp_mjoin_{uuid.uuid4().hex[:6]}_{idx}"
+        # Temporary join contexts should be under Files/<alias>, not FileRecords/<alias>
+        from .ops import _per_file_root as _get_per_file_root
+
+        per_file_root = _get_per_file_root(self)
+        tmp_ctx = f"{per_file_root}/_tmp_mjoin_{uuid.uuid4().hex[:6]}_{idx}"
         ensure_tmp_ctx(self, tmp_ctx)
         create_join(
             self,
