@@ -28,6 +28,5 @@ unity.egg-info/
 */node_modules*
 *.soffice-profile*
 .tmux_logs/
-intranet/repairs/*.xlsx
-intranet/repairs/*.csv
 intranet/logs/
+*:Zone.Identifier

@@ -8806,6 +8806,7 @@ dev = [
     { name = "pytest-dotenv" },
     { name = "pytest-html" },
     { name = "pytest-xdist" },
+    { name = "rich" },
     { name = "viztracer" },
 ]
 
@@ -8865,6 +8866,7 @@ dev = [
     { name = "pytest-dotenv", specifier = ">=0.5.2" },
     { name = "pytest-html", specifier = ">=4.1.1" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
+    { name = "rich", specifier = ">=13.9.4" },
     { name = "viztracer", specifier = ">=1.0.4" },
 ]
 

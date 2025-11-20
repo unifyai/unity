@@ -72,6 +72,7 @@ dev = [
     "viztracer>=1.0.4",
     "pytest-dotenv>=0.5.2",
     "ipykernel>=7.1.0",
+    "rich>=13.9.4",
 ]
 
 [tool.setuptools.packages.find]
