@@ -246,12 +246,9 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
     # contact_id = kwargs.get("contact_id")
     to_number = kwargs.get("phone_number")
     message = kwargs.get("message")
-    if not os.getenv("TEST"):
-        response = await comms_utils.send_sms_message_via_number(
-            to_number=to_number, message=message
-        )
-    else:
-        response = {"success": True}
+    response = await comms_utils.send_sms_message_via_number(
+        to_number=to_number, message=message
+    )
     if response["success"]:
         contact = cm.contact_index.get_contact(phone_number=to_number)
         event = SMSSent(contact=contact, content=message)
@@ -270,10 +267,7 @@ async def send_unify_message(
 ):
     message = kwargs.get("message")
     contact_id = kwargs.get("contact_id")
-    if not os.getenv("TEST"):
-        response = await comms_utils.send_unify_message(message=message)
-    else:
-        response = {"success": True}
+    response = await comms_utils.send_unify_message(message=message)
     if response["success"]:
         contact = cm.contact_index.get_contact(contact_id=contact_id)
         event = UnifyMessageSent(contact=contact, content=message)
@@ -291,12 +285,9 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
     subject = kwargs.get("subject")
     body = kwargs.get("body")
     message_id = kwargs.get("message_id")
-    if not os.getenv("TEST"):
-        response = await comms_utils.send_email_via_address(
-            to_email=to_email, subject=subject, body=body, message_id=message_id
-        )
-    else:
-        response = {"success": True}
+    response = await comms_utils.send_email_via_address(
+        to_email=to_email, subject=subject, body=body, message_id=message_id
+    )
     if response["success"]:
         contact = cm.contact_index.get_contact(email=to_email)
         event = EmailSent(
@@ -317,10 +308,7 @@ async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs
     # or remove this altogether
     # contact_id = kwargs.get("contact_id")
     to_number = kwargs.get("phone_number")
-    if not os.getenv("TEST"):
-        response = await comms_utils.start_call(to_number=to_number)
-    else:
-        response = {"success": True}
+    response = await comms_utils.start_call(to_number=to_number)
     if response["success"]:
         contact = cm.contact_index.get_contact(phone_number=to_number)
         event = PhoneCallSent(contact=contact)

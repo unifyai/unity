@@ -7,10 +7,8 @@ import os
 import asyncio
 
 from unity.conversation_manager.comms_manager import CommsManager
-from unity.conversation_manager.event_broker import (
-    get_event_broker,
-    create_event_broker,
-)
+from unity.conversation_manager.event_broker import get_event_broker
+from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
 from unity.helpers import cleanup_dangling_call_processes
@@ -51,6 +49,18 @@ async def main(project_name: str = "Assistants"):
     # This prevents conflicts when multiple call processes can't run simultaneously
     print("Checking for dangling call processes from previous runs...")
     cleanup_dangling_call_processes()
+
+    # In test runs, short-circuit external comms side effects so conversation
+    # manager integration tests don't hit real SMS/email/call providers.
+    if os.getenv("TEST"):
+
+        async def _mock_success(*args, **kwargs):
+            return {"success": True}
+
+        comms_utils.send_sms_message_via_number = _mock_success
+        comms_utils.send_unify_message = _mock_success
+        comms_utils.send_email_via_address = _mock_success
+        comms_utils.start_call = _mock_success
 
     stop = asyncio.Event()
 
