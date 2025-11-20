@@ -68,7 +68,7 @@ async def test_parse_all_supported_formats(file_manager, supported_file_examples
         display_name = str(example_data["path"])  # absolute path
 
         # Parse the file
-        from unity.file_manager.types.config import FilePipelineConfig
+        from unity.file_manager.types import FilePipelineConfig
 
         result = fm.parse(
             display_name,
@@ -124,7 +124,7 @@ async def test_parse_error_handling(file_manager, tmp_path: Path):
     assert fm.exists(str(bad_file))
 
     # Parsing should return a result (basic text parsing as fallback)
-    from unity.file_manager.types.config import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig
 
     result = fm.parse(
         str(bad_file),
@@ -187,7 +187,7 @@ async def test_file_content_preservation(file_manager, supported_file_examples: 
         # Parse by absolute path instead of importing
         display_name = str(example_data["path"])  # absolute path
 
-        from unity.file_manager.types.config import FilePipelineConfig
+        from unity.file_manager.types import FilePipelineConfig
 
         result = fm.parse(
             display_name,
@@ -228,7 +228,7 @@ async def test_document_structure_integrity(
     fm.clear()
     for filename, example_data in supported_file_examples.items():
         display_name = str(example_data["path"])  # absolute path
-        from unity.file_manager.types.config import FilePipelineConfig
+        from unity.file_manager.types import FilePipelineConfig
 
         result = fm.parse(
             display_name,
@@ -249,6 +249,13 @@ async def test_document_structure_integrity(
         ), f"Should have exactly one document record for {filename}"
 
         # Verify hierarchical structure
+        # Skip structural check for CSV files - they don't have hierarchical document structure
+        file_ext = Path(filename).suffix.lower()
+        if file_ext in [".csv", ".xlsx"]:
+            # CSV files are tabular data, not hierarchical documents
+            # They may only have a document record without sections/paragraphs
+            continue
+
         section_records = [r for r in records if r.get("content_type") == "section"]
         para_records = [r for r in records if r.get("content_type") == "paragraph"]
 

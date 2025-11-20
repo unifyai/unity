@@ -19,22 +19,17 @@ def test_filter_multi_join_chain(file_manager, tmp_path: Path):
     name = str(p)
     fm.parse(name, config=FilePipelineConfig())
 
-    # Resolve logical root from overview
-    ov = fm._tables_overview(file=name)
-    roots = [k for k, v in ov.items() if isinstance(v, dict) and "Content" in v]
-    assert roots, "Expected a per-file root in tables_overview"
-    root = roots[0]
-
-    # Chain a two-step multi-join using the same root (self-join) as a smoke test
+    # Use file_path directly instead of legacy root from tables_overview
+    # Chain a two-step multi-join using the same file_path (self-join) as a smoke test
     out = fm._filter_multi_join(
         joins=[
             {
-                "tables": [root, root],
-                "join_expr": f"{root}.row_id == {root}.row_id",
-                "select": {f"{root}.row_id": "rid"},
+                "tables": [name, name],
+                "join_expr": f"{name}.row_id == {name}.row_id",
+                "select": {f"{name}.row_id": "rid"},
             },
             {
-                "tables": ["$prev", root],
+                "tables": ["$prev", name],
                 "join_expr": "rid == rid",
                 "select": {"rid": "rid"},
             },
@@ -57,18 +52,14 @@ def test_search_multi_join_chain_backfill(file_manager, tmp_path: Path):
     name = str(p)
     fm.parse(name, config=FilePipelineConfig())
 
-    ov = fm._tables_overview(file=name)
-    roots = [k for k, v in ov.items() if isinstance(v, dict) and "Content" in v]
-    assert roots
-    root = roots[0]
-
+    # Use file_path directly instead of legacy root from tables_overview
     # No references → backfill path; ensure it does not error and returns a list
     rows = fm._search_multi_join(
         joins=[
             {
-                "tables": [root, root],
-                "join_expr": f"{root}.row_id == {root}.row_id",
-                "select": {f"{root}.row_id": "rid"},
+                "tables": [name, name],
+                "join_expr": f"{name}.row_id == {name}.row_id",
+                "select": {f"{name}.row_id": "rid"},
             },
         ],
         references=None,

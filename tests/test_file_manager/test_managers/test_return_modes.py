@@ -14,7 +14,7 @@ async def test_parse_return_modes(file_manager, tmp_path: Path):
     p = tmp_path / "sample.txt"
     p.write_text("Hello world. This is a sample file.", encoding="utf-8")
 
-    from unity.file_manager.types.config import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig
 
     # compact (default) → typed model
     res_compact = file_manager.parse(str(p))
@@ -59,7 +59,7 @@ async def test_ask_about_file_with_response_format(file_manager, tmp_path: Path)
     p.write_text("Quarterly Report Q1 2025. Revenue grew to $10M.", encoding="utf-8")
 
     # Ensure file is parseable/indexed first (no-op for local absolute path)
-    from unity.file_manager.types.config import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig
 
     file_manager.parse(
         str(p),

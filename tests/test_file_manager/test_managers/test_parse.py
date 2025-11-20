@@ -16,7 +16,7 @@ async def test_parse_single_file(file_manager, supported_file_examples: dict):
     filename, example_data = next(iter(supported_file_examples.items()))
     display_name = str(example_data["path"])  # absolute path
 
-    from unity.file_manager.types.config import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig
 
     # Request full mode to assert heavy fields like 'records'
     result = file_manager.parse(
@@ -63,7 +63,7 @@ async def test_parse_with_options(file_manager, supported_file_examples: dict):
     display_name = str(example_data["path"])  # absolute path
 
     # Parse with options via config (forwarded to parser)
-    from unity.file_manager.types.config import FilePipelineConfig, ParseConfig
+    from unity.file_manager.types import FilePipelineConfig, ParseConfig
 
     cfg = FilePipelineConfig(
         parse=ParseConfig(parser_kwargs={"max_chunk_size": 100, "chunk_overlap": 20}),
@@ -83,7 +83,7 @@ async def test_parse_empty_file(file_manager, sample_files: Path):
     empty_file = sample_files / "empty.txt"
     display_name = str(empty_file)
 
-    from unity.file_manager.types.config import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig
 
     # Request full mode to test 'records' semantics on empty file
     result = file_manager.parse(
@@ -116,7 +116,7 @@ async def test_parse_supported_formats(file_manager, supported_file_examples: di
         display_names.append(display_name)
 
     # Test parsing each file individually
-    from unity.file_manager.types.config import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig
 
     for display_name in display_names:
         result = file_manager.parse(
@@ -158,7 +158,7 @@ async def test_parse_multiple_supported_files(
         display_names.append(display_name)
 
     # Parse all files at once
-    from unity.file_manager.types.config import FilePipelineConfig
+    from unity.file_manager.types import FilePipelineConfig
 
     result = file_manager.parse(
         display_names,

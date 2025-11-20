@@ -12,8 +12,11 @@ from unity.file_manager.types import (
     FilePipelineConfig,
     IngestConfig,
     EmbeddingsConfig,
-    EmbeddingSpec,
+    FileEmbeddingSpec,
+    TableEmbeddingSpec,
     PluginsConfig,
+    BusinessContextSpec,
+    TableBusinessContextSpec,
 )
 
 
@@ -77,11 +80,17 @@ def test_embed_off_no_columns(file_manager, tmp_path: Path):
         ingest=IngestConfig(mode="per_file"),
         embed=EmbeddingsConfig(
             strategy="off",
-            specs=[
-                EmbeddingSpec(
+            file_specs=[
+                FileEmbeddingSpec(
+                    file_path="*",
                     context="per_file",
-                    source_column="summary",
-                    target_column="_summary_emb",
+                    tables=[
+                        TableEmbeddingSpec(
+                            table="*",
+                            source_columns=["summary"],
+                            target_columns=["_summary_emb"],
+                        ),
+                    ],
                 ),
             ],
         ),
@@ -134,11 +143,17 @@ def test_embed_after_single_hook_and_columns(file_manager, tmp_path: Path):
         embed=EmbeddingsConfig(
             strategy="after",
             hooks_per_chunk=True,  # irrelevant for 'after', should still be once
-            specs=[
-                EmbeddingSpec(
+            file_specs=[
+                FileEmbeddingSpec(
+                    file_path="*",
                     context="per_file",
-                    source_column="summary",
-                    target_column="_summary_emb",
+                    tables=[
+                        TableEmbeddingSpec(
+                            table="*",
+                            source_columns=["summary"],
+                            target_columns=["_summary_emb"],
+                        ),
+                    ],
                 ),
             ],
         ),
@@ -196,11 +211,17 @@ def test_embed_along_content_hooks_per_chunk(file_manager, tmp_path: Path):
         embed=EmbeddingsConfig(
             strategy="along",
             hooks_per_chunk=True,
-            specs=[
-                EmbeddingSpec(
+            file_specs=[
+                FileEmbeddingSpec(
+                    file_path="*",
                     context="per_file",
-                    source_column="summary",
-                    target_column="_summary_emb",
+                    tables=[
+                        TableEmbeddingSpec(
+                            table="*",
+                            source_columns=["summary"],
+                            target_columns=["_summary_emb"],
+                        ),
+                    ],
                 ),
             ],
         ),
@@ -279,10 +300,22 @@ def test_auto_strategy_across_formats(
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.parametrize(
-    "file_name,sheet_name,num_rows,batch_size,target_column",
+    "file_name,sheet_name,num_rows,batch_size,target_columns",
     [
-        ("large.csv", None, 6, 2, "_Name_emb"),  # CSV: no sheet name
-        ("large.xlsx", "Sheet1", 6, 2, "_Name_emb"),  # XLSX: with sheet name
+        (
+            "large.csv",
+            None,
+            6,
+            2,
+            ["_Name_emb", "_City_emb"],
+        ),  # CSV: no sheet name, multiple columns
+        (
+            "large.xlsx",
+            "Sheet1",
+            6,
+            2,
+            ["_Name_emb", "_City_emb"],
+        ),  # XLSX: with sheet name, multiple columns
     ],
 )
 def test_table_embeddings_along_for_csv_and_xlsx(
@@ -292,10 +325,11 @@ def test_table_embeddings_along_for_csv_and_xlsx(
     sheet_name: str | None,
     num_rows: int,
     batch_size: int,
-    target_column: str,
+    target_columns: list[str],
 ):
     """
     Ensure that along mode creates embedding columns on per-file table contexts for both CSV and XLSX-like inputs.
+    Demonstrates consolidated embedding spec with multiple columns per table.
     """
     fm = file_manager
     fm.clear()
@@ -312,20 +346,48 @@ def test_table_embeddings_along_for_csv_and_xlsx(
         "file_format": "csv" if file_name.endswith(".csv") else "xlsx",
         "records": [],
     }
+
+    # Use consolidated embedding spec with multiple columns per table
     cfg = FilePipelineConfig(
         ingest=IngestConfig(
             mode="per_file",
             table_rows_batch_size=batch_size,
+            business_contexts=[
+                BusinessContextSpec(
+                    file_path=file_name,
+                    tables=[
+                        TableBusinessContextSpec(
+                            table=sheet_name
+                            or "large",  # Use sheet name or filename-derived table name
+                            column_descriptions={
+                                "Name": "User's full name",
+                                "City": "City where the user resides",
+                                "Age": "User's age in years",
+                                "Country": "Country of residence",
+                            },
+                            table_description="User directory with demographic information",
+                        ),
+                    ],
+                ),
+            ],
         ),
         embed=EmbeddingsConfig(
             strategy="along",
             hooks_per_chunk=True,
-            specs=[
-                EmbeddingSpec(
+            file_specs=[
+                FileEmbeddingSpec(
+                    file_path="*",
                     context="per_file_table",
-                    table="*",
-                    source_column="Name",
-                    target_column=target_column,
+                    tables=[
+                        TableEmbeddingSpec(
+                            table="*",
+                            source_columns=[
+                                "Name",
+                                "City",
+                            ],  # Multiple columns in single spec
+                            target_columns=target_columns,
+                        ),
+                    ],
                 ),
             ],
         ),
@@ -333,12 +395,15 @@ def test_table_embeddings_along_for_csv_and_xlsx(
     # Run along pipeline directly
     fm._ingest_and_embed(file_path=file_name, document=doc, result=result, config=cfg)
 
-    # Locate a per-file table in the overview and assert the embedding column exists
+    # Locate a per-file table in the overview and assert the embedding columns exist
     ov = fm._tables_overview(file=file_name)
     roots = [k for k, v in ov.items() if isinstance(v, dict) and "Tables" in v]
     assert roots, "Expected per-file root with Tables"
     tables = ov[roots[0]]["Tables"]
     assert isinstance(tables, dict) and len(tables) >= 1
     logical = next(iter(tables.keys()))
-    cols = fm._list_columns(table=f"{roots[0]}.Tables.{logical}")
-    assert target_column in cols
+    # Use file_path directly instead of legacy root from tables_overview
+    cols = fm._list_columns(table=f"{file_name}.Tables.{logical}")
+    # Verify all target columns were created (consolidated spec with multiple columns)
+    for target_col in target_columns:
+        assert target_col in cols, f"Expected embedding column {target_col} to exist"
