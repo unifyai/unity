@@ -22,7 +22,6 @@ def provision_storage(self) -> None:
         ),
         fields=model_to_fields(Message),
     )
-    self._store.ensure_context()
 
     # Exchanges context: one row per exchange_id with optional metadata
     self._exchanges_store = TableStore(
@@ -31,7 +30,6 @@ def provision_storage(self) -> None:
         description="One row per conversation exchange/thread with optional metadata.",
         fields=model_to_fields(Exchange),
     )
-    self._exchanges_store.ensure_context()
 
     # No local columns cache; always read from TableStore when needed
 

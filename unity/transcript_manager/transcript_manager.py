@@ -54,7 +54,7 @@ from .images import (
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 from ..common.model_to_fields import model_to_fields
 
 
@@ -134,14 +134,8 @@ class TranscriptManager(BaseTranscriptManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
 
-        if read_ctx:
-            self._transcripts_ctx = f"{read_ctx}/Transcripts"
-        else:
-            self._transcripts_ctx = "Transcripts"
-        if read_ctx:
-            self._exchanges_ctx = f"{read_ctx}/Exchanges"
-        else:
-            self._exchanges_ctx = "Exchanges"
+        self._transcripts_ctx = ContextHandler.get_context(self, "Transcripts")
+        self._exchanges_ctx = ContextHandler.get_context(self, "Exchanges")
 
         # Image support: lazy-safe image manager and image-aware tools
         _ensure_image_manager(self)
