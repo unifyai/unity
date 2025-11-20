@@ -54,9 +54,17 @@ class ContextHandler:
         context_names = list(available_contexts.keys())
 
         all_contexts = []
+        active_context = unify.get_active_context()
+        assert (
+            active_context["read"] == active_context["write"]
+        ), "Read and write contexts must be the same"
         for manager in ContextHandler.get_managers():
             all_contexts.extend(
-                ContextHandler.get_contexts_for_manager(manager, context_names),
+                ContextHandler.get_contexts_for_manager(
+                    manager,
+                    active_context["read"],
+                    context_names,
+                ),
             )
 
         if len(all_contexts) <= 0:
@@ -66,7 +74,7 @@ class ContextHandler:
             start_time = time.time()
             try:
                 filtered_context = {k: v for k, v in context.items() if k != "fields"}
-                result = create_context(**filtered_context)
+                create_context(**filtered_context)
                 if "fields" in context:
                     create_fields(context["fields"], context=context["name"])
             except Exception as e:
@@ -92,7 +100,11 @@ class ContextHandler:
         cls._setup_complete = True
 
     @staticmethod
-    def get_contexts_for_manager(manager, available_contexts: List[str]):
+    def get_contexts_for_manager(
+        manager,
+        current_context: str,
+        available_contexts: List[str],
+    ):
         out = []
         assert hasattr(manager, "Config"), "Manager must have a Config class attribute"
         assert hasattr(
@@ -100,10 +112,11 @@ class ContextHandler:
             "required_contexts",
         ), "Config must have a required_contexts class attribute"
         for context in manager.Config.required_contexts:
-            if context.name in available_contexts:
+            _context_name = f"{current_context}/{context.name}"
+            if _context_name in available_contexts:
                 continue
             data = {
-                "name": context.name,
+                "name": _context_name,
                 "description": context.description,
                 "fields": context.fields if context.fields else None,
                 "unique_keys": context.unique_keys if context.unique_keys else None,
