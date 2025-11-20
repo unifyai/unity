@@ -16,7 +16,7 @@ from ..common.context_store import TableStore
 from ..file_manager.file_manager import FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 
 
 logger = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ class FunctionManager(BaseFunctionManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a FunctionManager."
-        self._ctx = f"{read_ctx}/Functions" if read_ctx else "Functions"
+        self._ctx = ContextHandler.get_context(self)
 
         # Ensure functions context and fields exist deterministically
         self._provision_storage()
@@ -342,7 +342,6 @@ class FunctionManager(BaseFunctionManager):
             description="List of functions, with all function details stored.",
             fields=model_to_fields(Function),
         )
-        self._store.ensure_context()
 
     def _get_log_by_function_id(
         self,
