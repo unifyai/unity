@@ -25,7 +25,7 @@ from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
 from ..common.filter_utils import normalize_filter_expr
 from ..common.data_store import DataStore
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 import itertools
 
 
@@ -608,6 +608,17 @@ class ImageHandle:
 class ImageManager(BaseImageManager):
     """Concrete implementation backed by Unify contexts and fields."""
 
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Images",
+                description="Collection of images with timestamps, captions, and raw base64 data.",
+                fields=model_to_fields(Image),
+                unique_keys={"image_id": "int"},
+                auto_counting={"image_id": None},
+            ),
+        ]
+
     def __init__(self) -> None:
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
@@ -625,7 +636,7 @@ class ImageManager(BaseImageManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating an ImageManager."
 
-        self._ctx = f"{read_ctx}/Images" if read_ctx else "Images"
+        self._ctx = ContextHandler.get_context(self, "Images")
 
         # Local DataStore mirror for Images (write-through on reads/writes)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("image_id",))
@@ -1345,7 +1356,6 @@ class ImageManager(BaseImageManager):
             description="Collection of images with timestamps, captions, and raw base64 data.",
             fields=model_to_fields(Image),
         )
-        self._store.ensure_context()
 
         # Cache built-in fields for fast whitelisting
         self._BUILTIN_FIELDS: tuple[str, ...] = tuple(Image.model_fields.keys())
