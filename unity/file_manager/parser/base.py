@@ -16,6 +16,7 @@ from typing import (
     Any,
     Generic,
     List,
+    Optional,
     Protocol,
     Sequence,
     TypeVar,
@@ -29,6 +30,45 @@ from unity.file_manager.parser.types.document import Document
 
 # Type variable for the return type
 T = TypeVar("T", bound=Document)
+
+
+def _run_async_from_sync(coro):
+    """
+    Run an async coroutine from a sync context, handling both cases:
+    - If no event loop is running, use asyncio.run()
+    - If an event loop is running, create a new loop in a thread and wait
+    """
+    try:
+        # Try to get the running loop
+        loop = asyncio.get_running_loop()
+        # We're in an async context - run in a separate thread with new event loop
+        import threading
+
+        result_container = {"value": None, "exception": None}
+        event = threading.Event()
+
+        def run_in_thread():
+            try:
+                # Create a new event loop in this thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                result_container["value"] = new_loop.run_until_complete(coro)
+            except Exception as e:
+                result_container["exception"] = e
+            finally:
+                event.set()
+
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        event.wait()
+        thread.join()
+
+        if result_container["exception"]:
+            raise result_container["exception"]
+        return result_container["value"]
+    except RuntimeError:
+        # No running loop - safe to use asyncio.run()
+        return asyncio.run(coro)
 
 
 class BaseParser(ABC, metaclass=SingletonABCMeta):
@@ -133,25 +173,88 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
         **options: Any,
     ) -> List[Document]:
         """
-        Parse multiple files (sequentially by default).
+        Parse multiple files in parallel using asyncio (similar to parse_batch_async).
 
-        Concrete parsers should override this with an optimized implementation
-        (including any safe parallelization). The base implementation iterates
-        over inputs and calls parse() for each path, preserving order, and
-        saves results if enabled.
+        Concrete parsers can override this with an optimized implementation,
+        but the base implementation provides parallel parsing out of the box.
+        Results are returned in the same order as input file_paths.
         """
         if not file_paths:
             return []
 
-        results: List[Document] = []
-        for path in file_paths:
-            try:
-                result = self.parse(path, **options)
-                results.append(result)
-                self._save_parsed_result_if_enabled(path, result)
-            except Exception as e:
-                raise RuntimeError(f"Failed to parse {path}: {e}") from e
-        return results
+        async def _parse_batch_async() -> List[Document]:
+            """Internal async function to run parallel parsing."""
+            loop = asyncio.get_event_loop()
+
+            # Create semaphore to limit concurrent parsing
+            semaphore = asyncio.Semaphore(max(1, batch_size))
+
+            completed = 0
+
+            async def parse_with_semaphore(
+                index: int,
+                path: Union[str, Path],
+            ) -> Tuple[int, Document]:
+                nonlocal completed
+                async with semaphore:
+                    try:
+                        # Run parse in executor since it's a blocking operation
+                        result = await loop.run_in_executor(
+                            None,
+                            lambda: self.parse(path, **options),
+                        )
+                        # Persist parsed result if enabled
+                        await loop.run_in_executor(
+                            None,
+                            self._save_parsed_result_if_enabled,
+                            path,
+                            result,
+                        )
+                        completed += 1
+                        print(
+                            f"[Parser] ✓ Parsed file {completed}/{len(file_paths)}: {path}",
+                        )
+                        return (index, result)
+                    except Exception as e:
+                        completed += 1
+                        print(
+                            f"[Parser] ❌ Failed to parse file {completed}/{len(file_paths)}: {path} - {e}",
+                        )
+                        raise RuntimeError(f"Failed to parse {path}: {e}") from e
+
+            print(
+                f"[Parser] 🔍 Parsing {len(file_paths)} file(s) in parallel (batch_size={batch_size})",
+            )
+
+            tasks = [
+                asyncio.create_task(parse_with_semaphore(i, p))
+                for i, p in enumerate(file_paths)
+            ]
+
+            # Collect results as they complete, preserving order
+            results: List[Optional[Document]] = [None] * len(file_paths)
+            errors: List[Exception] = []
+
+            for coro in asyncio.as_completed(tasks):
+                try:
+                    idx, result = await coro
+                    results[idx] = result
+                except Exception as e:
+                    errors.append(e)
+
+            print(
+                f"[Parser] ✅ Parsing complete: {len([r for r in results if r is not None])}/{len(file_paths)} files parsed successfully",
+            )
+
+            # If any errors occurred, raise the first one (preserving original behavior)
+            if errors:
+                raise errors[0]
+
+            # Filter out None results (shouldn't happen if no errors, but defensive)
+            return [r for r in results if r is not None]
+
+        # Run async function from sync context
+        return _run_async_from_sync(_parse_batch_async())
 
     async def parse_batch_async(
         self,
@@ -185,10 +288,13 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
         # Create semaphore to limit concurrent parsing
         semaphore = asyncio.Semaphore(max(1, batch_size))
 
+        completed = 0
+
         async def parse_with_semaphore(
             index: int,
             path: Union[str, Path],
         ) -> Tuple[int, Document]:
+            nonlocal completed
             async with semaphore:
                 try:
                     # Run parse in executor since it's a blocking operation
@@ -203,9 +309,21 @@ class BaseParser(ABC, metaclass=SingletonABCMeta):
                         path,
                         result,
                     )
+                    completed += 1
+                    print(
+                        f"[Parser] ✓ Parsed file {completed}/{len(file_paths)}: {path}",
+                    )
                     return (index, result)
                 except Exception as e:
+                    completed += 1
+                    print(
+                        f"[Parser] ❌ Failed to parse file {completed}/{len(file_paths)}: {path} - {e}",
+                    )
                     raise RuntimeError(f"Failed to parse {path}: {e}") from e
+
+        print(
+            f"[Parser] 🔍 Parsing {len(file_paths)} file(s) in parallel (batch_size={batch_size})",
+        )
 
         tasks = [
             asyncio.create_task(parse_with_semaphore(i, p))

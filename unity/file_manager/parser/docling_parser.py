@@ -643,7 +643,7 @@ class DoclingParser(GenericParser[Document]):
             try:
                 import unify
 
-                return unify.map(fn, items, name=name) if items else []
+                return unify.map(fn, items, name=name, mode="asyncio") if items else []
             except Exception:
                 return [fn(**it) for it in items]
 
