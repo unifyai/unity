@@ -82,7 +82,7 @@ from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.sentinels import _UnsetSentinel
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 
 
 # Sentinel for optional-argument presence detection
@@ -279,7 +279,7 @@ class TaskScheduler(BaseTaskScheduler):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TaskScheduler."
-        self._ctx = f"{read_ctx}/Tasks" if read_ctx else "Tasks"
+        self._ctx = ContextHandler.get_context(self)
 
         # Install storage adapter and ensure context/fields exist
         self._provision_storage()
@@ -336,21 +336,6 @@ class TaskScheduler(BaseTaskScheduler):
         """Ensure Tasks context, schema and local view exist (idempotent)."""
         # Install storage adapter and ensure context/fields exist
         self._store = TasksStore(self._ctx)
-        self._store.ensure_context(
-            unique_keys={"task_id": "int", "instance_id": "int"},
-            auto_counting={
-                "task_id": None,
-                "instance_id": "task_id",
-            },
-            description=(
-                "List of all tasks with their name, description, status, "
-                "schedule, deadline, repeat pattern, priority **and** "
-                "`instance_id` which tracks multiple executions of the "
-                "same logical task."
-            ),
-            fields=model_to_fields(Task),
-        )
-
         # Centralised local view for queue membership, allocator and light caching.
         self._view = LocalTaskView(self._store)
 
