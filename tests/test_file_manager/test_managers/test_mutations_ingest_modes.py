@@ -29,7 +29,7 @@ def test_unified_mode_rename_preserves_unified_content(file_manager, tmp_path: P
     assert "UnifiedDocs" in ov_before and "Content" in ov_before["UnifiedDocs"]
 
     # Rename the underlying file
-    fm._rename_file(target_id_or_path=name, new_name="unified_dst.txt")
+    fm._rename_file(file_id_or_path=name, new_name="unified_dst.txt")
     new_name = str(p.with_name("unified_dst.txt"))
 
     # After rename: the unified Content key remains under the same label
@@ -53,7 +53,7 @@ def test_per_file_mode_move_updates_content_root(file_manager, tmp_path: Path):
     # Move into a subfolder
     sub = tmp_path / "sub"
     sub.mkdir(parents=True, exist_ok=True)
-    fm._move_file(target_id_or_path=name, new_parent_path=str(sub))
+    fm._move_file(file_id_or_path=name, new_parent_path=str(sub))
     new_name = str(sub / src.name)
 
     # The file-scoped overview should resolve the Content context for the new path

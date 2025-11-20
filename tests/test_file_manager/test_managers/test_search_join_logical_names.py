@@ -24,25 +24,14 @@ def test_filter_join_with_logical_names(file_manager, tmp_path: Path):
     fa, fb = str(a), str(b)
     fm.parse([fa, fb], config=FilePipelineConfig())
 
-    # Overview provides logical names; fetch roots
-    ov_a = fm._tables_overview(file=fa)
-    roots_a = [k for k, v in ov_a.items() if isinstance(v, dict) and "Content" in v]
-    assert roots_a
-    root_a = roots_a[0]
-
-    ov_b = fm._tables_overview(file=fb)
-    roots_b = [k for k, v in ov_b.items() if isinstance(v, dict) and "Content" in v]
-    assert roots_b
-    root_b = roots_b[0]
-
-    # With no explicit tables extracted in this basic text path, we still check the join wrapper accepts logical names
-    # We will join Content contexts by a trivial select; this is a smoke test for logical name resolution
+    # Use file_path directly instead of legacy root from tables_overview
+    # We will join Content contexts by a trivial select; this is a smoke test for file_path resolution
     out = fm._filter_join(
-        tables=[root_a, root_b],
-        join_expr=f"{root_a}.row_id == {root_b}.row_id",
+        tables=[fa, fb],
+        join_expr=f"{fa}.row_id == {fb}.row_id",
         select={
-            f"{root_a}.file_id": "left_id",
-            f"{root_b}.file_id": "right_id",
+            f"{fa}.file_id": "left_id",
+            f"{fb}.file_id": "right_id",
         },
         mode="inner",
         left_where=None,

@@ -20,15 +20,15 @@ def test_list_columns_per_file_content(
     file_manager.parse(file_path)
 
     overview = file_manager._tables_overview(file=file_path)
-    # Find the per-file root key
+    # Verify overview has content (for validation)
     roots = [k for k in overview.keys() if k != "FileRecords"]
     if not roots:
         # Nothing was created (e.g., parse failure) – be lenient
         return
-    root = roots[0]
 
-    # Request the schema for the per-file Content context via logical name
-    cols = file_manager._list_columns(table=root)
+    # Use file_path directly instead of legacy root from tables_overview
+    # Request the schema for the per-file Content context via file_path
+    cols = file_manager._list_columns(table=file_path)
     assert isinstance(cols, dict)
     assert len(cols) > 0
 
@@ -55,19 +55,19 @@ def test_list_columns_per_file_table_when_present(
     roots = [k for k in overview.keys() if k != "FileRecords"]
     if not roots:
         return
-    # Look for a Tables map under any root
-    table_ref = None
+    # Look for a Tables map under any root to get the table label
+    table_label = None
     for root in roots:
         meta = overview.get(root, {})
         tables = meta.get("Tables") if isinstance(meta, dict) else None
         if tables:
-            label = next(iter(tables.keys()))
-            table_ref = f"{root}.Tables.{label}"
+            table_label = next(iter(tables.keys()))
             break
-    if table_ref is None:
+    if table_label is None:
         # No tables extracted in this run – be lenient
         return
 
-    cols = file_manager._list_columns(table=table_ref)
+    # Use file_path directly instead of legacy root from tables_overview
+    cols = file_manager._list_columns(table=f"{file_path}.Tables.{table_label}")
     assert isinstance(cols, dict)
     assert len(cols) > 0
