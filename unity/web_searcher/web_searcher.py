@@ -29,7 +29,7 @@ from ..common.embed_utils import ensure_vector_column
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k
 from .types.website import Website
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 
 
 class WebSearcher(BaseWebSearcher):
@@ -69,7 +69,7 @@ class WebSearcher(BaseWebSearcher):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must match for WebSearcher."
-        self._websites_ctx = f"{read_ctx}/Websites"
+        self._websites_ctx = ContextHandler.get_context(self)
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
             self._search,
@@ -254,7 +254,6 @@ class WebSearcher(BaseWebSearcher):
                 ),
                 fields=model_to_fields(Website),
             )
-            self._websites_store.ensure_context()
             try:
                 ensure_vector_column(
                     self._websites_ctx,
