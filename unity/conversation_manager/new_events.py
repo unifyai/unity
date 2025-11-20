@@ -88,6 +88,11 @@ class PhoneCallReceived(Event):
 
 
 @dataclass
+class PhoneCallAnswered(Event):
+    contact: dict
+
+
+@dataclass
 class UnifyCallReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 

@@ -43,16 +43,25 @@ class EventHandler:
         return f(event, cm, *args, **kwargs)
 
 
-CallEvents = Union[PhoneCallReceived, PhoneCallSent, UnifyCallReceived]
+CallEvents = Union[
+    PhoneCallReceived, PhoneCallSent, UnifyCallReceived, PhoneCallAnswered
+]
 
 
-@EventHandler.register((PhoneCallReceived, PhoneCallSent, UnifyCallReceived))
+@EventHandler.register(
+    (PhoneCallReceived, PhoneCallSent, UnifyCallReceived, PhoneCallAnswered)
+)
 async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
-    if cm.mode in ["phone", "gmeet", "unify_call"]:
+    if cm.mode in ["call", "gmeet", "unify_call"]:
         # can't make call
         # TODO: we should handle this somehow tbh
         # for now do nothing, but we can think of adding a notification of an attempted call
-        ...
+
+        # if an outbound call has been answered, we should send a notification to the call script
+        if isinstance(event, PhoneCallAnswered):
+            await cm.event_broker.publish(
+                "app:call:status", json.dumps({"type": "call_answered"})
+            )
     else:
         # update state
         message_content = None
@@ -69,7 +78,9 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
                 notif_content = f"Call received from {contact['first_name']}"
             case PhoneCallSent() as e:
                 if not os.getenv("TEST"):
-                    cm.call_manager.start_call(contact["phone_number"], contact, boss)
+                    cm.call_manager.start_call(
+                        contact["phone_number"], contact, boss, outbound=True
+                    )
                 message_content = "<Sending Call...>"
                 notif_content = f"Call sent to {contact['first_name']}"
             case UnifyCallReceived() as e:

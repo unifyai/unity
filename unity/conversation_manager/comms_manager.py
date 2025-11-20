@@ -302,7 +302,7 @@ class CommsManager:
                             room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_call_received"
-                    else:
+                    elif thread == "call":
                         number = event.get("caller_number", event.get("user_number"))
                         contact = next(
                             c for c in contacts if c["phone_number"] == number
@@ -312,6 +312,13 @@ class CommsManager:
                             conference_name=event.get("conference_name", ""),
                         )
                         topic = "app:comms:call_recieved"
+                    else:
+                        number = event.get("user_number")
+                        contact = next(
+                            c for c in contacts if c["phone_number"] == number
+                        )
+                        event = PhoneCallAnswered(contact=contact)
+                        topic = "app:comms:call_answered"
 
                     # Publish the event
                     task = asyncio.run_coroutine_threadsafe(
