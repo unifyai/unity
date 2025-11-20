@@ -271,7 +271,7 @@ if __name__ == "__main__":
     assistant_number = ""
     to_number = ""
     voice_provider = "gpt-realtime"
-    voice_id = ""
+    voice_id = "alloy"
     meet_id = ""
     outbound = "False"
     print("sys.argv", sys.argv)
