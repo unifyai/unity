@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional, Type
 from pydantic import BaseModel
 import asyncio
 import unify
+import functools
 from pathlib import Path
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
@@ -254,17 +255,21 @@ class WebSearcher(BaseWebSearcher):
                 ),
                 fields=model_to_fields(Website),
             )
-            try:
-                ensure_vector_column(
-                    self._websites_ctx,
-                    embed_column="notes_emb",
-                    source_column="notes",
-                    derived_expr=None,
-                )
-            except Exception:
-                pass
         except Exception:
             # Best-effort only; callers operate without caches if needed
+            pass
+
+    @functools.cache
+    def _ensure_notes_vector(self) -> None:
+        # Ensure vector for notes (best-effort)
+        try:
+            ensure_vector_column(
+                self._websites_ctx,
+                embed_column="notes_emb",
+                source_column="notes",
+                derived_expr=None,
+            )
+        except Exception:
             pass
 
     @functools.wraps(BaseWebSearcher.clear, updated=())
@@ -561,6 +566,7 @@ class WebSearcher(BaseWebSearcher):
         """
         if not isinstance(notes, str) or not notes.strip():
             return []
+        self._ensure_notes_vector()
         rows = table_search_top_k(
             context=self._websites_ctx,
             references={"notes": notes},
