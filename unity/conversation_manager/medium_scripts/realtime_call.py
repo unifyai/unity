@@ -202,6 +202,59 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         print(role, text)
 
+    async def end_call():
+        print("Initiating graceful shutdown...")
+
+        # Send end call event before cleaning tasks and closing connection
+        await event_broker.publish(
+            "app:comms:phone_call_ended",
+            PhoneCallEnded(contact=contact).to_json(),
+        )
+        print("End call event sent")
+
+        # Get all running tasks except current task
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+        if tasks:
+            print(f"Cancelling {len(tasks)} running tasks...")
+            # Cancel all tasks
+            for task in tasks:
+                task.cancel()
+
+            # Wait for tasks to be cancelled gracefully
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                print("All tasks cancelled successfully")
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                print(f"Error during task cancellation: {e}")
+
+        print("Graceful shutdown completed")
+
+    # Add inactivity timeout
+    INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
+    last_activity_time = asyncio.get_event_loop().time()
+
+    async def check_inactivity():
+        nonlocal last_activity_time
+        while True:
+            await asyncio.sleep(10)  # Check every 10 seconds
+            current_time = asyncio.get_event_loop().time()
+            if current_time - last_activity_time > INACTIVITY_TIMEOUT:
+                print("Inactivity timeout reached, shutting down agent...")
+                await end_call()
+                break  # Exit the loop after shutdown
+
+    # Start inactivity checker
+    asyncio.create_task(check_inactivity())
+
+    # Create a wrapper for the room event handler since it expects a sync function
+    def on_participant_disconnected(*args, **kwargs):
+        asyncio.create_task(end_call())
+
+    ctx.room.on("participant_disconnected", on_participant_disconnected)
+
     # Lightweight audio I/O options. You can add noise cancellation, custom VAD, etc.
     rio = RoomInputOptions(
         # noise_cancellation=noise_cancellation.BVC(),
@@ -257,12 +310,6 @@ async def entrypoint(ctx: JobContext) -> None:
     logger.info("starting AgentSession")
     await session.start(room=ctx.room, agent=agent, room_input_options=rio)
     asyncio.create_task(wait_for_nudges())
-
-    # Keep the job alive until the room ends or the worker shuts down.
-    # The worker lifecycle will stop this when participants leave.
-    while True:
-        # If your app has a shutdown condition, check it here.
-        await asyncio.sleep(2)
 
 
 if __name__ == "__main__":
