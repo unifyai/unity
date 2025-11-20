@@ -31,7 +31,7 @@ class LivekitCallManager:
         self.conference_name = ""
 
     # TODO: support unify calls and clean up boss data passage
-    def start_call(self, contact_phone_number, contact, boss):
+    def start_call(self, contact_phone_number, contact, boss, outbound: bool = False):
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         args = [
             contact_phone_number,
@@ -39,7 +39,7 @@ class LivekitCallManager:
             self.voice_provider,
             self.voice_id,
             None,
-            False,
+            outbound,
             contact["is_boss"],
             contact["contact_id"],
             contact["first_name"],

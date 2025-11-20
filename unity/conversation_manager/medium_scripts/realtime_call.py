@@ -33,7 +33,10 @@ from jinja2 import Template
 from livekit.agents import (
     Agent,
     AgentSession,
+    FunctionTool,
     JobContext,
+    llm,
+    ModelSettings,
     RoomInputOptions,
     UserInputTranscribedEvent,
     UserStateChangedEvent,
@@ -48,6 +51,7 @@ from livekit.plugins import (
     # noise_cancellation,
     silero,
 )
+from typing import AsyncIterable
 
 load_dotenv()
 
@@ -85,9 +89,32 @@ logger.setLevel(logging.INFO)
 
 
 class Assistant(Agent):
+    def __init__(
+        self,
+        instructions: str = "",
+        outbound: bool = False,
+    ) -> None:
+        self._call_received = not outbound
+
+        super().__init__(instructions=instructions)
+
     async def on_user_turn_completed(self, turn_ctx, new_message):
         print(turn_ctx)
         print(new_message)
+
+    async def llm_node(
+        self,
+        chat_ctx: llm.ChatContext,
+        tools: list[FunctionTool],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable[llm.ChatChunk]:
+        print("waiting for call to be received...")
+        while not self._call_received:
+            await asyncio.sleep(0.1)
+        print("call received")
+        print("running llm node...")
+        async for chunk in super().llm_node(chat_ctx, tools, model_settings):
+            yield chunk
 
     # async def transcription_node(self, text, model_settings):
     #     async for delta in text:
@@ -123,6 +150,11 @@ async def entrypoint(ctx: JobContext) -> None:
 
     voice_provider = os.environ.get("VOICE_PROVIDER", "gpt-realtime")
     voice_id = os.environ.get("VOICE_ID", "alloy")
+    outbound = os.environ.get("OUTBOUND", "False") == "True"
+
+    print("voice_provider", voice_provider)
+    print("voice_id", voice_id)
+    print("outbound", outbound)
 
     # Configure the OpenAI Realtime model. The default model is 'gpt-realtime', so the
     # explicit model= parameter here is optional, but shown for clarity.
@@ -190,7 +222,7 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     print("PRINTING SYSTEM PROMPT")
     print(system)
-    agent = Assistant(instructions=system)
+    agent = Assistant(instructions=system, outbound=outbound)
 
     await event_broker.publish(
         "app:comms:phone_call_started",

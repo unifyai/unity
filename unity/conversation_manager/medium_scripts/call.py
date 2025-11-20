@@ -123,6 +123,8 @@ class Assistant(Agent):
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
         print("waiting for call to be received...")
+        while not self._call_received:
+            await asyncio.sleep(0.1)
         print("call received")
         print("running llm node...")
         # this should probably be done with a queue instead to avoid race conditions
@@ -163,6 +165,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
+    print("outbound", outbound)
 
     # fallback for whenever pre-loading fails
     if STT is None:
@@ -336,7 +339,7 @@ async def entrypoint(ctx: agents.JobContext):
         global chunk_queue
 
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:response_gen")
+            await pubsub.subscribe("app:call:response_gen", "app:call:status")
             print("waiting for events...")
             while True:
                 try:
@@ -351,7 +354,7 @@ async def entrypoint(ctx: agents.JobContext):
                     # Update activity time on any event
                     last_activity_time = asyncio.get_event_loop().time()
                     # handle msg
-                    if msg["type"] == "call_received":
+                    if msg["type"] == "call_answered":
                         print("call received")
                         assistant.set_call_received()
                     elif msg["type"] == "start_gen":
