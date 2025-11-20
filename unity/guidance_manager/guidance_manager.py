@@ -34,7 +34,7 @@ from ..image_manager.image_manager import ImageManager
 from ..image_manager.types import AnnotatedImageRefs, AnnotatedImageRef
 from ..common.embed_utils import list_private_fields
 from ..common.filter_utils import normalize_filter_expr
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 
 
 class GuidanceManager(BaseGuidanceManager):
@@ -71,7 +71,7 @@ class GuidanceManager(BaseGuidanceManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a GuidanceManager."
 
-        self._ctx = f"{read_ctx}/Guidance" if read_ctx else "Guidance"
+        self._ctx = ContextHandler.get_context(self)
 
         # Built-in fields derived from Guidance model
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Guidance.model_fields.keys())
@@ -372,7 +372,6 @@ class GuidanceManager(BaseGuidanceManager):
             ),
             fields=model_to_fields(Guidance),
         )
-        self._store.ensure_context()
 
         # Prefill known custom fields once to include any preexisting non-private columns
         try:
