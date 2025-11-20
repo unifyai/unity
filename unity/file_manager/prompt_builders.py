@@ -90,6 +90,20 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             f"• Paginate scans to control volume: `{filter_files_fname}(filter=..., offset=200, limit=100)`.",
             f"• Semantic search inside a specific context: `{search_files_fname}(references={{'content': 'paymentterms'}}, table='<file_path>', filter=\"file_format == 'pdf'\")`.",
             "",
+            # Result volume management & pagination
+            "Result volume management & pagination",
+            "-------------------------------------",
+            "• Start with conservative limits (e.g., limit=50); increase to 100 only if strictly needed.",
+            f"• Prefer paginating with `offset` instead of raising limits: `{filter_files_fname}(filter=..., offset=0, limit=50)` then step offset by 50.",
+            "• Avoid very large limits (>100); they bloat payloads and the model context.",
+            "",
+            # Filter discipline & column selection
+            "Filter discipline & column selection",
+            "------------------------------------",
+            "• Choose only the minimal, most relevant columns for filters; avoid broad multi‑column predicates unless necessary.",
+            "• Do not OR across many similar fields (e.g., several date columns); pick the best single column based on schema/description and question intent.",
+            "• Only combine multiple columns when unavoidable; even then keep limits low (<100) and validate with small pages first.",
+            "",
             # Dict-based content_id usage
             "Dict-based hierarchical IDs (per-file Content)",
             "-----------------------------------------------",
@@ -125,9 +139,13 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             "-------------------------",
             f"• Pattern: Start with `{tables_overview_fname}` → `{list_columns_fname}` to decide which contexts and columns to use.",
             "• Pattern: Prefer semantic search for long text; exact filters for ids/labels.",
+            "• Pattern: Use small limits (50→100 max) with offset-based pagination to manage volume.",
+            "• Pattern: Choose the minimal set of filter columns based on schema/column descriptions.",
             "• Anti‑pattern: Hand-constructing raw Unify contexts – always pass `<file_path>` or `<file_path>.Tables.<label>` instead.",
             "• Anti‑pattern: Using substring filters for meaning over long text (prefer semantic search).",
             "• Anti‑pattern: Referencing columns in `result_where` not present in `select`.",
+            "• Anti‑pattern: Large limits (>100) that flood the context window; paginate instead.",
+            "• Anti‑pattern: Careless multi-column OR predicates across similar fields (e.g., several date columns); pick the single best column unless truly necessary.",
         ],
     )
 
@@ -344,6 +362,8 @@ def build_file_manager_ask_prompt(
         "• Prefer one comprehensive join or search call over several micro-calls when feasible.",
         "• When multiple independent checks are needed (e.g., stat on multiple files), plan them and run together.",
         "• Avoid confirmatory re‑queries unless new ambiguity arises.",
+        "• Control result volume: start with limit=50 and paginate with offset; only step to 100 if needed.",
+        "• Avoid large limits (>100) and broad multi‑column filter predicates; choose the minimal relevant columns.",
         "",
         "Anti‑patterns to avoid",
         "---------------------",
@@ -556,6 +576,8 @@ def build_file_manager_ask_about_file_prompt(
         "• Prefer a single comprehensive join/search over many micro-calls when feasible.",
         "• Plan independent checks together (e.g., stat + file-scoped overview) rather than serial drip calls.",
         "• Avoid confirmatory re-queries unless new ambiguity arises.",
+        "• Control result volume: start with limit=50 and paginate via offset; only step to 100 if needed.",
+        "• Avoid large limits (>100) and careless multi‑column filters; pick the minimal relevant columns.",
     ]
 
     # Structured extraction block when response_format is present (descriptive guidance)

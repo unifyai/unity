@@ -136,9 +136,15 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         p = self._abspath(path)
         dest = p.with_name(new_name)
         p.rename(dest)
-        rel = str(dest.relative_to(self._root)).replace("\\", "/")
+        # Handle absolute paths that may be outside adapter root
+        try:
+            rel = str(dest.relative_to(self._root)).replace("\\", "/")
+            path_str = "/" + rel if not rel.startswith("/") else rel
+        except ValueError:
+            # Path is outside adapter root, use absolute path
+            path_str = dest.as_posix()
         return FileReference(
-            path=("/" + rel if not rel.startswith("/") else rel),
+            path=path_str,
             name=dest.name,
             provider=self.name,
             uri=f"{self.uri_name}://{dest.resolve().as_posix().lstrip('/')}",
@@ -152,9 +158,15 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         new_parent.mkdir(parents=True, exist_ok=True)
         dest = new_parent / p.name
         p.rename(dest)
-        rel = str(dest.relative_to(self._root)).replace("\\", "/")
+        # Handle absolute paths that may be outside adapter root
+        try:
+            rel = str(dest.relative_to(self._root)).replace("\\", "/")
+            path_str = "/" + rel if not rel.startswith("/") else rel
+        except ValueError:
+            # Path is outside adapter root, use absolute path
+            path_str = dest.as_posix()
         return FileReference(
-            path=("/" + rel if not rel.startswith("/") else rel),
+            path=path_str,
             name=dest.name,
             provider=self.name,
             uri=f"{self.uri_name}://{dest.resolve().as_posix().lstrip('/')}",

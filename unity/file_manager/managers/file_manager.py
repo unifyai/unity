@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import functools
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 from typing import AsyncIterator
 
 import unify
@@ -14,10 +14,11 @@ from unity.file_manager.parser.docling_parser import DoclingParser
 from unity.file_manager.types.file import FileRecord, FileContent
 from unity.file_manager.types.config import (
     FilePipelineConfig as _FilePipelineConfig,
+    FileEmbeddingSpec,
+    TableEmbeddingSpec,
     resolve_callables as _resolve_callables,
 )
 from unity.file_manager.parser.types.document import Document as _Doc
-from .file_ops import build_compact_parse_model as _build_compact_parse_model
 from unity.file_manager.fs_adapters.base import BaseFileSystemAdapter
 from unity.file_manager.prompt_builders import (
     build_file_manager_ask_prompt,
@@ -107,6 +108,8 @@ class FileManager(BaseFileManager):
                 extract_tables=True,
             )
         )
+        # Optional rich progress manager (initialized during parse/parse_async when enabled)
+        self._progress_manager = None
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
 
         # Derive a stable alias and context
@@ -266,6 +269,7 @@ class FileManager(BaseFileManager):
 
         # Prefer adapter's provider when available
         try:
+            # Use path as-is (adapters handle both relative and absolute paths)
             ref = self._adapter_get(file_id_or_path=file_path)
             source_provider = str(ref.get("provider") or source_provider)
         except Exception:
@@ -278,6 +282,7 @@ class FileManager(BaseFileManager):
         try:
             from .storage import _resolve_file_target as _res_file_target  # type: ignore
 
+            # Use path as-is for querying
             res = _res_file_target(self, file_path)
             ingest_mode = res.get("ingest_mode", "per_file")
             unified_label = res.get("unified_label")
@@ -434,6 +439,7 @@ class FileManager(BaseFileManager):
             pass
         # Adapter lookup
         try:
+            # Use path as-is (adapters handle both relative and absolute paths)
             ref = self._adapter_get(file_id_or_path=s)
             uri = ref.get("uri")
             if isinstance(uri, str) and uri:
@@ -703,6 +709,7 @@ class FileManager(BaseFileManager):
         """
         if self._adapter is None:
             raise NotImplementedError("No adapter configured for direct file lookups")
+        # Use path as-is (adapters handle both relative and absolute paths)
         ref = self._adapter.get_file(file_id_or_path)
         return getattr(ref, "model_dump", lambda: ref.__dict__)()
 
@@ -723,6 +730,7 @@ class FileManager(BaseFileManager):
         """
         if self._adapter is None:
             raise NotImplementedError("No adapter configured for opening file bytes")
+        # Use path as-is (adapters handle both relative and absolute paths)
         data = self._adapter.open_bytes(file_id_or_path)
         # Return as base64-ish payload for safety; caller can decide how to use
         try:
@@ -756,6 +764,7 @@ class FileManager(BaseFileManager):
         """
         # Resolve via adapter when available
         if self._adapter is not None:
+            # Use path as-is (adapters handle both relative and absolute paths)
             return self._adapter.open_bytes(filename)
         raise FileNotFoundError(f"Unable to resolve file bytes for '{filename}'")
 
@@ -914,6 +923,7 @@ class FileManager(BaseFileManager):
         if self._adapter is None:
             return False
         try:
+            # Use path as-is (adapters handle both relative and absolute paths)
             ok = self._adapter.exists(filename)
         except Exception:
             return False
@@ -940,6 +950,41 @@ class FileManager(BaseFileManager):
         return list(items or [])
 
     # -------------------- Config + ingestion helpers (private) -------------------- #
+    def _resolve_embedding_specs_for_file(
+        self,
+        file_path: str,
+        config: _FilePipelineConfig,
+    ) -> List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]]:
+        """
+        Resolve file_specs for a given file_path.
+
+        This helper function filters file_specs by file_path (exact match or "*" wildcard)
+        and returns matching (FileEmbeddingSpec, TableEmbeddingSpec) pairs.
+
+        Parameters
+        ----------
+        file_path : str
+            The file path to resolve specs for
+        config : FilePipelineConfig
+            Pipeline configuration
+
+        Returns
+        -------
+        List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]]
+            List of (file_spec, table_spec) pairs applicable to this file_path
+        """
+        resolved_specs: List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]] = []
+
+        if hasattr(config.embed, "file_specs") and config.embed.file_specs:
+            for file_spec in config.embed.file_specs:
+                # Check if file_path matches (exact match or "*" wildcard)
+                if file_spec.file_path == "*" or file_spec.file_path == file_path:
+                    # Add all table specs for this file
+                    for table_spec in file_spec.tables:
+                        resolved_specs.append((file_spec, table_spec))
+
+        return resolved_specs
+
     def _ingest(
         self,
         *,
@@ -1056,6 +1101,7 @@ class FileManager(BaseFileManager):
                 file_path=dest_name,
                 document=document,
                 table_rows_batch_size=config.ingest.table_rows_batch_size,
+                config=config,
             )
 
         return inserted_ids
@@ -1085,10 +1131,13 @@ class FileManager(BaseFileManager):
         config : FilePipelineConfig
             Embeddings configuration.
         """
+        # Resolve embedding specs for this file_path
+        resolved_specs = self._resolve_embedding_specs_for_file(file_path, config)
+
         # Embedding is enabled when strategy != "off" and specs are provided.
         if not (
             getattr(getattr(config, "embed", None), "strategy", "auto") != "off"
-            and config.embed.specs
+            and resolved_specs
         ):
             return
         if bool(
@@ -1097,7 +1146,7 @@ class FileManager(BaseFileManager):
             print(
                 f"[Embed] Starting embeddings for: {file_path} (strategy={getattr(config.embed, 'strategy', 'auto')})",
             )
-            print(f"[Embed] Specs: {len(config.embed.specs)}")
+            print(f"[Embed] Specs: {len(resolved_specs)}")
         # Pre-embed hooks
         try:
             for fn in _resolve_callables(config.plugins.pre_embed):
@@ -1120,47 +1169,57 @@ class FileManager(BaseFileManager):
                 if config.ingest.mode == "per_file"
                 else (config.ingest.unified_label or "Unified")
             )
-            for spec in config.embed.specs:
-                if spec.context == "per_file":
+            for file_spec, table_spec in resolved_specs:
+                if file_spec.context == "per_file":
                     ctx = _storage_ctx_for_file(self, file_path=ctx_name)
-                    if bool(
-                        getattr(
-                            getattr(config, "diagnostics", None),
-                            "enable_progress",
-                            False,
-                        ),
+                    # Iterate over column pairs
+                    for source_col, target_col in zip(
+                        table_spec.source_columns,
+                        table_spec.target_columns,
                     ):
-                        print(
-                            f"[Embed] Ensuring vector column on Content: ctx={ctx}, target={spec.target_column}, source={spec.source_column}",
+                        if bool(
+                            getattr(
+                                getattr(config, "diagnostics", None),
+                                "enable_progress",
+                                False,
+                            ),
+                        ):
+                            print(
+                                f"[Embed] Ensuring vector column on Content: ctx={ctx}, target={target_col}, source={source_col}",
+                            )
+                        ensure_vector_column(
+                            ctx,
+                            embed_column=target_col,
+                            source_column=source_col,
+                            from_ids=(inserted_ids or None),
                         )
-                    ensure_vector_column(
-                        ctx,
-                        embed_column=spec.target_column,
-                        source_column=spec.source_column,
-                        from_ids=(inserted_ids or None),
-                    )
-                elif spec.context == "unified":
+                elif file_spec.context == "unified":
                     ctx = _storage_ctx_for_file(
                         self,
                         file_path=(config.ingest.unified_label or "Unified"),
                     )
-                    if bool(
-                        getattr(
-                            getattr(config, "diagnostics", None),
-                            "enable_progress",
-                            False,
-                        ),
+                    # Iterate over column pairs
+                    for source_col, target_col in zip(
+                        table_spec.source_columns,
+                        table_spec.target_columns,
                     ):
-                        print(
-                            f"[Embed] Ensuring vector column on Unified Content: ctx={ctx}, target={spec.target_column}, source={spec.source_column}",
+                        if bool(
+                            getattr(
+                                getattr(config, "diagnostics", None),
+                                "enable_progress",
+                                False,
+                            ),
+                        ):
+                            print(
+                                f"[Embed] Ensuring vector column on Unified Content: ctx={ctx}, target={target_col}, source={source_col}",
+                            )
+                        ensure_vector_column(
+                            ctx,
+                            embed_column=target_col,
+                            source_column=source_col,
+                            from_ids=(inserted_ids or None),
                         )
-                    ensure_vector_column(
-                        ctx,
-                        embed_column=spec.target_column,
-                        source_column=spec.source_column,
-                        from_ids=(inserted_ids or None),
-                    )
-                elif spec.context == "per_file_table":
+                elif file_spec.context == "per_file_table":
                     # Traverse the file-scoped overview to find per-file Tables contexts.
                     overview = self._tables_overview(file=ctx_name)
                     tables_meta: list[dict] = []
@@ -1175,7 +1234,7 @@ class FileManager(BaseFileManager):
                             )
                     # When a specific table label is provided, compare using the manager's safe() mapping
                     # against the actual per-file context suffix (…/Tables/<safe_label>).
-                    table_filter = getattr(spec, "table", None)
+                    table_filter = table_spec.table
                     safe_target = None
                     if table_filter not in (None, "*"):
                         try:
@@ -1193,21 +1252,26 @@ class FileManager(BaseFileManager):
                             tail = ctx_label.split("/Tables/", 1)[-1]
                             if tail != safe_target:
                                 continue
-                        if bool(
-                            getattr(
-                                getattr(config, "diagnostics", None),
-                                "enable_progress",
-                                False,
-                            ),
+                        # Iterate over column pairs
+                        for source_col, target_col in zip(
+                            table_spec.source_columns,
+                            table_spec.target_columns,
                         ):
-                            print(
-                                f"[Embed] Ensuring vector column on Table: ctx={ctx_label}, target={spec.target_column}, source={spec.source_column}",
+                            if bool(
+                                getattr(
+                                    getattr(config, "diagnostics", None),
+                                    "enable_progress",
+                                    False,
+                                ),
+                            ):
+                                print(
+                                    f"[Embed] Ensuring vector column on Table: ctx={ctx_label}, target={target_col}, source={source_col}",
+                                )
+                            ensure_vector_column(
+                                ctx_label,
+                                embed_column=target_col,
+                                source_column=source_col,
                             )
-                        ensure_vector_column(
-                            ctx_label,
-                            embed_column=spec.target_column,
-                            source_column=spec.source_column,
-                        )
         except Exception:
             pass
 
@@ -1271,6 +1335,7 @@ class FileManager(BaseFileManager):
         )
 
         # Lookup file_id from index to set FK on rows
+        # Use path as-is for querying
         _rows = unify.get_logs(
             context=self._ctx,
             filter=f"file_path == {file_path!r}",
@@ -1302,25 +1367,66 @@ class FileManager(BaseFileManager):
             except Exception:
                 pass
 
-        file_content_entries: List[Dict[str, Any]] = (
-            FileContent.to_file_content_entries(
-                file_id=int(_fid),
-                rows=rows,
-                id_layout=getattr(getattr(config, "ingest", None), "id_layout", "map"),
-            )
+        # Chunk rows according to content_rows_batch_size
+        content_rows_batch_size = int(
+            getattr(getattr(config, "ingest", None), "content_rows_batch_size", 1000),
+        )
+        id_layout = getattr(getattr(config, "ingest", None), "id_layout", "map")
+        auto_counting_per_file = (
+            getattr(config.ingest, "id_hierarchy", None)
+            if id_layout == "columns"
+            else None
         )
 
-        inserted_ids = _ops_create_file_content(
-            self,
-            file_path=dest_name,
-            auto_counting_per_file=(
-                getattr(config.ingest, "id_hierarchy", None)
-                if getattr(config.ingest, "id_layout", "map") == "columns"
-                else None
-            ),
-            rows=file_content_entries,
+        enable_progress = bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
         )
-        return list(inserted_ids or [])
+
+        total_rows = len(rows)
+        total_chunks = (
+            (total_rows + content_rows_batch_size - 1) // content_rows_batch_size
+            if total_rows > 0
+            else 0
+        )
+
+        # Start content ingestion tracking
+        if enable_progress and self._progress_manager is not None:
+            self._progress_manager.start_content_ingest(file_path, total_chunks)  # type: ignore[union-attr]
+
+        all_inserted_ids: List[int] = []
+        chunk_num = 0
+
+        chunk_iter = range(0, len(rows), content_rows_batch_size)
+
+        for i in chunk_iter:
+            chunk = rows[i : i + content_rows_batch_size]
+
+            file_content_entries: List[Dict[str, Any]] = (
+                FileContent.to_file_content_entries(
+                    file_id=int(_fid),
+                    rows=chunk,
+                    id_layout=id_layout,
+                )
+            )
+
+            inserted_ids = _ops_create_file_content(
+                self,
+                file_path=dest_name,
+                auto_counting_per_file=auto_counting_per_file,
+                rows=file_content_entries,
+            )
+            all_inserted_ids.extend(list(inserted_ids or []))
+
+            chunk_num += 1
+            # Update progress manager
+            if enable_progress and self._progress_manager is not None:
+                self._progress_manager.update_content_ingest(file_path, chunk_num)  # type: ignore[union-attr]
+
+        # Complete content ingestion
+        if enable_progress and self._progress_manager is not None:
+            self._progress_manager.complete_content_ingest(file_path)  # type: ignore[union-attr]
+
+        return all_inserted_ids
 
         # ---------- Per-table ingestion for spreadsheets (CSV/XLSX/Sheets) ----- #
 
@@ -1330,6 +1436,7 @@ class FileManager(BaseFileManager):
         file_path: str,
         document: Any,
         table_rows_batch_size: int = 100,
+        config: Optional[_FilePipelineConfig] = None,
     ) -> None:
         """
         Create one sub-context per extracted table and log its rows.
@@ -1411,9 +1518,39 @@ class FileManager(BaseFileManager):
                 print(f"Error ensuring per-file table context: {e}")
 
             # Batch rows for efficient logging via ops
+            enable_progress = (
+                bool(
+                    getattr(
+                        getattr(config, "diagnostics", None),
+                        "enable_progress",
+                        False,
+                    ),
+                )
+                if config
+                else False
+            )
+
             batch: List[Dict[str, Any]] = []
             processed = 0
             total_rows = len(rows)
+            total_chunks_for_table = (
+                (total_rows + table_rows_batch_size - 1) // table_rows_batch_size
+                if total_rows > 0
+                else 0
+            )
+
+            # Register table with progress manager
+            embed_strategy = (
+                getattr(getattr(config, "embed", None), "strategy", "off")
+                if config
+                else "off"
+            )
+            embed_total = total_chunks_for_table if embed_strategy == "along" else 0
+
+            if enable_progress and self._progress_manager is not None:
+                self._progress_manager.register_table(file_path, table_label, total_chunks_for_table, embed_total)  # type: ignore[union-attr]
+
+            chunk_num = 0
             for r in rows:
                 if isinstance(r, dict):
                     entry = {
@@ -1427,7 +1564,7 @@ class FileManager(BaseFileManager):
                 batch.append(entry)
                 if len(batch) >= max(1, int(table_rows_batch_size)):
                     try:
-                        _ops_create_file_table(
+                        inserted_ids = _ops_create_file_table(
                             self,
                             file_path=file_path,
                             table=table_label,
@@ -1440,23 +1577,22 @@ class FileManager(BaseFileManager):
                             ),
                         )
                         processed += len(batch)
-                        if bool(
-                            getattr(
-                                getattr(_FilePipelineConfig(), "diagnostics", None),
-                                "enable_progress",
-                                False,
-                            ),
-                        ):
-                            # This branch won't read user cfg; progress prints for table loops are handled in _ingest_and_embed
-                            pass
+                        chunk_num += 1
+
+                        # Update progress manager
+                        if enable_progress and self._progress_manager is not None:
+                            self._progress_manager.update_table_ingest(file_path, table_label, chunk_num)  # type: ignore[union-attr]
                     except Exception as e:
-                        print(f"Error logging table rows batch: {e}")
+                        if enable_progress:
+                            print(f"[Ingest] ❌ Error logging table rows batch: {e}")
+                        else:
+                            print(f"Error logging table rows batch: {e}")
                     batch = []
 
             # Flush any remaining rows
             if batch:
                 try:
-                    _ops_create_file_table(
+                    inserted_ids = _ops_create_file_table(
                         self,
                         file_path=file_path,
                         table=table_label,
@@ -1466,8 +1602,20 @@ class FileManager(BaseFileManager):
                             rows[0] if (rows and isinstance(rows[0], dict)) else None
                         ),
                     )
+                    chunk_num += 1
+
+                    # Update progress manager
+                    if enable_progress and self._progress_manager is not None:
+                        self._progress_manager.update_table_ingest(file_path, table_label, chunk_num)  # type: ignore[union-attr]
                 except Exception as e:
-                    print(f"Error logging final table rows batch: {e}")
+                    if enable_progress:
+                        print(f"[Ingest] ❌ Error logging final table rows batch: {e}")
+                    else:
+                        print(f"Error logging final table rows batch: {e}")
+
+            # Complete table ingestion
+            if enable_progress and self._progress_manager is not None:
+                self._progress_manager.complete_table_ingest(file_path, table_label)  # type: ignore[union-attr]
 
     def _ingest_and_embed(
         self,
@@ -1484,23 +1632,35 @@ class FileManager(BaseFileManager):
         but embedding jobs run asynchronously without blocking subsequent ingestion.
         All embedding jobs are tracked and awaited at the end.
         """
-        # 1) Index the file record (best-effort)
+        # 1) Index the file record (required for embedding)
         if bool(
             getattr(getattr(config, "diagnostics", None), "enable_progress", False),
         ):
             print(f"[Along] Starting ingest+embed for: {file_path}")
-        try:
-            from .ops import index_file_record as _ops_index_file_record
-
-            _ops_index_file_record(
-                self,
+        # Ensure file record exists before embedding (required for file_id lookup)
+        ident = self._build_file_identity(file_path)
+        _ops_create_file_record(
+            self,
+            entry=FileRecord.to_file_record_entry(
                 file_path=file_path,
+                source_uri=getattr(ident, "source_uri", None),
+                source_provider=getattr(ident, "source_provider", None),
                 result=result,
-                config=config,
-            )
-        except Exception:
-            # Fall through; downstream ingestion will still proceed.
-            pass
+                ingest_mode=(
+                    getattr(getattr(config, "ingest", None), "mode", "per_file")
+                    or "per_file"
+                ),
+                unified_label=(
+                    getattr(getattr(config, "ingest", None), "unified_label", None)
+                    if getattr(getattr(config, "ingest", None), "mode", "per_file")
+                    == "unified"
+                    else None
+                ),
+                table_ingest=bool(
+                    getattr(getattr(config, "ingest", None), "table_ingest", True),
+                ),
+            ),
+        )
 
         # Determine destination display name/context root for this file (content + tables)
         dest_name = (
@@ -1515,15 +1675,18 @@ class FileManager(BaseFileManager):
         batch_size = int(
             getattr(getattr(config, "ingest", None), "content_rows_batch_size", 1000),
         )
+        # Resolve embedding specs for this file_path
+        resolved_specs = self._resolve_embedding_specs_for_file(file_path, config)
+
         # Filter specs for the correct content context
         target_ctx_name = _storage_ctx_for_file(self, file_path=dest_name)
         content_spec_context = (
             "per_file" if config.ingest.mode == "per_file" else "unified"
         )
         content_specs = [
-            sp
-            for sp in (config.embed.specs or [])
-            if getattr(sp, "context", None) == content_spec_context
+            (file_spec, table_spec)
+            for file_spec, table_spec in resolved_specs
+            if file_spec.context == content_spec_context
         ]
         enable_progress = bool(
             getattr(getattr(config, "diagnostics", None), "enable_progress", False),
@@ -1547,14 +1710,14 @@ class FileManager(BaseFileManager):
             from .ops import embed_table_chunks_async as _ops_embed_table_chunks_async
 
             table_specs = [
-                sp
-                for sp in (config.embed.specs or [])
-                if getattr(sp, "context", None) == "per_file_table"
+                (file_spec, table_spec)
+                for file_spec, table_spec in resolved_specs
+                if file_spec.context == "per_file_table"
             ]
 
             _ops_embed_table_chunks_async(
                 self,
-                file_path=dest_name,
+                file_path=file_path,  # Use original file_path for config matching, not dest_name
                 document=document,
                 target_ctx_name=target_ctx_name,
                 table_specs=table_specs,
@@ -1609,6 +1772,12 @@ class FileManager(BaseFileManager):
 
         temp_dir: Optional[str] = None
         try:
+            # Initialize rich progress manager when enabled
+            try:
+                from .progress_display import FileProgressManager as _FP
+            except Exception:
+                _FP = None  # type: ignore
+
             import tempfile as _tempfile
 
             temp_dir = _tempfile.mkdtemp(prefix="filemanager_parse_")
@@ -1643,14 +1812,40 @@ class FileManager(BaseFileManager):
             if not exported_paths:
                 return results
 
-            # Parse exported files
+            enable_progress = bool(
+                getattr(getattr(cfg, "diagnostics", None), "enable_progress", False),
+            )
+
+            # Start progress manager and register files
+            if enable_progress and _FP is not None:
+                try:
+                    self._progress_manager = _FP(enable=True)
+                    self._progress_manager.start()
+                    # Register files up-front
+                    for exp in exported_paths:
+                        orig = exported_paths_to_original_paths.get(exp, exp)
+                        self._progress_manager.register_file(orig, cfg)  # type: ignore[union-attr]
+                except Exception:
+                    self._progress_manager = None
+
+            # Parse files using parser's batch method (handles parallelization)
             documents: List[Any] = []
             if len(exported_paths) > 1 and hasattr(self._parser, "parse_batch"):
                 try:
+                    if enable_progress:
+                        print(
+                            f"[FileManager] Parsing {len(exported_paths)} files in parallel (batch_size={cfg.parse.batch_size})",
+                        )
                     documents = self._parser.parse_batch(
                         exported_paths,
+                        batch_size=cfg.parse.batch_size,
                         **cfg.parse.parser_kwargs,
                     )
+                    # Mark all files as parsed (parse_batch returns in-order)
+                    if enable_progress and self._progress_manager is not None:
+                        for exp in exported_paths:
+                            orig = exported_paths_to_original_paths.get(exp, exp)
+                            self._progress_manager.update_parsing(orig, "complete")  # type: ignore[union-attr]
                 except Exception as e:
                     # Batch failure → mark all remaining as errors
                     for fp in exported_paths:
@@ -1660,6 +1855,11 @@ class FileManager(BaseFileManager):
                                 original_path,
                                 f"parse_batch failed: {e}",
                             )
+                            if enable_progress and self._progress_manager is not None:
+                                try:
+                                    self._progress_manager.update_parsing(original_path, "failed")  # type: ignore[union-attr]
+                                except Exception:
+                                    pass
                     return results
             else:
                 try:
@@ -1669,109 +1869,61 @@ class FileManager(BaseFileManager):
                             **cfg.parse.parser_kwargs,
                         ),
                     ]
+                    if enable_progress and self._progress_manager is not None:
+                        orig0 = exported_paths_to_original_paths.get(
+                            exported_paths[0],
+                            exported_paths[0],
+                        )
+                        self._progress_manager.update_parsing(orig0, "complete")  # type: ignore[union-attr]
                 except Exception as e:
                     original_path = exported_paths_to_original_paths.get(
                         exported_paths[0],
                         exported_paths[0],
                     )
                     results[original_path] = _Doc.error_result(original_path, str(e))
+                    if enable_progress and self._progress_manager is not None:
+                        try:
+                            self._progress_manager.update_parsing(original_path, "failed")  # type: ignore[union-attr]
+                        except Exception:
+                            pass
                     return results
 
             # Build results and ingest per-file artifacts
-            for idx, document in enumerate(documents):
-                fp = exported_paths[idx] if idx < len(exported_paths) else None
-                if fp is None:
-                    continue
-                original_path = exported_paths_to_original_paths.get(fp, fp)
-                try:
-                    # Post-parse hooks (document available)
-                    try:
-                        for fn in _resolve_callables(cfg.plugins.post_parse):
-                            try:
-                                fn(
-                                    manager=self,
-                                    filename=original_path,
-                                    result=None,
-                                    document=document,
-                                    config=cfg,
-                                )
-                            except Exception as e:
-                                results[original_path] = _Doc.error_result(
-                                    original_path,
-                                    f"post-parse hook failed: {e}",
-                                )
-                    except Exception as e:
-                        results[original_path] = _Doc.error_result(
-                            original_path,
-                            f"post-parse hooks failed: {e}",
-                        )
-                    result = document.to_parse_result(
-                        original_path,
-                        auto_counting=(
-                            cfg.ingest.auto_counting_per_file
-                            if cfg.ingest.id_layout == "columns"
-                            else None
-                        ),
-                        document_index=idx,
-                        id_layout=getattr(cfg.ingest, "id_layout", "map"),
-                        id_string_format=getattr(cfg.ingest, "id_string_format", None),
-                    )
-                except Exception as e:
-                    results[original_path] = _Doc.error_result(
-                        original_path,
-                        f"parse failed: {e}",
-                    )
+            # Check if we can parallelize (per_file mode only)
+            can_parallelize = cfg.ingest.mode == "per_file" and len(documents) > 1
 
-                # Choose strategy per-file
-                try:
-                    from .ops import resolve_embed_strategy as _res_strategy
-
-                    strategy = _res_strategy(document, result, cfg)
-                except Exception:
-                    strategy = "after"
-                if strategy == "along":
-                    self._ingest_and_embed(
-                        file_path=original_path,
-                        document=document,
-                        result=result,
-                        config=cfg,
+            if can_parallelize:
+                # Parallel processing for per_file mode
+                if enable_progress:
+                    print(
+                        f"[FileManager] Parallelizing ingest+embed for {len(documents)} files (per_file mode)",
                     )
-                else:
-                    inserted_ids = self._ingest(
-                        file_path=original_path,
-                        document=document,
-                        result=result,
-                        config=cfg,
-                    )
-                    if strategy != "off":
-                        self._embed(
-                            file_path=original_path,
-                            document=document,
-                            result=result,
-                            inserted_ids=inserted_ids,
-                            config=cfg,
-                        )
+                from .ops import process_files_parallel as _process_parallel
 
-                # Decide return mode
-                mode = getattr(getattr(cfg, "output", None), "return_mode", "compact")
-                if mode == "full":
-                    results[original_path] = result
-                elif mode == "none":
-                    results[original_path] = {
-                        "file_path": original_path,
-                        "status": result.get("status"),
-                        "error": result.get("error"),
-                        "total_records": result.get("total_records"),
-                        "file_format": result.get("file_format"),
-                    }
-                else:  # compact
-                    results[original_path] = _build_compact_parse_model(
+                results.update(
+                    _process_parallel(
                         self,
-                        file_path=original_path,
-                        document=document,
-                        result=result,
+                        documents=documents,
+                        exported_paths=exported_paths,
+                        exported_paths_to_original_paths=exported_paths_to_original_paths,
                         config=cfg,
-                    )
+                        enable_progress=enable_progress,
+                    ),
+                )
+            else:
+                # Sequential processing (unified mode or single file)
+                from .ops import process_files_sequential as _process_sequential
+
+                results.update(
+                    _process_sequential(
+                        self,
+                        documents=documents,
+                        exported_paths=exported_paths,
+                        exported_paths_to_original_paths=exported_paths_to_original_paths,
+                        config=cfg,
+                        enable_progress=enable_progress,
+                    ),
+                )
 
             return results
         finally:
@@ -1783,6 +1935,13 @@ class FileManager(BaseFileManager):
                     _shutil2.rmtree(temp_dir)
                 except Exception:
                     pass
+            # Stop progress manager if started
+            try:
+                if self._progress_manager is not None:
+                    self._progress_manager.stop()  # type: ignore[union-attr]
+                    self._progress_manager = None
+            except Exception:
+                pass
 
     async def parse_async(
         self,
@@ -1823,6 +1982,12 @@ class FileManager(BaseFileManager):
 
         temp_dir: Optional[str] = None
         try:
+            # Initialize rich progress manager when enabled
+            try:
+                from .progress_display import FileProgressManager as _FP
+            except Exception:
+                _FP = None  # type: ignore
+
             import tempfile as _tempfile
 
             temp_dir = _tempfile.mkdtemp(prefix="filemanager_parse_")
@@ -1860,15 +2025,52 @@ class FileManager(BaseFileManager):
                     yield err
                 return
 
-            # Parse exported files
-            documents: List[Any] = []
-            if len(exported_paths) > 1 and hasattr(self._parser, "parse_batch"):
+            enable_progress = bool(
+                getattr(getattr(cfg, "diagnostics", None), "enable_progress", False),
+            )
+
+            # Start progress manager and register files
+            if enable_progress and _FP is not None:
                 try:
-                    documents = await asyncio.to_thread(
-                        self._parser.parse_batch,
+                    self._progress_manager = _FP(enable=True)
+                    self._progress_manager.start()
+                    # Register files up-front
+                    for exp in exported_paths:
+                        orig = exported_paths_to_original_paths.get(exp, exp)
+                        self._progress_manager.register_file(orig, cfg)  # type: ignore[union-attr]
+                except Exception:
+                    self._progress_manager = None
+
+            # Parse files using parser's async batch method (yields as they complete)
+            documents: List[Any] = []
+            if len(exported_paths) > 1 and hasattr(self._parser, "parse_batch_async"):
+                try:
+                    if enable_progress:
+                        print(
+                            f"[FileManager] Parsing {len(exported_paths)} files in parallel (batch_size={cfg.parse.batch_size})",
+                        )
+                    # Collect documents as they complete parsing
+                    async for idx, document in self._parser.parse_batch_async(
                         exported_paths,
+                        batch_size=cfg.parse.batch_size,
                         **cfg.parse.parser_kwargs,
-                    )
+                    ):
+                        documents.append((idx, document))
+                        # Update parsing progress as each completes
+                        if enable_progress and self._progress_manager is not None:
+                            try:
+                                exp = (
+                                    exported_paths[idx]
+                                    if idx < len(exported_paths)
+                                    else exported_paths[0]
+                                )
+                                orig = exported_paths_to_original_paths.get(exp, exp)
+                                self._progress_manager.update_parsing(orig, "complete")  # type: ignore[union-attr]
+                            except Exception:
+                                pass
+                    # Sort by index to preserve order
+                    documents.sort(key=lambda x: x[0])
+                    documents = [doc for _, doc in documents]
                 except Exception as e:
                     # Batch failure → mark all remaining as errors
                     for fp in exported_paths:
@@ -1876,8 +2078,13 @@ class FileManager(BaseFileManager):
                         if original_path:
                             yield _Doc.error_result(
                                 original_path,
-                                f"parse_batch failed: {e}",
+                                f"parse_batch_async failed: {e}",
                             )
+                            if enable_progress and self._progress_manager is not None:
+                                try:
+                                    self._progress_manager.update_parsing(original_path, "failed")  # type: ignore[union-attr]
+                                except Exception:
+                                    pass
                     # also yield any buffered export errors
                     for err in export_errors:
                         yield err
@@ -1891,128 +2098,67 @@ class FileManager(BaseFileManager):
                             **cfg.parse.parser_kwargs,
                         ),
                     ]
+                    if enable_progress and self._progress_manager is not None:
+                        orig0 = exported_paths_to_original_paths.get(
+                            exported_paths[0],
+                            exported_paths[0],
+                        )
+                        self._progress_manager.update_parsing(orig0, "complete")  # type: ignore[union-attr]
                 except Exception as e:
                     original_path = exported_paths_to_original_paths.get(
                         exported_paths[0],
                         exported_paths[0],
                     )
                     yield _Doc.error_result(original_path, str(e))
+                    if enable_progress and self._progress_manager is not None:
+                        try:
+                            self._progress_manager.update_parsing(original_path, "failed")  # type: ignore[union-attr]
+                        except Exception:
+                            pass
                     for err in export_errors:
                         yield err
                     return
 
             # Build results and ingest per-file artifacts
-            for idx, document in enumerate(documents):
-                fp = exported_paths[idx] if idx < len(exported_paths) else None
-                if fp is None:
-                    continue
-                original_path = exported_paths_to_original_paths.get(fp, fp)
-                try:
-                    # Post-parse hooks (document available)
-                    try:
-                        for fn in _resolve_callables(cfg.plugins.post_parse):
-                            try:
-                                fn(
-                                    manager=self,
-                                    filename=original_path,
-                                    result=None,
-                                    document=document,
-                                    config=cfg,
-                                )
-                            except Exception as e:
-                                yield _Doc.error_result(
-                                    original_path,
-                                    f"post-parse hook failed: {e}",
-                                )
-                    except Exception as e:
-                        yield _Doc.error_result(
-                            original_path,
-                            f"post-parse hooks failed: {e}",
-                        )
-                    result = document.to_parse_result(
-                        original_path,
-                        auto_counting=(
-                            cfg.ingest.auto_counting_per_file
-                            if cfg.ingest.id_layout == "columns"
-                            else None
-                        ),
-                        document_index=idx,
-                        id_layout=getattr(cfg.ingest, "id_layout", "map"),
-                        id_string_format=getattr(cfg.ingest, "id_string_format", None),
-                    )
-                    # Defer assignment until after ingest/embed so we can choose return mode
-                except Exception as e:
-                    yield _Doc.error_result(original_path, f"parse failed: {e}")
-                    continue
+            # Check if we can parallelize (per_file mode only)
+            can_parallelize = cfg.ingest.mode == "per_file" and len(documents) > 1
 
-                # Choose strategy per-file
-                try:
-                    from .ops import resolve_embed_strategy as _res_strategy
-
-                    strategy = _res_strategy(document, result, cfg)
-                except Exception:
-                    strategy = "after"
-                if strategy == "along":
-                    self._ingest_and_embed(
-                        file_path=original_path,
-                        document=document,
-                        result=result,
-                        config=cfg,
+            if can_parallelize:
+                # Parallel processing for per_file mode using asyncio.gather
+                if enable_progress:
+                    print(
+                        f"[FileManager] Parallelizing ingest+embed for {len(documents)} files (per_file mode)",
                     )
-                else:
-                    inserted_ids = self._ingest(
-                        file_path=original_path,
-                        document=document,
-                        result=result,
-                        config=cfg,
-                    )
-                    if strategy != "off":
-                        self._embed(
-                            file_path=original_path,
-                            document=document,
-                            result=result,
-                            inserted_ids=inserted_ids,
-                            config=cfg,
-                        )
+                from .ops import process_files_parallel_async as _process_parallel_async
 
-                # Decide return mode
-                mode = getattr(getattr(cfg, "output", None), "return_mode", "compact")
-                if mode == "full":
-                    yield result
-                elif mode == "none":
-                    yield {
-                        "file_path": original_path,
-                        "status": result.get("status"),
-                        "error": result.get("error"),
-                        "total_records": result.get("total_records"),
-                        "file_format": result.get("file_format"),
-                    }
-                else:  # compact
-                    _model = _build_compact_parse_model(
-                        self,
-                        file_path=original_path,
-                        document=document,
-                        result=result,
-                        config=cfg,
-                    )
-                    # Ensure a stable dict payload with file_path for async tests/consumers
-                    if isinstance(_model, dict):
-                        _out = dict(_model)
-                        _out.setdefault("file_path", original_path)
-                        yield _out
-                    else:
-                        try:
-                            _as_dict = getattr(
-                                _model,
-                                "model_dump",
-                                lambda: dict(_model),
-                            )()
-                        except Exception:
-                            _as_dict = {"value": _model}
-                        _as_dict.setdefault("file_path", original_path)
-                        yield _as_dict
+                completed_results = await _process_parallel_async(
+                    self,
+                    documents=documents,
+                    exported_paths=exported_paths,
+                    exported_paths_to_original_paths=exported_paths_to_original_paths,
+                    config=cfg,
+                    enable_progress=enable_progress,
+                )
+                # Yield results in order
+                for original_path, result_dict in completed_results:
+                    yield result_dict
+            else:
+                # Sequential processing (unified mode or single file)
+                from .ops import (
+                    process_files_sequential_async as _process_sequential_async,
+                )
 
-            # finally, yield any buffered export errors (if any)
+                async for result_dict in _process_sequential_async(
+                    self,
+                    documents=documents,
+                    exported_paths=exported_paths,
+                    exported_paths_to_original_paths=exported_paths_to_original_paths,
+                    config=cfg,
+                    enable_progress=enable_progress,
+                ):
+                    yield result_dict
+
+            # Yield any buffered export errors at the end
             for err in export_errors:
                 yield err
         finally:
@@ -2024,6 +2170,13 @@ class FileManager(BaseFileManager):
                     _shutil2.rmtree(temp_dir)
                 except Exception:
                     pass
+            # Stop progress manager if started
+            try:
+                if self._progress_manager is not None:
+                    self._progress_manager.stop()  # type: ignore[union-attr]
+                    self._progress_manager = None
+            except Exception:
+                pass
 
     # ---------- Unify table helpers (schema + retrieval) ------------------ #
     @read_only
@@ -2691,9 +2844,10 @@ class FileManager(BaseFileManager):
                     )
                 except Exception:
                     logs = []
+            # Fallback to file_path match
             if not logs:
-                # Fallback to file_path match
                 try:
+                    # Use path as-is for querying
                     logs = unify.get_logs(
                         context=self._ctx,
                         filter=f"file_path == {str(path_or_uri)!r}",

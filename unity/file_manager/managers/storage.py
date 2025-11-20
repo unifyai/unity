@@ -7,6 +7,7 @@ import unify
 from ...common.context_store import TableStore
 from ...common.model_to_fields import model_to_fields
 from ..types.file import FileRecord as FileRow, FileContent as _PerFileContent
+from ..types.config import TableBusinessContextSpec
 
 
 def provision_storage(self) -> None:
@@ -159,6 +160,7 @@ def ensure_file_table_context(
     auto_counting: Optional[Dict[str, Optional[str]]] = None,
     columns: Optional[Union[List[str], Dict[str, Any]]] = None,
     example_row: Optional[Dict[str, Any]] = None,
+    business_context: Optional[TableBusinessContextSpec] = None,
 ) -> None:
     """Ensure a per-file Tables/<label> context exists with initial fields.
 
@@ -168,6 +170,9 @@ def ensure_file_table_context(
       * If a dict mapping names→types, pass through as-is.
     - Else, when ``example_row`` is provided, infer field names from its keys and
       create fields with ``{"mutable": True}`` (no strict type).
+    - When ``business_context`` is provided:
+      * Merge column descriptions into field definitions (add ``"description"`` key).
+      * Use ``table_description`` as the context description.
     """
     ctx = ctx_for_file_table(self, file_path=file_path, table=table)
     # Build fields from columns or example_row keys when provided
@@ -183,11 +188,29 @@ def ensure_file_table_context(
     elif example_row:
         names = [str(k) for k in example_row.keys()]
         fields_map = {name: {"mutable": True} for name in names}
+
+    # Apply business context: merge column descriptions into fields_map
+    if business_context:
+        column_descriptions = business_context.column_descriptions
+        for field_name in fields_map:
+            if field_name in column_descriptions:
+                desc = column_descriptions[field_name]
+                # Ensure field entry is a dict
+                if not isinstance(fields_map[field_name], dict):
+                    fields_map[field_name] = {"mutable": True}
+                fields_map[field_name]["description"] = desc
+
+    # Determine context description
+    context_description = None
+    if business_context and business_context.table_description:
+        context_description = business_context.table_description
+
     store = TableStore(
         ctx,
         unique_keys={unique_key: "int"},
         auto_counting={unique_key: None, **(auto_counting or {})},
         fields=fields_map,
+        description=context_description or "",
     )
     try:
         store.ensure_context()
@@ -208,6 +231,7 @@ def _resolve_file_target(self, file: str) -> Dict[str, Any]:
     - tables_prefix: str (prefix for per-file Tables contexts)
     - target_name: str (safe root used in per-file context building)
     """
+    # Use path as-is for querying
     try:
         rows = unify.get_logs(
             context=self._ctx,  # type: ignore[attr-defined]

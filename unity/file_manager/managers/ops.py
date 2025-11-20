@@ -1,22 +1,66 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union, Iterator, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed, Future
+from typing import Any, Dict, List, Optional, Union, Iterator, Tuple, AsyncIterator
+import asyncio
+import threading
 
 import time
 
 import unify
-from unity.file_manager.types.file import FileRecord, FileContent
+from unity.file_manager.types.file import FileContent
 from unity.file_manager.types.config import (
     FilePipelineConfig as _FilePipelineConfig,
-    EmbeddingSpec,
+    FileEmbeddingSpec,
+    TableEmbeddingSpec,
     resolve_callables as _resolve_callables,
 )
 from unity.common.embed_utils import ensure_vector_column
 
+try:
+    from unity.file_manager.managers.progress_display import FileProgressManager
+except ImportError:
+    FileProgressManager = None  # type: ignore
+
 
 def _safe(self):
     return getattr(self, "_safe") if hasattr(self, "_safe") else (lambda x: x)
+
+
+def _run_async_from_sync(coro):
+    """
+    Run an async coroutine from a sync context, handling both cases:
+    - If no event loop is running, use asyncio.run()
+    - If an event loop is running, create a new loop in a thread and wait
+    """
+    try:
+        # Try to get the running loop
+        loop = asyncio.get_running_loop()
+        # We're in an async context - run in a separate thread with new event loop
+        result_container = {"value": None, "exception": None}
+        event = threading.Event()
+
+        def run_in_thread():
+            try:
+                # Create a new event loop in this thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                result_container["value"] = new_loop.run_until_complete(coro)
+            except Exception as e:
+                result_container["exception"] = e
+            finally:
+                event.set()
+
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        event.wait()
+        thread.join()
+
+        if result_container["exception"]:
+            raise result_container["exception"]
+        return result_container["value"]
+    except RuntimeError:
+        # No running loop - safe to use asyncio.run()
+        return asyncio.run(coro)
 
 
 def _per_file_root(self) -> str:
@@ -102,6 +146,8 @@ def add_or_replace_file_row(
 
     Returns a short outcome dict.
     """
+    # Use file_path as-is (adapters handle both relative and absolute paths)
+
     # Try to find an existing row by file_path; replace if found
     fp = entry.get("file_path")
     if fp:
@@ -225,6 +271,8 @@ def update_file_record_by_path(
     Update the FileRecords row identified by old_file_path to the new_file_path,
     applying any extra field updates (e.g., file_name, display_path, source_uri).
     """
+    # Use paths as-is (adapters handle both relative and absolute paths)
+
     try:
         rows = unify.get_logs(
             context=self._ctx,
@@ -275,6 +323,7 @@ def delete_file_contexts(
     purged = {"content_rows": 0, "tables": 0}
 
     # Fetch file_id for unified deletions
+    # Use path as-is for querying
     try:
         rows = unify.get_logs(
             context=self._ctx,
@@ -383,6 +432,7 @@ def ensure_per_file_table_context(
     auto_counting: Optional[Dict[str, Optional[str]]] = None,
     columns: Optional[List[str]] = None,
     example_row: Optional[Dict[str, Any]] = None,
+    business_context: Optional[Any] = None,
 ) -> None:
     """Compatibility wrapper → storage.ensure_file_table_context."""
     from .storage import ensure_file_table_context as _ensure_tbl
@@ -392,6 +442,7 @@ def ensure_per_file_table_context(
         file_path=file_path,
         table=table,
         unique_key=unique_key,
+        business_context=business_context,
         auto_counting=auto_counting,
         columns=columns,
         example_row=example_row,
@@ -559,18 +610,22 @@ def rename_file(
             )
             if not logs:
                 raise ValueError(f"No file found with file_id {file_id_or_path}")
-            file_path = logs[0].entries.get("file_path")
-            if not file_path:
+            raw_file_path = logs[0].entries.get("file_path")
+            if not raw_file_path:
                 raise ValueError(
                     f"File record with file_id {file_id_or_path} has no file_path",
                 )
+            # Use path as-is from index
+            file_path = str(raw_file_path)
         except Exception as e:
             raise ValueError(f"Failed to resolve file_id {file_id_or_path}: {e}")
     else:
-        file_path = str(file_id_or_path).lstrip("/")
+        # Use path as-is (only convert to string if needed)
+        file_path = str(file_id_or_path)
 
     new_name = str(new_name)
 
+    # Query index with path as-is
     try:
         logs = unify.get_logs(
             context=self._ctx,  # type: ignore[attr-defined]
@@ -588,8 +643,9 @@ def rename_file(
         )
 
     old_file_path = logs[0].entries.get("file_path", file_path)
-    ref = self._adapter.rename(file_path, new_name)  # type: ignore[attr-defined]
-    new_path = ref.path.lstrip("/")
+    # Use path as-is (adapters handle both relative and absolute via _abspath)
+    ref = self._adapter.rename(old_file_path, new_name)  # type: ignore[attr-defined]
+    new_path = ref.path
 
     try:
         rename_file_contexts(self, old_file_path=old_file_path, new_file_path=new_path)
@@ -636,18 +692,22 @@ def move_file(
             )
             if not logs:
                 raise ValueError(f"No file found with file_id {file_id_or_path}")
-            file_path = logs[0].entries.get("file_path")
-            if not file_path:
+            raw_file_path = logs[0].entries.get("file_path")
+            if not raw_file_path:
                 raise ValueError(
                     f"File record with file_id {file_id_or_path} has no file_path",
                 )
+            # Use path as-is from index
+            file_path = str(raw_file_path)
         except Exception as e:
             raise ValueError(f"Failed to resolve file_id {file_id_or_path}: {e}")
     else:
-        file_path = str(file_id_or_path).lstrip("/")
+        # Use path as-is (only convert to string if needed)
+        file_path = str(file_id_or_path)
 
-    new_parent_path = str(new_parent_path).lstrip("/")
+    new_parent_path = str(new_parent_path)
 
+    # Query index with path as-is
     try:
         logs = unify.get_logs(
             context=self._ctx,  # type: ignore[attr-defined]
@@ -665,8 +725,9 @@ def move_file(
         )
     old_file_path = logs[0].entries.get("file_path", file_path)
 
-    ref = self._adapter.move(file_path, new_parent_path)  # type: ignore[attr-defined]
-    new_path = ref.path.lstrip("/")
+    # Use paths as-is (adapters handle both relative and absolute via _abspath)
+    ref = self._adapter.move(old_file_path, new_parent_path)  # type: ignore[attr-defined]
+    new_path = ref.path
 
     try:
         rename_file_contexts(self, old_file_path=old_file_path, new_file_path=new_path)
@@ -716,13 +777,17 @@ def delete_file(
             )
             if not logs:
                 raise ValueError(f"No file found with file_id {file_id}")
-            filename = logs[0].entries.get("file_path", "")
-            if not filename:
+            raw_filename = logs[0].entries.get("file_path", "")
+            if not raw_filename:
                 raise ValueError(f"File record with file_id {file_id} has no file_path")
+            # Use path as-is from index
+            filename = str(raw_filename)
         except Exception as e:
             raise ValueError(f"Failed to resolve file_id {file_id}: {e}")
     else:
-        file_path = str(file_id_or_path).lstrip("/")
+        # Use path as-is (only convert to string if needed)
+        file_path = str(file_id_or_path)
+        # Query index with path as-is
         try:
             logs = unify.get_logs(
                 context=self._ctx,  # type: ignore[attr-defined]
@@ -801,46 +866,6 @@ def delete_file(
 # ----------------------------- Ingest/Embed helpers (chunked) ------------------- #
 
 
-def index_file_record(
-    self,
-    *,
-    file_path: str,
-    result: Dict[str, Any],
-    config: _FilePipelineConfig,
-) -> None:
-    """
-    Create/update the FileRecord index row for a file (idempotent).
-    Mirrors the first step of FileManager._ingest.
-    """
-    ident = getattr(self, "_build_file_identity")(file_path)
-    from .ops import (
-        create_file_record as _ops_create_file_record,
-    )  # local import to avoid cycles
-
-    _ops_create_file_record(
-        self,
-        entry=FileRecord.to_file_record_entry(
-            file_path=file_path,
-            source_uri=getattr(ident, "source_uri", None),
-            source_provider=getattr(ident, "source_provider", None),
-            result=result,
-            ingest_mode=(
-                getattr(getattr(config, "ingest", None), "mode", "per_file")
-                or "per_file"
-            ),
-            unified_label=(
-                getattr(getattr(config, "ingest", None), "unified_label", None)
-                if getattr(getattr(config, "ingest", None), "mode", "per_file")
-                == "unified"
-                else None
-            ),
-            table_ingest=bool(
-                getattr(getattr(config, "ingest", None), "table_ingest", True),
-            ),
-        ),
-    )
-
-
 def resolve_embed_strategy(
     document: Any,
     result: Dict[str, Any],
@@ -882,12 +907,27 @@ def iter_ingest_content_rows(
     config: _FilePipelineConfig,
     batch_size: int,
     replace_existing: bool = True,
+    file_format: Optional[str] = None,
 ) -> Iterator[List[int]]:
     """
     Incrementally ingest per-file Content rows in chunks; yields inserted ids per chunk.
     Performs delete-once when replace_existing=True.
+
+    Parameters
+    ----------
+    file_format : str | None
+        File format (e.g., 'xlsx', 'csv') for applying content ingest policy.
     """
     rows: List[Dict[str, Any]] = list(records or [])
+
+    # Apply content ingest policy (same as in _ingest)
+    if file_format:
+        rows = apply_content_ingest_policy(
+            rows,
+            config=config,
+            file_format=file_format,
+        )
+
     # Filter allowed columns
     allowed = (
         set(config.ingest.allowed_columns) if config.ingest.allowed_columns else None
@@ -902,6 +942,7 @@ def iter_ingest_content_rows(
         else (config.ingest.unified_label or "Unified")
     )
     # lookup file_id from index
+    # Use path as-is for querying
     _rows = unify.get_logs(
         context=self._ctx,  # type: ignore[attr-defined]
         filter=f"file_path == {file_path!r}",
@@ -941,8 +982,30 @@ def iter_ingest_content_rows(
         getattr(config.ingest, "id_hierarchy", None) if id_layout == "columns" else None
     )
 
-    for i in range(0, len(rows), int(batch_size)):
+    enable_progress = bool(
+        getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+    )
+
+    total_rows = len(rows)
+    total_chunks = (total_rows + batch_size - 1) // batch_size if total_rows > 0 else 0
+
+    # Get progress manager from FileManager instance if available
+    progress_manager = (
+        getattr(self, "_progress_manager", None)
+        if hasattr(self, "_progress_manager")
+        else None
+    )
+
+    # Start content ingestion tracking
+    if enable_progress and progress_manager and FileProgressManager:
+        progress_manager.start_content_ingest(file_path, total_chunks)
+
+    chunk_iter = range(0, len(rows), int(batch_size))
+    chunk_num = 0
+
+    for i in chunk_iter:
         chunk = rows[i : i + int(batch_size)]
+
         file_content_entries: List[Dict[str, Any]] = (
             FileContent.to_file_content_entries(
                 file_id=int(_fid),
@@ -956,7 +1019,14 @@ def iter_ingest_content_rows(
             auto_counting_per_file=auto_cnt,
             rows=file_content_entries,
         )
-        yield list(ids or [])
+        inserted_ids = list(ids or [])
+
+        chunk_num += 1
+        # Update progress manager
+        if enable_progress and progress_manager and FileProgressManager:
+            progress_manager.update_content_ingest(file_path, chunk_num)
+
+        yield inserted_ids
 
 
 def iter_ingest_tables_for_document(
@@ -965,18 +1035,56 @@ def iter_ingest_tables_for_document(
     file_path: str,
     document: Any,
     table_rows_batch_size: int = 100,
+    config: Optional[_FilePipelineConfig] = None,
 ) -> Iterator[Tuple[str, List[int]]]:
     """
     Incrementally ingest per-file tables for a document; yields (table_ctx, inserted_ids) per batch.
     """
+    # Get enable_progress from config (needed for logging)
+    enable_progress = (
+        bool(
+            getattr(getattr(config, "diagnostics", None), "enable_progress", False),
+        )
+        if config
+        else False
+    )
+
     tables = getattr(getattr(document, "metadata", None), "tables", []) or []
     if not tables:
+        if enable_progress:
+            try:
+                print(f"[IngestOps] No tables found in document for {file_path}")
+            except Exception:
+                pass
         return
+
+    if enable_progress:
+        try:
+            print(
+                f"[IngestOps] Found {len(tables)} table(s) in document for {file_path}",
+            )
+        except Exception:
+            pass
 
     for idx, tbl in enumerate(tables, start=1):
         columns = getattr(tbl, "columns", None)
         rows = getattr(tbl, "rows", None)
+        sheet_name = getattr(tbl, "sheet_name", None)
+        if enable_progress:
+            try:
+                print(
+                    f"[IngestOps] Processing table {idx}/{len(tables)}: sheet_name={sheet_name}, rows={len(rows) if rows else 0}",
+                )
+            except Exception:
+                pass
         if not rows:
+            if enable_progress:
+                try:
+                    print(
+                        f"[IngestOps] Skipping table {idx} (sheet_name={sheet_name}): no rows",
+                    )
+                except Exception:
+                    pass
             continue
 
         # derive columns when missing
@@ -1003,6 +1111,49 @@ def iter_ingest_tables_for_document(
             else:
                 table_label = f"{idx:02d}"
 
+        if enable_progress:
+            try:
+                print(
+                    f"[IngestOps] Table label determined: '{table_label}' (sheet_name={sheet_name}, section_path={getattr(tbl, 'section_path', None)})",
+                )
+            except Exception:
+                pass
+
+        # Resolve business context from config
+        # Find matching BusinessContextSpec by file_path, then find matching TableBusinessContextSpec by table
+        business_context = None
+        config_table_names = []
+        if (
+            config
+            and hasattr(config, "ingest")
+            and hasattr(config.ingest, "business_contexts")
+        ):
+            for bc in config.ingest.business_contexts:
+                if bc.file_path == file_path:
+                    # Found matching file, now find matching table spec
+                    config_table_names = [ts.table for ts in bc.tables]
+                    for table_spec in bc.tables:
+                        if table_spec.table == table_label:
+                            business_context = table_spec
+                            if enable_progress:
+                                try:
+                                    print(
+                                        f"[IngestOps] Matched business context for table '{table_label}'",
+                                    )
+                                except Exception:
+                                    pass
+                            break
+                    if business_context:
+                        break
+
+        if enable_progress and not business_context and config_table_names:
+            try:
+                print(
+                    f"[IngestOps] No business context match for table '{table_label}'. Config tables: {config_table_names}",
+                )
+            except Exception:
+                pass
+
         # ensure table context
         ensure_per_file_table_context(
             self,
@@ -1010,11 +1161,43 @@ def iter_ingest_tables_for_document(
             table=table_label,
             columns=list(columns) if columns else None,
             example_row=(rows[0] if (rows and isinstance(rows[0], dict)) else None),
+            business_context=business_context,
         )
         table_ctx = per_file_table_ctx(self, file_path=file_path, table=table_label)
 
         # batch insert
+        total_rows_for_table = len(rows)
+        total_chunks_for_table = (
+            (total_rows_for_table + table_rows_batch_size - 1) // table_rows_batch_size
+            if total_rows_for_table > 0
+            else 0
+        )
+
+        # Get progress manager from FileManager instance if available
+        progress_manager = (
+            getattr(self, "_progress_manager", None)
+            if hasattr(self, "_progress_manager")
+            else None
+        )
+
+        # Register table with progress manager
+        embed_strategy = (
+            getattr(getattr(config, "embed", None), "strategy", "off")
+            if config
+            else "off"
+        )
+        embed_total = total_chunks_for_table if embed_strategy == "along" else 0
+
+        if enable_progress and progress_manager and FileProgressManager:
+            progress_manager.register_table(
+                file_path,
+                table_label,
+                total_chunks_for_table,
+                embed_total,
+            )
+
         batch: List[Dict[str, Any]] = []
+        chunk_num = 0
         for r in rows:
             if isinstance(r, dict):
                 entry = {
@@ -1037,7 +1220,18 @@ def iter_ingest_tables_for_document(
                         rows[0] if (rows and isinstance(rows[0], dict)) else None
                     ),
                 )
-                yield table_ctx, list(ids or [])
+                inserted_ids = list(ids or [])
+                chunk_num += 1
+
+                # Update progress manager
+                if enable_progress and progress_manager and FileProgressManager:
+                    progress_manager.update_table_ingest(
+                        file_path,
+                        table_label,
+                        chunk_num,
+                    )
+
+                yield table_ctx, inserted_ids
                 batch = []
 
         if batch:
@@ -1049,12 +1243,23 @@ def iter_ingest_tables_for_document(
                 columns=list(columns) if columns else None,
                 example_row=(rows[0] if (rows and isinstance(rows[0], dict)) else None),
             )
-            yield table_ctx, list(ids or [])
+            inserted_ids = list(ids or [])
+            chunk_num += 1
+
+            # Update progress manager
+            if enable_progress and progress_manager and FileProgressManager:
+                progress_manager.update_table_ingest(file_path, table_label, chunk_num)
+
+            yield table_ctx, inserted_ids
+
+        # Complete table ingestion
+        if enable_progress and progress_manager and FileProgressManager:
+            progress_manager.complete_table_ingest(file_path, table_label)
 
 
 def embed_content_chunk_for_ids(
     ctx_name: str,
-    specs: List[EmbeddingSpec],
+    specs: List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]],
     inserted_ids: List[int] | None,
     *,
     enable_progress: bool = False,
@@ -1073,43 +1278,76 @@ def embed_content_chunk_for_ids(
         except Exception:
             pass
     # Filter applicable specs (content contexts only)
-    applicable_specs = [sp for sp in specs if sp.context in ("per_file", "unified")]
+    applicable_specs = [
+        (file_spec, table_spec)
+        for file_spec, table_spec in specs
+        if file_spec.context in ("per_file", "unified")
+    ]
     if not applicable_specs:
         return
 
     batch_start = time.perf_counter()
 
-    def _run_embed(sp: EmbeddingSpec) -> str:
+    def _run_embed_column_pair(source_col: str, target_col: str) -> str:
+        """Embed a single column pair."""
         if enable_progress:
             try:
                 print(
-                    f"[EmbedOps]   -> ensure_vector_column target={sp.target_column} source={sp.source_column}",
+                    f"[EmbedOps]   -> ensure_vector_column target={target_col} source={source_col}",
                 )
             except Exception:
                 pass
         t0 = time.perf_counter()
         ensure_vector_column(
             ctx_name,
-            embed_column=sp.target_column,
-            source_column=sp.source_column,
+            embed_column=target_col,
+            source_column=source_col,
             from_ids=list(inserted_ids or []),
         )
         dt = (time.perf_counter() - t0) * 1000.0
         if enable_progress:
             try:
                 print(
-                    f"[EmbedOps]   <- done target={sp.target_column} time_ms={dt:.1f}",
+                    f"[EmbedOps]   <- done target={target_col} time_ms={dt:.1f}",
                 )
             except Exception:
                 pass
-        return sp.target_column
+        return target_col
 
-    max_workers = min(8, max(1, len(applicable_specs)))
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_run_embed, sp): sp for sp in applicable_specs}
-        for fut in as_completed(futures):
-            # Surface exceptions to fail fast; otherwise ignore
-            fut.result()
+    # Create tasks for all column pairs across all applicable specs
+    embed_tasks: List[Tuple[str, str]] = []
+    for file_spec, table_spec in applicable_specs:
+        # Iterate over source_columns and target_columns pairs
+        for source_col, target_col in zip(
+            table_spec.source_columns,
+            table_spec.target_columns,
+        ):
+            embed_tasks.append((source_col, target_col))
+
+    if not embed_tasks:
+        return
+
+    async def _run_embeds_async() -> None:
+        """Run embedding tasks using asyncio."""
+        loop = asyncio.get_event_loop()
+        max_workers = min(8, max(1, len(embed_tasks)))
+        semaphore = asyncio.Semaphore(max_workers)
+
+        async def run_embed_task(src: str, tgt: str) -> None:
+            async with semaphore:
+                await loop.run_in_executor(None, _run_embed_column_pair, src, tgt)
+
+        tasks = [
+            asyncio.create_task(run_embed_task(src, tgt)) for src, tgt in embed_tasks
+        ]
+        # Wait for all tasks, surfacing exceptions to fail fast
+        for task in tasks:
+            try:
+                await task
+            except Exception:
+                pass
+
+    _run_async_from_sync(_run_embeds_async())
     if enable_progress:
         try:
             print(
@@ -1123,7 +1361,7 @@ def embed_table_chunk_for_ids(
     self,
     *,
     table_ctx: str,
-    specs: List[EmbeddingSpec],
+    specs: List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]],
     inserted_ids: List[int] | None = None,
     enable_progress: bool = False,
 ) -> None:
@@ -1132,7 +1370,7 @@ def embed_table_chunk_for_ids(
     """
     if not specs:
         return
-    # extract tail label after /Tables/
+    # extract tail label after /Tables/ (this is already sanitized from ingestion)
     tail = None
     try:
         if "/Tables/" in table_ctx:
@@ -1143,60 +1381,107 @@ def embed_table_chunk_for_ids(
     if enable_progress:
         try:
             print(
-                f"[EmbedOps] Table chunk: ctx={table_ctx} specs={len(specs)} from_ids={len(inserted_ids or [])}",
+                f"[EmbedOps] Table chunk: ctx={table_ctx} tail={tail} specs={len(specs)} from_ids={len(inserted_ids or [])}",
             )
         except Exception:
             pass
-    applicable: list[EmbeddingSpec] = []
-    for sp in specs:
-        if sp.context != "per_file_table":
+    applicable: List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]] = []
+    for file_spec, table_spec in specs:
+        if file_spec.context != "per_file_table":
             continue
-        table_filter = getattr(sp, "table", None)
+        table_filter = table_spec.table
         if table_filter in (None, "*"):
-            applicable.append(sp)
+            applicable.append((file_spec, table_spec))
             continue
+        # Match: compare sanitized config table name with sanitized tail from context
+        # The tail is already sanitized from ingestion, so we need to sanitize the config table name
         try:
             safe_target = safe(str(table_filter))  # type: ignore[arg-type]
         except Exception:
             safe_target = str(table_filter)
-        if tail and tail == safe_target:
-            applicable.append(sp)
+        # Also try direct comparison in case sanitization differs
+        if tail and (tail == safe_target or tail == str(table_filter)):
+            applicable.append((file_spec, table_spec))
+            if enable_progress:
+                try:
+                    print(
+                        f"[EmbedOps] Matched table spec: config_table={table_filter} safe_target={safe_target} tail={tail}",
+                    )
+                except Exception:
+                    pass
 
     if not applicable:
+        if enable_progress:
+            try:
+                print(
+                    f"[EmbedOps] No matching specs for table_ctx={table_ctx} tail={tail}. Available specs: {[s.table for _, s in specs if _.context == 'per_file_table']}",
+                )
+            except Exception:
+                pass
         return
 
     batch_start = time.perf_counter()
 
-    def _run_embed(sp: EmbeddingSpec) -> str:
+    def _run_embed_column_pair(source_col: str, target_col: str) -> str:
+        """Embed a single column pair."""
         if enable_progress:
             try:
                 print(
-                    f"[EmbedOps]   -> ensure_vector_column target={sp.target_column} source={sp.source_column}",
+                    f"[EmbedOps]   -> ensure_vector_column target={target_col} source={source_col}",
                 )
             except Exception:
                 pass
         t0 = time.perf_counter()
         ensure_vector_column(
             table_ctx,
-            embed_column=sp.target_column,
-            source_column=sp.source_column,
+            embed_column=target_col,
+            source_column=source_col,
             from_ids=list(inserted_ids or []),
         )
         dt = (time.perf_counter() - t0) * 1000.0
         if enable_progress:
             try:
                 print(
-                    f"[EmbedOps]   <- done target={sp.target_column} time_ms={dt:.1f}",
+                    f"[EmbedOps]   <- done target={target_col} time_ms={dt:.1f}",
                 )
             except Exception:
                 pass
-        return sp.target_column
+        return target_col
 
-    max_workers = min(8, max(1, len(applicable)))
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_run_embed, sp): sp for sp in applicable}
-        for fut in as_completed(futures):
-            fut.result()
+    # Create tasks for all column pairs across all applicable specs
+    embed_tasks: List[Tuple[str, str]] = []
+    for file_spec, table_spec in applicable:
+        # Iterate over source_columns and target_columns pairs
+        for source_col, target_col in zip(
+            table_spec.source_columns,
+            table_spec.target_columns,
+        ):
+            embed_tasks.append((source_col, target_col))
+
+    if not embed_tasks:
+        return
+
+    async def _run_table_embeds_async() -> None:
+        """Run table embedding tasks using asyncio."""
+        loop = asyncio.get_event_loop()
+        max_workers = min(8, max(1, len(embed_tasks)))
+        semaphore = asyncio.Semaphore(max_workers)
+
+        async def run_embed_task(src: str, tgt: str) -> None:
+            async with semaphore:
+                await loop.run_in_executor(None, _run_embed_column_pair, src, tgt)
+
+        tasks = [
+            asyncio.create_task(run_embed_task(src, tgt)) for src, tgt in embed_tasks
+        ]
+        # Wait for all tasks
+        for task in tasks:
+            try:
+                await task
+            except Exception:
+                pass
+
+    _run_async_from_sync(_run_table_embeds_async())
     if enable_progress:
         try:
             print(
@@ -1208,9 +1493,8 @@ def embed_table_chunk_for_ids(
 
 def embed_chunk_with_hooks(
     self,
-    *,
     target_ctx_name: str,
-    specs: List[EmbeddingSpec],
+    specs: List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]],
     inserted_ids: List[int],
     file_path: str,
     result: Dict[str, Any],
@@ -1233,7 +1517,7 @@ def embed_chunk_with_hooks(
         FileManager instance (passed as first parameter for compatibility).
     target_ctx_name : str
         Context name for content embedding (used when chunk_type="content").
-    specs : list[EmbeddingSpec]
+    specs : list[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]]
         Embedding specifications to apply.
     inserted_ids : list[int]
         List of inserted log IDs to embed.
@@ -1274,6 +1558,13 @@ def embed_chunk_with_hooks(
     # Embed the chunk (scoped to inserted ids)
     try:
         if chunk_type == "content":
+            if enable_progress:
+                try:
+                    print(
+                        f"[EmbedOps] Starting content chunk embedding: chunk_index={chunk_index}, ids={len(inserted_ids)}, specs={len(specs)}",
+                    )
+                except Exception:
+                    pass
             embed_content_chunk_for_ids(
                 target_ctx_name,
                 specs,
@@ -1287,6 +1578,13 @@ def embed_chunk_with_hooks(
         elif chunk_type == "table":
             if table_ctx is None:
                 raise ValueError("table_ctx is required when chunk_type='table'")
+            if enable_progress:
+                try:
+                    print(
+                        f"[EmbedOps] Starting table chunk embedding: table_ctx={table_ctx}, ids={len(inserted_ids)}, specs={len(specs)}",
+                    )
+                except Exception:
+                    pass
             embed_table_chunk_for_ids(
                 self,
                 table_ctx=table_ctx,
@@ -1294,8 +1592,25 @@ def embed_chunk_with_hooks(
                 inserted_ids=inserted_ids,
                 enable_progress=enable_progress,
             )
-    except Exception:
-        pass
+            if enable_progress:
+                try:
+                    print(
+                        f"[EmbedOps] Completed table chunk embedding: table_ctx={table_ctx}",
+                    )
+                except Exception:
+                    pass
+    except Exception as e:
+        if enable_progress:
+            try:
+                print(
+                    f"[EmbedOps] Error embedding chunk: chunk_type={chunk_type}, error={e}",
+                )
+                import traceback
+
+                traceback.print_exc()
+            except Exception:
+                pass
+        raise
 
     # Post-embed hooks (per chunk when enabled)
     if bool(getattr(getattr(config, "embed", None), "hooks_per_chunk", True)):
@@ -1321,7 +1636,7 @@ def embed_content_chunks_async(
     file_path: str,
     records: List[Dict[str, Any]],
     target_ctx_name: str,
-    content_specs: List[EmbeddingSpec],
+    content_specs: List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]],
     result: Dict[str, Any],
     document: Any,
     config: _FilePipelineConfig,
@@ -1345,7 +1660,7 @@ def embed_content_chunks_async(
         Parsed content records to ingest.
     target_ctx_name : str
         Target context name for content embedding.
-    content_specs : list[EmbeddingSpec]
+    content_specs : list[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]]
         Embedding specifications for content.
     result : dict
         Parse result dictionary.
@@ -1365,12 +1680,37 @@ def embed_content_chunks_async(
     processed_records = 0
     chunk_index = 0
 
-    # Track embedding futures for async execution
-    embedding_futures: List[Future] = []
+    # Calculate total chunks for diagnostics
+    total_chunks = (
+        (total_records + batch_size - 1) // batch_size if total_records > 0 else 0
+    )
 
-    # Use thread pool for embedding jobs
-    max_workers = min(8, max(1, len(content_specs) if content_specs else 4))
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # Get progress manager from FileManager instance if available
+    progress_manager = (
+        getattr(self, "_progress_manager", None)
+        if hasattr(self, "_progress_manager")
+        else None
+    )
+
+    # Start content embedding tracking
+    if enable_progress and progress_manager and FileProgressManager:
+        progress_manager.start_content_embed(file_path, total_chunks)
+
+    async def _embed_chunks_async() -> None:
+        """Internal async function to run embedding jobs."""
+        loop = asyncio.get_event_loop()
+
+        # Create semaphore to limit concurrent embedding jobs
+        max_workers = min(8, max(1, len(content_specs) if content_specs else 4))
+        semaphore = asyncio.Semaphore(max_workers)
+
+        embedding_tasks: List[asyncio.Task] = []
+
+        # Extract file_format from result (same as in _ingest)
+        _fmt = result.get("file_format")
+        file_format = getattr(_fmt, "value", _fmt)
+        file_format_str = str(file_format).lower().strip() if file_format else None
+
         # Ingest chunks sequentially, submit embedding jobs asynchronously
         for inserted_ids in iter_ingest_content_rows(
             self,
@@ -1381,39 +1721,69 @@ def embed_content_chunks_async(
             replace_existing=bool(
                 getattr(getattr(config, "ingest", None), "replace_existing", True),
             ),
+            file_format=file_format_str,
         ):
             if not inserted_ids:
                 continue
+            nonlocal chunk_index, processed_records
             chunk_index += 1
             processed_records += len(inserted_ids)
-            if enable_progress:
-                print(
-                    f"[Along] Content chunk {chunk_index}: inserted={len(inserted_ids)} processed={processed_records}/{total_records}",
-                )
 
             # Submit embedding job asynchronously (non-blocking)
-            future = executor.submit(
-                embed_chunk_with_hooks,
-                self,
-                target_ctx_name=target_ctx_name,
-                specs=content_specs,
-                inserted_ids=inserted_ids,
-                file_path=file_path,
-                result=result,
-                document=document,
-                config=config,
-                enable_progress=enable_progress,
-                chunk_index=chunk_index,
-                chunk_type="content",
+            chunk_id = f"chunk_{chunk_index}"
+            if enable_progress and progress_manager and FileProgressManager:
+                progress_manager.update_content_embed_chunk(
+                    file_path,
+                    chunk_id,
+                    "started",
+                )
+
+            async def embed_chunk_task(ids: List[int], idx: int, cid: str) -> None:
+                async with semaphore:
+                    try:
+                        await loop.run_in_executor(
+                            None,
+                            embed_chunk_with_hooks,
+                            self,
+                            target_ctx_name,
+                            content_specs,
+                            ids,
+                            file_path,
+                            result,
+                            document,
+                            config,
+                            enable_progress,  # Pass enable_progress so we can see what's happening
+                            idx,
+                            "content",
+                        )
+                    finally:
+                        # Mark chunk as completed
+                        if enable_progress and progress_manager and FileProgressManager:
+                            progress_manager.update_content_embed_chunk(
+                                file_path,
+                                cid,
+                                "completed",
+                            )
+
+            task = asyncio.create_task(
+                embed_chunk_task(inserted_ids, chunk_index, chunk_id),
             )
-            embedding_futures.append(future)
+            embedding_tasks.append(task)
+
+            # Yield control to event loop so tasks can start running immediately
+            # This is critical: without this, tasks won't start until all ingestion completes
+            await asyncio.sleep(0)
 
         # Wait for all content embedding jobs to complete
-        for future in embedding_futures:
-            try:
-                future.result()
-            except Exception:
-                pass
+        for task in embedding_tasks:
+            await task
+
+        # Complete content embedding
+        if enable_progress and progress_manager and FileProgressManager:
+            progress_manager.complete_content_embed(file_path)
+
+    # Run async function from sync context
+    _run_async_from_sync(_embed_chunks_async())
 
 
 def embed_table_chunks_async(
@@ -1422,7 +1792,7 @@ def embed_table_chunks_async(
     file_path: str,
     document: Any,
     target_ctx_name: str,
-    table_specs: List[EmbeddingSpec],
+    table_specs: List[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]],
     result: Dict[str, Any],
     config: _FilePipelineConfig,
     table_rows_batch_size: int,
@@ -1445,7 +1815,7 @@ def embed_table_chunks_async(
         Parsed document object with tables.
     target_ctx_name : str
         Target context name (not used for tables but kept for consistency).
-    table_specs : list[EmbeddingSpec]
+    table_specs : list[Tuple[FileEmbeddingSpec, TableEmbeddingSpec]]
         Embedding specifications for tables.
     result : dict
         Parse result dictionary.
@@ -1473,56 +1843,799 @@ def embed_table_chunks_async(
     except Exception:
         table_row_totals = {}
     table_progress: Dict[str, int] = {}
+    table_chunk_counts: Dict[str, int] = {}  # Track chunk counts per table
 
-    # Track table embedding futures for async execution
-    table_embedding_futures: List[Future] = []
+    # Get progress manager from FileManager instance if available
+    progress_manager = (
+        getattr(self, "_progress_manager", None)
+        if hasattr(self, "_progress_manager")
+        else None
+    )
 
-    # Use thread pool for table embedding jobs
-    table_max_workers = min(8, max(1, len(table_specs) if table_specs else 4))
-    with ThreadPoolExecutor(max_workers=table_max_workers) as table_executor:
+    async def _embed_table_chunks_async() -> None:
+        """Internal async function to run table embedding jobs."""
+        loop = asyncio.get_event_loop()
+
+        if enable_progress:
+            try:
+                print(
+                    f"[EmbedOps] Starting table embedding for {file_path} with {len(table_specs)} table spec(s)",
+                )
+                for file_spec, table_spec in table_specs:
+                    print(
+                        f"[EmbedOps]   Spec: file_path={file_spec.file_path}, context={file_spec.context}, table={table_spec.table}",
+                    )
+            except Exception:
+                pass
+
+        # Create semaphore to limit concurrent table embedding jobs
+        table_max_workers = min(8, max(1, len(table_specs) if table_specs else 4))
+        semaphore = asyncio.Semaphore(table_max_workers)
+
+        table_embedding_tasks: List[asyncio.Task] = []
+        table_chunk_info: Dict[str, List[int]] = {}  # Track chunks per table
+        table_chunk_indices: Dict[str, int] = {}  # Track chunk index per table
+
+        # Note: Table embedding tasks are already created by register_table during ingestion
+        # No need to call start_table_embed here as it's a no-op anyway
+
         # Ingest table chunks sequentially, submit embedding jobs asynchronously
         for table_ctx, inserted_ids in iter_ingest_tables_for_document(
             self,
             file_path=file_path,
             document=document,
             table_rows_batch_size=table_rows_batch_size,
+            config=config,
         ):
-            if enable_progress:
-                label = table_ctx.split("/Tables/", 1)[-1]
-                table_progress[label] = table_progress.get(label, 0) + len(
-                    inserted_ids or [],
+            if not inserted_ids:
+                continue
+
+            label = table_ctx.split("/Tables/", 1)[-1]
+            if label not in table_chunk_info:
+                table_chunk_info[label] = []
+                table_chunk_indices[label] = 0
+
+            table_chunk_indices[label] += 1
+            chunk_id = f"{label}_chunk_{table_chunk_indices[label]}"
+            table_chunk_info[label].append(len(inserted_ids))
+            table_progress[label] = table_progress.get(label, 0) + len(inserted_ids)
+
+            # Mark embedding chunk as started
+            if enable_progress and progress_manager and FileProgressManager:
+                progress_manager.update_table_embed_chunk(
+                    file_path,
+                    label,
+                    chunk_id,
+                    "started",
                 )
-                tot = table_row_totals.get(label, 0)
-                if tot > 0:
-                    print(
-                        f"[Along] Table '{label}' chunk: inserted={len(inserted_ids or [])} processed={table_progress[label]}/{tot}",
-                    )
-                else:
-                    print(
-                        f"[Along] Table '{label}' chunk: inserted={len(inserted_ids or [])}",
-                    )
 
             # Submit table embedding job asynchronously (non-blocking)
-            future = table_executor.submit(
-                embed_chunk_with_hooks,
-                self,
-                target_ctx_name=target_ctx_name,  # Not used for tables but required
-                specs=table_specs,
-                inserted_ids=inserted_ids,
-                file_path=file_path,
-                result=result,
-                document=document,
-                config=config,
-                enable_progress=enable_progress,
-                chunk_index=None,  # Table chunks don't use chunk_index
-                chunk_type="table",
-                table_ctx=table_ctx,
+            async def embed_table_chunk_task(
+                ctx: str,
+                ids: List[int],
+                tbl_label: str,
+                cid: str,
+            ) -> None:
+                async with semaphore:
+                    try:
+                        await loop.run_in_executor(
+                            None,
+                            embed_chunk_with_hooks,
+                            self,
+                            target_ctx_name,  # Not used for tables but required
+                            table_specs,
+                            ids,
+                            file_path,
+                            result,
+                            document,
+                            config,
+                            enable_progress,  # Pass enable_progress so we can see what's happening
+                            None,  # Table chunks don't use chunk_index
+                            "table",
+                            ctx,
+                        )
+                    finally:
+                        # Mark chunk as completed
+                        if enable_progress and progress_manager and FileProgressManager:
+                            progress_manager.update_table_embed_chunk(
+                                file_path,
+                                tbl_label,
+                                cid,
+                                "completed",
+                            )
+
+            task = asyncio.create_task(
+                embed_table_chunk_task(table_ctx, inserted_ids, label, chunk_id),
             )
-            table_embedding_futures.append(future)
+            table_embedding_tasks.append((task, label))
+
+            # Yield control to event loop so tasks can start running immediately
+            # This is critical: without this, tasks won't start until all ingestion completes
+            await asyncio.sleep(0)
 
         # Wait for all table embedding jobs to complete
-        for future in table_embedding_futures:
+        for task, label in table_embedding_tasks:
             try:
-                future.result()
-            except Exception:
-                pass
+                await task
+            except Exception as e:
+                if enable_progress and progress_manager and FileProgressManager:
+                    progress_manager.fail_file(
+                        file_path,
+                        f"Table '{label}' embedding failed: {e}",
+                    )
+
+        # Complete table embedding for each table
+        if enable_progress and progress_manager and FileProgressManager:
+            for label in table_chunk_info.keys():
+                progress_manager.complete_table_embed(file_path, label)
+
+    # Run async function from sync context
+    _run_async_from_sync(_embed_table_chunks_async())
+
+
+def _process_single_file_core(
+    self,
+    *,
+    idx: int,
+    document: Any,
+    original_path: str,
+    config: _FilePipelineConfig,
+    enable_progress: bool,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Core logic for processing a single file: post-parse hooks, ingest, embed, and build result.
+
+    This is the shared helper function used by all processing variants (parallel/sequential, sync/async).
+
+    Parameters
+    ----------
+    self
+        FileManager instance.
+    idx : int
+        Document index.
+    document : Any
+        Parsed document object.
+    original_path : str
+        Original file path.
+    config : FilePipelineConfig
+        Pipeline configuration.
+    enable_progress : bool
+        Whether to enable progress logging.
+
+    Returns
+    -------
+    Tuple[str, Dict[str, Any]]
+        (original_path, result_dict) tuple.
+    """
+    from unity.file_manager.parser.types.document import Document as _Doc
+    from unity.file_manager.managers.file_ops import (
+        build_compact_parse_model as _build_compact_parse_model,
+    )
+
+    try:
+        # Post-parse hooks (document available)
+        try:
+            for fn in _resolve_callables(config.plugins.post_parse):
+                try:
+                    fn(
+                        manager=self,
+                        filename=original_path,
+                        result=None,
+                        document=document,
+                        config=config,
+                    )
+                except Exception as e:
+                    if enable_progress:
+                        print(
+                            f"[FileManager] ⚠️  Post-parse hook failed for {original_path}: {e}",
+                        )
+        except Exception as e:
+            if enable_progress:
+                print(
+                    f"[FileManager] ⚠️  Post-parse hooks failed for {original_path}: {e}",
+                )
+
+        result = document.to_parse_result(
+            original_path,
+            auto_counting=(
+                config.ingest.auto_counting_per_file
+                if config.ingest.id_layout == "columns"
+                else None
+            ),
+            document_index=idx,
+            id_layout=getattr(config.ingest, "id_layout", "map"),
+            id_string_format=getattr(config.ingest, "id_string_format", None),
+        )
+
+        # Choose strategy per-file
+        try:
+            strategy = resolve_embed_strategy(document, result, config)
+        except Exception:
+            strategy = "after"
+
+        if enable_progress:
+            print(f"[FileManager] 📄 Processing {original_path} (strategy={strategy})")
+
+        if strategy == "along":
+            getattr(self, "_ingest_and_embed")(
+                file_path=original_path,
+                document=document,
+                result=result,
+                config=config,
+            )
+        else:
+            inserted_ids = getattr(self, "_ingest")(
+                file_path=original_path,
+                document=document,
+                result=result,
+                config=config,
+            )
+            if strategy != "off":
+                getattr(self, "_embed")(
+                    file_path=original_path,
+                    document=document,
+                    result=result,
+                    inserted_ids=inserted_ids,
+                    config=config,
+                )
+
+        # Decide return mode
+        mode = getattr(getattr(config, "output", None), "return_mode", "compact")
+        if mode == "full":
+            return (original_path, result)
+        elif mode == "none":
+            return (
+                original_path,
+                {
+                    "file_path": original_path,
+                    "status": result.get("status"),
+                    "error": result.get("error"),
+                    "total_records": result.get("total_records"),
+                    "file_format": result.get("file_format"),
+                },
+            )
+        else:  # compact
+            return (
+                original_path,
+                _build_compact_parse_model(
+                    self,
+                    file_path=original_path,
+                    document=document,
+                    result=result,
+                    config=config,
+                ),
+            )
+    except Exception as e:
+        if enable_progress:
+            print(f"[FileManager] ❌ Error processing {original_path}: {e}")
+        from unity.file_manager.parser.types.document import Document as _Doc
+
+        return (
+            original_path,
+            _Doc.error_result(original_path, f"processing failed: {e}"),
+        )
+    finally:
+        # Mark file complete in progress manager
+        try:
+            if enable_progress and hasattr(self, "_progress_manager"):
+                pm = getattr(self, "_progress_manager", None)
+                if pm is not None:
+                    pm.complete_file(original_path)
+        except Exception:
+            pass
+
+
+def process_files_parallel(
+    self,
+    *,
+    documents: List[Any],
+    exported_paths: List[str],
+    exported_paths_to_original_paths: Dict[str, str],
+    config: _FilePipelineConfig,
+    enable_progress: bool,
+) -> Dict[str, Any]:
+    """
+    Process multiple files in parallel when ingest_mode is per_file.
+
+    Parameters
+    ----------
+    self
+        FileManager instance.
+    documents : list[Any]
+        Parsed document objects.
+    exported_paths : list[str]
+        Exported file paths.
+    exported_paths_to_original_paths : dict[str, str]
+        Mapping of exported paths to original paths.
+    config : FilePipelineConfig
+        Pipeline configuration.
+    enable_progress : bool
+        Whether to enable progress logging.
+
+    Returns
+    -------
+    dict[str, Any]
+        Mapping of original_path -> result dict.
+    """
+    from unity.file_manager.parser.types.document import Document as _Doc
+
+    results: Dict[str, Any] = {}
+
+    def _process_single_file(
+        idx: int,
+        document: Any,
+        exported_path: str,
+        original_path: str,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Wrapper for thread pool execution."""
+        return _process_single_file_core(
+            self,
+            idx=idx,
+            document=document,
+            original_path=original_path,
+            config=config,
+            enable_progress=enable_progress,
+        )
+
+    # Process files using asyncio
+    async def _process_files_async() -> Dict[str, Any]:
+        """Process files in parallel using asyncio."""
+        loop = asyncio.get_event_loop()
+        max_workers = min(len(documents), 8)  # Limit concurrent workers
+        semaphore = asyncio.Semaphore(max_workers)
+
+        async def process_file_task(
+            idx: int,
+            doc: Any,
+            exp_path: str,
+            orig_path: str,
+        ) -> Tuple[int, str, Dict[str, Any]]:
+            async with semaphore:
+                result = await loop.run_in_executor(
+                    None,
+                    _process_single_file,
+                    idx,
+                    doc,
+                    exp_path,
+                    orig_path,
+                )
+                return (idx, orig_path, result[1])
+
+        tasks = []
+        for idx, document in enumerate(documents):
+            if idx >= len(exported_paths):
+                continue
+            exported_path = exported_paths[idx]
+            original_path = exported_paths_to_original_paths.get(
+                exported_path,
+                exported_path,
+            )
+            tasks.append(
+                asyncio.create_task(
+                    process_file_task(idx, document, exported_path, original_path),
+                ),
+            )
+
+        # Collect results as they complete
+        completed = 0
+        if enable_progress:
+            print(f"[Ops] 🔄 Processing {len(tasks)} file(s) in parallel")
+
+        for coro in asyncio.as_completed(tasks):
+            completed += 1
+            try:
+                idx, original_path, result_dict = await coro
+                results[original_path] = result_dict
+                if enable_progress:
+                    print(
+                        f"[Ops] ✅ Completed {completed}/{len(tasks)}: {original_path}",
+                    )
+            except Exception as e:
+                # Try to get original_path from task if possible
+                try:
+                    # Get the task that raised the exception
+                    for task in tasks:
+                        if task.done() and task.exception() == e:
+                            # Extract original_path from task args if possible
+                            # Fallback to index-based lookup
+                            break
+                except Exception:
+                    pass
+                # Use index-based fallback
+                try:
+                    idx = next(i for i, t in enumerate(tasks) if t == coro)
+                    original_path = exported_paths_to_original_paths.get(
+                        exported_paths[idx] if idx < len(exported_paths) else "",
+                        exported_paths[idx] if idx < len(exported_paths) else "",
+                    )
+                except Exception:
+                    original_path = "unknown"
+                results[original_path] = _Doc.error_result(
+                    original_path,
+                    f"processing failed: {e}",
+                )
+                if enable_progress:
+                    print(
+                        f"[FileManager] ❌ Failed {completed}/{len(tasks)}: {original_path}",
+                    )
+
+        return results
+
+    return _run_async_from_sync(_process_files_async())
+
+
+def process_files_sequential(
+    self,
+    *,
+    documents: List[Any],
+    exported_paths: List[str],
+    exported_paths_to_original_paths: Dict[str, str],
+    config: _FilePipelineConfig,
+    enable_progress: bool,
+) -> Dict[str, Any]:
+    """
+    Process multiple files sequentially (unified mode or single file).
+
+    Parameters
+    ----------
+    self
+        FileManager instance.
+    documents : list[Any]
+        Parsed document objects.
+    exported_paths : list[str]
+        Exported file paths.
+    exported_paths_to_original_paths : dict[str, str]
+        Mapping of exported paths to original paths.
+    config : FilePipelineConfig
+        Pipeline configuration.
+    enable_progress : bool
+        Whether to enable progress logging.
+
+    Returns
+    -------
+    dict[str, Any]
+        Mapping of original_path -> result dict.
+    """
+    results: Dict[str, Any] = {}
+
+    if enable_progress:
+        if len(documents) > 1:
+            print(
+                f"[Ops] 🔄 Processing {len(documents)} file(s) sequentially (unified mode)",
+            )
+        else:
+            print(f"[Ops] 🔄 Processing 1 file sequentially")
+
+    for idx, document in enumerate(documents):
+        fp = exported_paths[idx] if idx < len(exported_paths) else None
+        if fp is None:
+            continue
+        original_path = exported_paths_to_original_paths.get(fp, fp)
+
+        if enable_progress:
+            print(
+                f"[Ops] 📄 Processing file {idx + 1}/{len(documents)}: {original_path}",
+            )
+
+        original_path, result_dict = _process_single_file_core(
+            self,
+            idx=idx,
+            document=document,
+            original_path=original_path,
+            config=config,
+            enable_progress=enable_progress,
+        )
+        results[original_path] = result_dict
+
+        if enable_progress:
+            print(f"[Ops] ✅ Completed {idx + 1}/{len(documents)}: {original_path}")
+
+    if enable_progress:
+        print(
+            f"[Ops] ✅ Sequential processing complete: {len(results)} file(s) processed",
+        )
+
+    return results
+
+
+async def _process_single_file_core_async(
+    self,
+    *,
+    idx: int,
+    document: Any,
+    original_path: str,
+    config: _FilePipelineConfig,
+    enable_progress: bool,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Async wrapper for core single-file processing logic.
+
+    Uses asyncio.to_thread for CPU-bound operations (ingest/embed).
+
+    Parameters
+    ----------
+    self
+        FileManager instance.
+    idx : int
+        Document index.
+    document : Any
+        Parsed document object.
+    original_path : str
+        Original file path.
+    config : FilePipelineConfig
+        Pipeline configuration.
+    enable_progress : bool
+        Whether to enable progress logging.
+
+    Returns
+    -------
+    Tuple[str, Dict[str, Any]]
+        (original_path, result_dict) tuple.
+    """
+    import asyncio
+    from unity.file_manager.parser.types.document import Document as _Doc
+    from unity.file_manager.managers.file_ops import (
+        build_compact_parse_model as _build_compact_parse_model,
+    )
+
+    try:
+        # Post-parse hooks (document available)
+        try:
+            for fn in _resolve_callables(config.plugins.post_parse):
+                try:
+                    fn(
+                        manager=self,
+                        filename=original_path,
+                        result=None,
+                        document=document,
+                        config=config,
+                    )
+                except Exception as e:
+                    if enable_progress:
+                        print(
+                            f"[FileManager] ⚠️  Post-parse hook failed for {original_path}: {e}",
+                        )
+        except Exception as e:
+            if enable_progress:
+                print(
+                    f"[FileManager] ⚠️  Post-parse hooks failed for {original_path}: {e}",
+                )
+
+        result = document.to_parse_result(
+            original_path,
+            auto_counting=(
+                config.ingest.auto_counting_per_file
+                if config.ingest.id_layout == "columns"
+                else None
+            ),
+            document_index=idx,
+            id_layout=getattr(config.ingest, "id_layout", "map"),
+            id_string_format=getattr(config.ingest, "id_string_format", None),
+        )
+
+        # Choose strategy per-file
+        try:
+            strategy = resolve_embed_strategy(document, result, config)
+        except Exception:
+            strategy = "after"
+
+        if enable_progress:
+            print(f"[FileManager] 📄 Processing {original_path} (strategy={strategy})")
+
+        # Run ingest/embed in thread pool (CPU-bound operations)
+        if strategy == "along":
+            await asyncio.to_thread(
+                getattr(self, "_ingest_and_embed"),
+                file_path=original_path,
+                document=document,
+                result=result,
+                config=config,
+            )
+        else:
+            inserted_ids = await asyncio.to_thread(
+                getattr(self, "_ingest"),
+                file_path=original_path,
+                document=document,
+                result=result,
+                config=config,
+            )
+            if strategy != "off":
+                await asyncio.to_thread(
+                    getattr(self, "_embed"),
+                    file_path=original_path,
+                    document=document,
+                    result=result,
+                    inserted_ids=inserted_ids,
+                    config=config,
+                )
+
+        # Decide return mode
+        mode = getattr(getattr(config, "output", None), "return_mode", "compact")
+        if mode == "full":
+            return (original_path, result)
+        elif mode == "none":
+            return (
+                original_path,
+                {
+                    "file_path": original_path,
+                    "status": result.get("status"),
+                    "error": result.get("error"),
+                    "total_records": result.get("total_records"),
+                    "file_format": result.get("file_format"),
+                },
+            )
+        else:  # compact
+            _model = await asyncio.to_thread(
+                _build_compact_parse_model,
+                self,
+                file_path=original_path,
+                document=document,
+                result=result,
+                config=config,
+            )
+            # Ensure a stable dict payload with file_path for async tests/consumers
+            if isinstance(_model, dict):
+                _out = dict(_model)
+                _out.setdefault("file_path", original_path)
+                return (original_path, _out)
+            else:
+                try:
+                    _as_dict = getattr(
+                        _model,
+                        "model_dump",
+                        lambda: dict(_model),
+                    )()
+                except Exception:
+                    _as_dict = {"value": _model}
+                _as_dict.setdefault("file_path", original_path)
+                return (original_path, _as_dict)
+    except Exception as e:
+        if enable_progress:
+            print(f"[FileManager] ❌ Error processing {original_path}: {e}")
+        return (
+            original_path,
+            _Doc.error_result(original_path, f"processing failed: {e}"),
+        )
+    finally:
+        # Mark file complete in progress manager
+        try:
+            if enable_progress and hasattr(self, "_progress_manager"):
+                pm = getattr(self, "_progress_manager", None)
+                if pm is not None:
+                    pm.complete_file(original_path)
+        except Exception:
+            pass
+
+
+async def process_files_parallel_async(
+    self,
+    *,
+    documents: List[Any],
+    exported_paths: List[str],
+    exported_paths_to_original_paths: Dict[str, str],
+    config: _FilePipelineConfig,
+    enable_progress: bool,
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """
+    Process multiple files in parallel asynchronously when ingest_mode is per_file.
+
+    Parameters
+    ----------
+    self
+        FileManager instance.
+    documents : list[Any]
+        Parsed document objects.
+    exported_paths : list[str]
+        Exported file paths.
+    exported_paths_to_original_paths : dict[str, str]
+        Mapping of exported paths to original paths.
+    config : FilePipelineConfig
+        Pipeline configuration.
+    enable_progress : bool
+        Whether to enable progress logging.
+
+    Returns
+    -------
+    list[Tuple[str, dict[str, Any]]]
+        List of (original_path, result_dict) tuples in order.
+    """
+    import asyncio
+    from unity.file_manager.parser.types.document import Document as _Doc
+
+    tasks = []
+    for idx, document in enumerate(documents):
+        if idx >= len(exported_paths):
+            continue
+        exported_path = exported_paths[idx]
+        original_path = exported_paths_to_original_paths.get(
+            exported_path,
+            exported_path,
+        )
+        tasks.append(
+            _process_single_file_core_async(
+                self,
+                idx=idx,
+                document=document,
+                original_path=original_path,
+                config=config,
+                enable_progress=enable_progress,
+            ),
+        )
+
+    # Execute all tasks concurrently
+    completed_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Return results in order
+    return [
+        (
+            result_data
+            if not isinstance(result_data, Exception)
+            else (
+                exported_paths_to_original_paths.get(
+                    exported_paths[idx] if idx < len(exported_paths) else "",
+                    exported_paths[idx] if idx < len(exported_paths) else "",
+                ),
+                _Doc.error_result(
+                    exported_paths_to_original_paths.get(
+                        exported_paths[idx] if idx < len(exported_paths) else "",
+                        exported_paths[idx] if idx < len(exported_paths) else "",
+                    ),
+                    f"processing failed: {result_data}",
+                ),
+            )
+        )
+        for idx, result_data in enumerate(completed_results)
+    ]
+
+
+async def process_files_sequential_async(
+    self,
+    *,
+    documents: List[Any],
+    exported_paths: List[str],
+    exported_paths_to_original_paths: Dict[str, str],
+    config: _FilePipelineConfig,
+    enable_progress: bool,
+) -> AsyncIterator[Dict[str, Any]]:
+    """
+    Process multiple files sequentially asynchronously (unified mode or single file).
+
+    Parameters
+    ----------
+    self
+        FileManager instance.
+    documents : list[Any]
+        Parsed document objects.
+    exported_paths : list[str]
+        Exported file paths.
+    exported_paths_to_original_paths : dict[str, str]
+        Mapping of exported paths to original paths.
+    config : FilePipelineConfig
+        Pipeline configuration.
+    enable_progress : bool
+        Whether to enable progress logging.
+
+    Yields
+    ------
+    dict[str, Any]
+        Result dict per file.
+    """
+    if enable_progress and len(documents) > 1:
+        print(
+            f"[FileManager] Sequential processing for {len(documents)} files (unified mode)",
+        )
+
+    for idx, document in enumerate(documents):
+        fp = exported_paths[idx] if idx < len(exported_paths) else None
+        if fp is None:
+            continue
+        original_path = exported_paths_to_original_paths.get(fp, fp)
+        original_path, result_dict = await _process_single_file_core_async(
+            self,
+            idx=idx,
+            document=document,
+            original_path=original_path,
+            config=config,
+            enable_progress=enable_progress,
+        )
+        yield result_dict
