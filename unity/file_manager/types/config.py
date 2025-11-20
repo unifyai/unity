@@ -20,8 +20,10 @@ Tip for future contributors:
 """
 
 from typing import Any, Callable, Dict, Iterable, List, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 import importlib
+import json
+from pathlib import Path
 
 
 # ------------------------------ Parser ------------------------------------ #
@@ -146,22 +148,90 @@ class IngestConfig(BaseModel):
         },
     )
 
+    # Business context specifications for enriching table contexts with descriptions
+    business_contexts: List["BusinessContextSpec"] = Field(default_factory=list)
+
+
+# --------------------------- Business Context ----------------------------- #
+
+
+class TableBusinessContextSpec(BaseModel):
+    """Table-level business context specification for enriching a single table context with descriptions.
+
+    - table: exact table label (required for matching)
+    - column_descriptions: mapping of column name → description
+    - table_description: optional description for the table context itself
+    """
+
+    table: str
+    column_descriptions: Dict[str, str] = Field(default_factory=dict)
+    table_description: Optional[str] = None
+
+
+class BusinessContextSpec(BaseModel):
+    """Business context specification for enriching table contexts with descriptions.
+
+    - file_path: exact file path (required for matching)
+    - tables: list of table specs for this file (at least one required)
+    """
+
+    file_path: str
+    tables: List[TableBusinessContextSpec] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_tables_not_empty(self) -> "BusinessContextSpec":
+        """Ensure tables list is not empty."""
+        if not self.tables:
+            raise ValueError(
+                "BusinessContextSpec must have at least one table specification",
+            )
+        return self
+
 
 # ------------------------------ Embeddings -------------------------------- #
 
 
-class EmbeddingSpec(BaseModel):
-    """Embedding target specification.
+class TableEmbeddingSpec(BaseModel):
+    """Table-level embedding specification for a single table.
 
-    - context selects where to embed.
-    - table allows narrowing to a specific table label in per_file_table mode;
-      use "*" or None to apply broadly.
+    - table: exact table label (required for matching)
+    - source_columns and target_columns are parallel lists; one spec can embed multiple columns.
     """
 
+    table: str
+    source_columns: List[str]
+    target_columns: List[str]
+
+    @model_validator(mode="after")
+    def validate_column_lists_match(self) -> "TableEmbeddingSpec":
+        """Ensure source_columns and target_columns have the same length."""
+        if len(self.source_columns) != len(self.target_columns):
+            raise ValueError(
+                f"source_columns ({len(self.source_columns)}) and target_columns ({len(self.target_columns)}) must have the same length",
+            )
+        return self
+
+
+class FileEmbeddingSpec(BaseModel):
+    """File-level embedding specification for enriching tables/contexts with embeddings.
+
+    - file_path: exact file path (required for matching). Use "*" to match all files.
+    - context: selects where to embed ("per_file", "per_file_table", "unified")
+    - tables: list of table specs for this file (at least one required for per_file_table context)
+    """
+
+    file_path: str
     context: Literal["per_file", "per_file_table", "unified"]
-    table: Optional[str] = None
-    source_column: str
-    target_column: str
+    tables: List[TableEmbeddingSpec] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_tables_not_empty(self) -> "FileEmbeddingSpec":
+        """Ensure tables list is not empty."""
+        if not self.tables:
+            raise ValueError(
+                "FileEmbeddingSpec must have at least one table specification",
+            )
+        return self
 
 
 class EmbeddingsConfig(BaseModel):
@@ -176,14 +246,15 @@ class EmbeddingsConfig(BaseModel):
         Size heuristic (total_records or total table rows) used when strategy == "auto".
     hooks_per_chunk:
         When True, run pre/post embed hooks for each chunk in along mode.
-    specs:
-        Target specifications describing where and what to embed.
+    file_specs:
+        File-level embedding specifications describing where and what to embed, organized by file_path.
+        Each FileEmbeddingSpec can target multiple tables within a file.
     """
 
     strategy: Literal["off", "after", "along", "auto"] = "auto"
     large_threshold: int = 2000
     hooks_per_chunk: bool = True
-    specs: List[EmbeddingSpec] = Field(default_factory=list)
+    file_specs: List[FileEmbeddingSpec] = Field(default_factory=list)
 
 
 # ------------------------------- Plugins ---------------------------------- #
@@ -267,6 +338,10 @@ class FilePipelineConfig(BaseModel):
     Keep this as the single entry point. Extend the grouped sub-configs as
     needed instead of growing many small models. Defaults preserve current
     behavior (per-file layout, no embeddings, modest parser batch size).
+
+    Can be instantiated with defaults or loaded from a JSON file using `from_file()`.
+    Supports partial configs when loading from file - only define what you need,
+    defaults fill the rest.
     """
 
     parse: ParseConfig = ParseConfig()
@@ -275,3 +350,144 @@ class FilePipelineConfig(BaseModel):
     plugins: PluginsConfig = PluginsConfig()
     output: OutputConfig = OutputConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+
+    @classmethod
+    def from_file(cls, path: str) -> "FilePipelineConfig":
+        """Load JSON config file and convert to FilePipelineConfig.
+
+        Supports partial configs - only define what you need, defaults fill the rest.
+        All fields in the JSON are optional to allow minimal config files.
+
+        Parameters
+        ----------
+        path : str
+            Path to JSON config file
+
+        Returns
+        -------
+        FilePipelineConfig
+            Validated and populated FilePipelineConfig instance
+
+        Raises
+        ------
+        FileNotFoundError
+            If config file doesn't exist
+        ValueError
+            If JSON is invalid or doesn't match schema
+        """
+        config_path = Path(path).expanduser().resolve()
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in config file: {e}") from e
+
+        # Helper class for validating JSON file structure (all fields optional)
+        class _FilePipelineConfigFile(BaseModel):
+            """Temporary model for validating JSON file structure."""
+
+            parse: Optional[Dict[str, Any]] = None
+            ingest: Optional[Dict[str, Any]] = None
+            embed: Optional[Dict[str, Any]] = None
+            plugins: Optional[Dict[str, Any]] = None
+            output: Optional[Dict[str, Any]] = None
+            diagnostics: Optional[Dict[str, Any]] = None
+
+        # Validate JSON structure
+        config_file = _FilePipelineConfigFile.model_validate(data)
+
+        # Build FilePipelineConfig with defaults, then override with provided values
+        cfg = cls()
+
+        # Parse config
+        if config_file.parse:
+            if "batch_size" in config_file.parse:
+                cfg.parse.batch_size = config_file.parse["batch_size"]
+            if "parser_kwargs" in config_file.parse:
+                cfg.parse.parser_kwargs.update(config_file.parse["parser_kwargs"])
+
+        # Ingest config
+        if config_file.ingest:
+            ingest_data = config_file.ingest
+            for key, value in ingest_data.items():
+                if key == "business_contexts":
+                    # Convert dicts to BusinessContextSpec instances with nested TableBusinessContextSpec
+                    business_contexts = []
+                    for bc_dict in value:
+                        # Extract tables list and convert each to TableBusinessContextSpec
+                        tables_data = bc_dict.get("tables", [])
+                        table_specs = [
+                            TableBusinessContextSpec(**table_dict)
+                            for table_dict in tables_data
+                        ]
+                        # Create BusinessContextSpec with file_path and tables
+                        business_contexts.append(
+                            BusinessContextSpec(
+                                file_path=bc_dict["file_path"],
+                                tables=table_specs,
+                            ),
+                        )
+                    cfg.ingest.business_contexts = business_contexts
+                elif hasattr(cfg.ingest, key):
+                    setattr(cfg.ingest, key, value)
+
+        # Embed config
+        if config_file.embed:
+            embed_data = config_file.embed
+            if "strategy" in embed_data:
+                cfg.embed.strategy = embed_data["strategy"]
+            if "large_threshold" in embed_data:
+                cfg.embed.large_threshold = embed_data["large_threshold"]
+            if "hooks_per_chunk" in embed_data:
+                cfg.embed.hooks_per_chunk = embed_data["hooks_per_chunk"]
+            if "file_specs" in embed_data:
+                # Convert dicts to FileEmbeddingSpec instances with nested TableEmbeddingSpec
+                file_specs = []
+                for fs_dict in embed_data["file_specs"]:
+                    # Extract tables list and convert each to TableEmbeddingSpec
+                    tables_data = fs_dict.get("tables", [])
+                    table_specs = [
+                        TableEmbeddingSpec(**table_dict) for table_dict in tables_data
+                    ]
+                    # Create FileEmbeddingSpec with file_path, context, and tables
+                    file_specs.append(
+                        FileEmbeddingSpec(
+                            file_path=fs_dict["file_path"],
+                            context=fs_dict["context"],
+                            tables=table_specs,
+                        ),
+                    )
+                cfg.embed.file_specs = file_specs
+
+        # Plugins config
+        if config_file.plugins:
+            plugins_data = config_file.plugins
+            for key in [
+                "pre_parse",
+                "post_parse",
+                "pre_ingest",
+                "post_ingest",
+                "pre_embed",
+                "post_embed",
+            ]:
+                if key in plugins_data:
+                    setattr(cfg.plugins, key, plugins_data[key])
+            if "plugin_kwargs" in plugins_data:
+                cfg.plugins.plugin_kwargs.update(plugins_data["plugin_kwargs"])
+
+        # Output config
+        if config_file.output:
+            if "return_mode" in config_file.output:
+                cfg.output.return_mode = config_file.output["return_mode"]
+
+        # Diagnostics config
+        if config_file.diagnostics:
+            if "enable_progress" in config_file.diagnostics:
+                cfg.diagnostics.enable_progress = config_file.diagnostics[
+                    "enable_progress"
+                ]
+
+        return cfg
