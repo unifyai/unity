@@ -12,7 +12,7 @@ from ..common.filter_utils import normalize_filter_expr
 from ..blacklist_manager.types.blacklist import BlackList
 from ..transcript_manager.types.message import Medium
 from .base import BaseBlackListManager
-from ..common.context_handler import TableContext
+from ..common.context_handler import TableContext, ContextHandler
 
 
 class BlackListManager(BaseBlackListManager):
@@ -54,7 +54,7 @@ class BlackListManager(BaseBlackListManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a BlackListManager."
 
-        self._ctx = f"{read_ctx}/BlackList" if read_ctx else "BlackList"
+        self._ctx = ContextHandler.get_context(self, "BlackList")
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(
@@ -80,7 +80,6 @@ class BlackListManager(BaseBlackListManager):
             description="List of blacklisted contact details (per medium).",
             fields=model_to_fields(BlackList),
         )
-        self._store.ensure_context()
 
     # ------------------------------------------------------------------ #
     # Public API                                                         #
