@@ -82,6 +82,7 @@ from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.sentinels import _UnsetSentinel
+from ..common.context_handler import TableContext
 
 
 # Sentinel for optional-argument presence detection
@@ -106,6 +107,25 @@ class TaskScheduler(BaseTaskScheduler):
         "status not in ('completed','cancelled','failed') and "
         "schedule.get('prev_task') is None"
     )
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Tasks",
+                description=(
+                    "List of all tasks with their name, description, status, "
+                    "schedule, deadline, repeat pattern, priority **and** "
+                    "`instance_id` which tracks multiple executions of the "
+                    "same logical task."
+                ),
+                fields=model_to_fields(Task),
+                unique_keys={"task_id": "int", "instance_id": "int"},
+                auto_counting={
+                    "task_id": None,
+                    "instance_id": "task_id",
+                },
+            ),
+        ]
 
     # ------------------------------------------------------------------ #
     #  Decorator – uniform ManagerMethod logging                          #
