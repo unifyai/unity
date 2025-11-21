@@ -39,19 +39,7 @@ event_broker = get_event_broker()
 chunk_queue = asyncio.Queue()
 current_running_response: asyncio.Task = None
 
-# Globals for contact and boss details
-contact_id = ""
-contact_first_name = ""
-contact_surname = ""
-contact_is_boss_user = ""
-contact_email = ""
-boss_first_name = ""
-boss_surname = ""
-boss_phone_number = ""
-boss_email = ""
-is_boss_user = ""
-
-# Globals initialized lazily or via prewarm to avoid duplicate heavy init
+# globals initialized lazily or via prewarm to avoid duplicate heavy init
 STT = None
 LLM = None
 VAD = None
@@ -67,51 +55,35 @@ def prewarm(_ctx=None):
         print("Prewarm complete")
     except Exception as e:
         print(f"Prewarm failed: {e}")
-        # Ensure fallback path runs by resetting all globals
+        # ensure fallback path runs by resetting all globals
         STT = None
         LLM = None
         VAD = None
 
 
 class Assistant(Agent):
-    def __init__(
-        self,
-        from_number: str = "",
-        to_number: str = "",
-        outbound: bool = False,
-    ) -> None:
+    def __init__(self, contact: dict, outbound: bool = False) -> None:
         self.past_events = []
         self.new_events = []
-        # self.client = client
         self.current_tasks_status = None
-        self.from_number = from_number
-        self._call_received = not outbound
+        self.contact = contact
+        self.call_received = not outbound
 
         super().__init__(instructions="", llm=LLM)
 
     def set_call_received(self):
-        self._call_received = True
+        self.call_received = True
 
     async def on_user_turn_completed(
         self,
         turn_ctx: ChatContext,
         new_message: ChatMessage,
     ) -> None:
-        # events_queue.put_nowait(PhoneUtteranceEvent(role="User", content=new_message.text_content))
-        # we will handle this through the events manager
         print("sending user message...")
         await event_broker.publish(
             "app:comms:phone_utterance",
             PhoneUtterance(
-                contact={
-                    "contact_id": contact_id,
-                    "first_name": contact_first_name,
-                    "surname": contact_surname,
-                    "email_address": contact_email,
-                    "phone_number": os.environ["CALL_FROM_NUMBER"],
-                    "is_boss": is_boss_user,
-                },
-                content=new_message.text_content,
+                contact=self.contact, content=new_message.text_content
             ).to_json(),
         )
         raise llm.StopResponse()
@@ -123,16 +95,11 @@ class Assistant(Agent):
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk]:
         print("waiting for call to be received...")
-        while not self._call_received:
+        while not self.call_received:
             await asyncio.sleep(0.1)
         print("call received")
-        print("running llm node...")
-        # this should probably be done with a queue instead to avoid race conditions
-        # async with event_broker.pubsub() as pubsub:
-        #     await pubsub.subscribe("app:call:chunk")
-        #     async for msg in pubsub.listen():
-        #         ...
 
+        print("running llm node...")
         while True:
             chunk = await chunk_queue.get()
             if chunk["type"] == "end_gen":
@@ -148,24 +115,16 @@ async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
     print("Connected to room")
 
-    # Get phone numbers from environment variables
-    from_number = os.environ.get("CALL_FROM_NUMBER", "")
-    voice_provider = os.environ.get("VOICE_PROVIDER", "cartesia")
-    voice_id = os.environ.get("VOICE_ID", "")
-    # to_number = os.environ.get("CALL_TO_NUMBER", "")
-    outbound = os.environ.get("OUTBOUND", "False") == "True"
-    contact = {
-        "contact_id": contact_id,
-        "first_name": contact_first_name,
-        "surname": contact_surname,
-        "email_address": contact_email,
-        "phone_number": from_number,
-        "is_boss": is_boss_user,
-    }
-
+    # read static config
+    voice_provider = os.environ.get("VOICE_PROVIDER")
+    voice_id = os.environ.get("VOICE_ID")
+    outbound = os.environ.get("OUTBOUND") == "True"
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
     print("outbound", outbound)
+
+    # contact payloads passed as json env vars
+    contact = json.loads(os.getenv("CONTACT", "{}"))
 
     # fallback for whenever pre-loading fails
     if STT is None:
@@ -193,23 +152,23 @@ async def entrypoint(ctx: agents.JobContext):
     async def end_call():
         print("Initiating graceful shutdown...")
 
-        # Send end call event before cleaning tasks and closing connection
+        # send end call event before cleaning tasks and closing connection
         await event_broker.publish(
             "app:comms:phone_call_ended",
             PhoneCallEnded(contact=contact).to_json(),
         )
         print("End call event sent")
 
-        # Get all running tasks except current task
+        # get all running tasks except current task
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 
         if tasks:
             print(f"Cancelling {len(tasks)} running tasks...")
-            # Cancel all tasks
+            # cancel all tasks
             for task in tasks:
                 task.cancel()
 
-            # Wait for tasks to be cancelled gracefully
+            # wait for tasks to be cancelled gracefully
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
                 print("All tasks cancelled successfully")
@@ -218,58 +177,41 @@ async def entrypoint(ctx: agents.JobContext):
             except Exception as e:
                 print(f"Error during task cancellation: {e}")
 
-        # Close the connection gracefully
-        # try:
-        #     await close_connection(writer=writer)
-        #     print("Connection closed gracefully")
-        # except Exception as e:
-        #     print(f"Error during connection cleanup: {e}")
-
         print("Graceful shutdown completed")
 
-    # Add inactivity timeout
+    # add inactivity timeout
     INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
     last_activity_time = asyncio.get_event_loop().time()
 
     async def check_inactivity():
         nonlocal last_activity_time
         while True:
-            await asyncio.sleep(10)  # Check every 10 seconds
+            await asyncio.sleep(10)  # check every 10 seconds
             current_time = asyncio.get_event_loop().time()
             if current_time - last_activity_time > INACTIVITY_TIMEOUT:
                 print("Inactivity timeout reached, shutting down agent...")
                 await end_call()
-                break  # Exit the loop after shutdown
+                break  # exit the loop after shutdown
 
-    # Start inactivity checker
+    # start inactivity checker
     asyncio.create_task(check_inactivity())
 
-    # Create a wrapper for the room event handler since it expects a sync function
+    # create a wrapper for the room event handler since it expects a sync function
     def on_participant_disconnected(*args, **kwargs):
         asyncio.create_task(end_call())
 
     ctx.room.on("participant_disconnected", on_participant_disconnected)
 
-    assistant = Assistant(
-        from_number=from_number,
-        # meet_id=meet_id if meet_id else None,
-        outbound=outbound,
-    )
+    assistant = Assistant(contact=contact, outbound=outbound)
     await session.start(
         room=ctx.room,
         agent=assistant,
         room_input_options=RoomInputOptions(
-            # LiveKit Cloud enhanced noise cancellation
-            # - If self-hosting, omit this parameter
-            # - For telephony applications, use `BVCTelephony` for best results
             noise_cancellation=(
                 noise_cancellation.BVC() if sys.platform == "darwin" else None
             ),
         ),
     )
-
-    # Initialize connection using utility function
-    # reader, writer = await create_connection("call")
 
     await event_broker.publish(
         "app:comms:phone_call_started",
@@ -375,64 +317,36 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    # Extract phone numbers before passing to agents.cli
-    from_number = ""
     assistant_number = ""
-    to_number = ""
-    voice_provider = "cartesia"
-    voice_id = ""
-    meet_id = ""
-    outbound = "False"
     print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 16:
-        # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
-        from_number = sys.argv[2]
-        assistant_number = sys.argv[3]
-        voice_provider = sys.argv[4] if sys.argv[4] != "None" else "cartesia"
-        voice_id = sys.argv[5]
-        outbound = sys.argv[7]
+    if len(sys.argv) > 7:
+        # get static config
+        assistant_number = sys.argv[2]
+        os.environ["VOICE_PROVIDER"] = (
+            sys.argv[3] if sys.argv[3] != "None" else "cartesia"
+        )
+        os.environ["VOICE_ID"] = sys.argv[4] if sys.argv[4] != "None" else ""
+        os.environ["OUTBOUND"] = sys.argv[5]
 
-        # contact details
-        is_boss_user = sys.argv[8]
-        contact_id = sys.argv[9]
-        contact_first_name = sys.argv[10]
-        contact_surname = sys.argv[11]
-        contact_email = sys.argv[12]
+        # get contact payloads
+        os.environ["CONTACT"] = sys.argv[6]
+        print(f"contact: {os.environ['CONTACT']}")
+        if not json.loads(os.environ["CONTACT"]):
+            print("Contact payload is invalid")
+            sys.exit(1)
 
-        # boss details
-        boss_first_name = sys.argv[13]
-        boss_surname = sys.argv[14]
-        boss_phone_number = sys.argv[15]
-        boss_email = sys.argv[16]
-
-        os.environ["BOSS_FIRST_NAME"] = boss_first_name
-        os.environ["BOSS_SURNAME"] = boss_surname
-        os.environ["BOSS_PHONE_NUMBER"] = boss_phone_number
-        os.environ["BOSS_EMAIL"] = boss_email
-        os.environ["CONTACT_ID"] = contact_id
-        os.environ["CONTACT_FIRST_NAME"] = contact_first_name
-        os.environ["CONTACT_SURNAME"] = contact_surname
-        os.environ["CONTACT_EMAIL"] = contact_email
-        os.environ["IS_BOSS_USER"] = is_boss_user
-
-        sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
-
-    # Store phone numbers in environment variables to be accessed by entrypoint
-    os.environ["CALL_FROM_NUMBER"] = from_number
-    os.environ["VOICE_PROVIDER"] = voice_provider
-    if voice_id != "None":
-        os.environ["VOICE_ID"] = voice_id
-    # os.environ["CALL_TO_NUMBER"] = assistant_number
-    os.environ["OUTBOUND"] = outbound
+        sys.argv = sys.argv[:2]  # keep only script name and "dev" command
+    else:
+        print("Not enough arguments provided")
+        sys.exit(1)
 
     agent_name = f"unity_{assistant_number}"
 
     # dispatch agent
-    if sys.argv[1] == "dev":
-        print(f"Dispatching agent {agent_name}")
-        dispatch_agent(agent_name)
-        print(f"Agent {agent_name} dispatched")
+    print(f"Dispatching agent {agent_name}")
+    dispatch_agent(agent_name)
+    print(f"Agent {agent_name} dispatched")
 
     agents.cli.run_app(
         agents.WorkerOptions(
