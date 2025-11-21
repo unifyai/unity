@@ -12,6 +12,7 @@ class StateManager(Enum):
     KNOWLEDGE = "knowledge_manager"
     TASKS = "task_scheduler"
     WEB_SEARCH = "web_searcher"
+    FILES = "file_manager"
 
     # Planned integrations – exposed here for forward compatibility
     GUIDANCE = "guidance_manager"

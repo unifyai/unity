@@ -66,10 +66,11 @@ def ensure_derived_column(
     - By default, scopes placeholders to a local alias `lg` referencing the
       provided `context` when `referenced_logs_context` is not specified.
     """
-    # Fast path: if field already exists, return without locking or logging
+    # Fast path: if field already exists and we are not doing targeted
+    # derived logs creation using from_ids, return without locking or logging
     try:
         fields = unify.get_fields(context=context)
-        if key in fields:
+        if key in fields and not from_ids:
             return
     except Exception:
         # If introspection fails, fall through to locked creation
@@ -79,10 +80,19 @@ def ensure_derived_column(
     # second existence check once inside the critical section (double-checked locking).
     lock = _get_column_lock(context, key)
     with lock:
+        # Early return if the column already exists and
+        # we are not doing targeted derived logs creation using from_ids
+        # We intentionally do this to avoid redundant calls to create
+        # duplicate embeddings that will get rejected by the backend
+        # due to duplication constraint
+        existing = unify.get_fields(context=context)
+        if key in existing and not from_ids:
+            return
+
         try:
             try:
                 fields = unify.get_fields(context=context)
-                if key in fields:
+                if key in fields and not from_ids:
                     return
             except Exception:
                 pass
@@ -148,6 +158,12 @@ def ensure_vector_column(
             equation=derived_expr,
             from_ids=from_ids,
         )
+
+    # Early return if the embedding column already exists and
+    # we are not doing targetted derived logs creation using from_ids
+    existing = unify.get_fields(context=context)
+    if embed_column in existing and not from_ids:
+        return
 
     # Define the embedding equation with explicit lg scoping and ensure the embedding column.
     embed_expr = f"embed({{lg:{source_column}}}, model='{EMBED_MODEL}')"

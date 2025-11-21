@@ -18,11 +18,7 @@ async def test_knowledge_manager_ask_guard_triggers_when_enabled(monkeypatch):
     # Ensure the env flag is on for this test only
     monkeypatch.setenv("UNITY_READONLY_ASK_GUARD", "true")
 
-    # Avoid initializing heavy FileManager/spaCy by injecting a lightweight stub
-    class _StubFileManager:  # minimal stub – not used by ask()
-        pass
-
-    km = KnowledgeManager(file_manager=_StubFileManager())
+    km = KnowledgeManager()
 
     # Monkeypatch the guard's stop() to detect classifier-triggered early stop
     stop_called: dict[str, str | None] = {"reason": None}

@@ -25,10 +25,6 @@ _KNOWLEDGE_DATA: List[Dict[str, str]] = [
         "category": "products",
     },
     {
-        "content": "Node Lambda acquired an OrbitalDrone X99 on 3 May 2025 via its procurement channel.",
-        "category": "transactions",
-    },
-    {
         "content": "The StorageVault contains components named AlphaCore and BetaModule.",
         "category": "inventory",
     },
@@ -44,17 +40,15 @@ _KNOWLEDGE_DATA: List[Dict[str, str]] = [
         "content": "Unit 42 weighs 30 kilograms and is stored in Bay A of the facility.",
         "category": "inventory",
     },
-    {
-        "content": "Batch A is located in Sector 7 and was calibrated in 1990.",
-        "category": "batches",
-    },
-    {
-        "content": "The capital of Andovia is Mirax, established in 1456.",
-        "category": "geography",
-    },
 ]
 
 _KNOWLEDGE_IDS: Dict[str, int] = {}
+_SEED_TABLE_PREFIX: str = "KB_Seed"
+
+
+def _category_to_table(category: str) -> str:
+    cat = (category or "general").strip().lower().replace(" ", "_")
+    return f"{_SEED_TABLE_PREFIX}_{cat}"
 
 
 class ScenarioBuilderKnowledge:
@@ -62,7 +56,22 @@ class ScenarioBuilderKnowledge:
 
     def __init__(self):
         self.km = KnowledgeManager()
+        self._ensure_seed_tables()
         self._populate_id_mapping()
+
+    def _ensure_seed_tables(self) -> None:
+        """Idempotently create one seed table per category in _KNOWLEDGE_DATA."""
+        seen: set[str] = set()
+        for kd in _KNOWLEDGE_DATA:
+            table = _category_to_table(kd.get("category", "general"))
+            if table in seen:
+                continue
+            seen.add(table)
+            try:
+                self.km._create_table(name=table, description=f"Seed table for {table}")
+            except Exception:
+                # Table likely exists already; proceed
+                pass
 
     def _populate_id_mapping(self):
         """Populate _KNOWLEDGE_IDS by searching for existing knowledge entries."""
@@ -80,18 +89,17 @@ class ScenarioBuilderKnowledge:
                 "_".join(search_words).lower().replace(",", "").replace(".", "")
             )
 
-            # Try to find existing knowledge by searching for key terms
+            # Prefer scanning only the relevant seed table for mapping
             try:
-                all_data = self.km._filter()
-                for table_name, table_data in all_data.items():
-                    if table_data and len(table_data) > 0:
-                        for row in table_data:
-                            # Check if any field contains our search words
-                            row_text = str(row).lower()
-                            if all(word.lower() in row_text for word in search_words):
-                                return (search_key, table_name, len(table_data))
+                seed_table = _category_to_table(category)
+                results = self.km._filter(tables=[seed_table], limit=1000)
+                rows = results.get(seed_table, []) or []
+                for row in rows:
+                    row_text = str(row).lower()
+                    if all(word.lower() in row_text for word in search_words):
+                        return (search_key, seed_table, len(rows))
             except Exception:
-                pass  # Continue if search fails
+                pass
 
             return None
 
@@ -122,44 +130,24 @@ class ScenarioBuilderKnowledge:
         for knowledge_data in _KNOWLEDGE_DATA:
             content = knowledge_data.get("content", "")
             category = knowledge_data.get("category", "general")
+            seed_table = _category_to_table(category)
 
-            # Create a search key for checking existence
-            search_words = content.split()[:3]
-            search_key = (
-                "_".join(search_words).lower().replace(",", "").replace(".", "")
-            )
-
-            # Check if knowledge already exists
+            # Check if knowledge already exists in its category seed table
             try:
-                all_data = self.km._filter()
-                knowledge_exists = False
-                for table_name, table_data in all_data.items():
-                    if table_data and len(table_data) > 0:
-                        for row in table_data:
-                            row_text = str(row).lower()
-                            if all(word.lower() in row_text for word in search_words):
-                                knowledge_exists = True
-                                break
-                    if knowledge_exists:
-                        break
-
-                if knowledge_exists:
-                    continue  # Knowledge already exists, skip
+                results = self.km._filter(
+                    tables=[seed_table],
+                    filter=f"content == '{content}'",
+                    limit=1,
+                )
+                rows = results.get(seed_table, []) or []
+                if rows:
+                    continue
             except Exception:
-                pass  # Continue if check fails
+                pass
 
+            # Insert directly via low-level API into category-specific table
             try:
-                # Use the update method to store knowledge
-                handle = await self.km.update(content)
-                await handle.result()
-
-                # Update our tracking
-                if search_key not in _KNOWLEDGE_IDS:
-                    _KNOWLEDGE_IDS[search_key] = {
-                        "category": category,
-                        "content": content,
-                    }
-
+                self.km._add_rows(table=seed_table, rows=[knowledge_data])
             except Exception as e:
                 print(
                     f"Warning: Could not create knowledge entry '{content[:50]}...' due to: {e}",

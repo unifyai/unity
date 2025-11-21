@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
-from unity.file_manager.file_manager import FileManager
+from unity.file_manager.managers.local import LocalFileManager as FileManager
 
 
 @_handle_project

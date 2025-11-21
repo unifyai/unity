@@ -12,9 +12,10 @@ from tests.helpers import _handle_project
 from unity.file_manager.parser import DoclingParser
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_initialization():
+async def test_parser_initialization():
     """Test parser initializes with correct defaults."""
     parser = DoclingParser()
 
@@ -23,15 +24,16 @@ def test_parser_initialization():
     assert parser.max_chunk_size == 500
     assert parser.chunk_overlap == 200
     assert parser.sentence_chunk_size == 512
-    assert parser.use_hybrid_chunking is False
+    assert parser.use_hybrid_chunking is True
     assert parser.extract_images is True
     assert parser.extract_tables is True
     assert parser.use_llm_enrichment is True
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_custom_initialization():
+async def test_parser_custom_initialization():
     """Test parser with custom parameters."""
     parser = DoclingParser(
         max_chunk_size=1000,
@@ -56,9 +58,10 @@ def test_parser_custom_initialization():
     assert parser.use_llm_enrichment is False
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_simple_text(parser, supported_format_files):
+async def test_parse_simple_text(parser, supported_format_files):
     """Test parsing a simple text file."""
     txt_files = supported_format_files[".txt"]["files"]
     simple_file = txt_files["simple"]
@@ -68,7 +71,8 @@ def test_parse_simple_text(parser, supported_format_files):
     assert doc.document_id is not None
     assert doc.metadata is not None
     assert doc.metadata.file_name == "test_simple.txt"
-    assert doc.metadata.file_type == "text/plain"
+    assert doc.metadata.mime_type.value == "text/plain"
+    assert doc.metadata.file_format.value == "txt"
     assert doc.metadata.parser_name == "DoclingParser"
 
     # Check content
@@ -81,9 +85,10 @@ def test_parse_simple_text(parser, supported_format_files):
     assert "simple text file" in full_text
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_multi_paragraph(parser, supported_format_files):
+async def test_parse_multi_paragraph(parser, supported_format_files):
     """Test parsing text with multiple paragraphs."""
     txt_files = supported_format_files[".txt"]["files"]
     multi_file = txt_files["multi_paragraph"]
@@ -108,9 +113,10 @@ def test_parse_multi_paragraph(parser, supported_format_files):
     assert "Third paragraph" in full_text
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_empty_file(parser, supported_format_files):
+async def test_parse_empty_file(parser, supported_format_files):
     """Test parsing an empty file."""
     txt_files = supported_format_files[".txt"]["files"]
     empty_file = txt_files["empty"]
@@ -129,9 +135,10 @@ def test_parse_empty_file(parser, supported_format_files):
     assert doc.to_plain_text().strip() == ""
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_special_characters(parser, supported_format_files):
+async def test_parse_special_characters(parser, supported_format_files):
     """Test parsing text with special characters."""
     txt_files = supported_format_files[".txt"]["files"]
     special_file = txt_files["special_chars"]
@@ -145,17 +152,19 @@ def test_parse_special_characters(parser, supported_format_files):
     assert "你好" in full_text
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_nonexistent_file(parser):
+async def test_parse_nonexistent_file(parser):
     """Test parsing a non-existent file."""
     with pytest.raises(FileNotFoundError):
         parser.parse(Path("/nonexistent/file.txt"))
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_flat_records_conversion(parser, supported_format_files):
+async def test_flat_records_conversion(parser, supported_format_files):
     """Test conversion to flat records format."""
     txt_files = supported_format_files[".txt"]["files"]
     simple_file = txt_files["simple"]

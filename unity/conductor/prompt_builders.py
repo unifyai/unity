@@ -50,6 +50,7 @@ def build_ask_prompt(
     guidance_ask_fname = _tool_name(tools, "guidancemanager_ask")
     task_ask_fname = _tool_name(tools, "taskscheduler_ask")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
+    fm_ask_fname = _tool_name(tools, "globalfilemanager_ask")
     actor_act_fname = _tool_name(tools, "actor_act")
     cm_ask_fname = _tool_name(tools, "conversationmanagerhandle_ask")
     cm_transcript_fname = _tool_name(
@@ -96,6 +97,12 @@ def build_ask_prompt(
         "Use the WebSearcher.ask tool for general knowledge, external information, industry concepts, best practices or anything that would reasonably be found on the web (and not in your internal managers).",
         "For live or time-sensitive facts (e.g., questions containing 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must use WebSearcher.ask – do not rely on internal memory for these.",
         "Use Contact/Transcript/Knowledge/Task managers for internal state about people, messages, stored facts and tasks respectively.",
+        # Files domain (read-only)
+        (
+            f"Files – Use `{fm_ask_fname}` for cross-filesystem inventory, discovery, and high-level file questions"
+            if fm_ask_fname
+            else "Files – Use GlobalFileManager.ask for cross-filesystem inventory, discovery, and high-level file questions"
+        ),
         "\nConversationManagerHandle Tools",
         "-----------------------",
         "The ConversationManagerHandle is always active. You can read from and steer the live conversation.",
@@ -133,6 +140,12 @@ def build_ask_prompt(
         else ""
     )
 
+    fm_examples = (
+        f'\n• Files – list filesystems and summarise inventory\n  `{fm_ask_fname}(text="List available filesystems and provide a brief inventory overview")`'
+        if fm_ask_fname
+        else ""
+    )
+
     usage_examples = "\n".join(
         [
             "Examples",
@@ -141,7 +154,7 @@ def build_ask_prompt(
             f'• Messages – top-3 messages about budgeting and banking\n  `{transcript_ask_fname}(text="Show the latest 3 messages about banking and budgeting")`',
             f'• Knowledge – onboarding policy summary\n  `{knowledge_ask_fname}(text="Summarise the employee onboarding policy")`',
             f'• Guidance – find guidance about onboarding demos\n  `{guidance_ask_fname}(text="Find guidance about the onboarding demo")`',
-            f'• Tasks – list tasks due today\n  `{task_ask_fname}(text="Which tasks are due today?")`{web_example}',
+            f'• Tasks – list tasks due today\n  `{task_ask_fname}(text="Which tasks are due today?")`{web_example}{fm_examples}',
         ],
     )
 
@@ -198,6 +211,8 @@ def build_request_prompt(
     task_execute_fname = _tool_name(tools, "taskscheduler_execute")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
     actor_act_fname = _tool_name(tools, "actor_act")
+    fm_ask_fname = _tool_name(tools, "globalfilemanager_ask")
+    fm_organize_fname = _tool_name(tools, "globalfilemanager_organize")
     cm_ask_fname = _tool_name(tools, "conversationmanagerhandle_ask")
     cm_interject_fname = _tool_name(tools, "conversationmanagerhandle_interject")
     cm_transcript_fname = _tool_name(
@@ -256,6 +271,19 @@ def build_request_prompt(
         f"- Start immediately via `{task_execute_fname}` when explicitly requested; otherwise schedule appropriately",
         "When tasks involve people (e.g. triggers referencing contacts), first resolve the relevant contact_id(s) via",
         f"`{contact_ask_fname}` and then proceed.",
+        "\nFiles (rename/move only)",
+        "-----------------------",
+        (
+            f"- Discover targets via `{fm_ask_fname}` (cross-filesystem inventory and search)"
+            if fm_ask_fname
+            else "- Discover targets via GlobalFileManager.ask (cross-filesystem inventory and search)"
+        ),
+        (
+            f"- Perform safe organization via `{fm_organize_fname}` (rename/move only; no create/delete)"
+            if fm_organize_fname
+            else "- Perform safe organization via GlobalFileManager.organize (rename/move only; no create/delete)"
+        ),
+        "- Use ask for discovery, then call organize to apply changes.",
         "Task execution policy — mandatory execute when asked to run/start:",
         f"- If the user says 'run', 'start', 'execute', 'begin', or 'launch' a task, you MUST call `{task_execute_fname}` exactly once.",
         f"- Do NOT use `{task_update_fname}` as a substitute for starting a task. Only use `{task_update_fname}` to create a missing task or to adjust fields prior to execution, then call `{task_execute_fname}`.",
@@ -294,6 +322,7 @@ def build_request_prompt(
     read_only_tools_line = (
         f"`{contact_ask_fname}`, `{transcript_ask_fname}`, `{knowledge_ask_fname}`, `{guidance_ask_fname}`, `{task_ask_fname}"
         + (f"`, `{web_ask_fname}`" if web_ask_fname else "")
+        + (f"`, `{fm_ask_fname}`" if fm_ask_fname else "")
         + "`"
     )
     decomposition_concurrency_request_lines = [
@@ -305,7 +334,9 @@ def build_request_prompt(
         "• Serialize dependent sub-requests: resolve the required read(s) first, then apply the write(s).",
         "• Never satisfy a read-only sub-request using the narrative result of a write; always call the appropriate `ask` tool.",
         f"• Read-only tools include: {read_only_tools_line}.",
-        f"• Write tools include: `{contact_update_fname}`, `{knowledge_update_fname}`, `{guidance_update_fname}`, `{task_update_fname}`.",
+        f"• Write tools include: `{contact_update_fname}`, `{knowledge_update_fname}`, `{guidance_update_fname}`, `{task_update_fname}`"
+        + (f", `{fm_organize_fname}`" if fm_organize_fname else "")
+        + ".",
     ]
 
     # Core philosophy for update tools: they are cautious, state-aware, and avoid duplication.
@@ -332,13 +363,19 @@ def build_request_prompt(
         else ""
     )
 
+    fm_usage = (
+        f'\n• Rename/move/delete files across filesystems\n  `{fm_organize_fname}(text="Rename /docs/notes.txt to notes-2024.txt; move /invoices/jan.xlsx to /archive/; delete /tmp/old.log.")`'
+        if fm_organize_fname
+        else ""
+    )
+
     usage_examples = "\n".join(
         [
             "Examples",
             "--------",
             f'• Create a task and start it\n  1) `{task_update_fname}(text="Create a task: Call Alice about the Q3 budget")`\n  2) `{task_execute_fname}(text="Start the call task now")`',
             f'• Update knowledge and verify\n  1) `{knowledge_update_fname}(text="Store: Office hours are 9–5 PT")`\n  2) `{knowledge_ask_fname}(text="What are our office hours?")`',
-            f'• Create or update a contact then confirm via read\n  1) `{contact_update_fname}(text="Create Jane Doe with email jane@example.com")`\n  2) `{contact_ask_fname}(text="Show Jane Doe\'s contact details")`{web_example}',
+            f'• Create or update a contact then confirm via read\n  1) `{contact_update_fname}(text="Create Jane Doe with email jane@example.com")`\n  2) `{contact_ask_fname}(text="Show Jane Doe\'s contact details")`{web_example}{fm_usage}',
             f"• Run an existing task immediately\n  `{task_execute_fname}(text=\"Run the task named 'Email Contoso about invoices' now\")`",
             f"• Run a task at a specific time\n  `{task_execute_fname}(text=\"Start 'Prepare slides for kickoff' today at 16:00\")`",
             f'• Create or update guidance\n  `{guidance_update_fname}(text="Create guidance: Troubleshooting VPN issues")`',
