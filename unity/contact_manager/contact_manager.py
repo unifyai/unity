@@ -172,9 +172,8 @@ class ContactManager(BaseContactManager):
         self._provision_storage()
 
         # ── ensure an assistant contact with id 0 exists and is up-to-date ──
-        self._sync_assistant_contact()
         # ── ensure a default *user* contact with id 1 exists and is up-to-date ──
-        self._sync_user_contact()
+        self._sync_required_contacts()
 
     # ──────────────────────────────────────────────────────────────────────
     #  Public API (English-only entrypoints for the LLM)
@@ -369,8 +368,7 @@ class ContactManager(BaseContactManager):
             pass
 
         # Recreate assistant and default user contacts (id 0 and 1)
-        self._sync_assistant_contact()
-        self._sync_user_contact()
+        self._sync_required_contacts()
 
     # (Optional) Public programmatic helpers (non-LLM)
     def get_contact_info(
@@ -1082,11 +1080,21 @@ class ContactManager(BaseContactManager):
     def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
         _sys_ensure_columns_exist(self, extra_fields)
 
-    def _sync_assistant_contact(self) -> None:
-        _sys_sync_assistant_contact(self)
-
-    def _sync_user_contact(self) -> None:
-        _sys_sync_user_contact(self)
+    def _sync_required_contacts(self) -> None:
+        existing_logs = unify.get_logs(
+            context=self._ctx,
+            filter="contact_id == 0 or contact_id == 1",
+            limit=2,
+        )
+        logs_by_contact_id = {
+            int(lg.entries.get("contact_id")): lg
+            for lg in existing_logs
+            if lg.entries.get("contact_id") is not None
+        }
+        assistant_log = logs_by_contact_id.get(0)
+        user_log = logs_by_contact_id.get(1)
+        _sys_sync_assistant_contact(self, assistant_log)
+        _sys_sync_user_contact(self, user_log)
 
     # Validation / sanitization
     def _allowed_fields(self) -> list[str]:
