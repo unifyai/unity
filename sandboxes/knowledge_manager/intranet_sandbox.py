@@ -82,6 +82,8 @@ LG = logging.getLogger("intranet_sandbox")
 # ═════════════════════════════════ seed helpers ═════════════════════════════
 
 _shutdown_requested = False
+_loop_ref: asyncio.AbstractEventLoop | None = None
+_shutdown_event: asyncio.Event | None = None
 
 
 def _signal_handler(signum, _frame):

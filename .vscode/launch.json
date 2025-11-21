@@ -71,6 +71,18 @@
           "envFile": "${workspaceFolder}/.env",
           "console": "integratedTerminal",
           "justMyCode": false
-        }
+        },
+        {
+          "name": "Intranet Demo Sandbox",
+          "type": "debugpy",
+          "request": "launch",
+          "program": "${workspaceFolder}/sandboxes/knowledge_manager/intranet_sandbox.py",
+          "args": ["--project_name", "Intranet"],
+          "cwd": "${workspaceFolder}",
+          "env": { "PYTHONPATH": "${workspaceFolder}" },
+          "envFile": "${workspaceFolder}/.env",
+          "console": "integratedTerminal",
+          "justMyCode": false
+        },
     ]
 }

@@ -167,7 +167,8 @@ def build_refactor_prompt(
            needed to reach Third Normal Form (3NF) or better. Always prefer
            **rename over delete+create** when feasible.
         3. Execute the plan step-by-step via the tool calls.
-        4. End with a concise plain-English *migration report*.
+        4. Keep exploration minimal (tables_overview + small, precise filters). Avoid long free‑form loops.
+        5. End with a concise plain-English *migration report*.
 
         Anti-patterns
         -------------
@@ -633,9 +634,8 @@ def build_ask_prompt(
         1. List each distinct piece of information the question asks for.
         2. Identify which tables / columns can hold that info.
         3. Fetch *all* relevant rows (use `{{search}}` for semantic search; use `{{filter}}` for precise filters).{join_hint}
-        4. If the schema is awkward, refactor it before continuing.
-        5. Aggregate results into a concise answer covering every fact.
-        6. Double-check nothing is missing; if so, repeat the search/refactor.
+        4. Aggregate results into a concise answer covering every fact.
+        5. Double-check nothing is missing; if so, repeat the search.
 
         Do **not** hallucinate data.
         """,
@@ -650,10 +650,14 @@ def build_ask_prompt(
         "─ Tool selection (read carefully) ─",
         f"• For ANY semantic question over free-form text, ALWAYS use `{search_fname}`. Never try to approximate meaning with a lot of brittle substring filters using the `{filter_fname}` tool.",
         f"• Use `{filter_fname}` only for exact/boolean logic over structured fields (ids, enums, ranges, null checks) or for narrow, constrained text.",
+        "• Keep semantic search tight: prefer k ≤ 10 unless there is a clear reason to widen.",
     ]
     if include_join_info:
         selection_lines.append(
             f"• Reserve joins for combining **different** tables; if all fields live in a single table, prefer direct `{filter_fname}`. Avoid self-joins.",
+        )
+        selection_lines.append(
+            "• **MANDATORY**: For questions requiring data from multiple tables, you MUST use the dedicated join tools (`filter_join`, `search_join`, `filter_multi_join`, `search_multi_join`). Do NOT simulate joins by filtering each table separately and combining results manually.",
         )
 
     parts_examples: list[str] = [
@@ -677,6 +681,12 @@ def build_ask_prompt(
                 '              join_expr="Orders.customer_id == Customers.customer_id",',
                 '              select={"Orders.notes":"notes","Customers.industry":"industry"},',
                 '              references={"notes":"rush order","industry":"pharma"}, k=5)`',
+                "• Exact filter over a join (result_where can only reference selected aliases):",
+                '  `filter_join(tables=["Orders","Customers"],',
+                '              join_expr="Orders.customer_id == Customers.customer_id",',
+                '              select={"Orders.customer_id":"cid","Customers.segment":"segment"},',
+                "              result_where=\"segment == 'enterprise' and cid > 1000\", result_limit=50)`",
+                "  (Alias any source columns you need in `select` first; `result_where` may only use these aliases.)",
                 "",
                 "─ Multi-join retrieval (chained joins) ─",
                 "• Chain joins with `$prev` to reference the previous step:",
@@ -686,6 +696,7 @@ def build_ask_prompt(
                 '    {"tables":["$prev","Companies"], "join_expr":"_.company_id == Companies.company_id",',
                 '      "select":{"$prev.units":"units","$prev.model":"model","Companies.name":"company"}}',
                 '  ], references={"company":"Northwind","model":"Voyager"}, k=5)`',
+                "• When filtering the final result of a multi-join, ensure the last step’s `select` includes any columns you will reference in `result_where`.",
                 "",
             ],
         )

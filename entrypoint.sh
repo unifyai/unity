@@ -7,6 +7,7 @@ set -e
 REDIS_PID=""
 MAIN_PID=""
 AGENT_PID=""
+CSB_PID=""
 DESKTOP_PID=""
 
 # Function to handle graceful shutdown
@@ -46,6 +47,15 @@ cleanup() {
     else
         echo "Stopping agent-service..."
         pkill -f "ts-node" 2>/dev/null || true
+    fi
+
+    if [ ! -z "$CSB_PID" ]; then
+        echo "Stopping codesandbox-service (PID: $CSB_PID)..."
+        kill -TERM $CSB_PID 2>/dev/null || true
+        wait $CSB_PID 2>/dev/null || true
+    else
+        echo "Stopping codesandbox-service..."
+        pkill -f "codesandbox-service" 2>/dev/null || true
     fi
 
     echo "Cleanup complete"
@@ -102,6 +112,10 @@ DESKTOP_PID=$!
 # Start agent-service (ts-node)
 npx ts-node /app/agent-service/src/index.ts &
 AGENT_PID=$!
+
+# Start codesandbox-service (ts-node)
+npx ts-node /app/codesandbox-service/src/index.ts &
+CSB_PID=$!
 
 # echo "Starting virtual desktop and Magnitude server..."
 # bash desktop/startup.sh &

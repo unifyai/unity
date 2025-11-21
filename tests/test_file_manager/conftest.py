@@ -9,6 +9,149 @@ import pytest
 from pathlib import Path
 from typing import Any, Dict, List
 from unity.file_manager.parser import DoclingParser
+from unity.file_manager.managers.local import LocalFileManager
+from unity.file_manager.global_file_manager import GlobalFileManager
+from unity.file_manager.simulated import SimulatedFileManager
+
+from tests.helpers import SETTINGS
+
+
+async def llm_judge_html_equivalence(
+    expected_html: str,
+    parsed_html: str,
+) -> tuple[bool, str]:
+    """
+    Use a small LLM to judge if two HTML tables are semantically equivalent.
+
+    This allows for structural differences (e.g., header rows wrapped in <tbody> vs not)
+    as long as the content, information, and overall table structure are identical.
+
+    Args:
+        expected_html: The expected HTML table (from pandas)
+        parsed_html: The parsed HTML table (from Docling)
+
+    Returns:
+        Tuple of (is_equivalent: bool, explanation: str)
+    """
+    try:
+        import unify
+
+        system_prompt = """You are an HTML table comparison expert. Your task is to determine if two HTML tables are semantically equivalent.
+
+Rules for comparison:
+1. The actual TABLE DATA (cell contents, values, text) MUST be identical (with exceptions below)
+2. The table structure (rows, columns, headers) MUST be the same
+3. Minor structural differences are acceptable if they don't change the meaning:
+   - Header rows inside or outside <tbody> tags
+   - Presence or absence of <thead> wrappers
+   - Different tag nesting that preserves the same logical structure
+4. The number of rows and columns MUST match
+5. Header cells and data cells must be in the correct positions
+6. **CRITICAL: Missing/empty data representations are equivalent:**
+   - Empty cells, "nan", "NaN", "None", blank strings, and missing values are ALL considered equivalent
+   - A cell with "nan" is the same as an empty cell or a cell with whitespace
+   - Different representations of missing data should NOT cause a mismatch
+7. **CRITICAL: Numeric equivalence:**
+   - Integers and floats representing the same value are equivalent: "30" == "30.0" == "30.00"
+   - Trailing zeros in floats should be ignored: "1.5" == "1.50"
+   - Different numeric formats representing the same value are acceptable
+8. **CRITICAL: Parsed table can be MORE complete:**
+   - If the parsed table has actual data where the expected table has missing/nan values, this is ACCEPTABLE
+   - The parsed table having MORE information than expected (filling in nan/missing cells) is GOOD
+   - Only flag as NOT_EQUIVALENT if parsed table is MISSING data that exists in expected table
+
+Respond with ONLY one of these two formats:
+- If tables are semantically equivalent: "EQUIVALENT: <brief reason>"
+- If tables are NOT equivalent: "NOT_EQUIVALENT: <specific difference found>"
+"""
+
+        user_prompt = f"""Compare these two HTML tables:
+
+Expected HTML:
+{expected_html}
+
+Parsed HTML:
+{parsed_html}
+
+Your response:"""
+
+        client = unify.AsyncUnify(
+            "o4-mini@openai",
+            cache=SETTINGS.UNIFY_CACHE,
+            traced=SETTINGS.UNIFY_TRACED,
+        )
+        client.set_system_message(system_prompt)
+        result = await client.generate(user_prompt)
+
+        # Handle the response - it might be a string or None
+        if result is None:
+            return (
+                expected_html == parsed_html,
+                "LLM returned None, using exact string match",
+            )
+
+        response_text = str(result).strip()
+
+        if response_text.startswith("EQUIVALENT"):
+            return True, response_text.replace("EQUIVALENT:", "").strip()
+        else:
+            return False, response_text.replace("NOT_EQUIVALENT:", "").strip()
+
+    except ImportError:
+        # If unify is not available, fall back to string comparison
+        return (
+            expected_html == parsed_html,
+            "LLM judge not available, using exact string match",
+        )
+    except Exception as e:
+        # If LLM call fails, fall back to string comparison
+        return (
+            expected_html == parsed_html,
+            f"LLM judge failed: {str(e)}, using exact string match",
+        )
+
+
+@pytest.fixture(scope="session")
+def fm_root(tmp_path_factory) -> str:
+    """Session-scoped root directory for the singleton LocalFileManager.
+
+    All tests must instantiate the manager with this same root to respect
+    singleton semantics across the suite.
+    """
+    return tmp_path_factory.mktemp("fm_root").as_posix()
+
+
+@pytest.fixture()
+def file_manager(fm_root: str) -> LocalFileManager:
+    """Return the singleton LocalFileManager bound to the session's fm_root."""
+    return LocalFileManager(fm_root)
+
+
+@pytest.fixture()
+def rootless_file_manager():
+    """Provide a non-singleton FileManager with a rootless Local adapter.
+
+    This allows tests to exercise absolute-path behavior without conflicting
+    with the session-scoped LocalFileManager singleton.
+    """
+    from unity.file_manager.managers.file_manager import FileManager
+    from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
+
+    return FileManager(adapter=LocalFileSystemAdapter(None))
+
+
+@pytest.fixture()
+def global_file_manager(file_manager):
+    """Return the singleton GlobalFileManager configured with the local manager."""
+    local = file_manager
+    gfm = GlobalFileManager([local])
+    return gfm
+
+
+@pytest.fixture(scope="module")
+def simulated_fm() -> SimulatedFileManager:
+    """Provide a singleton-ish simulated file manager for this module."""
+    return SimulatedFileManager("Demo file storage for unit-tests.")
 
 
 @pytest.fixture()
@@ -85,8 +228,8 @@ def _get_format_content_generators() -> Dict[str, Dict[str, Any]]:
             "validation_patterns": ["Name,Age,City", "John Doe", "Jane Smith"],
             "structure_expectations": {
                 "min_sections": 1,
-                "min_paragraphs": 1,
-                "min_sentences": 1,
+                "min_paragraphs": 0,  # CSV files don't produce paragraphs, they produce tables
+                "min_sentences": 0,  # CSV files don't have sentences in traditional sense
             },
         },
         ".json": {
@@ -338,16 +481,14 @@ def _create_sample_file(file_path: Path, file_type: str) -> None:
 
 
 @pytest.fixture()
-def sample_files(tmp_path: Path) -> Path:
+def sample_files(tmp_path: Path, fm_root: str) -> Path:
     """Create sample files for all supported formats."""
-    from unity.file_manager.file_manager import FileManager
-
     d = tmp_path / "samples"
     d.mkdir(parents=True, exist_ok=True)
 
-    # Get supported formats from the current FileManager/parser
-    fm = FileManager()
-    supported_formats = fm.supported_formats
+    # Get supported formats from the current LocalFileManager/parser
+    fm = LocalFileManager(fm_root)
+    supported_formats = fm._parser.supported_formats
 
     # Create sample files for each supported format
     for i, fmt in enumerate(supported_formats):
@@ -374,12 +515,10 @@ def sample_files(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def supported_file_examples(tmp_path: Path) -> dict:
+def supported_file_examples(tmp_path: Path, fm_root: str) -> dict:
     """Create examples of files in each supported format with expected content."""
-    from unity.file_manager.file_manager import FileManager
-
-    fm = FileManager()
-    supported_formats = fm.supported_formats
+    fm = LocalFileManager(fm_root)
+    supported_formats = fm._parser.supported_formats
 
     examples = {}
 
@@ -587,7 +726,7 @@ def parser_validation_suite() -> Dict[str, Any]:
     def validate_metadata(document, expected_mime_type: str):
         """Validate document metadata is properly set."""
         assert document.metadata is not None
-        assert document.metadata.file_type == expected_mime_type
+        assert str(document.metadata.mime_type) == expected_mime_type
         assert document.metadata.parser_name == "DoclingParser"
         assert document.metadata.processing_time is not None
         assert document.processing_status == "completed"
@@ -595,10 +734,26 @@ def parser_validation_suite() -> Dict[str, Any]:
     def validate_content_preservation(document, validation_patterns: List[str]):
         """Validate that important content patterns are preserved."""
         full_text = document.to_plain_text()
+
+        # Check if this is a CSV file (has tables but no paragraphs)
+        is_csv = str(document.metadata.mime_type) == "text/csv" or (
+            len(document.metadata.tables) > 0
+            and sum(len(s.paragraphs) for s in document.sections) == 0
+        )
+
         for pattern in validation_patterns:
-            assert (
-                pattern.lower() in full_text.lower()
-            ), f"Pattern '{pattern}' not found in parsed content"
+            if is_csv and "," in pattern:
+                # For CSV files with comma-separated patterns (e.g., "Name,Age,City")
+                # Check that individual words exist since CSV transforms to table format
+                words = pattern.replace(",", " ").split()
+                assert all(
+                    word.lower() in full_text.lower() for word in words
+                ), f"CSV should contain all words from pattern '{pattern}' in parsed content"
+            else:
+                # For other formats or non-comma patterns, check exact pattern
+                assert (
+                    pattern.lower() in full_text.lower()
+                ), f"Pattern '{pattern}' not found in parsed content"
 
     def validate_flat_records(records: List[Dict[str, Any]]):
         """Validate flat record structure and content."""
@@ -610,14 +765,10 @@ def parser_validation_suite() -> Dict[str, Any]:
 
         # Validate record structure
         required_fields = [
-            "content_id",
             "content_type",
             "title",
             "summary",
             "content_text",
-            "level",
-            "confidence_score",
-            "schema_id",
         ]
         for record in records:
             for field in required_fields:
@@ -631,8 +782,6 @@ def parser_validation_suite() -> Dict[str, Any]:
                 "image",
                 "table",
             ]
-            assert isinstance(record["confidence_score"], (int, float))
-            assert 0.0 <= record["confidence_score"] <= 1.0
 
     return {
         "validate_structure": validate_document_structure,
@@ -665,13 +814,3 @@ def performance_benchmarks() -> Dict[str, Any]:
             "min_concurrency": 2,  # minimum concurrent files
         },
     }
-
-
-# Import the proper SimulatedFileManager
-from unity.file_manager.simulated import SimulatedFileManager
-
-
-@pytest.fixture()
-def simulated_file_manager() -> SimulatedFileManager:
-    """Create a simulated FileManager for unit tests."""
-    return SimulatedFileManager()

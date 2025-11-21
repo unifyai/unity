@@ -1,0 +1,11 @@
+{
+  "organize_and_query": [
+    "us Organize files by type and by month, then answer three questions about the contents using compact parse artifacts (no full_text). Prefer ask for broad queries and ask_about_file for specific PDFs by name."
+  ],
+  "semantic_search": [
+    "us Demonstrate semantic search on the sample set. Find documents about policy/security, and show the top-3 related files for each query."
+  ],
+  "tables_and_spreadsheets": [
+    "us Locate spreadsheets and CSVs, extract key columns, and summarize table counts using compact parse references."
+  ]
+}

@@ -18,9 +18,10 @@ from tests.helpers import _handle_project
 from unity.file_manager.parser import DoclingParser
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_with_llm_enrichment_mock(supported_format_files):
+async def test_parser_with_llm_enrichment_mock(supported_format_files):
     """Test parser with LLM enrichment enabled (mocked)."""
     parser = DoclingParser(use_llm_enrichment=True)
     txt_files = supported_format_files[".txt"]["files"]
@@ -50,9 +51,10 @@ def test_parser_with_llm_enrichment_mock(supported_format_files):
         assert len(doc.sections) >= 1
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_fallback_when_docling_unavailable(supported_format_files):
+async def test_parser_fallback_when_docling_unavailable(supported_format_files):
     """Test parser falls back gracefully when Docling is not available."""
     # Mock DOCLING_AVAILABLE to False
     with patch("unity.file_manager.parser.docling_parser.DOCLING_AVAILABLE", False):
@@ -65,9 +67,10 @@ def test_parser_fallback_when_docling_unavailable(supported_format_files):
         assert "simple text file" in doc.to_plain_text()
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_error_handling_corrupt_file(tmp_path: Path):
+async def test_parser_error_handling_corrupt_file(tmp_path: Path):
     """Test parser handles corrupt files gracefully."""
     parser = DoclingParser(use_llm_enrichment=False)
 
@@ -79,15 +82,17 @@ def test_parser_error_handling_corrupt_file(tmp_path: Path):
     try:
         doc = parser.parse(corrupt_file)
         # If it succeeds, check it handled the binary data
-        assert doc.metadata.file_type is not None
+        assert doc.metadata.mime_type is not None
+        assert doc.metadata.file_format is not None
     except Exception as e:
         # Should be a reasonable exception, not a crash
         assert "decode" in str(e).lower() or "parse" in str(e).lower()
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_with_very_long_lines(tmp_path: Path):
+async def test_parser_with_very_long_lines(tmp_path: Path):
     """Test parser handles files with very long lines."""
     parser = DoclingParser(
         max_chunk_size=100,
@@ -108,9 +113,10 @@ def test_parser_with_very_long_lines(tmp_path: Path):
     assert long_line in doc.to_plain_text()
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_sentence_splitting_edge_cases(tmp_path: Path):
+async def test_parser_sentence_splitting_edge_cases(tmp_path: Path):
     """Test sentence splitting with edge cases."""
     parser = DoclingParser(use_llm_enrichment=False)
 
@@ -141,9 +147,10 @@ def test_parser_sentence_splitting_edge_cases(tmp_path: Path):
     assert any("98.6°F" in s.text for s in sentences)
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_with_mixed_encodings(tmp_path: Path):
+async def test_parser_with_mixed_encodings(tmp_path: Path):
     """Test parser handles files with different encodings."""
     parser = DoclingParser(use_llm_enrichment=False)
 
@@ -164,9 +171,10 @@ def test_parser_with_mixed_encodings(tmp_path: Path):
         assert len(content) > 0
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_memory_efficiency(tmp_path: Path):
+async def test_parser_memory_efficiency(tmp_path: Path):
     """Test parser doesn't load entire file into memory at once."""
     parser = DoclingParser(
         max_chunk_size=1000,
@@ -219,9 +227,10 @@ async def test_parser_concurrent_parsing(parser, supported_format_files):
         assert doc.to_plain_text().strip(), f"Document {i} should have some content"
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parser_metadata_extraction(tmp_path: Path):
+async def test_parser_metadata_extraction(tmp_path: Path):
     """Test comprehensive metadata extraction."""
     parser = DoclingParser(use_llm_enrichment=False)
 
@@ -239,7 +248,8 @@ def test_parser_metadata_extraction(tmp_path: Path):
 
     # Check metadata
     assert doc.metadata.file_name == "metadata_test.txt"
-    assert doc.metadata.file_type == "text/plain"
+    assert doc.metadata.mime_type.value == "text/plain"
+    assert doc.metadata.file_format.value == "txt"
     assert doc.metadata.file_size == len(content.encode("utf-8"))
     # Note: encoding attribute may not be available in metadata
     # assert doc.metadata.encoding in ["utf-8", "UTF-8"]

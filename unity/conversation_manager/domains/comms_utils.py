@@ -196,7 +196,9 @@ async def add_email_attachments(
                 async with session.get(url, headers=headers, params=params) as resp:
                     data = await resp.read()
 
-                from unity.file_manager.file_manager import FileManager
+                from unity.file_manager.managers.local import (
+                    LocalFileManager as FileManager,
+                )
 
                 file_manager = FileManager()
                 await asyncio.to_thread(

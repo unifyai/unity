@@ -51,6 +51,8 @@ from ..task_scheduler.task_scheduler import TaskScheduler
 from ..task_scheduler.active_queue import ActiveQueue
 from ..web_searcher.base import BaseWebSearcher
 from ..web_searcher.web_searcher import WebSearcher
+from ..file_manager.base import BaseGlobalFileManager
+from ..file_manager.global_file_manager import GlobalFileManager
 from ..actor.base import BaseActor
 from ..actor.hierarchical_actor import HierarchicalActor
 from ..actor.base import BaseActorHandle
@@ -96,6 +98,7 @@ class Conductor(BaseConductor):
         task_scheduler: Optional[BaseTaskScheduler] = None,
         web_searcher: Optional[BaseWebSearcher] = None,
         actor: Optional[BaseActor] = None,
+        global_file_manager: Optional[BaseGlobalFileManager] = None,
         conversation_manager: Optional[BaseConversationManagerHandle] = None,
     ) -> None:
         """
@@ -166,6 +169,12 @@ class Conductor(BaseConductor):
 
         self._web_searcher = web_searcher if web_searcher is not None else WebSearcher()
 
+        self._file_manager: BaseGlobalFileManager = (
+            global_file_manager
+            if global_file_manager is not None
+            else GlobalFileManager([])
+        )
+
         self._cm_handle = (
             conversation_manager
             if conversation_manager is not None
@@ -195,6 +204,7 @@ class Conductor(BaseConductor):
             self._skill_manager.ask,
             self._task_scheduler.ask,
             self._web_searcher.ask,
+            self._file_manager.ask,
             self._cm_handle.ask,
             self._cm_handle.interject,
             self._cm_handle.get_full_transcript,
@@ -223,6 +233,7 @@ class Conductor(BaseConductor):
                 self._guidance_manager.update,
                 self._secret_manager.update,
                 self._task_scheduler.update,
+                self._file_manager.organize,
                 self._actor.act,
                 ToolSpec(self._task_scheduler.execute, max_concurrent=1),
                 self.clear,
