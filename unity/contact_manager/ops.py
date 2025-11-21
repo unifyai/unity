@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Set
 
 import unify
+from pydantic import ValidationError
 
 from ..common.tool_outcome import ToolOutcome
 from .types.contact import Contact
@@ -56,6 +57,7 @@ def create_contact(
     phone_number: Optional[str] = None,
     whatsapp_number: Optional[str] = None,
     bio: Optional[str] = None,
+    timezone: Optional[str] = None,
     rolling_summary: Optional[str] = None,
     respond_to: bool = False,
     response_policy: Optional[str] = None,
@@ -71,6 +73,7 @@ def create_contact(
         "phone_number": phone_number,
         "whatsapp_number": whatsapp_number,
         "bio": bio,
+        "timezone": timezone,
         "rolling_summary": rolling_summary,
         "respond_to": respond_to,
         "response_policy": response_policy,
@@ -91,6 +94,22 @@ def create_contact(
 
     if not any(v is not None for v in contact_details.values()):
         raise AssertionError("At least one contact detail must be provided.")
+
+    # Validate against Pydantic model
+    try:
+        Contact(**contact_details)
+    except ValidationError as e:
+        msg = str(e)
+        try:
+            err = e.errors()[0]
+            msg = err.get("msg", str(e))
+            if err.get("type") == "value_error":
+                ctx = err.get("ctx", {})
+                if "error" in ctx:
+                    msg = str(ctx["error"])
+        except Exception:
+            pass
+        raise ValueError(msg) from e
 
     _assert_no_duplicate_unique(self, contact_details)
 
@@ -115,6 +134,7 @@ def update_contact(
     phone_number: Optional[str] = None,
     whatsapp_number: Optional[str] = None,
     bio: Optional[str] = None,
+    timezone: Optional[str] = None,
     rolling_summary: Optional[str] = None,
     respond_to: Optional[bool] = None,
     response_policy: Optional[str] = None,
@@ -131,6 +151,7 @@ def update_contact(
         "phone_number": phone_number,
         "whatsapp_number": whatsapp_number,
         "bio": bio,
+        "timezone": timezone,
         "rolling_summary": rolling_summary,
         "respond_to": respond_to,
         "response_policy": response_policy,
@@ -149,6 +170,22 @@ def update_contact(
     updates_dict = {k: v for k, v in contact_details.items() if v is not None}
     if not updates_dict:
         raise ValueError("At least one contact detail must be provided for an update.")
+
+    # Validate against Pydantic model
+    try:
+        Contact(contact_id=contact_id, **updates_dict)
+    except ValidationError as e:
+        msg = str(e)
+        try:
+            err = e.errors()[0]
+            msg = err.get("msg", str(e))
+            if err.get("type") == "value_error":
+                ctx = err.get("ctx", {})
+                if "error" in ctx:
+                    msg = str(ctx["error"])
+        except Exception:
+            pass
+        raise ValueError(msg) from e
 
     _assert_no_duplicate_unique(self, contact_details, exclude_contact_id=contact_id)
 

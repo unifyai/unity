@@ -605,6 +605,7 @@ class ContactManager(BaseContactManager):
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
         bio: Optional[str] = None,
+        timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         respond_to: bool = False,
         response_policy: Optional[str] = None,
@@ -631,6 +632,8 @@ class ContactManager(BaseContactManager):
             WhatsApp number. Same formatting guidance as ``phone_number``. Must be unique.
         bio : str | None
             Free‑form notes or description about the contact. Optional.
+        timezone : str | None
+            IANA Timezone identifier (e.g. "America/New_York"). Optional.
         rolling_summary : str | None
             Internal running summary of recent activity for this contact. Optional.
         respond_to : bool, default False
@@ -682,6 +685,7 @@ class ContactManager(BaseContactManager):
             phone_number=phone_number,
             whatsapp_number=whatsapp_number,
             bio=bio,
+            timezone=timezone,
             rolling_summary=rolling_summary,
             respond_to=respond_to,
             response_policy=response_policy,
@@ -698,6 +702,7 @@ class ContactManager(BaseContactManager):
         phone_number: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
         bio: Optional[str] = None,
+        timezone: Optional[str] = None,
         rolling_summary: Optional[str] = None,
         respond_to: Optional[bool] = None,
         response_policy: Optional[str] = None,
@@ -727,6 +732,8 @@ class ContactManager(BaseContactManager):
             New WhatsApp number. Same formatting and uniqueness rules as ``phone_number``.
         bio : str | None
             Free‑form notes/description.
+        timezone : str | None
+            IANA Timezone identifier.
         rolling_summary : str | None
             Updated rolling activity summary (internal).
         respond_to : bool | None
@@ -770,6 +777,7 @@ class ContactManager(BaseContactManager):
             phone_number=phone_number,
             whatsapp_number=whatsapp_number,
             bio=bio,
+            timezone=timezone,
             rolling_summary=rolling_summary,
             respond_to=respond_to,
             response_policy=response_policy,
