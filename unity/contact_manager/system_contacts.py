@@ -33,13 +33,12 @@ def sync_assistant_contact(self) -> None:
     """Ensure assistant contact (id == 0) exists and is correct."""
     from .. import ASSISTANT as _GLOBAL_ASSISTANT  # local import to avoid cycles
 
-    assistants = fetch_assistant_info(self)
-
     # 1) Prefer the assistant provided by unity.init
     if _GLOBAL_ASSISTANT is not None:
         selected = _GLOBAL_ASSISTANT
     else:
         # 2) Otherwise map the active context (if numeric) onto the list index
+        assistants = fetch_assistant_info(self)
         ctxs = unify.get_active_context()
         read_ctx = ctxs.get("read")
         try:
