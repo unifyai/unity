@@ -19,7 +19,7 @@ def provision_storage(self) -> None:
             unique_keys={"file_id": "int"},
             auto_counting={"file_id": None},
             description=(
-                "FileRecords index for a single filesystem; per-file content lives under Files/<alias>/<filename>/Tables/<table>."
+                "FileRecords index for a single filesystem; per-file content lives under Files/<alias>/<safe(file_path)>/Tables/<table>."
             ),
             fields=model_to_fields(FileRow),
         )

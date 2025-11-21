@@ -639,7 +639,7 @@ def rename_file(
         raise ValueError(f"File '{file_path}' not found in Unify logs.")
     if len(logs) > 1:
         raise ValueError(
-            f"Multiple files found with filename '{file_path}'. Data integrity issue.",
+            f"Multiple files found with file_path '{file_path}'. Data integrity issue.",
         )
 
     old_file_path = logs[0].entries.get("file_path", file_path)
@@ -721,7 +721,7 @@ def move_file(
         raise ValueError(f"File '{file_path}' not found in Unify logs.")
     if len(logs) > 1:
         raise ValueError(
-            f"Multiple files found with filename '{file_path}'. Data integrity issue.",
+            f"Multiple files found with file_path '{file_path}'. Data integrity issue.",
         )
     old_file_path = logs[0].entries.get("file_path", file_path)
 
@@ -777,11 +777,11 @@ def delete_file(
             )
             if not logs:
                 raise ValueError(f"No file found with file_id {file_id}")
-            raw_filename = logs[0].entries.get("file_path", "")
-            if not raw_filename:
+            raw_file_path = logs[0].entries.get("file_path", "")
+            if not raw_file_path:
                 raise ValueError(f"File record with file_id {file_id} has no file_path")
             # Use path as-is from index
-            filename = str(raw_filename)
+            file_path = str(raw_file_path)
         except Exception as e:
             raise ValueError(f"Failed to resolve file_id {file_id}: {e}")
     else:
@@ -801,9 +801,9 @@ def delete_file(
             raise ValueError(f"File '{file_path}' not found in Unify logs.")
         if len(logs) > 1:
             raise ValueError(
-                f"Multiple files found with filename '{file_path}'. Data integrity issue.",
+                f"Multiple files found with file path '{file_path}'. Data integrity issue.",
             )
-        filename = logs[0].entries.get("file_path", file_path)
+        file_path = logs[0].entries.get("file_path", file_path)
         file_id = logs[0].entries.get("file_id")
         if file_id is None:
             raise ValueError(f"File record for '{file_path}' has no file_id")
@@ -829,9 +829,9 @@ def delete_file(
 
     # 2) Get file_path for adapter deletion and protected check (already resolved above)
 
-    if getattr(self, "is_protected")(filename):  # type: ignore[attr-defined]
+    if getattr(self, "is_protected")(file_path):  # type: ignore[attr-defined]
         raise PermissionError(
-            f"'{filename}' is protected and cannot be deleted by FileManager.",
+            f"'{file_path}' is protected and cannot be deleted by FileManager.",
         )
 
     # 3) Adapter deletion when supported
@@ -841,13 +841,13 @@ def delete_file(
         False,
     ):
         try:
-            self._adapter.delete(filename)  # type: ignore[attr-defined]
+            self._adapter.delete(file_path)  # type: ignore[attr-defined]
         except (NotImplementedError, FileNotFoundError):
             pass
 
     # 4) Ingest-aware purge of contexts/rows
     try:
-        delete_file_contexts(self, file_path=filename)
+        delete_file_contexts(self, file_path=file_path)
     except Exception:
         pass
 
@@ -859,7 +859,7 @@ def delete_file(
 
     return {
         "outcome": "file deleted",
-        "details": {"file_id": file_id, "file_path": filename},
+        "details": {"file_id": file_id, "file_path": file_path},
     }
 
 
@@ -1545,7 +1545,7 @@ def embed_chunk_with_hooks(
                 try:
                     fn(
                         manager=self,
-                        filename=file_path,
+                        file_path=file_path,
                         result=result,
                         document=document,
                         config=config,
@@ -1619,7 +1619,7 @@ def embed_chunk_with_hooks(
                 try:
                     fn(
                         manager=self,
-                        filename=file_path,
+                        file_path=file_path,
                         result=result,
                         document=document,
                         config=config,
@@ -2019,7 +2019,7 @@ def _process_single_file_core(
                 try:
                     fn(
                         manager=self,
-                        filename=original_path,
+                        file_path=original_path,
                         result=None,
                         document=document,
                         config=config,
@@ -2385,7 +2385,7 @@ async def _process_single_file_core_async(
                 try:
                     fn(
                         manager=self,
-                        filename=original_path,
+                        file_path=original_path,
                         result=None,
                         document=document,
                         config=config,

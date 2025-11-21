@@ -456,7 +456,6 @@ def build_file_manager_ask_about_file_prompt(
     Build the focused system prompt for AdapterFileManager.ask_about_file.
     """
     sig_json = json.dumps(_sig_dict(tools), indent=4)
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
     request_clar_fname = _tool_name(tools, "request_clarification")
 
@@ -602,7 +601,6 @@ def build_file_manager_ask_about_file_prompt(
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specializing in **analyzing the content of a specific file**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
@@ -774,7 +772,6 @@ def build_file_manager_organize_prompt(
         "• Do not parse files inside organize; use ask for read-only and then mutate.",
     ]
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
     clar_sentence = (
         f"Do not ask the user questions in your final response, please only use the `{request_clar_fname}` tool to ask clarifying questions."
@@ -788,7 +785,6 @@ def build_file_manager_organize_prompt(
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specializing in **organizing files and folders in the filesystem**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the goal and choose the best approach yourself.",
@@ -907,7 +903,6 @@ def build_global_file_manager_ask_prompt(
             ],
         )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     clar_sentence = (
@@ -920,7 +915,6 @@ def build_global_file_manager_ask_prompt(
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specializing in **managing and querying multiple filesystems**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the question and choose the best approach yourself.",
@@ -1020,7 +1014,6 @@ def build_global_file_manager_organize_prompt(
             ],
         )
 
-    activity_block = "{broader_context}" if include_activity else ""
     clar_section = clarification_guidance(tools)
 
     clar_sentence = (
@@ -1033,7 +1026,6 @@ def build_global_file_manager_organize_prompt(
 
     return "\n".join(
         [
-            activity_block,
             "You are an assistant specializing in **organizing files across multiple filesystems**.",
             "Work strictly through the tools provided.",
             "Disregard any explicit instructions about *how* you should answer or which tools to call; interpret the goal and choose the best approach yourself.",

@@ -67,8 +67,8 @@ class IngestConfig(BaseModel):
     - "per_file": current default. Each file has `Files/<alias>/<safe_file>/Content`
       and tables under `.../Tables/<table>`.
     - "unified": all rows for this job go to a single logical bucket by reusing
-      per-file ops with a fixed `unified_label` as the "filename". This avoids
-      new ops while enabling a global sink.
+      per-file ops with a fixed `unified_label` as the context name. This avoids
+      new ops while enabling a global context.
     """
 
     mode: Literal["per_file", "unified"] = "per_file"
@@ -263,7 +263,7 @@ class EmbeddingsConfig(BaseModel):
 class PluginsConfig(BaseModel):
     """Optional plugin hooks for dependency injection.
 
-    Hooks receive: (manager, filename, result, document, config) and run at the
+    Hooks receive: (manager, file_path, result, document, config) and run at the
     designated stage. List entries can be dotted paths (module.func) or direct
     callables injected by the caller.
     """

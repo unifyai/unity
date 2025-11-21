@@ -106,21 +106,21 @@ def resolve_table_ref(self, ref: str) -> str:
 
     if key.startswith("id="):
         file_id = int(key.split("=", 1)[1])
-        filename = _lookup_path_by_id(file_id)
+        file_path = _lookup_path_by_id(file_id)
         from .storage import ctx_for_file_table as _ctx_for_file_table
 
-        return _ctx_for_file_table(self, file_path=filename, table=tbl)
+        return _ctx_for_file_table(self, file_path=file_path, table=tbl)
     if key.startswith("#") and key[1:].isdigit():
         file_id = int(key[1:])
-        filename = _lookup_path_by_id(file_id)
+        file_path = _lookup_path_by_id(file_id)
         from .storage import ctx_for_file_table as _ctx_for_file_table
 
-        return _ctx_for_file_table(self, file_path=filename, table=tbl)
+        return _ctx_for_file_table(self, file_path=file_path, table=tbl)
     # Fallback: treat as file path / display name
-    filename = key
+    file_path = key
     from .storage import ctx_for_file_table as _ctx_for_file_table
 
-    return _ctx_for_file_table(self, file_path=filename, table=tbl)
+    return _ctx_for_file_table(self, file_path=file_path, table=tbl)
 
 
 # --------------------- Index-level filter/search (FileRecords) ---------------- #
@@ -475,7 +475,7 @@ def filter_join(
     if isinstance(tables, str):
         tables = [tables]
     if len(tables) != 2:
-        raise ValueError("Exactly two tables are required as 'filename:table'")
+        raise ValueError("Exactly two tables are required as 'file_path:table'")
 
     tmp_ctx = f"{self._ctx}/_tmp_join_{uuid.uuid4().hex[:6]}"
     ensure_tmp_ctx(self, tmp_ctx)
@@ -551,7 +551,7 @@ def search_join(
     if isinstance(tables, str):
         tables = [tables]
     if len(tables) != 2:
-        raise ValueError("Exactly two tables are required as 'filename:table'")
+        raise ValueError("Exactly two tables are required as 'file_path:table'")
 
     tmp_ctx = f"{self._ctx}/_tmp_join_{uuid.uuid4().hex[:6]}"
     ensure_tmp_ctx(self, tmp_ctx)

@@ -69,8 +69,10 @@ async def test_csv_per_table_context(file_manager, tmp_path: Path):
         set(rows[0].entries.keys()),
     ), "Columns not found"
     assert len(rows) > 0, "No rows found"
-    assert len(rows[0].entries) == 3, "Columns not found"
-    assert len(rows[1].entries) == 3, "Columns not found"
+    assert len(rows[0].entries) == 4, "Columns not found"
+    assert len(rows[1].entries) == 4, "Columns not found"
+    assert "row_id" in rows[0].entries
+    assert "row_id" in rows[1].entries
     assert rows[0].entries["Name"] == "Jane", "Name not found"
     assert rows[0].entries["Age"] == "25", "Age not found"
     assert rows[0].entries["City"] == "LDN", "City not found"

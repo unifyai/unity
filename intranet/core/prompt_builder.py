@@ -195,8 +195,6 @@ def build_intranet_ask_llm_prompt(
     sends all available full-texts directly to the model for a single-shot answer.
     """
 
-    activity_block = "{broader_context}" if include_activity else ""
-
     # Core instructions for Midland Heart policy QA
     core = textwrap.dedent(
         """
@@ -331,7 +329,6 @@ def build_intranet_ask_llm_prompt(
         extra = f"\nCase-specific instructions\n--------------------------\n{extra}\n"
 
     parts: list[str] = [
-        activity_block,
         core,
         "",
         documents_block,
