@@ -133,6 +133,7 @@ def _create_join(
     left_where: Optional[str] = None,
     right_where: Optional[str] = None,
 ) -> str:
+    # 1️⃣  Resolve & validate the inputs
     if isinstance(tables, str):
         tables = [tables]
     if len(tables) != 2:
@@ -144,19 +145,24 @@ def _create_join(
         right_table,
     )
 
+    # Optionally rewrite the pre-filters to the fully-qualified contexts
     def _rewrite_filter(expr: Optional[str], table: str, ctx: str) -> Optional[str]:
         return None if expr is None else expr.replace(table, ctx)
 
     left_where = _rewrite_filter(left_where, left_table, left_ctx)
     right_where = _rewrite_filter(right_where, right_table, right_ctx)
 
+    # Fully-qualify the join expression / selected columns
     join_expr = join_expr.replace(left_table, left_ctx).replace(right_table, right_ctx)
     select = {
         c.replace(left_table, left_ctx).replace(right_table, right_ctx): v
         for c, v in select.items()
     }
 
+    # 3️⃣  Destination context (join results will be stored here)
     dest_ctx = ctx_for_table(self, dest_table)
+
+    # 4️⃣  Fire the REST request
     unify.join_logs(
         pair_of_args=(
             {

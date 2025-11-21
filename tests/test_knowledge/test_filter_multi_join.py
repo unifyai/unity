@@ -89,14 +89,16 @@ def test_filter_multi_join(monkeypatch):
     # ---------- spies ------------------------------------------------------
     join_calls = []
 
-    original_join = KnowledgeManager._create_join
+    from unity.knowledge_manager import search as search_mod
+
+    original_join = search_mod._create_join
 
     @functools.wraps(original_join)
     def _join_spy(self, *a, **k):
         join_calls.append(k.copy())
         return original_join(self, *a, **k)
 
-    monkeypatch.setattr(KnowledgeManager, "_create_join", _join_spy, raising=True)
+    monkeypatch.setattr(search_mod, "_create_join", _join_spy, raising=True)
 
     # ---------- exercise ---------------------------------------------------
     pipeline = [
