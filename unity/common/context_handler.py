@@ -94,9 +94,9 @@ class ContextHandler:
             print(
                 f"Time taken for {context['name']}: {time.time() - start_time} seconds",
             )
-            cls._available_contexts[(context["manager"], context["name"])] = context[
-                "name"
-            ]
+            cls._available_contexts[(context["manager"], context["original_name"])] = (
+                context["name"]
+            )
             return context["name"]
 
         with ThreadPoolExecutor() as executor:
@@ -129,13 +129,14 @@ class ContextHandler:
         for context in manager.Config.required_contexts:
             _context_name = f"{current_context}/{context.name}"
             if _context_name in available_contexts:
-                cls._available_contexts[(manager.__class__.__name__, context.name)] = (
+                cls._available_contexts[(manager.__name__, context.name)] = (
                     _context_name
                 )
                 continue
             data = {
-                "manager": manager.__class__.__name__,
+                "manager": manager.__name__,
                 "name": _context_name,
+                "original_name": context.name,
                 "description": context.description,
                 "fields": context.fields if context.fields else None,
                 "unique_keys": context.unique_keys if context.unique_keys else None,
