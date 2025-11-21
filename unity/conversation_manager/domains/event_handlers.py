@@ -72,17 +72,15 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         )
         match event:
             case PhoneCallReceived() as e:
-                cm.call_manager.start_call(contact["phone_number"], contact, boss)
+                cm.call_manager.start_call(contact, boss)
                 message_content = "<Recvieving Call...>"
                 notif_content = f"Call received from {contact['first_name']}"
             case PhoneCallSent() as e:
-                cm.call_manager.start_call(
-                    contact["phone_number"], contact, boss, outbound=True
-                )
+                cm.call_manager.start_call(contact, boss, outbound=True)
                 message_content = "<Sending Call...>"
                 notif_content = f"Call sent to {contact['first_name']}"
             case UnifyCallReceived() as e:
-                cm.call_manager.start_unify_call(e.agent_name, e.room_name)
+                cm.call_manager.start_unify_call(e.agent_name, e.room_name, contact)
                 message_content = "<Recieving Call...>"
                 notif_content = f"Call received from {contact['first_name']}"
 
@@ -136,22 +134,22 @@ async def _(
         AssistantUnifyCallUtterance,
     )
 )
-async def _(event: PhoneCallEnded, cm: "ConversationManager", *args, **kwargs):
+async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     # publish transcript
     # asyncio.create_task(managers_utils.log_message(cm, event))
-    if isinstance(event, (PhoneUtterance, AssistantPhoneUtterance)):
-        phone_number = event.contact["phone_number"]
-        contact = cm.contact_index.get_contact(phone_number=phone_number)
-        cm.contact_index.push_message(
-            contact,
-            "phone",
-            event.content,
-            role=(
-                "user"
-                if "assistant" not in event.__class__.__name__.lower()
-                else "assistant"
-            ),
-        )
+    print("publishing utterance", event)
+    contact_id = event.contact["contact_id"]
+    contact = cm.contact_index.get_contact(contact_id=contact_id)
+    cm.contact_index.push_message(
+        contact,
+        "phone",
+        event.content,
+        role=(
+            "user"
+            if "assistant" not in event.__class__.__name__.lower()
+            else "assistant"
+        ),
+    )
     # start filler only in non-realtime
     if isinstance(event, (PhoneUtterance, UnifyCallUtterance)):
         if not cm.call_manager.realtime:

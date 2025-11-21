@@ -37,7 +37,7 @@ from unity.conversation_manager.utils import dispatch_agent
 event_broker = get_event_broker()
 chunk_queue = asyncio.Queue()
 
-# Globals initialized lazily or via prewarm to avoid duplicate heavy init
+# globals initialized lazily or via prewarm to avoid duplicate heavy init
 STT = None
 LLM = None
 VAD = None
@@ -53,15 +53,15 @@ def prewarm(_ctx=None):
         print("Prewarm complete")
     except Exception as e:
         print(f"Prewarm failed: {e}")
-        # Ensure fallback path runs by resetting all globals
+        # ensure fallback path runs by resetting all globals
         STT = None
         LLM = None
         VAD = None
 
 
 class Assistant(Agent):
-    def __init__(self, contact_id: int = 1) -> None:
-        self.contact_id = contact_id
+    def __init__(self, contact: dict) -> None:
+        self.contact = contact
         super().__init__(instructions="", llm=LLM)
 
     async def on_user_turn_completed(
@@ -69,11 +69,11 @@ class Assistant(Agent):
         turn_ctx: ChatContext,
         new_message: ChatMessage,
     ) -> None:
-        # Emit user utterance into Redis
+        # emit user utterance into Redis
         await event_broker.publish(
             "app:comms:unify_call_utterance",
             UnifyCallUtterance(
-                contact=self.contact_id,
+                contact=self.contact,
                 content=new_message.text_content,
             ).to_json(),
         )
@@ -101,10 +101,14 @@ async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
     print("[unify_call] Connected to room")
 
-    voice_provider = os.environ.get("VOICE_PROVIDER", "cartesia")
-    voice_id = os.environ.get("VOICE_ID", "")
-    # unify_call always addresses the boss contact (id=1)
-    contact_id = 1
+    # read static config
+    voice_provider = os.environ.get("VOICE_PROVIDER")
+    voice_id = os.environ.get("VOICE_ID")
+    print("voice_provider", voice_provider)
+    print("voice_id", voice_id)
+
+    # contact payloads passed as json env vars
+    contact = json.loads(os.getenv("CONTACT", "{}"))
 
     # fallback for whenever pre-loading fails
     if STT is None:
@@ -133,7 +137,7 @@ async def entrypoint(ctx: agents.JobContext):
         print("[unify_call] Initiating graceful shutdown...")
         await event_broker.publish(
             "app:comms:unify_call_ended",
-            UnifyCallEnded(contact=contact_id).to_json(),
+            UnifyCallEnded(contact=contact).to_json(),
         )
 
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
@@ -146,8 +150,8 @@ async def entrypoint(ctx: agents.JobContext):
                 pass
         print("[unify_call] Graceful shutdown completed")
 
-    # Inactivity timeout
-    INACTIVITY_TIMEOUT = 300
+    # inactivity timeout
+    INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
     last_activity_time = asyncio.get_event_loop().time()
 
     async def check_inactivity():
@@ -167,7 +171,7 @@ async def entrypoint(ctx: agents.JobContext):
 
     ctx.room.on("participant_disconnected", on_participant_disconnected)
 
-    assistant = Assistant(contact_id=contact_id)
+    assistant = Assistant(contact=contact)
     await session.start(
         room=ctx.room,
         agent=assistant,
@@ -178,10 +182,10 @@ async def entrypoint(ctx: agents.JobContext):
         ),
     )
 
-    # Worker has started and connected – publish UnifyCallStarted
+    # worker has started and connected – publish UnifyCallStarted
     await event_broker.publish(
         "app:comms:unify_call_started",
-        UnifyCallStarted(contact=contact_id).to_json(),
+        UnifyCallStarted(contact=contact).to_json(),
     )
 
     async def response_task():
@@ -233,37 +237,35 @@ async def entrypoint(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    # Allow running locally for dev worker
-    voice_provider = "cartesia"
-    voice_id = ""
-    contact_id = 1
-    agent_name = f"unity_unify_call_{contact_id}"
-    room_name = f"unity_unify_call_{contact_id}"
+    agent_name = "unity_unify_call_1"
+    room_name = "unity_unify_call_1"
+    print("sys.argv", sys.argv)
 
-    # Parse optional args passed after the "dev" subcommand
-    # Example invocation from run_script:
-    #   unify_call.py dev <voice_provider> <voice_id> <agent_name>
-    if len(sys.argv) > 1 and sys.argv[1] == "dev":
-        if len(sys.argv) > 2:
-            voice_provider = sys.argv[2]
-        if len(sys.argv) > 3:
-            voice_id = sys.argv[3]
-        if len(sys.argv) > 4:
-            agent_name = sys.argv[4]
-        if len(sys.argv) > 5:
-            room_name = sys.argv[5]
-        # Trim argv so livekit agents CLI doesn't see extra args
-        sys.argv = sys.argv[:2]
+    if len(sys.argv) > 6:
+        # get static config
+        agent_name = sys.argv[2]
+        room_name = sys.argv[3]
+        os.environ["VOICE_PROVIDER"] = (
+            sys.argv[4] if sys.argv[4] != "None" else "cartesia"
+        )
+        os.environ["VOICE_ID"] = sys.argv[5] if sys.argv[5] != "None" else ""
 
-    os.environ["UNIFY_CONTACT_ID"] = str(contact_id)
-    os.environ["VOICE_PROVIDER"] = voice_provider
-    if voice_id:
-        os.environ["VOICE_ID"] = voice_id
+        # get contact payloads
+        os.environ["CONTACT"] = sys.argv[6]
+        print(f"contact: {os.environ['CONTACT']}")
+        if not json.loads(os.environ["CONTACT"]):
+            print("Contact payload is invalid")
+            sys.exit(1)
+
+        sys.argv = sys.argv[:2]  # keep only script name and "dev" command
+    else:
+        print("Not enough arguments provided")
+        sys.exit(1)
 
     # dispatch agent
-    print("[unify_call] Dispatching agent")
+    print(f"Dispatching agent {agent_name} with room {room_name}")
     dispatch_agent(agent_name, room_name)
-    print("[unify_call] Agent dispatched")
+    print(f"Agent {agent_name} dispatched")
 
     agents.cli.run_app(
         agents.WorkerOptions(

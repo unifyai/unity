@@ -31,27 +31,17 @@ class LivekitCallManager:
         self.conference_name = ""
 
     # TODO: support unify calls and clean up boss data passage
-    def start_call(self, contact_phone_number, contact, boss, outbound: bool = False):
+    def start_call(self, contact: dict, boss: dict, outbound: bool = False):
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         args = [
-            contact_phone_number,
             self.assistant_number,
             self.voice_provider,
             self.voice_id,
-            None,
             outbound,
-            contact["is_boss"],
-            contact["contact_id"],
-            contact["first_name"],
-            contact["surname"],
-            contact["email_address"],
-            boss["first_name"],
-            boss["surname"],
-            boss["phone_number"],
-            boss["email_address"],
+            json.dumps(contact),
         ]
         if self.realtime:
-            args.append(self.assistant_bio)
+            args += [json.dumps(boss), self.assistant_bio]
             target_path = target_path / "realtime_call.py"
         else:
             target_path = target_path / "call.py"
@@ -59,7 +49,9 @@ class LivekitCallManager:
         print(f"target_path: {target_path}, args: {args}")
         self.call_proc = run_script(str(target_path), "dev", *args)
 
-    def start_unify_call(self, agent_name, room_name=None):
+    def start_unify_call(
+        self, agent_name: str | None, room_name: str | None, contact: dict
+    ):
         target_path = (
             Path(__file__).parent.parent.resolve() / "medium_scripts" / "unify_call.py"
         )
@@ -82,10 +74,11 @@ class LivekitCallManager:
             )
         )
         args = [
-            self.voice_provider,
-            self.voice_id,
             agent_name,
             room_name,
+            self.voice_provider,
+            self.voice_id,
+            json.dumps(contact),
         ]
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
