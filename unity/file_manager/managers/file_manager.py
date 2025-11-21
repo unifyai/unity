@@ -145,7 +145,7 @@ class FileManager(BaseFileManager):
         # Use a single Files namespace and a per‑filesystem suffix
         # Root contexts
         # - FileRecords: index of files (lightweight per file row)
-        # - File:        per-file content roots (one subcontext per filename)
+        # - File:        per-file content roots (one subcontext per safe filepath)
         self._ctx = f"{base_ctx}/FileRecords/{self._fs_alias}"
         self._per_file_root = f"{base_ctx}/Files/{self._fs_alias}"
 
@@ -155,7 +155,7 @@ class FileManager(BaseFileManager):
             unique_keys={"file_id": "int"},
             auto_counting={"file_id": None},
             description=(
-                "FileRecords index for a single filesystem; per-file content lives under Files/<alias>/<filename>/Tables/<table>."
+                "FileRecords index for a single filesystem; per-file content lives under Files/<alias>/<safe_filepath>/Tables/<table>."
             ),
             fields=model_to_fields(FileRecord),
         )
@@ -743,13 +743,13 @@ class FileManager(BaseFileManager):
         except Exception:
             return {"file_path": file_id_or_path, "length": len(data)}
 
-    def _open_bytes_by_filename(self, filename: str) -> bytes:
+    def _open_bytes_by_filepath(self, file_path: str) -> bytes:
         """
-        Return file bytes by consulting stored metadata first, then the adapter.
+        Return file bytes by consulting the adapter.
 
         Parameters
         ----------
-        filename : str
+        file_path : str
             Logical path/identifier used by the index and adapter.
 
         Returns
@@ -765,8 +765,8 @@ class FileManager(BaseFileManager):
         # Resolve via adapter when available
         if self._adapter is not None:
             # Use path as-is (adapters handle both relative and absolute paths)
-            return self._adapter.open_bytes(filename)
-        raise FileNotFoundError(f"Unable to resolve file bytes for '{filename}'")
+            return self._adapter.open_bytes(file_path)
+        raise FileNotFoundError(f"Unable to resolve file bytes for '{file_path}'")
 
     # ---------- Adapter-backed mutators (capability-guarded) --------------- #
     def _rename_file(
@@ -842,7 +842,7 @@ class FileManager(BaseFileManager):
         ---------
         - Propagates the new path across per-file contexts (and tables) for per_file
           ingest-mode. Unified Content remains under the unified label.
-        - Updates the FileRecords row (file_path, file_name) to the new location.
+        - Updates the FileRecords row (file_path, file_path) to the new location.
 
         Raises
         ------
@@ -902,44 +902,49 @@ class FileManager(BaseFileManager):
 
         return _ops_delete(self, file_id_or_path=file_id_or_path, _log_id=_log_id)
 
-    # ---------- Unify-backed retrieval + BaseFileManager API --------------- #
-    def exists(self, filename: str) -> bool:  # type: ignore[override]
-        """Check if a file exists in the underlying filesystem.
+    def exists(self, file_path: str) -> bool:  # type: ignore[override]
+        """
+        Check if a file exists in the adapter-backed filesystem.
 
-        This method delegates to the adapter's exists method to check
-        if the file exists in the filesystem. It does NOT check Unify logs,
-        which only contain parsed files.
+        This delegates to the adapter's ``exists`` method and does **not** look
+        at Unify logs or parsed/indexed state. Use it to answer "does this
+        path currently exist in the underlying filesystem?", regardless of
+        whether it has ever been parsed.
 
         Parameters
         ----------
-        filename : str
-            The display name or path of the file to check.
+        file_path : str
+            Adapter-native file path/identifier to check.
 
         Returns
         -------
         bool
-            True if the file exists in the filesystem, False otherwise.
+            True if the adapter reports the file exists, False otherwise or
+            when no adapter is configured.
         """
         if self._adapter is None:
             return False
         try:
             # Use path as-is (adapters handle both relative and absolute paths)
-            ok = self._adapter.exists(filename)
+            ok = self._adapter.exists(file_path)
         except Exception:
             return False
         return bool(ok)
 
     def list(self) -> List[str]:  # type: ignore[override]
-        """List all files in the underlying filesystem.
+        """
+        List all files visible to the underlying adapter.
 
-        This method delegates to the adapter's list method to list
-        files in the filesystem. It does NOT query Unify logs, which only
-        contain parsed files.
+        This delegates to the adapter's ``list`` method and returns the set of
+        file paths/identifiers that the adapter can currently see. It does
+        **not** query Unify logs, so results are about raw filesystem presence,
+        not parsed/indexed state.
 
         Returns
         -------
         list[str]
-            List of file paths/display names in the filesystem.
+            Adapter-native file paths/identifiers discoverable in the underlying
+            filesystem, or an empty list if no adapter is configured or listing fails.
         """
         if self._adapter is None:
             return []
@@ -1119,8 +1124,8 @@ class FileManager(BaseFileManager):
 
         Parameters
         ----------
-        filename : str
-            Logical identifier/path of the file parsed.
+        file_path : str
+            The file path of the file to embed.
         document : Any
             Parsed document object (unused for content embeddings; may be used
             by future table/image embedding policies).
@@ -1153,7 +1158,7 @@ class FileManager(BaseFileManager):
                 try:
                     fn(
                         manager=self,
-                        filename=file_path,
+                        file_path=file_path,
                         result=result,
                         document=document,
                         config=config,
@@ -1281,7 +1286,7 @@ class FileManager(BaseFileManager):
                 try:
                     fn(
                         manager=self,
-                        filename=file_path,
+                        file_path=file_path,
                         result=result,
                         document=document,
                         config=config,
@@ -1327,7 +1332,7 @@ class FileManager(BaseFileManager):
         if allowed:
             rows = [{k: v for k, v in rec.items() if k in allowed} for rec in rows]
 
-        # Determine destination context "filename" (per-file or unified bucket)
+        # Determine destination context name (per-file or unified bucket)
         dest_name = (
             file_path
             if config.ingest.mode == "per_file"
@@ -1759,7 +1764,7 @@ class FileManager(BaseFileManager):
         Returns
         -------
         dict[str, Any]
-            Mapping of filename → compact Pydantic model, raw dict, or minimal stub per output mode.
+            Mapping of file path → compact Pydantic model, raw dict, or minimal stub per output mode.
         """
         cfg = config or _FilePipelineConfig()
 
@@ -2625,46 +2630,62 @@ class FileManager(BaseFileManager):
         return self._adapter.import_directory(str(directory))
 
     def export_file(self, file_path: str, destination_dir: str) -> str:  # type: ignore[override]
-        """Export a file from the underlying filesystem to a local destination directory.
+        """
+        Export a single adapter-managed file to a local directory.
 
-        This method delegates to the adapter's export_file method, which:
-        - LocalAdapter: copies file preserving metadata
-        - CodeSandboxAdapter: downloads via SDK (with download API)
-        - InteractAdapter: streams via API
+        This delegates to the adapter's ``export_file``, which reads the file
+        from its storage (local or remote) and writes it under ``destination_dir``
+        on the local filesystem.
 
         Parameters
         ----------
         file_path : str
-            The path of the file to export.
+            Adapter-native path/identifier of the file to export.
         destination_dir : str
-            Local directory path where the file should be exported.
+            Local directory where the exported file should be written.
 
         Returns
         -------
         str
-            Full path to the exported file in the destination directory.
+            Absolute local path of the exported file.
+
+        Raises
+        ------
+        NotImplementedError
+            If no adapter is configured.
+        Exception
+            Any error from the adapter's ``export_file`` implementation.
         """
         if self._adapter is None:
             raise NotImplementedError("No adapter configured for export_file")
         return self._adapter.export_file(file_path, destination_dir)
 
     def export_directory(self, directory: str, destination_dir: str) -> List[str]:  # type: ignore[override]
-        """Export all files from a directory to a local destination directory.
+        """
+        Export all files from an adapter-managed directory to a local directory.
 
-        This method delegates to the adapter's export_directory method, which
-        optimizes for batch operations where possible (e.g., zip downloads for CodeSandbox).
+        This delegates to the adapter's ``export_directory``, which enumerates
+        files under ``directory`` in its namespace and writes them into
+        ``destination_dir`` on the local filesystem.
 
         Parameters
         ----------
         directory : str
-            The directory path to export files from.
+            Adapter-native directory path to export from.
         destination_dir : str
-            Local directory path where files should be exported.
+            Local directory where files should be written.
 
         Returns
         -------
         list[str]
-            List of full paths to exported files in the destination directory.
+            Absolute local paths of all exported files.
+
+        Raises
+        ------
+        NotImplementedError
+            If no adapter is configured.
+        Exception
+            Any error from the adapter's ``export_directory`` implementation.
         """
         if self._adapter is None:
             raise NotImplementedError("No adapter configured for export_directory")
@@ -2677,7 +2698,35 @@ class FileManager(BaseFileManager):
         display_name: Optional[str] = None,
         protected: bool = False,
     ) -> str:
-        """Register a pre-existing file path with the adapter (metadata only)."""
+        """
+        Register an already-present file with the adapter without moving it.
+
+        This is a metadata-only operation: it tells the adapter that ``path``
+        should be treated as a managed file and returns the identifier to use
+        with this FileManager. Parsing/indexing still happens via ``parse``.
+
+        Parameters
+        ----------
+        path : Any
+            Existing file path/identifier in the adapter's namespace.
+        display_name : str | None, optional
+            Optional human-friendly label the adapter may store.
+        protected : bool, default False
+            Hint to mark the file as protected against destructive operations
+            (semantics are adapter-specific).
+
+        Returns
+        -------
+        str
+            Adapter-native identifier/path for the registered file.
+
+        Raises
+        ------
+        NotImplementedError
+            If no adapter is configured.
+        Exception
+            Any error from the adapter's ``register_existing_file`` implementation.
+        """
         if self._adapter is None:
             raise NotImplementedError(
                 "No adapter configured for register_existing_file",
@@ -2689,13 +2738,55 @@ class FileManager(BaseFileManager):
         )
 
     def is_protected(self, file_path: str) -> bool:
-        """Return True when the file is marked as protected (adapter-specific)."""
+        """
+        Return whether the adapter considers this file protected.
+
+        Protection is an adapter-defined flag used to guard against destructive
+        operations (rename/move/delete/overwrite); this method simply forwards
+        the query to the adapter.
+
+        Parameters
+        ----------
+        file_path : str
+            Adapter-native file path/identifier to check.
+
+        Returns
+        -------
+        bool
+            True if the adapter reports the file as protected, False otherwise
+            or when no adapter is configured.
+        """
         if self._adapter is None:
             return False
         return self._adapter.is_protected(file_path)
 
     def save_file_to_downloads(self, file_path: str, contents: bytes) -> str:
-        """Save file contents into a downloads area and return the saved path."""
+        """
+        Save bytes into the adapter's downloads area and return the saved path.
+
+        Use this when you have in-memory file content that should be exposed to
+        the user as a downloadable artifact. The adapter decides where the
+        downloads area lives and how names are de-duplicated.
+
+        Parameters
+        ----------
+        file_path : str
+            Desired file name or relative path within the downloads area.
+        contents : bytes
+            Raw bytes to persist.
+
+        Returns
+        -------
+        str
+            Adapter-native path or URL referring to the saved file.
+
+        Raises
+        ------
+        NotImplementedError
+            If no adapter is configured.
+        Exception
+            Any error from the adapter's ``save_file_to_downloads`` implementation.
+        """
         if self._adapter is None:
             raise NotImplementedError(
                 "No adapter configured for save_file_to_downloads",

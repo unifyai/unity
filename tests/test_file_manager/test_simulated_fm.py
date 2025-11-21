@@ -7,7 +7,12 @@ import functools
 from unity.file_manager import simulated as sim_mod
 
 # helper that wraps each test in its own Unify project / trace context
-from tests.helpers import _handle_project
+from tests.helpers import (
+    _handle_project,
+    _ack_ok,
+    _assert_blocks_while_paused,
+    DEFAULT_TIMEOUT,
+)
 from tests.test_file_manager.helpers import ask_judge
 
 
@@ -242,7 +247,7 @@ async def test_interject_simulated_fm(monkeypatch, simulated_file_manager):
     handle = await fm.ask(instruction)
     await asyncio.sleep(0.05)
     reply = handle.interject("Focus on financial metrics.")
-    assert "ack" in reply.lower() or "noted" in reply.lower()
+    assert _ack_ok(reply)
     final_answer = await handle.result()
     assert calls["interject"] == 1, ".interject should be called exactly once"
 
@@ -584,8 +589,7 @@ async def test_gfm_pause_and_resume(simulated_global_file_manager):
     assert "pause" in pause_msg.lower() or "paused" in pause_msg.lower()
 
     res_task = asyncio.create_task(handle.result())
-    await asyncio.sleep(0.1)
-    assert not res_task.done()
+    await _assert_blocks_while_paused(res_task)
 
     resume_msg = handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()

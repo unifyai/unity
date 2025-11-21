@@ -132,10 +132,10 @@ def test_embed_after_single_hook_and_columns(file_manager, tmp_path: Path):
 
     calls = {"pre": 0, "post": 0}
 
-    def pre_hook(manager, filename, result, document, config):
+    def pre_hook(manager, file_path, result, document, config):
         calls["pre"] += 1
 
-    def post_hook(manager, filename, result, document, config):
+    def post_hook(manager, file_path, result, document, config):
         calls["post"] += 1
 
     cfg = FilePipelineConfig(
@@ -200,10 +200,10 @@ def test_embed_along_content_hooks_per_chunk(file_manager, tmp_path: Path):
 
     calls = {"pre": 0, "post": 0}
 
-    def pre_hook(manager, filename, result, document, config):
+    def pre_hook(manager, file_path, result, document, config):
         calls["pre"] += 1
 
-    def post_hook(manager, filename, result, document, config):
+    def post_hook(manager, file_path, result, document, config):
         calls["post"] += 1
 
     cfg = FilePipelineConfig(
