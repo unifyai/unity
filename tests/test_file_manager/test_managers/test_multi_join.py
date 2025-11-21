@@ -30,7 +30,8 @@ def test_filter_multi_join_chain(file_manager, tmp_path: Path):
             },
             {
                 "tables": ["$prev", name],
-                "join_expr": "rid == rid",
+                # Join the derived rid from $prev to the real row_id on the file context
+                "join_expr": "rid == row_id",
                 "select": {"rid": "rid"},
             },
         ],

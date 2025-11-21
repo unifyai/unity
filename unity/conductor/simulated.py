@@ -27,6 +27,7 @@ from ..web_searcher.simulated import SimulatedWebSearcher
 from ..actor.simulated import SimulatedActor
 from ..conversation_manager.base import BaseConversationManagerHandle
 from ..conversation_manager.simulated import SimulatedConversationManagerHandle
+from ..file_manager.base import BaseGlobalFileManager
 from ..file_manager.simulated import SimulatedGlobalFileManager, SimulatedFileManager
 
 __all__ = [
@@ -61,6 +62,7 @@ class SimulatedConductor(Conductor):
         web_searcher: Optional[BaseWebSearcher] = None,
         actor: Optional[BaseActor] = None,
         conversation_manager: Optional[BaseConversationManagerHandle] = None,
+        global_file_manager: Optional[BaseGlobalFileManager] = None,
     ) -> None:
         # Instantiate simulated components unless caller provided overrides
         _actor = (
@@ -166,8 +168,12 @@ class SimulatedConductor(Conductor):
             )
         )
 
-        _global_file_manager = SimulatedGlobalFileManager(
-            [SimulatedFileManager(), SimulatedFileManager()],
+        _global_file_manager = (
+            global_file_manager
+            if global_file_manager is not None
+            else SimulatedGlobalFileManager(
+                [SimulatedFileManager(), SimulatedFileManager()],
+            )
         )
 
         # Delegate to the real Conductor with our simulated defaults
