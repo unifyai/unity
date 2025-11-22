@@ -217,14 +217,14 @@ async def test_handle_pause_and_resume(monkeypatch):
     handle = await cm.ask("Generate a short summary of all open opportunities.")
 
     # 1️⃣ Pause before awaiting the result
-    pause_msg = handle.pause()
+    pause_msg = await handle.pause()
     assert "pause" in pause_msg.lower()
 
     # 2️⃣ Kick off result() – it should block while paused
     res_task = await _assert_blocks_while_paused(handle.result())
 
     # 3️⃣ Resume and ensure the task now completes
-    resume_msg = handle.resume()
+    resume_msg = await handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
     answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
@@ -281,7 +281,7 @@ async def test_stop_while_paused_finishes_immediately_cm():
     cm = SimulatedContactManager()
     h = await cm.ask("Produce a long contact export.")
     # Enter paused state
-    h.pause()
+    await h.pause()
     # result() should be blocked while paused
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
