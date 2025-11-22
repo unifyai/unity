@@ -3,13 +3,15 @@ import time
 import json
 import asyncio
 import unify
+import threading
 
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
     AsyncToolLoopHandle,
+    SteerableToolHandle,
 )
 from unity.common.tool_spec import ToolSpec
-from tests.helpers import SETTINGS
+from tests.helpers import SETTINGS, _handle_project
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
@@ -1173,8 +1175,9 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     final = await outer.result()
     assert final == "processed stopped early, no result"
 
-    # Assert that the inner handle's stop() was invoked exactly once
-    assert stop_calls["count"] == 1, "inner handle stop() was not propagated"
+    # Assert that the inner handle's stop() was invoked at least once
+    # (It might be called twice: once via the mirror message if processed, and once via the safety-net in cancel_pending_tasks)
+    assert stop_calls["count"] >= 1, "inner handle stop() was not propagated"
 
 
 @pytest.mark.asyncio
@@ -1358,3 +1361,116 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
         "pause": 1,
         "resume": 1,
     }, "pause/resume should each be propagated once"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_outer_stop_calls_inner_stop_on_cancel():
+    """
+    Regression test for a hanging issue where outer_handle.stop()
+    cancelled the wrapper task but failed to call inner_handle.stop().
+
+    If inner_handle.stop() is not called, resources (like threads)
+    might leak or block forever.
+    """
+
+    stop_called = {"count": 0}
+
+    class ThreadedHandle(SteerableToolHandle):
+        def __init__(self):
+            self._done_event = threading.Event()
+
+        async def ask(self, question: str, **kwargs):
+            return "answer"
+
+        def interject(self, message: str, **kwargs):
+            pass
+
+        def stop(self, reason: str | None = None, **kwargs):
+            stop_called["count"] += 1
+            self._done_event.set()
+            return "stopped"
+
+        def pause(self, **kwargs):
+            pass
+
+        def resume(self, **kwargs):
+            pass
+
+        def done(self) -> bool:
+            return self._done_event.is_set()
+
+        async def result(self) -> str:
+            # Simulate a blocking thread wait - mimicking SimulatedActor
+            await asyncio.to_thread(self._done_event.wait)
+            return "done"
+
+        # Event API stubs
+        async def next_clarification(self):
+            return {}
+
+        async def next_notification(self):
+            return {}
+
+        async def answer_clarification(self, cid, ans):
+            pass
+
+    inner_handle = ThreadedHandle()
+
+    async def outer_tool() -> SteerableToolHandle:
+        return inner_handle
+
+    client = unify.AsyncUnify(
+        "gpt-5@openai",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
+    client.set_system_message("Call outer_tool then wait.")
+
+    handle = start_async_tool_loop(
+        client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        timeout=30,
+    )
+
+    # Wait until tool is active
+    await _wait_for_tool_request(client, "outer_tool")
+
+    # Wait until the handle is likely adopted (placeholder inserted)
+    async def _has_tool_placeholder():
+        return any(
+            m.get("role") == "tool" and m.get("name") == "outer_tool"
+            for m in client.messages
+        )
+
+    await _wait_for_condition(_has_tool_placeholder, poll=0.05, timeout=5.0)
+
+    # FORCE STOP the outer loop
+    # We use _task.cancel() to simulate a hard cancellation (or the race condition where cancellation
+    # is processed before the stop-mirror message). This ensures we verify the safety-net
+    # in tools_data.cancel_pending_tasks is working.
+    # Note: handle.stop() sets an event AND sends a mirror message; if we used that, the
+    # mirror message might be processed first, masking the bug.
+    handle._task.cancel()
+
+    # Wait for cleanup
+    try:
+        await handle.result()
+    except asyncio.CancelledError:
+        pass
+
+    # Wait briefly for propagation (threading event set is immediate but context switch needed)
+    await asyncio.sleep(0.1)
+
+    # Verify inner handle stop was called
+    assert (
+        stop_called["count"] >= 1
+    ), "Inner handle stop() should have been called during outer cancellation"
+
+    # Ensure the thread is unblocked
+    assert inner_handle._done_event.is_set()
+
+    # Clean up
+    if not inner_handle._done_event.is_set():
+        inner_handle._done_event.set()
