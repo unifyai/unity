@@ -217,11 +217,11 @@ async def test_nested_steer_noop_when_child_selector_does_not_match():
         def stop(self, *_, **__):  # type: ignore[override]
             return self._current_handle.stop()
 
-    async def pause(self, *_, **__):  # type: ignore[override]
-        return await self._current_handle.pause()
+        async def pause(self, *_, **__):  # type: ignore[override]
+            return await self._current_handle.pause()
 
-    async def resume(self, *_, **__):  # type: ignore[override]
-        return await self._current_handle.resume()
+        async def resume(self, *_, **__):  # type: ignore[override]
+            return await self._current_handle.resume()
 
         def done(self) -> bool:  # type: ignore[override]
             return self._current_handle.done()
