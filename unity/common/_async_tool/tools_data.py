@@ -729,7 +729,7 @@ class ToolsData:
                         child_handle,
                         "pause",
                     ):
-                        child_handle.pause()  # type: ignore[attr-defined]
+                        await child_handle.pause()  # type: ignore[attr-defined]
                 except Exception:
                     pass
                 try:
