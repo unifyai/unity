@@ -60,7 +60,7 @@ def pytest_sessionstart(session):
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Build a readable, second-precision timestamp (e.g., 2025-10-31_14-05-23)
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    explicit_log_path = os.getenv("PYTEST_LOG_PATH")
 
     # Open a unique file using exclusive creation to avoid races across concurrent runs
     def _open_unique(path_no_suffix: Path):
@@ -77,8 +77,17 @@ def pytest_sessionstart(session):
             except FileExistsError:
                 suffix_index += 1
 
-    base_path = logs_dir / f"{ts}.txt"
-    log_path, fh = _open_unique(base_path)
+    if explicit_log_path:
+        base_path = Path(explicit_log_path)
+        if not base_path.is_absolute():
+            base_path = root_path / base_path
+        log_path = base_path
+        # Overwrite if exists; caller ensures uniqueness
+        fh = open(log_path, mode="w", encoding="utf-8")
+    else:
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        base_path = logs_dir / f"{ts}.txt"
+        log_path, fh = _open_unique(base_path)
 
     global _TEE_FILE_HANDLE, _TEE_ORIG_STREAM, _TEE_STREAM_ATTR
     _TEE_FILE_HANDLE = fh
