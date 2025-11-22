@@ -18,6 +18,9 @@ EXCLUDE_DIRS=( .git .hg .svn .venv venv .mypy_cache .pytest_cache __pycache__ .i
 # With -t/--per-test: one session per collected pytest node id across provided dirs/files.
 PER_TEST=0
 
+# Wait for completion flag
+WAIT_FOR_COMPLETION=0
+
 # Optional filename match (glob-like, e.g., "*_tool_docstring*")
 NAME_PATTERN=""
 
@@ -29,6 +32,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 declare -a POSITIONAL_ARGS=()
 while (( "$#" )); do
   case "$1" in
+    -w|--wait)
+      WAIT_FOR_COMPLETION=1
+      shift
+      ;;
     -t|--per-test)
       PER_TEST=1
       shift
@@ -57,9 +64,10 @@ cd "$REPO_ROOT"
 # Build the command to run in each tmux session
 run_cmd() {
   local target="$1"   # pytest target (file path or node id)
+  local log_file="$2" # pytest log file path
   # Build the inner script first with safe %q for path/target, then quote the whole script with %q
   local inner
-  inner=$(printf 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.venv/bin/activate && cd %q && pytest %q; status=$?; sname=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; "✅ "*) base="${sname#✅ }" ;; "❌ "*) base="${sname#❌ }" ;; "⏳ "*) base="${sname#⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; tmux rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(tmux display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; tmux kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$REPO_ROOT" "$target")
+  inner=$(printf 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && pytest %q; status=$?; sname=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; "✅ "*) base="${sname#✅ }" ;; "❌ "*) base="${sname#❌ }" ;; "⏳ "*) base="${sname#⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; tmux rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(tmux display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; tmux kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$log_file" "$REPO_ROOT" "$target")
   printf 'bash -lc %q' "$inner"
 }
 
@@ -303,8 +311,12 @@ for target in "${files[@]}"; do
   fname="${target##*/}"
   wname="${fname%.py}"
 
+  # Define log file in .pytest_logs
+  mkdir -p "$REPO_ROOT/.pytest_logs"
+  log_file=".pytest_logs/${session}.txt"
+
   # Create the session first (no command), set remain-on-exit, then send the command.
-  cmd="$(run_cmd "$target")"
+  cmd="$(run_cmd "$target" "$log_file")"
   tmux new-session -d -s "$session" -n "$wname" "$cmd"
   pending_name="$(unique_session_name "? ⏳ $session")"
   tmux rename-session -t "$session" "$pending_name"
@@ -333,3 +345,21 @@ echo "  • Watch sessions: watch -n 0.5 'tmux ls'"
 echo "  • List sessions: tmux ls"
 echo "  • Attach:       tmux attach -t <session>"
 echo "  • Inside tmux:  tmux switch-client -t <session>"
+
+if (( WAIT_FOR_COMPLETION )); then
+  echo "Waiting for tests to complete..."
+  while tmux ls 2>/dev/null | grep -q "? ⏳"; do
+    sleep 1
+  done
+
+  echo "All tests completed."
+  if tmux ls 2>/dev/null | grep -q "x ❌"; then
+    echo "Failures detected in the following sessions:"
+    tmux ls | grep "x ❌"
+    echo "Logs are available in .pytest_logs/"
+    exit 1
+  else
+    echo "All tests passed!"
+    exit 0
+  fi
+fi

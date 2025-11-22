@@ -10,10 +10,13 @@ globs: **/*.py, **/*.toml, .git/hooks/*
 - Do not use global python or other system interpreters.
 
 ## Running Tests
-- **Command**: `.venv/bin/pytest [test_file]`
-- **Sandbox Permissions**: When running tests, **ALWAYS** use `required_permissions: ['all']`.
-  - Reason: The test suite needs to read the `.env` file which is often blocked by the default sandbox.
-  - Example: `run_terminal_cmd(command=".venv/bin/pytest ...", required_permissions=["all"])`
+- **Command**: `tests/.parallel_run.sh --wait [path]`
+- **Method**: This script runs tests in parallel `tmux` sessions, logs output to `.pytest_logs/<session>.txt`, and waits for completion.
+- **Failure Handling**:
+  - If the script exits with code 1, failures were detected.
+  - Do **NOT** inspect `tmux` panes directly.
+  - **ALWAYS** read the corresponding log file in `.pytest_logs/` for the failed session (e.g., `.pytest_logs/x_❌_tests-contact_manager-test_api.txt`).
+- **Permissions**: Use `required_permissions: ['all']` to ensure access to `.env` and log files.
 
 ## Pre-commit Hooks
 - The `pre-commit` tool is installed in the project `dev` dependencies.
