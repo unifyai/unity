@@ -124,6 +124,7 @@ class SteerableHandle(ABC):
         message: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
         """Inject an additional *user* turn into the running conversation.
 
@@ -135,6 +136,8 @@ class SteerableHandle(ABC):
             The parent chat context continued since the start of this loop.
             When provided, implementations should ensure the LLM sees this
             continuation alongside the interjection.
+        images : list | dict | None, optional
+            Live image references to make available during this interjection.
         """
 
 
