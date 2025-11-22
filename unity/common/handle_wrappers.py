@@ -39,14 +39,14 @@ def _iter_from_container(container: Any, src: str):
 def discover_wrapped_handles(obj: Any) -> List[Tuple[str, Any]]:
     """Return a list of (source, handle) pairs from the standard entrypoint.
 
-    Only the standard method get_wrapped_handles() is supported.
+    Only the standard method _get_wrapped_handles() is supported.
     """
     try:
-        meth = getattr(obj, "get_wrapped_handles", None)
+        meth = getattr(obj, "_get_wrapped_handles", None)
         if not callable(meth):
             return []
         res = meth()
-        return list(_iter_from_container(res, "get_wrapped_handles"))
+        return list(_iter_from_container(res, "_get_wrapped_handles"))
     except Exception:
         return []
 
@@ -57,10 +57,10 @@ class HandleWrapperMixin:
     Usage:
         class MyWrapper(HandleWrapperMixin):
             def __init__(self, handle):
-                self.wrap_handle(handle)
+                self._wrap_handle(handle)
     """
 
-    def get_wrapped_handles(self) -> list:
+    def _get_wrapped_handles(self) -> list:
         lst = getattr(self, "_wrapped_handles", None)
         return (
             list(lst)
@@ -69,7 +69,7 @@ class HandleWrapperMixin:
         )
 
     # Convenience helpers for wrappers to register inner handles explicitly
-    def wrap_handle(self, handle: Any) -> None:
+    def _wrap_handle(self, handle: Any) -> None:
         lst = getattr(self, "_wrapped_handles", None)
         if isinstance(lst, list):
             lst.append(handle)

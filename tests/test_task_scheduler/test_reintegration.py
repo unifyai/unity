@@ -455,7 +455,7 @@ async def test_chain_then_defer_restores_next_head_start_at(monkeypatch):
     # Start the head in chain mode but only allow the head to complete
     handle = await ts.execute(task_id=head_id)
     # Wait for just the head to finish
-    await handle.active_task_done()
+    await handle._active_task_done()
 
     # Start the second task (mid) and then request deferral "as originally scheduled"
     handle.stop(

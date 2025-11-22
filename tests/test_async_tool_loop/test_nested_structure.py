@@ -113,7 +113,7 @@ class WrapperHandle(SteerableToolHandle):
         self._current_handle = h
 
     # Adopt standardized wrapper registration for nested_structure
-    def get_wrapped_handles(self):  # type: ignore[override]
+    def _get_wrapped_handles(self):  # type: ignore[override]
         return {"current": self._current_handle}
 
     async def ask(self, question: str, *, parent_chat_context_cont=None):  # type: ignore[override]

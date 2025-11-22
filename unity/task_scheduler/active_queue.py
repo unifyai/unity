@@ -364,7 +364,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         self._driver = asyncio.create_task(self._drive())
 
     # Standardized wrapper registration: always expose the current inner handle
-    def get_wrapped_handles(self):  # type: ignore[override]
+    def _get_wrapped_handles(self):  # type: ignore[override]
         try:
             return {"current": self._current_handle}
         except Exception:
@@ -835,7 +835,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             return self._summarise_completions()
         return ""
 
-    async def active_task_done(self) -> str:
+    async def _active_task_done(self) -> str:
         """
         Await until the next task in the queue completes (or return immediately
         if tasks have already completed since the last call) and return a JSON
