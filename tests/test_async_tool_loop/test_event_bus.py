@@ -18,8 +18,7 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
 )
 from unity.common._async_tool.loop import async_tool_loop_inner
-from unity.events.event_bus import EVENT_BUS
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project, SETTINGS, capture_events
 
 
 @unify.traced
@@ -56,21 +55,20 @@ async def test_basic_event_flow() -> None:
     pause_event = asyncio.Event()
     pause_event.set()  # start un-paused
 
-    await async_tool_loop_inner(
-        client=client,
-        message="world",
-        tools={"echo": echo},
-        interject_queue=asyncio.Queue(),
-        cancel_event=asyncio.Event(),
-        pause_event=pause_event,
-        prune_tool_duplicates=True,
-    )
+    async with capture_events("ToolLoop") as captured_events:
+        await async_tool_loop_inner(
+            client=client,
+            message="world",
+            tools={"echo": echo},
+            interject_queue=asyncio.Queue(),
+            cancel_event=asyncio.Event(),
+            pause_event=pause_event,
+            prune_tool_duplicates=True,
+        )
 
-    # Exactly four events should have been published for the run
-    #    (newest-first order → reverse for readability).
-    events = list(
-        reversed(await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=10)),
-    )
+    # Exactly four events should have been published for the run.
+    # Captured events are already in chronological order (oldest first).
+    events = captured_events
     assert len(events) == 4
 
     roles = [evt.payload["message"]["role"] for evt in events]
@@ -116,13 +114,15 @@ async def test_interjection_publishes_user_event() -> None:
         max_consecutive_failures=1,
     )
 
-    # Interject with second.
-    await handle.interject("second")
+    async with capture_events("ToolLoop") as captured_events:
+        # Interject with second.
+        await handle.interject("second")
 
-    final = await handle.result()
+        final = await handle.result()
+
     assert "you said: second" in final.lower().replace("*", "")
 
-    events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=10)
+    events = captured_events
     roles = [evt.payload["message"]["role"] for evt in events]
     assert "user" in roles  # initial user
     # Interjection is now published as a system message that includes the
