@@ -46,7 +46,7 @@ def log_job_startup(
                     "user_email": user_email,
                     "assistant_email": assistant_email,
                     "running": True,
-                }
+                },
             ],
             api_key=api_key,
         )

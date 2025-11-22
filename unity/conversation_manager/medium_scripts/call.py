@@ -83,7 +83,8 @@ class Assistant(Agent):
         await event_broker.publish(
             "app:comms:phone_utterance",
             PhoneUtterance(
-                contact=self.contact, content=new_message.text_content
+                contact=self.contact,
+                content=new_message.text_content,
             ).to_json(),
         )
         raise llm.StopResponse()
@@ -269,7 +270,7 @@ async def entrypoint(ctx: agents.JobContext):
                             event_broker.publish(
                                 "app:comms:interrupt",
                                 Interrupt(
-                                    contact=os.environ["CALL_FROM_NUMBER"]
+                                    contact=os.environ["CALL_FROM_NUMBER"],
                                 ).to_json(),
                             ),
                         )
@@ -286,7 +287,8 @@ async def entrypoint(ctx: agents.JobContext):
             while True:
                 try:
                     msg = await pubsub.get_message(
-                        ignore_subscribe_messages=True, timeout=None
+                        ignore_subscribe_messages=True,
+                        timeout=None,
                     )
                     if msg is None:
                         continue

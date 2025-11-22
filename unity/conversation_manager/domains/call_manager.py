@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 import sys
 
@@ -50,7 +49,10 @@ class LivekitCallManager:
         self.call_proc = run_script(str(target_path), "dev", *args)
 
     def start_unify_call(
-        self, agent_name: str | None, room_name: str | None, contact: dict
+        self,
+        agent_name: str | None,
+        room_name: str | None,
+        contact: dict,
     ):
         target_path = (
             Path(__file__).parent.parent.resolve() / "medium_scripts" / "unify_call.py"

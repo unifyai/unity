@@ -1,4 +1,3 @@
-from textwrap import dedent
 from datetime import datetime
 
 from unity.conversation_manager.domains.contact_index import (
@@ -34,7 +33,9 @@ class Renderer:
     ):
         contacts = "\n\n".join(
             self.render_contact(
-                c, max_messages=max_messages, last_snapshot=last_snapshot
+                c,
+                max_messages=max_messages,
+                last_snapshot=last_snapshot,
             )
             for c in active_conversations.values()
         )
@@ -50,7 +51,10 @@ class Renderer:
         )
         threads = "\n\n".join(
             self.render_thread(
-                t_name, t, max_messages=max_messages, last_snapshot=last_snapshot
+                t_name,
+                t,
+                max_messages=max_messages,
+                last_snapshot=last_snapshot,
             )
             for t_name, t in contact.threads.items()
             if t
@@ -86,7 +90,9 @@ class Renderer:
 
     # notification stuff
     def render_notification_bar(
-        self, notification_bar: NotificationBar, last_snapshot=None
+        self,
+        notification_bar: NotificationBar,
+        last_snapshot=None,
     ):
         pinned_notifs = [n for n in notification_bar.notifications if n.pinned]
         new_notifs = [

@@ -95,7 +95,10 @@ class ContactIndex:
 
     # should check if the contact exists
     def get_contact(
-        self, contact_id: str = None, phone_number=None, email=None
+        self,
+        contact_id: str = None,
+        phone_number=None,
+        email=None,
     ) -> dict:
         c = None
         if contact_id:

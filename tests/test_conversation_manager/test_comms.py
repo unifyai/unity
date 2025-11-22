@@ -90,7 +90,11 @@ async def test_sms_to_unify_message(test_redis_client, event_capture):
 
     # Send incoming SMS
     contact = contacts[1]
-    await send_incoming_sms(test_redis_client, contact, "Tell me a joke via unify message")
+    await send_incoming_sms(
+        test_redis_client,
+        contact,
+        "Tell me a joke via unify message",
+    )
 
     # Capture outgoing unify message and verify response
     await capture_outgoing_unify_message(event_capture, contact)
@@ -137,7 +141,13 @@ async def test_email_to_email(test_redis_client, event_capture):
     # Send incoming email
     contact = contacts[1]
     message_id = "test_message_id"
-    await send_incoming_email(test_redis_client, contact, "Test Subject", "Tell me a joke", message_id)
+    await send_incoming_email(
+        test_redis_client,
+        contact,
+        "Test Subject",
+        "Tell me a joke",
+        message_id,
+    )
 
     # Capture outgoing email and verify response
     await capture_outgoing_email(event_capture, contact, message_id)
@@ -155,7 +165,13 @@ async def test_email_to_sms(test_redis_client, event_capture):
     # Send incoming email
     contact = contacts[1]
     message_id = "test_message_id"
-    await send_incoming_email(test_redis_client, contact, "Test Subject", "Tell me a joke via SMS", message_id)
+    await send_incoming_email(
+        test_redis_client,
+        contact,
+        "Test Subject",
+        "Tell me a joke via SMS",
+        message_id,
+    )
 
     # Capture outgoing SMS and verify response
     await capture_outgoing_sms(event_capture, contact)
@@ -173,7 +189,13 @@ async def test_email_to_unify_message(test_redis_client, event_capture):
     # Send incoming email
     contact = contacts[1]
     message_id = "test_message_id"
-    await send_incoming_email(test_redis_client, contact, "Test Subject", "Tell me a joke via unify message", message_id)
+    await send_incoming_email(
+        test_redis_client,
+        contact,
+        "Test Subject",
+        "Tell me a joke via unify message",
+        message_id,
+    )
 
     # Capture outgoing unify message and verify response
     await capture_outgoing_unify_message(event_capture, contact)
@@ -191,7 +213,13 @@ async def test_email_to_phone_call(test_redis_client, event_capture):
     # Send incoming email
     contact = contacts[1]
     message_id = "test_message_id"
-    await send_incoming_email(test_redis_client, contact, "Test Subject", "Tell me a joke via phone call", message_id)
+    await send_incoming_email(
+        test_redis_client,
+        contact,
+        "Test Subject",
+        "Tell me a joke via phone call",
+        message_id,
+    )
 
     # Capture outgoing phone call and verify response
     await capture_outgoing_phone_call(event_capture, contact)
@@ -233,7 +261,11 @@ async def test_unify_message_to_sms(test_redis_client, event_capture):
 
     # Send incoming unify message
     contact = contacts[1]
-    await send_incoming_unify_message(test_redis_client, contact, "Tell me a joke via SMS")
+    await send_incoming_unify_message(
+        test_redis_client,
+        contact,
+        "Tell me a joke via SMS",
+    )
 
     # Capture outgoing SMS and verify response
     await capture_outgoing_sms(event_capture, contact)
@@ -251,7 +283,11 @@ async def test_unify_message_to_email(test_redis_client, event_capture):
 
     # Send incoming unify message
     contact = contacts[1]
-    await send_incoming_unify_message(test_redis_client, contact, "Tell me a joke via email")
+    await send_incoming_unify_message(
+        test_redis_client,
+        contact,
+        "Tell me a joke via email",
+    )
 
     # Capture outgoing email and verify response
     await capture_outgoing_email(event_capture, contact)
@@ -268,7 +304,11 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
 
     # Send incoming unify message
     contact = contacts[1]
-    await send_incoming_unify_message(test_redis_client, contact, "Tell me a joke via phone call")
+    await send_incoming_unify_message(
+        test_redis_client,
+        contact,
+        "Tell me a joke via phone call",
+    )
 
     # Capture outgoing phone call and verify response
     await capture_outgoing_phone_call(event_capture, contact)
