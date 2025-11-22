@@ -507,8 +507,8 @@ async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog
     # Trigger update with an instruction; first step policy requires `ask`, creating a nested child loop.
     handle = await cm.update("Please check contacts and then do nothing.")
 
-    # Wait until the nested `ask` child has been adopted
-    async def _ask_child_adopted():
+    # Wait until the nested `ask` child has been adopted AND has produced an assistant message
+    async def _ask_child_ready_for_snapshot():
         try:
             task_info = getattr(getattr(handle, "_task", None), "task_info", {})  # type: ignore[attr-defined]
             if isinstance(task_info, dict):
@@ -516,12 +516,18 @@ async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog
                     nm = getattr(meta, "name", None)
                     hd = getattr(meta, "handle", None)
                     if nm == "ask" and hd is not None:
-                        return True
+                        # Ensure it's still alive (if it finished, we missed the window)
+                        if hasattr(hd, "done") and hd.done():
+                            return False
+                        # Check history for assistant message so we have something to assert replay on
+                        hist = hd.get_history()
+                        if any(m.get("role") == "assistant" for m in hist):
+                            return True
         except Exception:
             return False
         return False
 
-    await _wait_for_condition(_ask_child_adopted, poll=0.02, timeout=60.0)
+    await _wait_for_condition(_ask_child_ready_for_snapshot, poll=0.02, timeout=60.0)
 
     # Take recursive snapshot to capture the in-flight child
     snap = handle.serialize(recursive=True)
