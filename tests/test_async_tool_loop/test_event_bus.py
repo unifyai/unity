@@ -107,14 +107,14 @@ async def test_interjection_publishes_user_event() -> None:
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said most recently, and do not include the quoation marks in your response.",
     )
 
-    handle = start_async_tool_loop(
-        client=client,
-        message="first",
-        tools={},  # no tools needed
-        max_consecutive_failures=1,
-    )
-
     async with capture_events("ToolLoop") as captured_events:
+        handle = start_async_tool_loop(
+            client=client,
+            message="first",
+            tools={},  # no tools needed
+            max_consecutive_failures=1,
+        )
+
         # Interject with second.
         await handle.interject("second")
 
