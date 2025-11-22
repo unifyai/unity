@@ -485,7 +485,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             },
         )
 
-    def pause(self) -> str:
+    async def pause(self) -> str:
         if not self._description:
             raise Exception("The actor is not running, so nothing to pause.")
         if self._paused:
@@ -501,7 +501,7 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
         self._log_pause()
         return f"Paused '{self._description}'."
 
-    def resume(self) -> str:
+    async def resume(self) -> str:
         if not self._description:
             raise Exception("No actor is running, so nothing to resume.")
         if not self._paused:

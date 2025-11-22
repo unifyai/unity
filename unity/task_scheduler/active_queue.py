@@ -782,26 +782,26 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         except Exception:
             return "Stopped."
 
-    def pause(self) -> Optional[str]:  # type: ignore[override]
+    async def pause(self) -> Optional[str]:  # type: ignore[override]
         try:
             if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
                 return "Already completed."
         except Exception:
             pass
         try:
-            ret = self._current_handle.pause()
+            ret = await self._current_handle.pause()
             return ret
         except Exception:
             return "Already completed."
 
-    def resume(self) -> Optional[str]:  # type: ignore[override]
+    async def resume(self) -> Optional[str]:  # type: ignore[override]
         try:
             if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
                 return "Already completed."
         except Exception:
             pass
         try:
-            ret = self._current_handle.resume()
+            ret = await self._current_handle.resume()
             return ret
         except Exception:
             return "Already completed."

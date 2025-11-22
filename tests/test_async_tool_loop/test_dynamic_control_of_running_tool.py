@@ -434,7 +434,7 @@ async def test_global_pause_blocks_llm_until_resume(client):
     await _wait_for_tool_request(client, "slow")
 
     # Pause the outer loop (tools should keep running; the LLM must not speak)
-    handle.pause()
+    await handle.pause()
 
     # Wait until the tool result for `slow` has been appended while paused
     await _wait_for_tool_message_prefix(client, "slow")
@@ -469,7 +469,7 @@ async def test_global_pause_blocks_llm_until_resume(client):
     ), "assistant produced a new message while the loop was paused"
 
     # Resume and allow the conversation to complete
-    handle.resume()
+    await handle.resume()
     final = await handle.result()
 
     assert (
@@ -496,12 +496,12 @@ async def test_global_resume_idempotent_no_extra_turns(client):
     await _wait_for_tool_request(client, "slow")
 
     # Pause while tool is running; let it finish while paused – wait for tool result deterministically
-    handle.pause()
+    await handle.pause()
     await _wait_for_tool_message_prefix(client, "slow")
 
     # Resume twice (idempotent)
-    handle.resume()
-    handle.resume()
+    await handle.resume()
+    await handle.resume()
 
     final = await handle.result()
     assert final.strip().upper().startswith("OK")
@@ -557,11 +557,11 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
             self._done.set()
             return "stopped"
 
-        def pause(self):
+        async def pause(self):
             self.pause_count += 1
             return "paused"
 
-        def resume(self):
+        async def resume(self):
             self.resume_count += 1
             return "resumed"
 
@@ -616,7 +616,7 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
     # adopting a single delegate. We no longer assert on `_delegate`.
 
     # Pause the outer loop – must forward exactly once to the delegate
-    outer.pause()
+    await outer.pause()
 
     async def _paused_once() -> bool:
         return inner_handle.pause_count >= 1
@@ -627,7 +627,7 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
     ), "delegate did not receive pause() exactly once"
 
     # Now resume the outer loop – must forward exactly once to the delegate
-    outer.resume()
+    await outer.resume()
 
     async def _resumed_once() -> bool:
         return inner_handle.resume_count >= 1
@@ -665,13 +665,13 @@ async def test_resume_when_no_pending_tools_allows_llm_turn(client):
     )
 
     # Pause immediately; there are no pending tools. The loop should not finish while paused.
-    h.pause()
+    await h.pause()
     # Assert result() blocks while paused using a timeout-based check
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(asyncio.shield(h.result()), timeout=1)
 
     # Resume and finish
-    h.resume()
+    await h.resume()
     final = await h.result()
     assert final.strip().upper().startswith("OK")
 
@@ -841,10 +841,10 @@ async def test_dynamic_helpers_hide_next_notification_and_clarification(client):
             self._done.set()
             return "stopped"
 
-        def pause(self):
+        async def pause(self):
             return "paused"
 
-        def resume(self):
+        async def resume(self):
             return "resumed"
 
         def done(self) -> bool:
@@ -1068,7 +1068,7 @@ async def test_new_tool_scheduled_while_paused_starts_paused(client, monkeypatch
 
     # Ensure the LLM step actually started, then pause the outer handle
     await asyncio.wait_for(llm_started.wait(), timeout=30)
-    h.pause()
+    await h.pause()
     # Allow the patched LLM to proceed and return the tool-call while paused
     release_llm.set()
 
@@ -1153,7 +1153,7 @@ async def test_resume_unblocks_paused_base_tool_without_helper(client, monkeypat
 
     # Ensure LLM step started, then pause the outer handle
     await asyncio.wait_for(llm_started.wait(), timeout=30)
-    h.pause()
+    await h.pause()
     release_llm.set()
 
     # Wait until the tool placeholder appears (scheduled while paused)
@@ -1165,7 +1165,7 @@ async def test_resume_unblocks_paused_base_tool_without_helper(client, monkeypat
     ), "tool did not start paused while outer loop was paused"
 
     # Resume the outer handle – should auto-set the per-call pause_event for base tools
-    h.resume()
+    await h.resume()
 
     # Wait until final tool result "ok" is observed without relying on a resume helper
     async def _has_final_ok() -> bool:

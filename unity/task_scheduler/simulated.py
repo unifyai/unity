@@ -202,14 +202,14 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._done_event.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
 
-    def pause(self) -> str:
+    async def pause(self) -> str:
         if self._paused:
             return "Already paused."
         self._log_pause()
         self._paused = True
         return "Paused."
 
-    def resume(self) -> str:
+    async def resume(self) -> str:
         if not self._paused:
             return "Already running."
         self._log_resume()
@@ -568,17 +568,17 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
                 except Exception:
                     return "Stopped."
 
-            def pause(self) -> Optional[str]:  # type: ignore[override]
+            async def pause(self) -> Optional[str]:  # type: ignore[override]
                 self._log_pause()
                 try:
-                    return self._inner.pause()
+                    return await self._inner.pause()
                 except Exception:
                     return "Already completed."
 
-            def resume(self) -> Optional[str]:  # type: ignore[override]
+            async def resume(self) -> Optional[str]:  # type: ignore[override]
                 self._log_resume()
                 try:
-                    return self._inner.resume()
+                    return await self._inner.resume()
                 except Exception:
                     return "Already completed."
 
@@ -634,9 +634,9 @@ class SimulatedTaskScheduler(BaseTaskScheduler):
 
                     def stop(self, reason: Optional[str] = None): ...
 
-                    def pause(self): ...
+                    async def pause(self): ...
 
-                    def resume(self): ...
+                    async def resume(self): ...
 
                     def done(self) -> bool:
                         return True

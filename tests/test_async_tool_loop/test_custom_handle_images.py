@@ -52,10 +52,10 @@ class CustomImagesHandle(SteerableToolHandle):
         self._done.set()
         return "stopped"
 
-    def pause(self):
+    async def pause(self):
         return "paused"
 
-    def resume(self):
+    async def resume(self):
         return "resumed"
 
     def done(self) -> bool:

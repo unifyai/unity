@@ -351,14 +351,14 @@ async def test_queue_pause_resume_and_completion(monkeypatch):
     orig_resume = SimulatedActorHandle.resume
 
     @functools.wraps(orig_pause)
-    def spy_pause(self) -> str:  # type: ignore[override]
+    async def spy_pause(self) -> str:  # type: ignore[override]
         calls["pause"] += 1
-        return orig_pause(self)
+        return await orig_pause(self)
 
     @functools.wraps(orig_resume)
-    def spy_resume(self) -> str:  # type: ignore[override]
+    async def spy_resume(self) -> str:  # type: ignore[override]
         calls["resume"] += 1
-        return orig_resume(self)
+        return await orig_resume(self)
 
     monkeypatch.setattr(SimulatedActorHandle, "pause", spy_pause, raising=True)
     monkeypatch.setattr(SimulatedActorHandle, "resume", spy_resume, raising=True)
@@ -422,8 +422,8 @@ async def test_queue_pause_resume_and_completion(monkeypatch):
     await _wait_until_active()
 
     # Pause immediately while active (A: step 1), then resume (A: step 2) → A completes
-    h.pause()
-    h.resume()
+    await h.pause()
+    await h.resume()
 
     # Wait until B is active, then perform two benign steps for B: interject + ask
     await asyncio.wait_for(b_active_evt.wait(), timeout=15)
@@ -782,8 +782,8 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     h = await ts.execute(task_id=a_id)
 
     # Complete A deterministically with pause/resume (each consumes a step)
-    h.pause()
-    h.resume()
+    await h.pause()
+    await h.resume()
     await asyncio.wait_for(_completed_evt_for(a_id).wait(), timeout=10)
 
     # Wait until B is active
@@ -800,16 +800,16 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     ts._delete_task(task_id=c_id)
 
     # Complete B deterministically
-    h.pause()
-    h.resume()
+    await h.pause()
+    await h.resume()
     await asyncio.wait_for(_completed_evt_for(b_id).wait(), timeout=10)
 
     # Wait until D is active before applying steps to the new current handle
     await asyncio.wait_for(_evt_for(d_id).wait(), timeout=10)
 
     # D should be picked up next and complete after two steps
-    h.pause()
-    h.resume()
+    await h.pause()
+    await h.resume()
     await asyncio.wait_for(_completed_evt_for(d_id).wait(), timeout=10)
 
     res = await h.result()
@@ -911,13 +911,13 @@ async def test_append_to_queue_singleton_adds_follower_and_runs(monkeypatch):
     assert isinstance(msg, str)
 
     # Complete A deterministically (two steps)
-    h.pause()
-    h.resume()
+    await h.pause()
+    await h.resume()
 
     # Wait until B becomes active, then complete B
     await asyncio.wait_for(b_active_evt.wait(), timeout=20)
-    h.pause()
-    h.resume()
+    await h.pause()
+    await h.resume()
 
     res = await asyncio.wait_for(h.result(), timeout=30)
     assert isinstance(res, str)
@@ -1079,7 +1079,7 @@ async def test_active_task_done_incremental(monkeypatch):
     inner = getattr(h, "_inner", h)
 
     # Complete A with a single step (pause triggers a step in simulated actor)
-    h.pause()
+    await h.pause()
 
     # First call should include only A
     import json as _json
@@ -1090,7 +1090,7 @@ async def test_active_task_done_incremental(monkeypatch):
 
     # Ensure B is active, then complete it
     await asyncio.wait_for(b_active_evt.wait(), timeout=5)
-    h.pause()
+    await h.pause()
 
     # Second call should include only B
     payload2 = await inner._active_task_done()
@@ -1414,10 +1414,10 @@ async def test_dynamic_helper_append_to_queue_is_exposed_and_callable():
         def stop(self, *, cancel: bool = False, reason: str | None = None):  # type: ignore[override]
             return "stopped"
 
-        def pause(self):  # type: ignore[override]
+        async def pause(self):  # type: ignore[override]
             return "paused"
 
-        def resume(self):  # type: ignore[override]
+        async def resume(self):  # type: ignore[override]
             return "resumed"
 
         def done(self) -> bool:  # type: ignore[override]
@@ -1664,8 +1664,8 @@ async def test_active_queue_requests_clarification_at_queue_level(monkeypatch):
     await down_q.put("Apply to last only")
 
     # Complete A deterministically with pause/resume (each consumes a step)
-    h.pause()
-    h.resume()
+    await h.pause()
+    await h.resume()
 
     # Ensure B becomes active using an explicit event; then complete B
     b_active_evt: asyncio.Event = asyncio.Event()
@@ -1693,8 +1693,8 @@ async def test_active_queue_requests_clarification_at_queue_level(monkeypatch):
     )
 
     await asyncio.wait_for(b_active_evt.wait(), timeout=20)
-    h.pause()
-    h.resume()
+    await h.pause()
+    await h.resume()
 
     # Expect final completion (summary or inner result depending on chain state)
     res = await asyncio.wait_for(h.result(), timeout=30)

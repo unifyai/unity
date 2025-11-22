@@ -43,10 +43,10 @@ class ToyHandle(SteerableToolHandle):
         self._done.set()
         return "stopped"
 
-    def pause(self, *_, **__):  # type: ignore[override]
+    async def pause(self, *_, **__):  # type: ignore[override]
         return "paused"
 
-    def resume(self, *_, **__):  # type: ignore[override]
+    async def resume(self, *_, **__):  # type: ignore[override]
         return "resumed"
 
     def done(self) -> bool:  # type: ignore[override]
@@ -85,10 +85,10 @@ class NestedHandle(SteerableToolHandle):
         self._done.set()
         return "stopped"
 
-    def pause(self, *_, **__):  # type: ignore[override]
+    async def pause(self, *_, **__):  # type: ignore[override]
         return "paused"
 
-    def resume(self, *_, **__):  # type: ignore[override]
+    async def resume(self, *_, **__):  # type: ignore[override]
         return "resumed"
 
     def done(self) -> bool:  # type: ignore[override]
@@ -125,11 +125,11 @@ class WrapperHandle(SteerableToolHandle):
     def stop(self, *_, **__):  # type: ignore[override]
         return self._current_handle.stop()
 
-    def pause(self, *_, **__):  # type: ignore[override]
-        return self._current_handle.pause()
+    async def pause(self, *_, **__):  # type: ignore[override]
+        return await self._current_handle.pause()
 
-    def resume(self, *_, **__):  # type: ignore[override]
-        return self._current_handle.resume()
+    async def resume(self, *_, **__):  # type: ignore[override]
+        return await self._current_handle.resume()
 
     def done(self) -> bool:  # type: ignore[override]
         return self._current_handle.done()

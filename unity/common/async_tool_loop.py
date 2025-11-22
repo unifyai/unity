@@ -170,7 +170,7 @@ class SteerableToolHandle(SteerableHandle):
         """
 
     @abstractmethod
-    def pause(self) -> Awaitable[Optional[str]] | Optional[str]:
+    async def pause(self) -> Optional[str]:
         """Pause the outer conversational loop without stopping running tools.
 
         Behaviour
@@ -183,7 +183,7 @@ class SteerableToolHandle(SteerableHandle):
         """
 
     @abstractmethod
-    def resume(self) -> Awaitable[Optional[str]] | Optional[str]:
+    async def resume(self) -> Optional[str]:
         """Resume a loop previously paused with :pyfunc:`pause`.
 
         Behaviour
@@ -834,26 +834,24 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             self._stop_event.set()
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
-    def pause(self, **kwargs) -> None:
+    async def pause(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
 
         self._pause_event.clear()
         # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
         try:
-            asyncio.create_task(
-                self._record_and_forward(
-                    "pause",
-                    kwargs=dict(kwargs or {}),
-                    had_passthrough=False,
-                    forwarded_to=[],
-                ),
+            await self._record_and_forward(
+                "pause",
+                kwargs=dict(kwargs or {}),
+                had_passthrough=False,
+                forwarded_to=[],
             )
         except Exception:
             pass
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
-            self._queue.put_nowait(
+            await self._queue.put(
                 {
                     "_mirror": {
                         "method": "pause",
@@ -865,7 +863,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             pass
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
-    def resume(self, **kwargs) -> None:
+    async def resume(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
         # Auto-resume base tools that were started in paused state while the outer loop was paused
@@ -883,19 +881,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self._pause_event.set()
         # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
         try:
-            asyncio.create_task(
-                self._record_and_forward(
-                    "resume",
-                    kwargs=dict(kwargs or {}),
-                    had_passthrough=False,
-                    forwarded_to=[],
-                ),
+            await self._record_and_forward(
+                "resume",
+                kwargs=dict(kwargs or {}),
+                had_passthrough=False,
+                forwarded_to=[],
             )
         except Exception:
             pass
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
-            self._queue.put_nowait(
+            await self._queue.put(
                 {
                     "_mirror": {
                         "method": "resume",

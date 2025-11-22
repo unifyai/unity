@@ -224,13 +224,13 @@ class _SimulatedSkillHandle(SteerableToolHandle, SimulatedHandleMixin):
         except TypeError:
             return self._inner.stop(reason)  # type: ignore[call-arg]
 
-    def pause(self) -> Optional[str]:
+    async def pause(self) -> Optional[str]:
         self._log_pause()
-        return self._inner.pause()
+        return await self._inner.pause()
 
-    def resume(self) -> Optional[str]:
+    async def resume(self) -> Optional[str]:
         self._log_resume()
-        return self._inner.resume()
+        return await self._inner.resume()
 
     def done(self) -> bool:
         return self._inner.done()

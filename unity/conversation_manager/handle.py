@@ -504,10 +504,10 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
 
     # --- Other SteerableToolHandle methods (no-op for this handle) ---
 
-    def pause(self) -> str:
+    async def pause(self) -> str:
         return "ConversationManagerHandle does not support pausing."
 
-    def resume(self) -> str:
+    async def resume(self) -> str:
         return "ConversationManagerHandle does not support resuming."
 
     async def next_clarification(self) -> dict:

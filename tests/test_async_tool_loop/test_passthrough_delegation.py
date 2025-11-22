@@ -303,10 +303,10 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             return "resumed"
 
         def done(self) -> bool:
@@ -426,10 +426,10 @@ async def test_passthrough_clarification_bubbles_and_can_be_answered(monkeypatch
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             return "resumed"
 
         def done(self) -> bool:
@@ -531,11 +531,11 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):  # type: ignore[override]
+        async def pause(self, *_, **__):  # type: ignore[override]
             self.paused += 1
             return "paused"
 
-        def resume(self, *_, **__):  # type: ignore[override]
+        async def resume(self, *_, **__):  # type: ignore[override]
             self.resumed += 1
             return "resumed"
 
@@ -587,7 +587,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
     await _wait_for_tool_request(client, "t2")
 
     # Programmatic pause → wait counters
-    outer.pause()
+    await outer.pause()
     from tests.test_async_tool_loop.async_helpers import _wait_for_condition
 
     async def _paused_both():
@@ -596,7 +596,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
     await _wait_for_condition(_paused_both, poll=0.05, timeout=60.0)
 
     # Programmatic resume → wait counters
-    outer.resume()
+    await outer.resume()
 
     async def _resumed_both():
         return h1.resumed >= 1 and h2.resumed >= 1
@@ -660,10 +660,10 @@ async def test_programmatic_interject_with_kwargs_forwarded_to_passthrough_handl
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             return "resumed"
 
         def done(self) -> bool:
@@ -776,11 +776,11 @@ async def test_programmatic_pause_resume_stop_kwargs_forwarded(monkeypatch):
             self._done.set()
             return "stopped"
 
-        def pause(self, *, reason: str, log_to_backend: bool = False):
+        async def pause(self, *, reason: str, log_to_backend: bool = False):
             self.pauses.append({"reason": reason, "log_to_backend": log_to_backend})
             return "paused"
 
-        def resume(self, *, token: str | None = None):
+        async def resume(self, *, token: str | None = None):
             self.resumes.append({"token": token})
             return "resumed"
 
@@ -849,8 +849,8 @@ async def test_programmatic_pause_resume_stop_kwargs_forwarded(monkeypatch):
     await _wait_adopted()
 
     # Programmatic kwargs steering
-    outer.pause(reason="maintenance", log_to_backend=True)  # type: ignore[arg-type]
-    outer.resume(token="session-123")  # type: ignore[arg-type]
+    await outer.pause(reason="maintenance", log_to_backend=True)  # type: ignore[arg-type]
+    await outer.resume(token="session-123")  # type: ignore[arg-type]
     outer.stop(reason="done", abandon=True)  # type: ignore[arg-type]
 
     async def _all_seen():
@@ -1008,10 +1008,10 @@ async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             return "resumed"
 
         def done(self) -> bool:
@@ -1132,10 +1132,10 @@ async def test_early_ask_forwarded_on_adoption(monkeypatch):
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             return "resumed"
 
         def done(self) -> bool:
@@ -1234,11 +1234,11 @@ async def test_adoption_syncs_pause_state_when_paused(monkeypatch):
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             self.paused += 1
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             self.resumed += 1
             return "resumed"
 
@@ -1288,7 +1288,7 @@ async def test_adoption_syncs_pause_state_when_paused(monkeypatch):
     await _wait_for_tool_request(client, "spawn")
 
     # Pause BEFORE adoption so adoption-time state sync applies pause() to the child
-    outer.pause()
+    await outer.pause()
 
     # Now allow adoption
     gate.set()
@@ -1337,11 +1337,11 @@ async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             self.paused += 1
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             self.resumed += 1
             return "resumed"
 
@@ -1390,8 +1390,8 @@ async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
     await _wait_for_tool_request(client, "spawn")
 
     # EARLY steering: pause then resume BEFORE adoption (outer is resumed at adoption)
-    outer.pause()
-    outer.resume()
+    await outer.pause()
+    await outer.resume()
 
     # Now allow adoption
     gate.set()
@@ -1439,10 +1439,10 @@ async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             return "resumed"
 
         def done(self) -> bool:
@@ -1581,10 +1581,10 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             return "resumed"
 
         def done(self) -> bool:
@@ -1932,10 +1932,10 @@ async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             return "resumed"
 
         def done(self) -> bool:
@@ -2047,10 +2047,10 @@ async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
             self._done.set()
             return "stopped"
 
-        def pause(self, *_, **__):
+        async def pause(self, *_, **__):
             return "paused"
 
-        def resume(self, *_, **__):
+        async def resume(self, *_, **__):
             return "resumed"
 
         def done(self) -> bool:
