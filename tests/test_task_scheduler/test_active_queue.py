@@ -979,7 +979,7 @@ async def test_append_to_queue_emits_notification(monkeypatch):
 @_handle_project
 async def test_active_task_done_aggregates_all_when_called_late(monkeypatch):
     """
-    If called after multiple tasks completed, active_task_done should return
+    If called after multiple tasks completed, _active_task_done should return
     a JSON mapping containing all completions since never having been called.
     """
 
@@ -1010,17 +1010,17 @@ async def test_active_task_done_aggregates_all_when_called_late(monkeypatch):
     # Access inner handle if wrapped
     inner = getattr(h, "_inner", h)
 
-    # Call active_task_done the first time – should aggregate all completions
+    # Call _active_task_done the first time – should aggregate all completions
     import json as _json
 
-    payload_str = await inner.active_task_done()
+    payload_str = await inner._active_task_done()
     data = _json.loads(payload_str or "{}")
     assert isinstance(data, dict)
     assert set(data.keys()) == {"A_done", "B_done", "C_done"}
     assert all(isinstance(v, str) for v in data.values())
 
     # Second call after everything already consumed should be empty
-    payload_str2 = await inner.active_task_done()
+    payload_str2 = await inner._active_task_done()
     data2 = _json.loads(payload_str2 or "{}")
     assert data2 == {}
 
@@ -1029,7 +1029,7 @@ async def test_active_task_done_aggregates_all_when_called_late(monkeypatch):
 @_handle_project
 async def test_active_task_done_incremental(monkeypatch):
     """
-    Consecutive calls to active_task_done should return only new completions
+    Consecutive calls to _active_task_done should return only new completions
     since the previous call.
     """
 
@@ -1084,7 +1084,7 @@ async def test_active_task_done_incremental(monkeypatch):
     # First call should include only A
     import json as _json
 
-    payload1 = await inner.active_task_done()
+    payload1 = await inner._active_task_done()
     data1 = _json.loads(payload1 or "{}")
     assert set(data1.keys()) == {"A_inc"}
 
@@ -1093,12 +1093,12 @@ async def test_active_task_done_incremental(monkeypatch):
     h.pause()
 
     # Second call should include only B
-    payload2 = await inner.active_task_done()
+    payload2 = await inner._active_task_done()
     data2 = _json.loads(payload2 or "{}")
     assert set(data2.keys()) == {"B_inc"}
 
     # Further calls after consumption should be empty
-    payload3 = await inner.active_task_done()
+    payload3 = await inner._active_task_done()
     data3 = _json.loads(payload3 or "{}")
     assert data3 == {}
 

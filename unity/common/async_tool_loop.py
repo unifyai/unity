@@ -227,12 +227,19 @@ class SteerableToolHandle(SteerableHandle):
         Behaviour
         ---------
         - Looks up the queued clarification channel for ``call_id`` and delivers
-          the provided ``answer`` to the tool that is currently waiting.
+          the provided ``answer`` to the waiting tool.
         - If the mapping is missing (e.g., the tool already finished or the loop
           resumed on its own), the call is a no‑op.
         - Implementations should not raise in the absence of a matching channel;
           best‑effort delivery is sufficient.
         """
+
+    async def nested_steer(self, spec: dict) -> dict:
+        """Apply a nested steering spec.
+
+        See module-level ``_nested_steer_on`` for details.
+        """
+        return await _nested_steer_on(self, spec)
 
     # --- snapshotting (skeleton; non-abstract stubs in v1) -----------------
     def serialize(self) -> dict:

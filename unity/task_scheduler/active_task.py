@@ -124,7 +124,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         self._last_intent_reason: Optional[str] = None
 
         # Register the underlying actor handle for standardized wrapper discovery
-        self.wrap_handle(actor_handle)
+        self._wrap_handle(actor_handle)
 
     @classmethod
     async def create(
