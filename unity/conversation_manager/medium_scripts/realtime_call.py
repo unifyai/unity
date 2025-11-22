@@ -265,7 +265,10 @@ async def entrypoint(ctx: JobContext) -> None:
     print("PRINTING SYSTEM PROMPT")
     print(system)
     agent = Assistant(
-        contact=contact, boss=boss, instructions=system, outbound=outbound
+        contact=contact,
+        boss=boss,
+        instructions=system,
+        outbound=outbound,
     )
 
     await event_broker.publish(

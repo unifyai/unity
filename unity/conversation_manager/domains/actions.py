@@ -1,10 +1,8 @@
 import asyncio
 import inspect
-import os
 from typing import Literal, Optional, Union, TYPE_CHECKING
 import asyncio
 from pydantic import BaseModel, Field, create_model
-from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
@@ -201,7 +199,7 @@ class Action:
         f = cls.action_handlers.get(action_name)
         if not f:
             raise Exception(
-                f"unregisted action: {action_name}, make sure to register action"
+                f"unregisted action: {action_name}, make sure to register action",
             )
         if inspect.iscoroutinefunction(f):
             if _as_task:
@@ -247,7 +245,8 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
     to_number = kwargs.get("phone_number")
     message = kwargs.get("message")
     response = await comms_utils.send_sms_message_via_number(
-        to_number=to_number, message=message
+        to_number=to_number,
+        message=message,
     )
     if response["success"]:
         contact = cm.contact_index.get_contact(phone_number=to_number)
@@ -263,7 +262,10 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
 
 @Action.register()
 async def send_unify_message(
-    cm: "ConversationManager", action_name: str, *args, **kwargs
+    cm: "ConversationManager",
+    action_name: str,
+    *args,
+    **kwargs,
 ):
     message = kwargs.get("message")
     contact_id = kwargs.get("contact_id")
@@ -286,12 +288,18 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
     body = kwargs.get("body")
     message_id = kwargs.get("message_id")
     response = await comms_utils.send_email_via_address(
-        to_email=to_email, subject=subject, body=body, message_id=message_id
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        message_id=message_id,
     )
     if response["success"]:
         contact = cm.contact_index.get_contact(email=to_email)
         event = EmailSent(
-            contact=contact, body=body, subject=subject, message_id=message_id
+            contact=contact,
+            body=body,
+            subject=subject,
+            message_id=message_id,
         )
     else:
         if not cm.assistant_email:
@@ -326,7 +334,10 @@ _next_handle_id = 0
 
 @Action.register(["conductor_ask", "conductor_request"])
 async def conductor_ask_request(
-    cm: "ConversationManager", action_name: str, *args, **kwargs
+    cm: "ConversationManager",
+    action_name: str,
+    *args,
+    **kwargs,
 ):
     """Start a Conductor ask/request, store handle, and publish started."""
     global _next_handle_id
@@ -365,13 +376,16 @@ async def conductor_ask_request(
     asyncio.create_task(managers_utils.conductor_watch_result(handle_id, handle))
     asyncio.create_task(managers_utils.conductor_watch_notifications(handle_id, handle))
     asyncio.create_task(
-        managers_utils.conductor_watch_clarifications(handle_id, handle)
+        managers_utils.conductor_watch_clarifications(handle_id, handle),
     )
 
 
 @Action.register([...])
 async def conductor_handle_actions(
-    cm: "ConversationManager", action_name: str, *args, **kwargs
+    cm: "ConversationManager",
+    action_name: str,
+    *args,
+    **kwargs,
 ):
     handle_id = kwargs["handle_id"]
     query = kwargs["query"]
@@ -437,7 +451,10 @@ async def conductor_handle_actions(
 
 @Action.register()
 async def summarize_conversation(
-    cm: "ConversationManager", action_name: str, *args, **kwargs
+    cm: "ConversationManager",
+    action_name: str,
+    *args,
+    **kwargs,
 ):
     pass
     # cm.transcript_manager

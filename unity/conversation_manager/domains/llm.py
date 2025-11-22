@@ -29,7 +29,11 @@ class LLM:
             if not call_type:
                 raise Exception("call type must be specified if using stream_to_call")
             return await self._run_stream(
-                system_prompt, messages, response_model, call_type, before_stream_start
+                system_prompt,
+                messages,
+                response_model,
+                call_type,
+                before_stream_start,
             )
 
     async def _run_non_stream(self, system_prompt, messages, response_model):

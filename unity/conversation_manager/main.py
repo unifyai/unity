@@ -102,7 +102,7 @@ async def main(project_name: str = "Assistants"):
     comms_manager = CommsManager(event_broker=event_broker)
 
     asyncio.create_task(conversation_manager.wait_for_events()).add_done_callback(
-        log_task_exc
+        log_task_exc,
     )
     asyncio.create_task(conversation_manager.check_inactivity())
     if not os.getenv("TEST"):
