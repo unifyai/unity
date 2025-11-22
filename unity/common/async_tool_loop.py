@@ -746,6 +746,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record user-visible immediately
         self._append_user_visible_user(message, parent_chat_context_cont)
 
+        # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
+        payload = {
+            "message": message,
+            "parent_chat_context_continuted": parent_chat_context_cont,
+            "images": images,
+            "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
+        }
+        # Use put_nowait to ensure the interjection is registered *synchronously* before
+        # we yield control (e.g. in _record_and_forward). This prevents a race where
+        # a fast-running loop completes its turn and exits before seeing the queued item.
+        self._queue.put_nowait(payload)
+
         # Centralized steering: record steer event; functional forwarding happens via mirror path
         await self._record_and_forward(
             "interject",
@@ -760,15 +772,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             had_passthrough=False,
             forwarded_to=[],
         )
-
-        # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
-        payload = {
-            "message": message,
-            "parent_chat_context_continuted": parent_chat_context_cont,
-            "images": images,
-            "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
-        }
-        await self._queue.put(payload)
         # Also mirror as synthetic helper tool_calls immediately (no LLM step)
         try:
             await self._queue.put(
