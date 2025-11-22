@@ -38,11 +38,11 @@ class NodeHandle:
         self.stopped += 1
         return "stopped"
 
-    def pause(self, *_, **__):
+    async def pause(self, *_, **__):
         self.paused += 1
         return "paused"
 
-    def resume(self, *_, **__):
+    async def resume(self, *_, **__):
         self.resumed += 1
         return "resumed"
 

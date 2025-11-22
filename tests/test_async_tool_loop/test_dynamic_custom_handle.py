@@ -69,11 +69,16 @@ class CustomArgsHandle(SteerableToolHandle):
         self._done_ev.set()
         return "stopped"
 
-    def pause(self, *, reason: str, log_to_backend: bool = False) -> Optional[str]:
+    async def pause(
+        self,
+        *,
+        reason: str,
+        log_to_backend: bool = False,
+    ) -> Optional[str]:
         self.pause_calls.append({"reason": reason, "log_to_backend": log_to_backend})
         return "paused"
 
-    def resume(self, *, resume_token: Optional[str] = None) -> Optional[str]:
+    async def resume(self, *, resume_token: Optional[str] = None) -> Optional[str]:
         self.resume_calls.append({"resume_token": resume_token})
         return "resumed"
 
@@ -318,10 +323,10 @@ async def test_dynamic_helpers_use_base_docstrings_when_not_overridden(client):
         def stop(self, reason: Optional[str] = None):
             return "stopped"
 
-        def pause(self):
+        async def pause(self):
             return "paused"
 
-        def resume(self):
+        async def resume(self):
             return "resumed"
 
         def done(self) -> bool:
@@ -425,11 +430,11 @@ async def test_dynamic_helpers_use_overridden_docstrings_when_provided(client):
             """Stop override doc: stop only if safe to cancel."""
             return "stopped"
 
-        def pause(self, *, gate: Optional[str] = None):
+        async def pause(self, *, gate: Optional[str] = None):
             """Pause override doc: only pause if XYZ precondition holds."""
             return "paused"
 
-        def resume(self, *, token: Optional[str] = None):
+        async def resume(self, *, token: Optional[str] = None):
             """Resume override doc: resume with a session token if required."""
             return "resumed"
 
@@ -521,10 +526,10 @@ async def test_dynamic_helpers_adopt_custom_method_docstring(client):
         def stop(self, reason: Optional[str] = None):
             return "stopped"
 
-        def pause(self):
+        async def pause(self):
             return "paused"
 
-        def resume(self):
+        async def resume(self):
             return "resumed"
 
         def done(self) -> bool:
@@ -631,10 +636,10 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods():
         def stop(self, reason: str | None = None, *, parent_chat_context_cont=None):  # type: ignore[override]
             return "stopped"
 
-        def pause(self):  # type: ignore[override]
+        async def pause(self):  # type: ignore[override]
             return "paused"
 
-        def resume(self):  # type: ignore[override]
+        async def resume(self):  # type: ignore[override]
             return "resumed"
 
         def done(self) -> bool:  # type: ignore[override]
@@ -781,10 +786,10 @@ async def test_dynamic_factory_ignores_internal_introspection_methods():
         def stop(self, r=None):
             return "stopped"
 
-        def pause(self):
+        async def pause(self):
             return "paused"
 
-        def resume(self):
+        async def resume(self):
             return "resumed"
 
         def done(self):

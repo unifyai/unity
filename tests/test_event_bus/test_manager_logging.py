@@ -39,11 +39,11 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
         self._done = True
         return "Stopped"
 
-    def pause(self):
+    async def pause(self):
         self._paused = True
         return "Paused"
 
-    def resume(self):
+    async def resume(self):
         self._paused = False
         return "Resumed"
 
@@ -82,10 +82,10 @@ class _PrivateAttrHandle(SteerableToolHandle):
     def stop(self, reason: str | None = None, *, parent_chat_context_cont: list[dict] | None = None):  # type: ignore[override]
         return "stopped"
 
-    def pause(self):  # type: ignore[override]
+    async def pause(self):  # type: ignore[override]
         return "paused"
 
-    def resume(self):  # type: ignore[override]
+    async def resume(self):  # type: ignore[override]
         return "resumed"
 
     def done(self):  # type: ignore[override]
@@ -198,12 +198,12 @@ class _CustomArgsHandle(SteerableToolHandle):
         return "stopped"
 
     # Pause/Resume with required/optional kwargs
-    def pause(self, *, reason: str, log_to_backend: bool = False) -> str | None:
+    async def pause(self, *, reason: str, log_to_backend: bool = False) -> str | None:
         """Pause processing for a specific reason; optionally log to backend."""
         self.pause_calls.append({"reason": reason, "log_to_backend": log_to_backend})
         return "paused"
 
-    def resume(self, *, resume_token: str | None = None) -> str | None:
+    async def resume(self, *, resume_token: str | None = None) -> str | None:
         """Resume processing using an optional token."""
         self.resume_calls.append({"resume_token": resume_token})
         return "resumed"
@@ -310,8 +310,8 @@ async def test_logged_wrapper_pause_resume_forward_kwargs():
     )
 
     # pass custom kwargs to pause/resume via the wrapper
-    assert logged.pause(reason="testing", log_to_backend=True) == "paused"  # type: ignore[call-arg]
-    assert logged.resume(resume_token="abc") == "resumed"  # type: ignore[call-arg]
+    assert await logged.pause(reason="testing", log_to_backend=True) == "paused"  # type: ignore[call-arg]
+    assert await logged.resume(resume_token="abc") == "resumed"  # type: ignore[call-arg]
     assert inner.pause_calls and inner.pause_calls[-1] == {
         "reason": "testing",
         "log_to_backend": True,

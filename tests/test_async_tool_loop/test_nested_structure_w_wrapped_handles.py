@@ -32,10 +32,10 @@ class ToyHandle:
         self._done.set()
         return "stopped"
 
-    def pause(self, *_, **__):
+    async def pause(self, *_, **__):
         return "paused"
 
-    def resume(self, *_, **__):
+    async def resume(self, *_, **__):
         return "resumed"
 
     def done(self) -> bool:
@@ -75,10 +75,10 @@ class SteeringHandle:
         self._done.set()
         return "stopped"
 
-    def pause(self, *_, **__):
+    async def pause(self, *_, **__):
         return "paused"
 
-    def resume(self, *_, **__):
+    async def resume(self, *_, **__):
         return "resumed"
 
     def done(self) -> bool:

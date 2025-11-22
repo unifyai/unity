@@ -215,10 +215,10 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
             def stop(self, *args, **kwargs):
                 pass
 
-            def pause(self):
+            async def pause(self):
                 pass
 
-            def resume(self):
+            async def resume(self):
                 pass
 
             async def interject(self, *args, **kwargs):
@@ -280,12 +280,12 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
             "interjection_id": interjection_id,
         }
 
-    def pause(self) -> str:
+    async def pause(self) -> str:
         """Pauses the simulated conversation."""
         self._paused = True
         return "Simulated conversation is paused."
 
-    def resume(self) -> str:
+    async def resume(self) -> str:
         """Resumes a paused conversation."""
         self._paused = False
         return "Simulated conversation is resumed."

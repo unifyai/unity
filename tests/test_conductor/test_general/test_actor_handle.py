@@ -84,8 +84,8 @@ async def test_actor_handle_present_for_direct_actor(monkeypatch):
         assert await c.actor_handle() is h
 
         # Drive two steps to complete deterministically
-        h.pause()
-        h.resume()
+        await h.pause()
+        await h.resume()
         await asyncio.wait_for(h.result(), timeout=30)
 
         # After completion, the handle should clear
@@ -154,8 +154,8 @@ async def test_actor_handle_present_with_active_task(monkeypatch):
         assert th is ah is h
 
         # Complete deterministically
-        h.pause()
-        h.resume()
+        await h.pause()
+        await h.resume()
         await asyncio.wait_for(h.result(), timeout=30)
 
         assert await c.actor_handle() is None

@@ -910,13 +910,13 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     #        result placeholder to be appended while paused, then resume ───
     # Wait deterministically until the assistant has scheduled the tool
     await _wait_for_tool_request(client, "long_tool")
-    outer_handle.pause()
+    await outer_handle.pause()
 
     # Ensure the tool result message for `long_tool` is appended while paused
     await _wait_for_tool_message_prefix(client, "long_tool")
 
     # Resume and finish
-    outer_handle.resume()
+    await outer_handle.resume()
     final_reply = await outer_handle.result()
 
     # ── 5.  Assertions ───────────────────────────────────────────────────
@@ -962,7 +962,7 @@ async def test_handle_result_blocks_until_resume():
     )
 
     # pause almost immediately
-    h.pause()
+    await h.pause()
 
     with pytest.raises(asyncio.TimeoutError):
         # Shield protects the inner task from the stoplation that
@@ -970,7 +970,7 @@ async def test_handle_result_blocks_until_resume():
         await asyncio.wait_for(asyncio.shield(h.result()), timeout=1)
 
     # resume – now it should finish quickly
-    h.resume()
+    await h.resume()
     final = await asyncio.wait_for(h.result(), timeout=60)
 
     assert "done" in final.strip().lower()
@@ -1251,13 +1251,13 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
 
     # Pause outer; should propagate to inner handle if available – wait until observed
-    outer.pause()
+    await outer.pause()
 
     async def _paused_once():
         return pause_calls["count"] >= 1
 
     await _wait_for_condition(_paused_once, poll=0.05, timeout=60.0)
-    outer.resume()  # unfreeze outer so the test completes
+    await outer.resume()  # unfreeze outer so the test completes
 
     await outer.result()
 
@@ -1342,13 +1342,13 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
 
     # Pause then resume outer; both should propagate – wait for each transition deterministically
-    outer.pause()
+    await outer.pause()
 
     async def _saw_pause():
         return counts["pause"] >= 1
 
     await _wait_for_condition(_saw_pause, poll=0.05, timeout=60.0)
-    outer.resume()
+    await outer.resume()
 
     async def _saw_resume():
         return counts["resume"] >= 1

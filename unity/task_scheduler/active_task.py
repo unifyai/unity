@@ -346,14 +346,14 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         return ret
 
     @functools.wraps(BaseActiveTask.pause, updated=())
-    def pause(self) -> Optional[str]:
-        ret = self._actor_handle.pause()
+    async def pause(self) -> Optional[str]:
+        ret = await self._actor_handle.pause()
         self._mirror_status(Status.paused)
         return ret
 
     @functools.wraps(BaseActiveTask.resume, updated=())
-    def resume(self) -> Optional[str]:
-        ret = self._actor_handle.resume()
+    async def resume(self) -> Optional[str]:
+        ret = await self._actor_handle.resume()
         self._mirror_status(Status.active)
         return ret
 

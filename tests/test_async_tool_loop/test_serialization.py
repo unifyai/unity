@@ -240,12 +240,12 @@ async def test_pause_resume_survives_serialization():
     handle = await tm.ask("List my transcripts briefly.")
 
     # Pause before snapshot
-    handle.pause()
+    await handle.pause()
     snap = handle.serialize()
 
     # Resume after deserialization and complete
     resumed: AsyncToolLoopHandle = AsyncToolLoopHandle.deserialize(snap)
-    resumed.resume()
+    await resumed.resume()
     out = await asyncio.wait_for(resumed.result(), timeout=180)
     assert isinstance(out, str) and len(out) > 0
 
