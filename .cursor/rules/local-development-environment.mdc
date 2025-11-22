@@ -1,0 +1,30 @@
+---
+description: Instructions for local development, test execution, and environment management
+globs: **/*.py, **/*.toml, .git/hooks/*
+---
+
+# Local Development Environment
+
+## Python Interpreter
+- **ALWAYS** use the project's virtual environment interpreter: `.venv/bin/python`.
+- Do not use global python or other system interpreters.
+
+## Running Tests
+- **Command**: `.venv/bin/pytest [test_file]`
+- **Sandbox Permissions**: When running tests, **ALWAYS** use `required_permissions: ['all']`.
+  - Reason: The test suite needs to read the `.env` file which is often blocked by the default sandbox.
+  - Example: `run_terminal_cmd(command=".venv/bin/pytest ...", required_permissions=["all"])`
+
+## Pre-commit Hooks
+- The `pre-commit` tool is installed in the project `dev` dependencies.
+- **Execution**: Run via the python module to ensure path visibility:
+  - `.venv/bin/python -m pre_commit run --all-files`
+- **When to run**: If you modify files and want to ensure they pass CI checks, run pre-commit *before* committing.
+
+## Dependencies
+- This project uses `uv` for dependency management.
+- Config file: `pyproject.toml`
+
+## Edit Safety
+- **Protected Files**: Do not edit `uv.lock` or `package-lock.json` manually. Use the appropriate package manager commands.
+- **Sensitive Files**: Do not output the contents of `.env` or `*.key` files to the chat.
