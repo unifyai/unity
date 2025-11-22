@@ -225,3 +225,46 @@ def make_queues():
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
     return up_q, down_q
+
+
+from contextlib import asynccontextmanager
+from typing import List
+
+
+@asynccontextmanager
+async def capture_events(
+    event_type: str,
+    filter: str | None = None,
+    every_n: int = 1,
+):
+    """
+    Context manager to capture events live.
+    Avoids slow/blocking backend searches in tests by hooking directly
+    into the in-memory EventBus publishing pipeline.
+    """
+    captured: List[Any] = []
+
+    async def _cb(evts):
+        captured.extend(evts)
+
+    sub_id = await EVENT_BUS.register_callback(
+        event_type=event_type,
+        callback=_cb,
+        filter=filter,
+        every_n=every_n,
+    )
+    try:
+        yield captured
+    finally:
+        # Ensure all callback tasks (including the one for the final event)
+        # have finished execution before returning control to the test.
+        # This avoids race conditions where the test asserts on 'captured'
+        # while the EventBus is still processing the last publication.
+        #
+        # We wrap in suppress() because join_callbacks is an async method
+        # on the real EventBus but might be missing on mocks if they aren't
+        # fully compliant (though our conftest mock likely needs it).
+        try:
+            await EVENT_BUS.join_callbacks()
+        except Exception:
+            pass

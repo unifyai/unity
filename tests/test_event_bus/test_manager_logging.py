@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pytest
 
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, capture_events
 from unity.events.event_bus import EVENT_BUS
 from unity.events.manager_event_logging import wrap_handle_with_logging, new_call_id
 from unity.common.async_tool_loop import SteerableToolHandle
@@ -111,23 +111,24 @@ async def test_manager_logging_sanitizes_iterable_answer_to_string():
     call_id = new_call_id()
     logged = wrap_handle_with_logging(inner, call_id, "UnitTestManager", "ask")
 
-    # Invoke result() → wrapper publishes a ManagerMethod event with phase="outgoing"
-    out = await logged.result()
+    # Capture ManagerMethod events to avoid race/I/O latency
+    async with capture_events("ManagerMethod") as captured_events:
+        # Invoke result() → wrapper publishes a ManagerMethod event with phase="outgoing"
+        out = await logged.result()
+
     assert isinstance(out, list) and out[0] == "OK"
 
     # Ensure logs are flushed to backend before searching
     EVENT_BUS.join_published()
 
     # Fetch the newest ManagerMethod event for our manager/method with outgoing phase
-    events = await EVENT_BUS.search(
-        filter=(
-            'type == "ManagerMethod" and '
-            'payload["manager"] == "UnitTestManager" and '
-            'payload["method"] == "ask" and '
-            'payload["phase"] == "outgoing"'
-        ),
-        limit=1,
-    )
+    events = [
+        e
+        for e in captured_events
+        if e.payload.get("manager") == "UnitTestManager"
+        and e.payload.get("method") == "ask"
+        and e.payload.get("phase") == "outgoing"
+    ]
 
     assert len(events) == 1
     evt = events[0]
@@ -414,23 +415,23 @@ async def test_logged_wrapper_logs_custom_method_calls():
         "execute",
     )
 
-    # Invoke a custom, non-standard ASYNC method to avoid scheduling races
-    pong = await logged.ping(note="ensure-logged")  # type: ignore[attr-defined]
+    async with capture_events("ManagerMethod") as captured_events:
+        # Invoke a custom, non-standard ASYNC method to avoid scheduling races
+        pong = await logged.ping(note="ensure-logged")  # type: ignore[attr-defined]
+
     assert pong == "pong"
 
     # Ensure all async publish tasks complete before querying the event log
     EVENT_BUS.join_published()
 
     # Verify that a ManagerMethod event was recorded for this custom action
-    events = await EVENT_BUS.search(
-        filter=(
-            'type == "ManagerMethod" and '
-            'payload["manager"] == "UnitTestManager" and '
-            'payload["method"] == "execute" and '
-            'payload.get("action") == "ping"'
-        ),
-        limit=1,
-    )
+    events = [
+        e
+        for e in captured_events
+        if e.payload.get("manager") == "UnitTestManager"
+        and e.payload.get("method") == "execute"
+        and e.payload.get("action") == "ping"
+    ]
 
     assert len(events) == 1
 
