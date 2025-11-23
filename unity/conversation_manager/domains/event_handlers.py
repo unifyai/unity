@@ -297,7 +297,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 async def _(event: GetContactsResponse, cm: "ConversationManager", *args, **kwargs):
     print("recieved and setting contacts")
     cm.contact_index.set_contacts(event.contacts)
-    print(cm.contact_index.contacts)
+    # print(cm.contact_index.contacts)
 
 
 @EventHandler.register(GetBusEventsResponse)
@@ -418,7 +418,8 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
             )
             updated_active_contacts = {
                 cid: Contact(
-                    **{**c.model_dump(mode="python"), **uc, "threads": c.threads},
+
+                    **{**c.model_dump(), **uc, "threads": c.threads}
                 )
                 for (cid, c), uc in zip(
                     cm.contact_index.active_conversations.items(),
