@@ -19,24 +19,28 @@ class ContextHandler:
     _setup_complete = False
     _available_contexts = {}
 
+    @staticmethod
+    def _get_active_context() -> str:
+        active_context = unify.get_active_context()
+        assert (
+            active_context["read"] == active_context["write"]
+        ), "Read and write contexts must be the same"
+        return active_context["read"]
+
+    @staticmethod
+    def _get_available_contexts() -> List[str]:
+        return list(unify.get_contexts().keys())
+
     @classmethod
     def get_context(cls, manager: BaseStateManager, ctx_name: str) -> Optional[str]:
         key = (type(manager).__name__, ctx_name)
         ret = cls._available_contexts.get(key)
         if ret is None:
-            active_context = unify.get_active_context()
-            assert (
-                active_context["read"] == active_context["write"]
-            ), "Read and write contexts must be the same"
-            available_contexts = unify.get_contexts()
-            context_names = list(available_contexts.keys())
-            contexts = cls.get_contexts_for_manager(
-                manager,
-                active_context["read"],
-                context_names,
-            )
+            active_context = cls._get_active_context()
+            contexts = cls.get_contexts_for_manager(manager, active_context)
+            available_contexts = cls._get_available_contexts()
             for context in contexts:
-                cls.create_context_wrapper(context)
+                cls.create_context_wrapper(context, available_contexts)
             ret = cls._available_contexts.get(key)
 
         return ret
@@ -64,23 +68,25 @@ class ContextHandler:
         ]
 
     @classmethod
-    def create_context_wrapper(cls, entry: Dict):
+    def create_context_wrapper(cls, entry: Dict, remote_contexts: List[str]):
+        table = entry["table_context"]
         try:
-            create_context(
-                entry["name"],
-                description=entry["table_context"].description,
-                unique_keys=entry["table_context"].unique_keys,
-                auto_counting=entry["table_context"].auto_counting,
-            )
-            if entry["table_context"].fields:
-                create_fields(entry["table_context"].fields, context=entry["name"])
+            if entry["name"] not in remote_contexts:
+                create_context(
+                    entry["name"],
+                    description=table.description,
+                    unique_keys=table.unique_keys,
+                    auto_counting=table.auto_counting,
+                )
+            # TODO: No need to check current fields, this has no effect if fields are already created
+            # possibly can be eliminated if get_fields returns the context for the fields
+            if table.fields:
+                create_fields(table.fields, context=entry["name"])
         except Exception as e:
             print(f"Error creating context {entry['name']}: {e}")
             return None
 
-        cls._available_contexts[(entry["manager"], entry["table_context"].name)] = (
-            entry["name"]
-        )
+        cls._available_contexts[(entry["manager"], table.name)] = entry["name"]
 
         return entry["name"]
 
@@ -89,33 +95,28 @@ class ContextHandler:
         if cls._setup_complete:
             return
 
-        available_contexts = unify.get_contexts()
-        context_names = list(available_contexts.keys())
-
-        active_context = unify.get_active_context()
-        assert (
-            active_context["read"] == active_context["write"]
-        ), "Read and write contexts must be the same"
+        current_context = cls._get_active_context()
+        available_contexts = cls._get_available_contexts()
 
         all_contexts = []
         for manager in ContextHandler.get_managers():
             all_contexts.extend(
                 cls.get_contexts_for_manager(
                     manager,
-                    active_context["read"],
-                    context_names,
+                    current_context,
                 ),
             )
-
-        if len(all_contexts) <= 0:
-            return
 
         with ThreadPoolExecutor() as executor:
             futures = []
 
             for entry in all_contexts:
                 futures.append(
-                    executor.submit(cls.create_context_wrapper, entry),
+                    executor.submit(
+                        cls.create_context_wrapper,
+                        entry,
+                        available_contexts,
+                    ),
                 )
 
         cls._setup_complete = True
@@ -125,7 +126,6 @@ class ContextHandler:
         cls,
         manager,
         current_context: str,
-        available_contexts: List[str],
     ):
         assert hasattr(manager, "Config"), "Manager must have a Config class attribute"
         assert hasattr(
@@ -141,13 +141,9 @@ class ContextHandler:
             manager_name = type(manager).__name__
 
         for context in manager.Config.required_contexts:
-            _context_name = f"{current_context}/{context.name}"
-            if _context_name in available_contexts:
-                cls._available_contexts[(manager_name, context.name)] = _context_name
-                continue
             data = {
                 "manager": manager_name,
-                "name": _context_name,
+                "name": f"{current_context}/{context.name}",
                 "table_context": context,
             }
             out.append(data)
