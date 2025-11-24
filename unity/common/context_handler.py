@@ -23,8 +23,25 @@ class ContextHandler:
 
     @classmethod
     def get_context(cls, manager: BaseStateManager, ctx_name: str) -> Optional[str]:
-        key = (manager.__class__.__name__, ctx_name)
-        return cls._available_contexts.get(key)
+        key = (type(manager).__name__, ctx_name)
+        ret = cls._available_contexts.get(key)
+        if ret is None:
+            active_context = unify.get_active_context()
+            assert (
+                active_context["read"] == active_context["write"]
+            ), "Read and write contexts must be the same"
+            available_contexts = unify.get_contexts()
+            context_names = list(available_contexts.keys())
+            contexts = cls.get_contexts_for_manager(
+                manager,
+                active_context["read"],
+                context_names,
+            )
+            for context in contexts:
+                cls.create_context_wrapper(context)
+            ret = cls._available_contexts.get(key)
+
+        return ret
 
     @classmethod
     def get_managers(cls):
@@ -53,6 +70,29 @@ class ContextHandler:
         return cls._setup_complete
 
     @classmethod
+    def create_context_wrapper(cls, context: Dict):
+        start_time = time.time()
+        try:
+            create_context(
+                context["name"],
+                description=context.get("description", None),
+                unique_keys=context.get("unique_keys", None),
+                auto_counting=context.get("auto_counting", None),
+            )
+            if "fields" in context:
+                create_fields(context["fields"], context=context["name"])
+        except Exception as e:
+            print(f"Error creating context {context['name']}: {e}")
+            return None
+        print(
+            f"Time taken for {context['name']}: {time.time() - start_time} seconds",
+        )
+        cls._available_contexts[(context["manager"], context["original_name"])] = (
+            context["name"]
+        )
+        return context["name"]
+
+    @classmethod
     def setup(cls):
         if cls.is_setup_complete():
             return
@@ -77,34 +117,12 @@ class ContextHandler:
         if len(all_contexts) <= 0:
             return
 
-        def create_context_wrapper(context: Dict):
-            start_time = time.time()
-            try:
-                create_context(
-                    context["name"],
-                    description=context.get("description", None),
-                    unique_keys=context.get("unique_keys", None),
-                    auto_counting=context.get("auto_counting", None),
-                )
-                if "fields" in context:
-                    create_fields(context["fields"], context=context["name"])
-            except Exception as e:
-                print(f"Error creating context {context['name']}: {e}")
-                return None
-            print(
-                f"Time taken for {context['name']}: {time.time() - start_time} seconds",
-            )
-            cls._available_contexts[(context["manager"], context["original_name"])] = (
-                context["name"]
-            )
-            return context["name"]
-
         with ThreadPoolExecutor() as executor:
             futures = []
 
             for context in all_contexts:
                 futures.append(
-                    executor.submit(create_context_wrapper, context),
+                    executor.submit(cls.create_context_wrapper, context),
                 )
 
             for future in as_completed(futures):
@@ -126,15 +144,18 @@ class ContextHandler:
             manager.Config,
             "required_contexts",
         ), "Config must have a required_contexts class attribute"
+        manager_name: str
+        try:
+            manager_name = manager.__name__
+        except:
+            manager_name = type(manager).__name__
         for context in manager.Config.required_contexts:
             _context_name = f"{current_context}/{context.name}"
             if _context_name in available_contexts:
-                cls._available_contexts[(manager.__name__, context.name)] = (
-                    _context_name
-                )
+                cls._available_contexts[(manager_name, context.name)] = _context_name
                 continue
             data = {
-                "manager": manager.__name__,
+                "manager": manager_name,
                 "name": _context_name,
                 "original_name": context.name,
                 "description": context.description,
