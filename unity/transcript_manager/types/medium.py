@@ -32,7 +32,7 @@ class Medium(StrEnum):
     @property
     def info(self) -> MediumInfo:
         """Return the full Pydantic metadata model for this medium."""
-        return _MEDIUM_REGISTRY[self]
+        return MEDIUM_REGISTRY[self]
 
     @property
     def description(self) -> str:
@@ -41,10 +41,10 @@ class Medium(StrEnum):
 
 
 # Registry of metadata for each medium
-_MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
+MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     Medium.UNIFY_MESSAGE: MediumInfo(
         value=Medium.UNIFY_MESSAGE,
-        description="A text-based chat message sent within the Unify platform.",
+        description="A text-based chat message sent within the internal Unify assistant interface.",
     ),
     Medium.UNIFY_CALL: MediumInfo(
         value=Medium.UNIFY_CALL,
