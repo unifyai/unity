@@ -8,7 +8,7 @@ from pydantic import (
 )
 from datetime import datetime
 from ...image_manager.types import AnnotatedImageRefs
-from typing import ClassVar
+from typing import ClassVar, Optional
 from .medium import Medium
 
 UNASSIGNED = -1
@@ -19,9 +19,12 @@ class Message(BaseModel):
     medium: Medium = Field(
         description="The communication channel used for this message",
     )
-    sender_id: int = Field(description="ID of the contact who sent the message")
-    receiver_ids: list[int] = Field(
-        description="IDs of the contact(s) who received the message.",
+    sender_id: Optional[int] = Field(
+        default=None,
+        description="ID of the contact who sent the message (None if contact deleted)",
+    )
+    receiver_ids: list[Optional[int]] = Field(
+        description="IDs of the contact(s) who received the message (None entries if contacts deleted)",
         min_length=1,
     )
     timestamp: datetime = Field(

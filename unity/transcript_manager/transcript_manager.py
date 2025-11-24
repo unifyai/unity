@@ -671,7 +671,7 @@ class TranscriptManager(BaseTranscriptManager):
         # ── 1.  Bulk update all *sender_id* occurrences ────────────────────
         sender_log_ids = unify.get_logs(
             context=self._transcripts_ctx,
-            filter=f"sender_id == {original_contact_id}",
+            filter=f"sender_id is not None and sender_id == {original_contact_id}",
             return_ids_only=True,
         )
         if sender_log_ids:
