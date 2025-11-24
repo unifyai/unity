@@ -75,7 +75,6 @@ class ConversationManager:
         project_name: str = "Assistants",
         stop: asyncio.Event = None,
         user_turn_end_callback: Optional[Callable[[list[dict]], str]] = None,
-        realtime=False,
     ):
         # assistant details
         self.job_name = job_name
@@ -148,7 +147,7 @@ class ConversationManager:
 
         self.mode = "text"
         self.chat_history = []
-        self.contact_index = ContactIndex()
+        self.contact_index = ContactIndex(is_local=bool(self.assistant_id))
         self.notifications_bar = NotificationBar()
         self.conductor_handles: dict[int, dict] = (
             {}
