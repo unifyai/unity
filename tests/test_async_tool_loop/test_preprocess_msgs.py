@@ -6,7 +6,8 @@ import pytest
 import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project, SETTINGS, get_test_client
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 
 
 # --------------------------------------------------------------------------- #
@@ -20,7 +21,7 @@ async def test_preprocess_msgs_dynamic_placeholder(monkeypatch):
     """Verify that the preprocess hook patches placeholders *per-LLM-call* and
     that the modifications never leak into the persistent chat history."""
 
-    client = get_test_client()
+    client = new_llm_client()
 
     # Counter so each invocation produces a fresh replacement value.
     counter = {"n": 0}

@@ -27,7 +27,8 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from tests.helpers import _handle_project, SETTINGS, get_test_client
+from tests.helpers import _handle_project, SETTINGS
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
 import pytest
@@ -79,7 +80,7 @@ def new_client() -> unify.AsyncUnify:
     Return a fresh client *with its own conversation state* so that tests do
     not interfere with one another.
     """
-    return get_test_client().set_system_message(
+    return new_llm_client().set_system_message(
         "Feel free to call multiple *different* tools per turn if appropriate.",
     )
 
@@ -145,7 +146,7 @@ async def test_concurrent_tools_waits_for_all_results():
             events.append(("generate", time.monotonic()))
             return await super().generate(**kwargs)
 
-    # Manually constructing to support inheritance, but mirroring get_test_client defaults
+    # Manually constructing to support inheritance, but mirroring new_llm_client defaults
     client = InstrumentedClient(
         os.getenv("UNIFY_MODEL", "gpt-5@openai"),
         reasoning_effort="high",
@@ -449,7 +450,7 @@ async def test_no_tools_without_system_message() -> None:
 
         user → assistant
     """
-    client = get_test_client()
+    client = new_llm_client()
 
     answer = await start_async_tool_loop(
         client,

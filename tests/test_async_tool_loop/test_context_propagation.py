@@ -11,13 +11,14 @@ from typing import List
 
 import pytest
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project, get_test_client
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 
 
 @pytest.mark.asyncio
 @_handle_project
 async def test_chat_context_propagation() -> None:
-    client = get_test_client()
+    client = new_llm_client()
 
     root_ctx = [{"role": "user", "content": "root-level message"}]
     captured_ctx: List[list[dict]] = []
@@ -62,7 +63,7 @@ async def test_ask_uses_continued_parent_context() -> None:
     exists in the provided continued context, not in the current prompt.
     """
 
-    client = get_test_client()
+    client = new_llm_client()
 
     # Start a trivial outer loop (no tools needed for this test).
     handle = start_async_tool_loop(
@@ -101,7 +102,7 @@ async def test_interject_with_continued_parent_context_influences_decision() -> 
     such that the next assistant reply reflects that broader context.
     """
 
-    client = get_test_client()
+    client = new_llm_client()
 
     handle = start_async_tool_loop(
         client=client,

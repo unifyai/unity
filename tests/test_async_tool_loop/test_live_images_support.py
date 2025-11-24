@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import pytest
-import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common._async_tool.loop_config import LIVE_IMAGES_REGISTRY
@@ -13,7 +12,8 @@ from unity.image_manager.types import (
     AnnotatedImageRefs,
     RawImageRefs,
 )
-from tests.helpers import _handle_project, SETTINGS, get_test_client
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 
 
 # Removed stub client; tests use real AsyncUnify with spies only.
@@ -82,7 +82,7 @@ async def test_live_images_helpers_exposed_and_overview_injected(
     # Spy at the callsite used by the loop
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
 
-    client = get_test_client()
+    client = new_llm_client()
     client.set_system_message("Reply exactly with the word 'done'.")
 
     # Seed registry with a handle for id=42 so helpers can resolve it
@@ -158,7 +158,7 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
     the (dummy) image answer returned by the handle.
     """
 
-    client = get_test_client()
+    client = new_llm_client()
     client.set_system_message(
         "Call the dynamic helper `ask_image` once for image_id=42 with the question 'What is the dominant color?'. "
         "Then provide a short final answer.",
@@ -205,7 +205,7 @@ async def test_ask_image_uses_parent_chat_context(monkeypatch) -> None:
     image content (Google logo) with the slogan provided in the parent context.
     """
 
-    client = get_test_client()
+    client = new_llm_client()
 
     # Seed a real Google logo image via ImageManager so ask_image will resolve it by id
     from pathlib import Path as _Path
@@ -271,7 +271,7 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
     image_url content block (data URL) was appended to the transcript.
     """
 
-    client = get_test_client()
+    client = new_llm_client()
     client.set_system_message(
         "Call the dynamic helper `attach_image_raw` for image_id=99 with note 'please inspect'. "
         "Then reply with exactly 'red'.",
@@ -331,7 +331,7 @@ async def test_live_images_accepts_annotated_and_raw_refs_variants(monkeypatch) 
     live images. Now, the synthetic overview should be injected and include the image id.
     """
 
-    client = get_test_client()
+    client = new_llm_client()
     client.set_system_message("Reply exactly with the word 'done'.")
 
     # Seed a real image so ImageManager can resolve ids if needed
@@ -375,7 +375,7 @@ async def test_live_images_accepts_annotated_and_raw_refs_variants(monkeypatch) 
     assert f'"image_id": {int(img_id)}' in (ov_msgs_a[-1].get("content") or "")
 
     # Reset client for second case to avoid cross-talk
-    client_b = get_test_client()
+    client_b = new_llm_client()
     client_b.set_system_message("Reply exactly with the word 'done'.")
 
     # Case B: RawImageRefs
@@ -421,7 +421,7 @@ async def test_images_and_ask_image(monkeypatch) -> None:
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp2, raising=True)
 
-    client = get_test_client()
+    client = new_llm_client()
 
     # Two dummy image handles – first for Susan, second for Emily
     susan_id = 201
@@ -527,7 +527,7 @@ async def test_overview_injected_before_first_llm_step(monkeypatch) -> None:
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
 
-    client = get_test_client()
+    client = new_llm_client()
     client.set_system_message("Say 'done'.")
 
     # Seed a single image in the live registry and align a typed ref
@@ -638,7 +638,7 @@ async def test_ask_loop_injects_overview_and_exposes_helpers(monkeypatch) -> Non
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
 
-    client = get_test_client()
+    client = new_llm_client()
     client.set_system_message(
         "In your FIRST assistant turn, call `wait_forever` and wait.",
     )

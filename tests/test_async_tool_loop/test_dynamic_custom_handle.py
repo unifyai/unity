@@ -14,12 +14,12 @@ from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
     start_async_tool_loop,
 )
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
 )
-from tests.helpers import get_test_client
 
 
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
@@ -117,7 +117,7 @@ async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-def
 
 @pytest.fixture(scope="function")
 def client():
-    return get_test_client()
+    return new_llm_client()
 
 
 @pytest.mark.asyncio

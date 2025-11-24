@@ -4,7 +4,7 @@ import pytest
 import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import get_test_client
+from unity.common.llm_client import new_llm_client
 
 
 @pytest.mark.asyncio
@@ -27,7 +27,7 @@ async def test_all_llm_kwargs_are_forwarded_verbatim(monkeypatch):
     accept_any.__name__ = "accept_any"
     accept_any.__qualname__ = "accept_any"
 
-    client = get_test_client()
+    client = new_llm_client()
     # Instruct the real model to call `accept_any` once with the provided fields
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `accept_any` "

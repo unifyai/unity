@@ -18,7 +18,8 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
 )
 from unity.common._async_tool.loop import async_tool_loop_inner
-from tests.helpers import _handle_project, capture_events, get_test_client
+from tests.helpers import _handle_project, capture_events
+from unity.common.llm_client import new_llm_client
 
 
 @unify.traced
@@ -39,7 +40,7 @@ async def test_basic_event_flow() -> None:
         user/msg → assistant/tool-call → tool/result → assistant/final-text
     """
 
-    client = get_test_client().set_system_message(
+    client = new_llm_client().set_system_message(
         "You are an automated test agent.\n"
         "You MUST call the tool named `echo` exactly once, passing the user's message as the `text` argument.\n"
         "Do NOT reply directly without first calling the `echo` tool (even if you think you know the answer).\n"
@@ -90,7 +91,7 @@ async def test_interjection_publishes_user_event() -> None:
     loop is still thinking, then confirm that the event bus recorded it.
     """
 
-    client = get_test_client()
+    client = new_llm_client()
     client.set_system_message(
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said most recently, and do not include the quoation marks in your response.",
     )
