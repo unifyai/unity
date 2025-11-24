@@ -1,9 +1,7 @@
 import unify
 from typing import List, Dict
-import time
 from concurrent.futures import ThreadPoolExecutor
 from unity.common.state_managers import BaseStateManager
-from concurrent.futures import as_completed
 from unify import create_context, create_fields
 from pydantic import BaseModel
 from typing import Optional, Any
@@ -71,7 +69,6 @@ class ContextHandler:
 
     @classmethod
     def create_context_wrapper(cls, context: Dict):
-        start_time = time.time()
         try:
             create_context(
                 context["name"],
@@ -84,9 +81,7 @@ class ContextHandler:
         except Exception as e:
             print(f"Error creating context {context['name']}: {e}")
             return None
-        print(
-            f"Time taken for {context['name']}: {time.time() - start_time} seconds",
-        )
+
         cls._available_contexts[(context["manager"], context["original_name"])] = (
             context["name"]
         )
@@ -124,10 +119,6 @@ class ContextHandler:
                 futures.append(
                     executor.submit(cls.create_context_wrapper, context),
                 )
-
-            for future in as_completed(futures):
-                context_name = future.result()
-                print(f"Context {context_name} created")
 
         cls._setup_complete = True
 
