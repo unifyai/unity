@@ -19,6 +19,7 @@ from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
 )
+from tests.helpers import get_test_client
 
 
 MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
@@ -116,13 +117,7 @@ async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-def
 
 @pytest.fixture(scope="function")
 def client():
-    return unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    return get_test_client()
 
 
 @pytest.mark.asyncio
