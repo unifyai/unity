@@ -326,6 +326,14 @@ class TaskScheduler(BaseTaskScheduler):
                 "same logical task."
             ),
             fields=model_to_fields(Task),
+            foreign_keys=[
+                {
+                    "name": "entrypoint",
+                    "references": f"{self._ctx.replace("Tasks", "Functions")}.function_id",
+                    "on_delete": "SET NULL",
+                    "on_update": "CASCADE",
+                },
+            ],
         )
 
         # Centralised local view for queue membership, allocator and light caching.
