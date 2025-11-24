@@ -17,6 +17,7 @@ from typing import Callable, Dict
 # Schemas used in the prompt -------------------------------------------------
 from ..contact_manager.types.contact import Contact
 from .types.message import Message
+from .types.medium import Medium
 from ..common.prompt_helpers import (
     clarification_guidance,
     sig_dict,
@@ -239,9 +240,13 @@ def build_ask_prompt(
         attach_msg_imgs_fname=attach_msg_imgs_fname,
     )
 
+    # NEW: Build a dictionary of medium descriptions
+    medium_descriptions = {m.value: m.description for m in Medium}
+
     schemas = [
         ("Contact", Contact.model_json_schema()),
         ("Message", Message.model_json_schema()),
+        ("Communication Channels (Mediums)", medium_descriptions),
         ("Message field shorthand (full → shorthand)", Message.shorthand_map()),
         ("Message field shorthand (shorthand → full)", Message.shorthand_inverse_map()),
     ]
