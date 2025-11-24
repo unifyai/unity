@@ -263,9 +263,10 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # dispatch agent
-    print(f"Dispatching agent {agent_name} with room {room_name}")
-    dispatch_agent(agent_name, room_name)
-    print(f"Agent {agent_name} dispatched")
+    if sys.argv[1] != "download-files":
+        print(f"Dispatching agent {agent_name} with room {room_name}")
+        dispatch_agent(agent_name, room_name)
+        print(f"Agent {agent_name} dispatched")
 
     agents.cli.run_app(
         agents.WorkerOptions(
