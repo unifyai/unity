@@ -44,7 +44,7 @@ class Medium(StrEnum):
 _MEDIUM_REGISTRY: dict[Medium, MediumInfo] = {
     Medium.UNIFY_MESSAGE: MediumInfo(
         value=Medium.UNIFY_MESSAGE,
-        description="A text-based chat message sent within the internal Unify assistant interface.",
+        description="A text-based chat message sent within the Unify platform.",
     ),
     Medium.UNIFY_CALL: MediumInfo(
         value=Medium.UNIFY_CALL,
