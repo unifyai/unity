@@ -9,7 +9,7 @@ from unity.common.async_tool_loop import (
     SteerableHandle,
     _nested_structure_on,
 )
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project, SETTINGS, get_test_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
@@ -169,13 +169,7 @@ async def test_nested_structure_reports_child_tool_and_handle():
     async def Outer_spawn():  # type: ignore[valid-type]
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",
@@ -243,13 +237,7 @@ async def test_nested_structure_reports_deep_hierarchy_via_task_info():
     async def Outer_spawn():  # type: ignore[valid-type]
         return nested
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",
@@ -310,13 +298,7 @@ async def test_nested_structure_includes_wrapper_attribute_children():
     async def Outer_spawn():  # type: ignore[valid-type]
         return wrapped
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",
