@@ -8,7 +8,7 @@ from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
     SteerableToolHandle,
 )
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project, SETTINGS, get_test_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
@@ -32,13 +32,7 @@ async def sleeper(delay: float = 1.0) -> str:  # noqa: D401 – simple async
 
 async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
     """Return a nested async-tool loop *handle* that requests pass-through."""
-    inner_client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    inner_client = get_test_client()
     # Start an inner loop that runs one sleeper tool.
     inner_handle = start_async_tool_loop(
         inner_client,
@@ -84,13 +78,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
 
     async def delegating_tool() -> AsyncToolLoopHandle:  # type: ignore[valid-type]
         """Return a nested handle marked for pass-through with patched interject."""
-        inner_client = unify.AsyncUnify(
-            endpoint="gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = get_test_client()
 
         inner_handle = start_async_tool_loop(
             inner_client,
@@ -123,13 +111,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
 
     # ---- start outer loop -------------------------------------------------
     # Real client; strongly instruct the model to call our delegating tool
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call "
         "`delegating_tool_interject` with no arguments. Then wait for it to complete before replying.",
@@ -186,13 +168,7 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
         __passthrough__ = True  # signal passthrough mode
 
     async def _make_inner(counter: list[str]) -> AsyncToolLoopHandle:
-        client = unify.AsyncUnify(
-            endpoint="gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        client = get_test_client()
 
         async def _noop():
             return "ok"
@@ -231,13 +207,7 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
         await gate.wait()
         return inner_two
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both `delegate_one` and `delegate_two` "
         "with no arguments, in the same turn, then wait for completion before replying.",
@@ -334,13 +304,7 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
     async def d2():  # type: ignore[valid-type]
         return h2
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both tools `d1` and `d2` "
         "with no arguments, then wait for completion before replying.",
@@ -458,13 +422,7 @@ async def test_passthrough_clarification_bubbles_and_can_be_answered(monkeypatch
         return inner
 
     # Force a single tool call to spawn the passthrough handle (via instruction to real LLM)
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying with a brief final message.",
@@ -563,13 +521,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
     async def t2():  # type: ignore[valid-type]
         return h2
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both tools `t1` and `t2` "
         "with no arguments in the same turn, then wait for completion before replying.",
@@ -687,13 +639,7 @@ async def test_programmatic_interject_with_kwargs_forwarded_to_passthrough_handl
     async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -805,13 +751,7 @@ async def test_programmatic_pause_resume_stop_kwargs_forwarded(monkeypatch):
     async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -888,13 +828,7 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
     """
 
     # Inner real client; instruct it to call `sleeper` then finish
-    inner_client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    inner_client = get_test_client()
     inner_client.set_system_message(
         'You are running inside an automated test. In your FIRST assistant turn, call `sleeper` with {"delay": 0.01}. '
         "After it finishes, reply exactly with the single word DONE.",
@@ -920,13 +854,7 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
     delegating_tool_regression.__qualname__ = "delegating_tool_regression"
 
     # Outer client; spy wrapper records calls while still hitting the real LLM
-    outer_client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    outer_client = get_test_client()
     outer_client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `delegating_tool_regression` "
         "with no arguments, then wait for the inner task to complete before replying.",
@@ -1039,13 +967,7 @@ async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch
     async def d2():  # type: ignore[valid-type]
         return h2
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both tools `d1` and `d2` "
         "with no arguments, then wait for completion before replying.",
@@ -1164,13 +1086,7 @@ async def test_early_ask_forwarded_on_adoption(monkeypatch):
         await gate.wait()
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1267,13 +1183,7 @@ async def test_adoption_syncs_pause_state_when_paused(monkeypatch):
         await gate.wait()
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1369,13 +1279,7 @@ async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
         await gate.wait()
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1466,13 +1370,7 @@ async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
     async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1608,13 +1506,7 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
     async def spawn() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -1753,20 +1645,8 @@ async def test_custom_method_only_propagates_to_matching_passthrough_handles(
             return "ok"
 
     # Two inner clients
-    client_one = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
-    client_two = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client_one = get_test_client()
+    client_two = get_test_client()
 
     @unify.traced
     async def noop():
@@ -1792,13 +1672,7 @@ async def test_custom_method_only_propagates_to_matching_passthrough_handles(
         return h
 
     # Outer client instructs model to call both delegates in the first turn
-    outer_client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    outer_client = get_test_client()
     outer_client.set_system_message(
         "In your FIRST assistant turn, call both tools `delegate_custom` and `delegate_base` "
         "with no arguments, then wait for completion before replying.",
@@ -1961,13 +1835,7 @@ async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
         await gate.wait()
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `spawn` with no arguments. "
         "Wait for it to finish before replying.",
@@ -2091,13 +1959,7 @@ async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
         await gate.wait()
         return late
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call both tools "
         "`delegate_early` and `delegate_late` with no arguments, then wait for completion before replying.",
