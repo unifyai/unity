@@ -13,28 +13,15 @@ from pathlib import Path
 import pytest
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project, SETTINGS, get_test_client
 
 # --------------------------------------------------------------------------- #
 #  CONSTANTS                                                                  #
 # --------------------------------------------------------------------------- #
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
-
 # Load cat image and convert to base64
 with open(Path(__file__).parent / "cat.jpg", "rb") as f:
     CAT_IMG = base64.b64encode(f.read()).decode("utf-8")
-
-
-def new_client() -> unify.AsyncUnify:
-    """Utility to get a fresh client with env-controlled caching / tracing."""
-    return unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -50,7 +37,7 @@ async def test_initial_user_image_is_promoted() -> None:
       • `image_url` block present in the chat payload sent to the model;
       • the assistant correctly answers “cat”.
     """
-    client = new_client()
+    client = get_test_client()
     client.set_system_message(
         "You will receive an image. Answer with ONE three-letter word naming the animal.",
     )
@@ -111,7 +98,7 @@ async def test_tool_result_image_is_promoted_and_reasoned_over() -> None:
          it must answer “cat”.
     """
     # ---- phase 1: run the tool and verify promotion ----------------------
-    client = new_client()
+    client = get_test_client()
     client.set_system_message(
         "Call image_tool exactly once. The tool will return a base64-encoded image of a domestic cat. After the tool finishes, respond with exactly 'cat' (lowercase, no punctuation). Do not output anything else.",
     )
