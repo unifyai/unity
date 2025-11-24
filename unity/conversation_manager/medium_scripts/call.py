@@ -322,7 +322,7 @@ if __name__ == "__main__":
     assistant_number = ""
     print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 7:
+    if len(sys.argv) > 6:
         # get static config
         assistant_number = sys.argv[2]
         os.environ["VOICE_PROVIDER"] = (
