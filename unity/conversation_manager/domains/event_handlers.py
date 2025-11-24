@@ -417,10 +417,7 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
                 contact_id=[cid for cid in cm.contact_index.active_conversations],
             )
             updated_active_contacts = {
-                cid: Contact(
-
-                    **{**c.model_dump(), **uc, "threads": c.threads}
-                )
+                cid: Contact(**{**c.model_dump(), **uc, "threads": c.threads})
                 for (cid, c), uc in zip(
                     cm.contact_index.active_conversations.items(),
                     updated_active_contacts.values(),

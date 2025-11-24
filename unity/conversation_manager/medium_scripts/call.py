@@ -339,7 +339,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         sys.argv = sys.argv[:2]  # keep only script name and "dev" command
-    else:
+    elif sys.argv[1] != "download-files":
         print("Not enough arguments provided")
         sys.exit(1)
 
