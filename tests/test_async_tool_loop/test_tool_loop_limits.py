@@ -6,7 +6,7 @@ from typing import Dict, Callable
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.tool_spec import ToolSpec
-from tests.helpers import SETTINGS, get_test_client
+from unity.common.llm_client import new_llm_client
 
 
 # small helper: pre-seed an assistant tool_call so preflight backfill schedules it immediately
@@ -37,7 +37,7 @@ def _preseed_tool_call(
 # ── 1. max_steps safeguard ────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_max_steps_exceeded():
-    client = get_test_client()
+    client = new_llm_client()
     # The conversation will contain at least USER + ASSISTANT = 2 messages,
     # so max_steps=1 must raise.
     handle = start_async_tool_loop(
@@ -55,7 +55,7 @@ async def test_max_steps_exceeded():
 # ── 2. timeout safeguard ──────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_timeout_exceeded(monkeypatch):
-    client = get_test_client()
+    client = new_llm_client()
     # Force generate to be slower than timeout using monkeypatch while still calling the real LLM.
     orig_generate = client.generate
 
@@ -108,7 +108,7 @@ async def test_prunes_over_quota_tool_calls(monkeypatch):
         counter["n"] += 1
         return "ok"
 
-    client = get_test_client()
+    client = new_llm_client()
     # Instruct the real LLM to attempt three calls; the loop will prune to 2
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, request the tool `short_tool` "
@@ -166,7 +166,7 @@ async def test_prunes_over_quota_serial_calls(monkeypatch):
         counter["n"] += 1
         return "ok"
 
-    client = get_test_client()
+    client = new_llm_client()
     # Instruct the model how to conclude after the allowed calls
     client.set_system_message(
         "You are part of an automated test. If tools are available, request the tool `short_tool` exactly once per turn. "
@@ -217,7 +217,7 @@ def _make_long_tool(cancel_flag: dict):
 async def test_timeout_graceful_termination():
     """No exception; pending tool is cancelled when timeout hits."""
     cancel_flag = {}
-    client = get_test_client()
+    client = new_llm_client()
     # Instruct real LLM to call the tool once and keep running; timeout will stop it
     client.set_system_message(
         'You are running inside an automated test. In your FIRST assistant turn, call `long_tool` with {"seconds": 5}. '
@@ -247,7 +247,7 @@ async def test_timeout_graceful_termination():
 async def test_max_steps_graceful_termination():
     """No exception; pending tool is cancelled when max_steps is exceeded."""
     cancel_flag = {}
-    client = get_test_client()
+    client = new_llm_client()
     # Instruct real LLM to call the tool once and keep running; max_steps will stop it
     client.set_system_message(
         'You are running inside an automated test. In your FIRST assistant turn, call `long_tool` with {"seconds": 5}. '
@@ -321,7 +321,7 @@ def new_client() -> unify.AsyncUnify:
     Return a fresh client *with its own conversation state* so that tests do
     not interfere with one another.
     """
-    return get_test_client()
+    return new_llm_client()
 
 
 @pytest.mark.asyncio

@@ -6,14 +6,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import base64
 from pathlib import Path
 
 import pytest
-import unify
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project, SETTINGS, get_test_client
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 
 # --------------------------------------------------------------------------- #
 #  CONSTANTS                                                                  #
@@ -37,7 +36,7 @@ async def test_initial_user_image_is_promoted() -> None:
       • `image_url` block present in the chat payload sent to the model;
       • the assistant correctly answers “cat”.
     """
-    client = get_test_client()
+    client = new_llm_client()
     client.set_system_message(
         "You will receive an image. Answer with ONE three-letter word naming the animal.",
     )
@@ -98,7 +97,7 @@ async def test_tool_result_image_is_promoted_and_reasoned_over() -> None:
          it must answer “cat”.
     """
     # ---- phase 1: run the tool and verify promotion ----------------------
-    client = get_test_client()
+    client = new_llm_client()
     client.set_system_message(
         "Call image_tool exactly once. The tool will return a base64-encoded image of a domestic cat. After the tool finishes, respond with exactly 'cat' (lowercase, no punctuation). Do not output anything else.",
     )

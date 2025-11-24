@@ -3,7 +3,7 @@ import functools
 import inspect
 import sys
 import traceback
-from os import sep, getenv
+from os import sep
 from typing import Any, Callable
 from unity.events.event_bus import EVENT_BUS
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -268,26 +268,3 @@ async def capture_events(
             await EVENT_BUS.join_callbacks()
         except Exception:
             pass
-
-
-def get_test_client(
-    endpoint: str | None = None,
-    **kwargs: Any,
-) -> "unify.AsyncUnify":
-    """
-    Return a configured AsyncUnify client for testing.
-
-    Defaults to the UNIFY_MODEL env var or gpt-5@openai if no endpoint is provided.
-    """
-    if endpoint is None:
-        endpoint = getenv("UNIFY_MODEL", "gpt-5@openai")
-
-    defaults = {
-        "reasoning_effort": "high",
-        "service_tier": "priority",
-        "cache": SETTINGS.UNIFY_CACHE,
-        "traced": SETTINGS.UNIFY_TRACED,
-    }
-    defaults.update(kwargs)
-
-    return unify.AsyncUnify(endpoint, **defaults)
