@@ -30,7 +30,8 @@ from unity.transcript_manager.simulated import SimulatedTranscriptManager
 from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 from unity.task_scheduler.simulated import SimulatedTaskScheduler
 
-from unity.transcript_manager.types.message import Message, Medium
+from unity.transcript_manager.types.message import Message
+from unity.transcript_manager.types.medium import Medium
 
 
 # ---------------------------------------------------------------------------

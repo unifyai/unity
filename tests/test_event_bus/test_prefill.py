@@ -4,7 +4,8 @@ import asyncio
 import datetime as dt
 
 from unity.events.event_bus import EventBus, Event
-from unity.transcript_manager.types.message import Message, Medium
+from unity.transcript_manager.types.message import Message
+from unity.transcript_manager.types.medium import Medium
 from tests.helpers import _handle_project
 
 

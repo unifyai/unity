@@ -1,4 +1,3 @@
-from enum import StrEnum
 from pydantic import (
     BaseModel,
     Field,
@@ -10,20 +9,9 @@ from pydantic import (
 from datetime import datetime
 from ...image_manager.types import AnnotatedImageRefs
 from typing import ClassVar
+from .medium import Medium
 
 UNASSIGNED = -1
-
-
-class Medium(StrEnum):
-    UNIFY_MESSAGE = "unify_message"
-    UNIFY_CALL = "unify_call"
-    UNIFY_MEET = "unify_meet"
-    EMAIL = "email"
-    SMS_MESSAGE = "sms_message"
-    PHONE_CALL = "phone_call"
-    WHATSAPP_MSG = "whatsapp_message"
-    WHATSAPP_CALL = "whatsapp_call"
-    GOOGLE_MEET = "google_meet"
 
 
 class Message(BaseModel):
@@ -170,6 +158,3 @@ class Message(BaseModel):
                 out = out
 
         return out
-
-
-VALID_MEDIA: tuple[str, ...] = tuple(m.value for m in Medium)
