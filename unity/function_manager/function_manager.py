@@ -474,6 +474,7 @@ class FunctionManager(BaseFunctionManager):
         *,
         implementations: Union[str, List[str]],
         preconditions: Optional[Dict[str, Dict]] = None,
+        verify: Optional[Dict[str, bool]] = None,
         overwrite: bool = False,
     ) -> Dict[str, str]:
         """
@@ -482,6 +483,7 @@ class FunctionManager(BaseFunctionManager):
         Args:
             implementations: Function source code (single string or list of strings).
             preconditions: Optional preconditions for functions.
+            verify: Optional verification settings (name -> bool).
             overwrite: If True, update existing functions; if False, skip duplicates.
 
         Returns:
@@ -490,6 +492,8 @@ class FunctionManager(BaseFunctionManager):
 
         if preconditions is None:
             preconditions = {}
+        if verify is None:
+            verify = {}
         if isinstance(implementations, str):
             implementations = [implementations]
 
@@ -570,6 +574,7 @@ class FunctionManager(BaseFunctionManager):
                 docstring = inspect.getdoc(fn_obj) or ""
                 embedding_text = f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
                 precondition = preconditions.get(name)
+                should_verify = verify.get(name, True)
 
                 entry_data = {
                     "argspec": signature,
@@ -578,6 +583,7 @@ class FunctionManager(BaseFunctionManager):
                     "calls": dependencies_list,
                     "embedding_text": embedding_text,
                     "precondition": precondition,
+                    "verify": should_verify,
                 }
 
                 if name in existing_to_update:
@@ -677,6 +683,7 @@ class FunctionManager(BaseFunctionManager):
                 "argspec": log.entries["argspec"],
                 "docstring": log.entries["docstring"],
                 "guidance_ids": log.entries.get("guidance_ids", []),
+                "verify": log.entries.get("verify", True),
             }
             if include_implementations:
                 data["implementation"] = log.entries["implementation"]
