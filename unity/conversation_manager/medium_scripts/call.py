@@ -346,9 +346,10 @@ if __name__ == "__main__":
     agent_name = f"unity_{assistant_number}"
 
     # dispatch agent
-    print(f"Dispatching agent {agent_name}")
-    dispatch_agent(agent_name)
-    print(f"Agent {agent_name} dispatched")
+    if sys.argv[1] != "download-files":
+        print(f"Dispatching agent {agent_name}")
+        dispatch_agent(agent_name)
+        print(f"Agent {agent_name} dispatched")
 
     agents.cli.run_app(
         agents.WorkerOptions(
