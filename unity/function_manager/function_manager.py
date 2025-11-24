@@ -158,6 +158,11 @@ class FunctionManager(BaseFunctionManager):
             try:
                 # Create <tmp>/functions
                 tmp_dir = getattr(self._fm, "_tmp_dir", None)
+                if tmp_dir is None:
+                    import tempfile
+
+                    tmp_dir = Path(tempfile.mkdtemp(prefix="unity_functions_"))
+
                 if isinstance(tmp_dir, Path):
                     functions_dir = tmp_dir / "functions"
                     functions_dir.mkdir(parents=True, exist_ok=True)
