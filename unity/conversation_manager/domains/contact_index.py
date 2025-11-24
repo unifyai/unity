@@ -44,9 +44,10 @@ class EmailMessage:
 
 
 class ContactIndex:
-    def __init__(self):
+    def __init__(self, is_local: bool = False):
         self.active_conversations: dict[str, Contact] = {}
-        self.contacts = None
+        self.contacts: dict[int, Contact] = {}
+        self.is_local = is_local
 
     @property
     def boss_contact(self):
@@ -54,10 +55,11 @@ class ContactIndex:
         return self.contacts.get(1)
 
     def set_contacts(self, contacts: list[dict]):
-        self.contacts = {
-            c["contact_id"]: Contact(**c, is_boss=c["contact_id"] == 1)
-            for c in contacts
-        }
+        print(f"Setting contacts: {contacts}")
+        for c in contacts:
+            self.contacts[c["contact_id"]] = Contact(**c, is_boss=c["contact_id"] == 1)
+        if not self.is_local:
+            self.contacts.pop(-1, None)
 
     # is this supposed to fail for any reason?
     def push_message(
