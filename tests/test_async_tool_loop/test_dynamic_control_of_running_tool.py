@@ -28,7 +28,7 @@ import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 
 # Shared helpers
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project, SETTINGS, get_test_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_assistant_call_prefix,
@@ -155,13 +155,7 @@ def _assistant_is_check_status_only(msg: dict) -> bool:
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="function")
 def client():
-    return unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    return get_test_client()
 
 
 # --------------------------------------------------------------------------- #
@@ -937,13 +931,7 @@ async def test_dynamic_helpers_hide_get_history_for_async_handle(client):
     @unify.traced
     async def spawn_inner_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         # Start an inner async tool loop and return its handle immediately
-        inner_client = unify.AsyncUnify(
-            MODEL_NAME,
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = get_test_client()
         return start_async_tool_loop(
             inner_client,
             message="Inner loop: reply OK.",
