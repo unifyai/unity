@@ -1,13 +1,12 @@
 import asyncio
 
 import pytest
-import unify
 
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
     SteerableToolHandle,
 )
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project, get_test_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
@@ -74,13 +73,7 @@ async def test_nested_steer_targets_child_and_applies_method():
         return inner
 
     # Real LLM client; direct it to call our tool in the first turn
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",
@@ -243,13 +236,7 @@ async def test_nested_steer_noop_when_child_selector_does_not_match():
     async def Wrapper_run():  # type: ignore[valid-type]
         return wrapper
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Wrapper_run` with no arguments. "
         "Then wait for it to complete before replying.",
@@ -341,13 +328,7 @@ async def test_nested_steer_applies_serial_steps_on_child():
     async def Outer_spawn():  # type: ignore[valid-type]
         return inner
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = get_test_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",
