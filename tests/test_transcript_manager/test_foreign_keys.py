@@ -177,6 +177,271 @@ def test_fk_message_sender_id_set_null_on_delete():
     assert contents == {"Message 1", "Message 2"}
 
 
+@_handle_project
+@pytest.mark.unit
+def test_fk_message_sender_id_null_does_not_break_manager_init():
+    """Test that loading messages with null sender_id doesn't break TranscriptManager initialization."""
+    cm = ContactManager()
+    tm = TranscriptManager()
+
+    # Create contacts
+    cm._create_contact(
+        first_name="Alice",
+        email_address="alice@test.com",
+        phone_number="1111111111",
+    )
+    cm._create_contact(
+        first_name="Bob",
+        email_address="bob@test.com",
+        phone_number="2222222222",
+    )
+
+    contacts = unify.get_logs(context=cm._ctx, from_fields=["contact_id", "first_name"])
+    alice_id = next(
+        int(c.entries["contact_id"])
+        for c in contacts
+        if c.entries["first_name"] == "Alice"
+    )
+    bob_id = next(
+        int(c.entries["contact_id"])
+        for c in contacts
+        if c.entries["first_name"] == "Bob"
+    )
+
+    # Alice sends message to Bob
+    tm.log_first_message_in_new_exchange(
+        {
+            "medium": "sms_message",
+            "sender_id": alice_id,
+            "receiver_ids": [bob_id],
+            "content": "Hello from Alice",
+            "timestamp": datetime.now(),
+        },
+    )
+
+    # Delete Alice (SET NULL will null sender_id)
+    cm._delete_contact(contact_id=alice_id)
+
+    # Reinitialize TranscriptManager to force loading messages from DB
+    tm_new = TranscriptManager()
+
+    # Verify the new manager can successfully read messages with null sender_id
+    messages = unify.get_logs(
+        context=tm_new._transcripts_ctx,
+    )
+    assert len(messages) == 1
+    assert messages[0].entries.get("sender_id") is None  # Null sender
+    assert messages[0].entries["receiver_ids"] == [bob_id]
+    assert messages[0].entries["content"] == "Hello from Alice"
+
+    # Verify we can construct Message objects from the DB data (no ValidationError)
+    from unity.transcript_manager.types.message import Message
+
+    msg = Message(**messages[0].entries)
+    assert msg.sender_id is None
+    assert msg.receiver_ids == [bob_id]
+    assert msg.content == "Hello from Alice"
+
+
+@_handle_project
+@pytest.mark.unit
+def test_fk_message_receiver_ids_null_does_not_break_manager_init():
+    """Test that messages with null entries in receiver_ids can be loaded without errors."""
+    cm = ContactManager()
+    tm = TranscriptManager()
+
+    # Create contacts
+    cm._create_contact(
+        first_name="Alice",
+        email_address="alice@test.com",
+        phone_number="1111111111",
+    )
+    cm._create_contact(
+        first_name="Bob",
+        email_address="bob@test.com",
+        phone_number="2222222222",
+    )
+    cm._create_contact(
+        first_name="Charlie",
+        email_address="charlie@test.com",
+        phone_number="3333333333",
+    )
+
+    contacts = unify.get_logs(context=cm._ctx, from_fields=["contact_id", "first_name"])
+    alice_id = next(
+        int(c.entries["contact_id"])
+        for c in contacts
+        if c.entries["first_name"] == "Alice"
+    )
+    bob_id = next(
+        int(c.entries["contact_id"])
+        for c in contacts
+        if c.entries["first_name"] == "Bob"
+    )
+    charlie_id = next(
+        int(c.entries["contact_id"])
+        for c in contacts
+        if c.entries["first_name"] == "Charlie"
+    )
+
+    # Log message with multiple receivers
+    tm.log_first_message_in_new_exchange(
+        {
+            "medium": "email",
+            "sender_id": alice_id,
+            "receiver_ids": [bob_id, charlie_id],
+            "content": "Hello Bob and Charlie!",
+            "timestamp": datetime.now(),
+        },
+    )
+
+    # Verify message exists with both receivers
+    messages = unify.get_logs(context=tm._transcripts_ctx)
+    assert len(messages) == 1
+    assert set(messages[0].entries["receiver_ids"]) == {bob_id, charlie_id}
+
+    # Delete Charlie (should trigger SET NULL on receiver_ids[*])
+    cm._delete_contact(contact_id=charlie_id)
+
+    # Verify message now has [bob_id, None] in receiver_ids
+    messages = unify.get_logs(context=tm._transcripts_ctx)
+    assert len(messages) == 1
+    receiver_ids = messages[0].entries["receiver_ids"]
+    assert bob_id in receiver_ids
+    assert None in receiver_ids
+    assert len(receiver_ids) == 2
+
+    # Create a new TranscriptManager instance and verify it loads successfully
+    tm_new = TranscriptManager()
+
+    # Verify the new manager can successfully read messages with null entries in receiver_ids
+    messages = unify.get_logs(context=tm_new._transcripts_ctx)
+    assert len(messages) == 1
+    assert bob_id in messages[0].entries["receiver_ids"]
+    assert None in messages[0].entries["receiver_ids"]
+
+    # Verify we can construct Message objects from the DB data (no ValidationError)
+    from unity.transcript_manager.types.message import Message
+
+    msg = Message(**messages[0].entries)
+    assert bob_id in msg.receiver_ids
+    assert None in msg.receiver_ids
+
+
+@_handle_project
+@pytest.mark.unit
+def test_fk_message_images_null_does_not_break_manager_init():
+    """Test that messages with null image_ids in nested images can be loaded without errors."""
+    cm = ContactManager()
+    tm = TranscriptManager()
+    im = ImageManager()
+
+    # Create contacts
+    cm._create_contact(
+        first_name="Alice",
+        email_address="alice@test.com",
+        phone_number="1111111111",
+    )
+    cm._create_contact(
+        first_name="Bob",
+        email_address="bob@test.com",
+        phone_number="2222222222",
+    )
+
+    contacts = unify.get_logs(context=cm._ctx, from_fields=["contact_id", "first_name"])
+    alice_id = next(
+        int(c.entries["contact_id"])
+        for c in contacts
+        if c.entries["first_name"] == "Alice"
+    )
+    bob_id = next(
+        int(c.entries["contact_id"])
+        for c in contacts
+        if c.entries["first_name"] == "Bob"
+    )
+
+    # Create two test images
+    img_ids = im.add_images(
+        [
+            {"data": _make_test_image_b64(color=(255, 0, 0)), "caption": "Image 1"},
+            {"data": _make_test_image_b64(color=(0, 0, 255)), "caption": "Image 2"},
+        ],
+        synchronous=True,
+    )
+    assert img_ids[0] is not None and img_ids[1] is not None, "Image creation failed"
+    img1_id = img_ids[0]
+    img2_id = img_ids[1]
+
+    # Log message with multiple images
+    tm.log_first_message_in_new_exchange(
+        {
+            "medium": "email",
+            "sender_id": alice_id,
+            "receiver_ids": [bob_id],
+            "content": "Check out these images!",
+            "timestamp": datetime.now(),
+            "images": [
+                {
+                    "annotation": "First image",
+                    "raw_image_ref": {"image_id": img1_id},
+                },
+                {
+                    "annotation": "Second image",
+                    "raw_image_ref": {"image_id": img2_id},
+                },
+            ],
+        },
+    )
+
+    # Verify message exists with both images
+    messages = unify.get_logs(context=tm._transcripts_ctx)
+    assert len(messages) == 1
+    image_ids_in_msg = [
+        img["raw_image_ref"]["image_id"]
+        for img in messages[0].entries.get("images", [])
+    ]
+    assert img1_id in image_ids_in_msg
+    assert img2_id in image_ids_in_msg
+
+    # Delete img2 (should trigger SET NULL on nested image_id)
+    img2_logs = unify.get_logs(
+        context=im._ctx,
+        filter=f"image_id == {img2_id}",
+        return_ids_only=True,
+    )
+    assert img2_logs, "Image not found"
+    unify.delete_logs(context=im._ctx, logs=img2_logs[0])
+
+    # Verify message now has one valid image_id and one None
+    messages = unify.get_logs(context=tm._transcripts_ctx)
+    assert len(messages) == 1
+    images_list = messages[0].entries.get("images", [])
+    assert len(images_list) == 2
+
+    image_ids_after_delete = [img["raw_image_ref"]["image_id"] for img in images_list]
+    assert img1_id in image_ids_after_delete
+    assert None in image_ids_after_delete
+
+    # Create a new TranscriptManager instance and verify it loads successfully
+    tm_new = TranscriptManager()
+
+    # Verify the new manager can successfully read messages with null image_ids
+    messages = unify.get_logs(context=tm_new._transcripts_ctx)
+    assert len(messages) == 1
+    images_list = messages[0].entries.get("images", [])
+    assert len(images_list) == 2
+
+    # Verify we can construct Message objects from the DB data (no ValidationError)
+    from unity.transcript_manager.types.message import Message
+
+    msg = Message(**messages[0].entries)
+    assert len(msg.images.root) == 2
+    # One image should have a valid ID, one should have None
+    image_ids_in_model = [ref.raw_image_ref.image_id for ref in msg.images.root]
+    assert img1_id in image_ids_in_model
+    assert None in image_ids_in_model
+
+
 # --------------------------------------------------------------------------- #
 #  Unit Tests: receiver_ids[*] → Contacts.contact_id (SET NULL)              #
 # --------------------------------------------------------------------------- #
