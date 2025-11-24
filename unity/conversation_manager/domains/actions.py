@@ -8,6 +8,7 @@ from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.new_events import *
 from unity.conversation_manager.domains.utils import log_task_exc
+from unity.conversation_manager.domains.contact_index import Contact
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -78,18 +79,29 @@ class WaitForNextEvent(BaseModel):
 #     ...
 
 
+class ContactDetails(BaseModel):
+    first_name: Optional[str]
+    surename: Optional[str]
+
+
+class ContactDetailsPhone(ContactDetails):
+    phone_number: Optional[str]
+
+
+class ContactDetailsEmail(ContactDetails):
+    email_address: Optional[str]
+
+
 class SendEmail(BaseModel):
     """Comms method to send emails"""
 
     action_name: Literal["send_email"]
-    contact_id: int = Field(
+    contact_id: Optional[int] = Field(
         ...,
-        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
+        description="contact id, leave as None if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    email_address: str = Field(
-        ...,
-        description="the email address to send the email to",
-    )
+    contact_details: Optional[ContactDetailsEmail]
+    old_contact_details: Optional[ContactDetailsEmail]
     subject: str = Field(
         ...,
         description="the subject of the email, should be the same as the subject of the received email without any prefix.",
@@ -105,11 +117,18 @@ class SendSMS(BaseModel):
     """Comms method to send sms"""
 
     action_name: Literal["send_sms"]
-    contact_id: int = Field(
+    contact_id: Optional[int] = Field(
         ...,
-        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
+        description="contact id, leave as None if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    phone_number: str
+    contact_details: Optional[ContactDetailsPhone] = Field(
+        ...,
+        description="contact details if you can not infer the contac_id (because it is not in the active conversations), contact details will be used to retrieve the contact if it exists or create a new one",
+    )
+    old_contact_details: Optional[ContactDetailsPhone] = Field(
+        ...,
+        description="only use old_contact_details if you are updating an exisitng contact data, non-None fields will be updated with data in contact_details",
+    )
     message: str
 
 
@@ -117,15 +136,16 @@ class MakeCall(BaseModel):
     """Comms method to make outbound calls"""
 
     action_name: Literal["make_call"]
-    contact_id: int = Field(
+    contact_id: Optional[int] = Field(
         ...,
-        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
+        description="contact id, leave as None if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    phone_number: str
+    contact_details: Optional[ContactDetailsPhone]
+    old_contact_details: Optional[ContactDetailsPhone]
 
 
 class SendUnifyMessage(BaseModel):
-    """Send a message to the boss chat (no-phone medium)"""
+    """Send a message to the boss chat on the unify platform (no-phone medium)"""
 
     action_name: Literal["send_unify_message"]
     message: str
@@ -227,6 +247,100 @@ class Action:
         return wrapper
 
 
+# utils
+async def get_update_or_create_contact(
+    cm: "ConversationManager",
+    contact_id: int = None,
+    details: dict = None,
+    old_details: dict = None,
+):
+    if not contact_id and not details:
+        # bad
+        ...
+    if details and old_details:
+        # if old details exist, means update
+        # we should probably assert first that old details make sense
+        # we must have either contact_id or phone/email available here as unique indentifiers
+        if (
+            not contact_id
+            and old_details.get("phone_number")
+            or old_details.get("email_address")
+        ):
+            print("bad")
+            return None
+        phone, email = details.get("phone_number"), details.get("email")
+        data_to_change = {}
+        for k, v in old_details.items():
+            if v is not None:
+                data_to_change[k] = details[k]
+        outcome = await asyncio.to_thread(
+            cm.contact_manager.update_contact(contact_id, **data_to_change),
+        )
+        # all good, maybe no need to get all contacts here
+        updated_contacts = cm.contact_manager.get_contact_info(
+            contact_id=[c.contact_id for c in cm.contact_index.contacts],
+        )
+        updated_active_contacts = {
+            Contact(
+                **{**c.model_dump(), **uc, "threads": c.threads},
+            )
+            for (cid, c), uc in zip(
+                cm.contact_index.active_conversations.items(),
+                updated_contacts,
+            )
+        }
+        cm.contact_index.contacts = updated_contacts
+        cm.contact_index.active_conversations = updated_active_contacts
+        contact = (
+            cm.contact_index.get_contact(phone_number=phone)
+            if phone
+            else cm.contact_index.get_contact(email=email)
+        )
+        return contact
+
+    elif contact_id and details:
+        contact = cm.contact_index.get_contact(contact_id=contact_id)
+        data_to_insert = {}
+        for k, v in details:
+            if v:
+                if contact[k] != v:
+                    data_to_insert[k] = v
+        updated_contacts = cm.contact_manager.get_contact_info(
+            contact_id=[c.contact_id for c in cm.contact_index.contacts],
+        )
+        updated_active_contacts = {
+            Contact(
+                **{**c.model_dump(), **uc, "threads": c.threads},
+            )
+            for (cid, c), uc in zip(
+                cm.contact_index.active_conversations.items(),
+                updated_contacts,
+            )
+        }
+        cm.contact_index.contacts = updated_contacts
+        cm.contact_index.active_conversations = updated_active_contacts
+        contact = (
+            cm.contact_index.get_contact(phone_number=phone)
+            if phone
+            else cm.contact_index.get_contact(email=email)
+        )
+        return contact
+
+    elif contact_id:
+        # means just message this person directly
+        return cm.contact_index.get_contact(contact_id=contact_id)
+    elif details:
+        # first time communicating with this person, just create a new contact
+        outcome_dict = await asyncio.to_thread(
+            cm.contact_manager._create_contact,
+            **details,
+        )
+        cid = outcome_dict["details"]["contact_id"]
+        contact = Contact(**cm.contact_manager.get_contact_info(contact_id=cid)[cid])
+        cm.contact_index.contacts[cid] = contact
+        return contact.model_dump()
+
+
 # registered actions, make sure to add *args, **kwargs to make calling these actions easier
 # TODO: add sending/performing [action] notification when actions are made
 
@@ -242,12 +356,22 @@ async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs)
     # ToDo: either include contact details in prompt and uncomment this
     # or remove this altogether
     # contact_id = kwargs.get("contact_id")
-    to_number = kwargs.get("phone_number")
+    contact_id = kwargs.get("contact_id")
+    contact_details = kwargs.get("contact_details")
+    old_contact_details = kwargs.get("old_contact_details")
     message = kwargs.get("message")
+    contact = await get_update_or_create_contact(
+        cm,
+        contact_id,
+        contact_details,
+        old_contact_details,
+    )
+    to_number = contact.get("phone_number")
     response = await comms_utils.send_sms_message_via_number(
         to_number=to_number,
         message=message,
     )
+
     if response["success"]:
         contact = cm.contact_index.get_contact(phone_number=to_number)
         event = SMSSent(contact=contact, content=message)
@@ -447,19 +571,3 @@ async def conductor_handle_actions(
             response=f"Intervened: {action_name} {result}",
         ).to_json(),
     )
-
-
-@Action.register()
-async def summarize_conversation(
-    cm: "ConversationManager",
-    action_name: str,
-    *args,
-    **kwargs,
-):
-    pass
-    # cm.transcript_manager
-    # tasks = [
-    #         cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid)
-    #         for cid, contact in zip(cm.contact_index.active_conversations)
-    #     ]
-    # await asyncio.gather(*tasks)
