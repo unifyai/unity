@@ -352,13 +352,13 @@ class GuidanceManager(BaseGuidanceManager):
             foreign_keys=[
                 {
                     "name": "images[*].raw_image_ref.image_id",
-                    "references": f"{self._ctx.replace("Guidance", "Images")}.image_id",
+                    "references": f"{self._ctx.replace('Guidance', 'Images')}.image_id",
                     "on_delete": "SET NULL",
                     "on_update": "CASCADE",
                 },
                 {
                     "name": "function_ids[*]",
-                    "references": f"{self._ctx.replace("Guidance", "Functions")}.function_id",
+                    "references": f"{self._ctx.replace('Guidance', 'Functions')}.function_id",
                     "on_delete": "CASCADE",  # pop on function deletion
                     "on_update": "CASCADE",
                 },
