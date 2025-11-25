@@ -11,7 +11,7 @@ from tests.test_async_tool_loop.async_helpers import (
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_flat_secretmanager_ask():
+async def test_nested_structure_flat_ask():
     """
     Verify a flat, in‑flight SecretManager.ask loop reports a minimal structure.
     """
@@ -40,7 +40,7 @@ async def test_nested_structure_flat_secretmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_flat_secretmanager_update_before_nested(monkeypatch):
+async def test_nested_structure_flat_update_before_nested(monkeypatch):
     """
     Verify a flat, in‑flight SecretManager.update loop reports a minimal structure
     when the first‑turn nested ask has been requested but not yet adopted.
@@ -105,7 +105,7 @@ async def test_nested_structure_flat_secretmanager_update_before_nested(monkeypa
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_secretmanager_update_then_ask_nested():
+async def test_nested_structure_update_then_ask_nested():
     """
     Verify a nested structure for SecretManager.update → SecretManager.ask
     (update flow is expected to consult ask on the first turn for discovery/verification).

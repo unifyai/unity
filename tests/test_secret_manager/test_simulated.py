@@ -21,7 +21,7 @@ from tests.helpers import (
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.  Doc-string inheritance
 # ─────────────────────────────────────────────────────────────────────────────
-def test_simulated_sm_docstrings_match_base():
+def test_docstrings_match_base():
     """Public methods in SimulatedSecretManager should copy BaseSecretManager doc-strings."""
     from unity.secret_manager.base import BaseSecretManager
     from unity.secret_manager.simulated import SimulatedSecretManager
@@ -41,7 +41,7 @@ def test_simulated_sm_docstrings_match_base():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_sm():
+async def test_start_and_ask():
     sm = SimulatedSecretManager("Demo Secret Manager for unit-tests.")
     h = await sm.ask("List all secret keys.")
     answer = await h.result()
@@ -53,7 +53,7 @@ async def test_start_and_ask_simulated_sm():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_sm_stateful_memory_serial_asks():
+async def test_stateful_memory_serial_asks():
     sm = SimulatedSecretManager()
 
     h1 = await sm.ask(
@@ -76,7 +76,7 @@ async def test_sm_stateful_memory_serial_asks():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_sm_stateful_update_then_ask():
+async def test_stateful_update_then_ask():
     sm = SimulatedSecretManager()
 
     upd = await sm.update(
@@ -99,7 +99,7 @@ async def test_sm_stateful_update_then_ask():
 # 5.  Interject
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_interject_sm(monkeypatch):
+async def test_handle_interject(monkeypatch):
     calls = {"interject": 0}
     orig = _SimulatedSecretHandle.interject
 
@@ -122,7 +122,7 @@ async def test_handle_interject_sm(monkeypatch):
 # 6.  Stop
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_stop_sm():
+async def test_handle_stop():
     sm = SimulatedSecretManager()
     h = await sm.ask("Generate a summary of configured secrets.")
     await asyncio.sleep(0.05)
@@ -135,7 +135,7 @@ async def test_handle_stop_sm():
 # 7.  Clarification handshake
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_requests_clarification_sm():
+async def test_handle_requests_clarification():
     sm = SimulatedSecretManager()
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
@@ -160,7 +160,7 @@ async def test_handle_requests_clarification_sm():
 # 8.  Pause → Resume round-trip
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_pause_and_resume_sm(monkeypatch):
+async def test_handle_pause_and_resume(monkeypatch):
     call_counts = {"pause": 0, "resume": 0}
 
     original_pause = _SimulatedSecretHandle.pause
@@ -240,7 +240,7 @@ async def test_handle_ask_nested():
 # 10.  Clear – reset and remain usable
 @pytest.mark.asyncio
 @_handle_project
-async def test_simulated_clear():
+async def test_clear():
     """
     SimulatedSecretManager.clear should reset the manager and remain usable afterwards.
     """
@@ -282,7 +282,7 @@ async def test_from_and_to_placeholder_roundtrip():
 # 12.  Stop while paused should finish immediately
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_paused_finishes_immediately_sm():
+async def test_stop_while_paused_finishes_immediately():
     sm = SimulatedSecretManager()
     h = await sm.ask("Produce a long secrets audit.")
     h.pause()
@@ -298,7 +298,7 @@ async def test_stop_while_paused_finishes_immediately_sm():
 # 13.  Stop while waiting for clarification should finish immediately
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_waiting_for_clarification_finishes_immediately_sm():
+async def test_stop_while_waiting_for_clarification_finishes_immediately():
     sm = SimulatedSecretManager()
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
