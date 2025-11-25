@@ -69,7 +69,7 @@ def _assert_dict_subset(expected: dict, actual: dict):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_serialize_contactmanager_ask():
+async def test_serialize_contact_ask():
     cond = Conductor()
     h = await cond.ask("Who is the contact living in Berlin working as a designer?")
 
@@ -124,7 +124,7 @@ async def test_conductor_serialize_contactmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_serialize_transcriptmanager_ask():
+async def test_serialize_transcript_ask():
     cond = Conductor()
     h = await cond.ask(
         "Show me the most recent message mentioning budgeting or banking.",
@@ -180,7 +180,7 @@ async def test_conductor_serialize_transcriptmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_serialize_guidancemanager_ask():
+async def test_serialize_guidance_ask():
     cond = Conductor()
     h = await cond.ask("Find the onboarding demo guidance.")
 
@@ -234,7 +234,7 @@ async def test_conductor_serialize_guidancemanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_serialize_secretmanager_ask():
+async def test_serialize_secret_ask():
     cond = Conductor()
     h = await cond.ask("Which secrets are currently stored?")
 
@@ -288,7 +288,7 @@ async def test_conductor_serialize_secretmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_serialize_skillmanager_ask():
+async def test_serialize_skill_ask():
     cond = Conductor()
     h = await cond.ask("What high-level skills do you have for spreadsheets and CSVs?")
 
@@ -342,7 +342,7 @@ async def test_conductor_serialize_skillmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_serialize_taskscheduler_ask():
+async def test_serialize_task_ask():
     cond = Conductor()
     h = await cond.ask("What tasks are scheduled for today?")
 
@@ -396,7 +396,7 @@ async def test_conductor_serialize_taskscheduler_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_conductor_serialize_websearcher_ask():
+async def test_serialize_web_ask():
     cond = Conductor()
     h = await cond.ask("What are the latest developments in retrieval for LLMs?")
 
@@ -455,7 +455,7 @@ async def test_conductor_serialize_websearcher_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_conductor_ask_contactmanager():
+async def test_deserialize_continue_contact_ask():
     # Seed Contacts with a Berlin-based product designer to make the answer immediate
     cm = ContactManager()
     cm._create_contact(  # type: ignore[attr-defined]
@@ -503,7 +503,7 @@ async def test_deserialize_and_continue_conductor_ask_contactmanager():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_conductor_ask_transcriptmanager():
+async def test_deserialize_continue_transcript_ask():
     # Seed Transcripts with a recent budgeting/banking message
     tm = TranscriptManager()
     tm.log_first_message_in_new_exchange(  # type: ignore[attr-defined]
@@ -555,7 +555,7 @@ async def test_deserialize_and_continue_conductor_ask_transcriptmanager():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_conductor_ask_guidancemanager():
+async def test_deserialize_continue_guidance_ask():
     # Seed Guidance with an onboarding demo entry
     gm = GuidanceManager()
     gm._add_guidance(  # type: ignore[attr-defined]
@@ -601,7 +601,7 @@ async def test_deserialize_and_continue_conductor_ask_guidancemanager():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_conductor_ask_secretmanager():
+async def test_deserialize_continue_secret_ask():
     # Seed Secrets with a demo key to ensure a quick list/search response
     sm = SecretManager()
     try:
@@ -652,7 +652,7 @@ async def test_deserialize_and_continue_conductor_ask_secretmanager():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_conductor_ask_skillmanager():
+async def test_deserialize_continue_skill_ask():
     snap = {
         "version": 1,
         "loop_id": "Conductor.ask(static-skill)",
@@ -691,7 +691,7 @@ async def test_deserialize_and_continue_conductor_ask_skillmanager():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_conductor_ask_taskscheduler():
+async def test_deserialize_continue_task_ask():
     # Seed TaskScheduler with a couple of tasks so ask() has immediate content
     ts = TaskScheduler()
     ts.create_task(
@@ -741,7 +741,7 @@ async def test_deserialize_and_continue_conductor_ask_taskscheduler():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_conductor_ask_websearcher():
+async def test_deserialize_continue_web_ask():
     snap = {
         "version": 1,
         "loop_id": "Conductor.ask(static-web)",

@@ -52,7 +52,7 @@ def _build_transcript(useful_line: str) -> str:
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mmupdate_contacts_invokes_expected_tools(monkeypatch):
+async def test_update_contacts_invokes_expected_tools(monkeypatch):
     counts = {"cm_create": 0}
 
     # --- patch SimulatedContactManager._create_contact ---------------------
@@ -110,7 +110,7 @@ async def test_mmupdate_contacts_invokes_expected_tools(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mmupdate_contact_bio_calls_inner_helpers(monkeypatch):
+async def test_update_contact_bio_calls_inner_helpers(monkeypatch):
     counts = {"cm_update": 0}
 
     # --- patch SimulatedContactManager.update_contact ---------------------
@@ -177,7 +177,7 @@ async def test_mmupdate_contact_bio_calls_inner_helpers(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mmupdate_contact_rolling_summary_invocations(monkeypatch):
+async def test_update_contact_rolling_summary_invocations(monkeypatch):
     counts = {"cm_update": 0}
 
     # --- patch SimulatedContactManager.update_contact ---------------------
@@ -247,7 +247,7 @@ async def test_mmupdate_contact_rolling_summary_invocations(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mmupdate_contact_response_policy_invocations(monkeypatch):
+async def test_update_contact_response_policy_invocations(monkeypatch):
     orig_cm_upd = SimulatedContactManager.update_contact
 
     calls = {"cm_update": 0}
@@ -308,7 +308,7 @@ async def test_mmupdate_contact_response_policy_invocations(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
+async def test_update_knowledge_invokes_kb_update(monkeypatch):
     counts = {"kb_update": 0}
 
     orig_kb_update = SimulatedKnowledgeManager.update
@@ -354,7 +354,7 @@ async def test_mm_update_knowledge_invokes_kb_update(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
+async def test_update_tasks_invokes_scheduler_update(monkeypatch):
     counts = {"ts_update": 0}
 
     orig_ts_update = SimulatedTaskScheduler.update
@@ -396,7 +396,7 @@ async def test_mm_update_tasks_invokes_scheduler_update(monkeypatch):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_mm_reset_remains_usable():
+async def test_reset_remains_usable():
     mm = SimulatedMemoryManager()
     # Reset should not raise
     await asyncio.wait_for(mm.reset(), timeout=DEFAULT_TIMEOUT)
@@ -412,7 +412,7 @@ async def test_mm_reset_remains_usable():
 # 8. build_plain_transcript – includes manager_method JSON lines               #
 # --------------------------------------------------------------------------- #
 @_handle_project
-def test_mm_build_plain_transcript_includes_manager_method_json():
+def test_build_plain_transcript_includes_manager_method_json():
     msgs = [
         {"sender": "Alice Example", "content": "Hi Bob"},
         {

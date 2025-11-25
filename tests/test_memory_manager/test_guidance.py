@@ -97,7 +97,7 @@ def _wrap_builder(monkeypatch, name: str, bucket: dict):
         ),
     ],
 )
-async def test_guidance_is_propagated(
+async def test_propagation(
     monkeypatch,
     method_name: str,
     builder_name: str,

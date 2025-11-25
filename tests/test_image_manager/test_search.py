@@ -11,7 +11,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_images_by_caption_semantics():
+def test_by_caption_semantics():
     im = ImageManager()
 
     # Seed a few images with distinct captions

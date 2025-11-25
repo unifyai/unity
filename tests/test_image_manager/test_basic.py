@@ -197,7 +197,7 @@ def test_get_images_order_and_raw():
 
 @pytest.mark.unit
 @_handle_project
-def test_image_manager_clear():
+def test_clear():
     im = ImageManager()
 
     # Seed a couple of images

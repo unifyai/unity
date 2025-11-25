@@ -11,7 +11,7 @@ from unity.task_scheduler.simulated import SimulatedTaskScheduler
 
 @pytest.mark.asyncio
 @_handle_project
-async def testupdate_contacts_merges_duplicate_contacts(monkeypatch):
+async def test_update_contacts_merges_duplicates(monkeypatch):
     """MemoryManager.update_contacts should call merge_contacts when the
     transcript indicates two contact IDs refer to the *same* person.
 

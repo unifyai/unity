@@ -48,7 +48,7 @@ _CASES = [
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("user_request,expected_target", _CASES)
-async def test_conductor_clear_requires_confirmation_then_calls_clear_with_target(
+async def test_clear_requires_confirmation(
     user_request: str,
     expected_target: str,
 ):

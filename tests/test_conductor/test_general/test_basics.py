@@ -15,7 +15,7 @@ from tests.helpers import _handle_project
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.  Doc-string inheritance                                                 #
 # ─────────────────────────────────────────────────────────────────────────────
-def test_simulated_cond_docstrings_match_base():
+def test_docstrings_match_base():
     """
     Public methods in SimulatedConductor should copy the real BaseConductor
     doc-strings one-for-one (via functools.wraps).
@@ -38,7 +38,7 @@ def test_simulated_cond_docstrings_match_base():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_cond():
+async def test_start_and_ask():
     cond = SimulatedConductor(
         description=(
             "Operations assistant for Acme Real Estate handling listings, client follow-ups, "
@@ -57,7 +57,7 @@ async def test_start_and_ask_simulated_cond():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_reasoning_steps_toggle_ask_and_request():
+async def test_reasoning_steps_toggle():
     cond = SimulatedConductor(
         description=(
             "Account management assistant summarizing priorities across active opportunities and customers."
@@ -91,7 +91,7 @@ async def test_reasoning_steps_toggle_ask_and_request():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_cond_request_then_ask_stateful():
+async def test_request_then_ask_stateful():
     """
     A `request()` that (likely) touches the TaskScheduler should influence a
     subsequent `ask()` routed to the same sub-manager (stateful LLM behind it).
@@ -179,7 +179,7 @@ async def test_handle_stop():
 @pytest.mark.slow
 @pytest.mark.asyncio
 @_handle_project
-async def test_cond_supports_optional_clarification_channels():
+async def test_supports_clarification_channels():
     """
     Conductor provides an optional `request_clarification` tool to the loop when
     caller supplies duplex queues. We do not enforce that the LLM must use it,

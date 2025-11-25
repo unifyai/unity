@@ -17,7 +17,7 @@ from unity.knowledge_manager.simulated import SimulatedKnowledgeManager
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_prompt_shield_blocks_duplicate_kb_update(monkeypatch):
+async def test_blocks_duplicate_kb_update(monkeypatch):
     kb_counter: Dict[str, int] = {"calls": 0}
     # Track how many times the *passive* update_knowledge helper fires
     mm_kb_counter: Dict[str, int] = {"calls": 0}
@@ -119,7 +119,7 @@ async def test_prompt_shield_blocks_duplicate_kb_update(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_prompt_shield_allows_km_update_when_irrelevant_explicit_call(
+async def test_allows_km_update_when_irrelevant_explicit_call(
     monkeypatch,
 ):
     kb_counter: Dict[str, int] = {"calls": 0}
