@@ -124,6 +124,14 @@ class TaskScheduler(BaseTaskScheduler):
                     "task_id": None,
                     "instance_id": "task_id",
                 },
+                foreign_keys=[
+                    {
+                        "name": "entrypoint",
+                        "references": "Functions.function_id", # TODO: change to the actual context
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                ],
             ),
         ]
 
