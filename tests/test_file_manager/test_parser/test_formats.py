@@ -52,7 +52,7 @@ def normalize_html_for_comparison(html_str: str) -> str:
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_txt_simple(parser, supported_format_files):
+async def test_txt_simple(parser, supported_format_files):
     """Test parsing simple text file."""
     txt_files = supported_format_files[".txt"]["files"]
     txt_file = txt_files["simple"]
@@ -75,7 +75,7 @@ async def test_parse_txt_simple(parser, supported_format_files):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_txt_multi_paragraph(parser, supported_format_files):
+async def test_txt_multi_paragraph(parser, supported_format_files):
     """Test parsing multi-paragraph text file."""
     txt_files = supported_format_files[".txt"]["files"]
     txt_file = txt_files["multi_paragraph"]
@@ -99,7 +99,7 @@ async def test_parse_txt_multi_paragraph(parser, supported_format_files):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_txt_special_characters(parser, supported_format_files):
+async def test_txt_special_characters(parser, supported_format_files):
     """Test parsing text file with special characters."""
     txt_files = supported_format_files[".txt"]["files"]
     txt_file = txt_files["special_chars"]
@@ -123,7 +123,7 @@ async def test_parse_txt_special_characters(parser, supported_format_files):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_pdf_file(parser):
+async def test_pdf(parser):
     """Test parsing PDF file from sample directory."""
     from pathlib import Path
 
@@ -154,7 +154,7 @@ async def test_parse_pdf_file(parser):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_docx_file(parser):
+async def test_docx(parser):
     """Test parsing DOCX file from sample directory."""
     from pathlib import Path
 
@@ -187,7 +187,7 @@ async def test_parse_docx_file(parser):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_csv_file(parser):
+async def test_csv(parser):
     """Test parsing CSV file from sample directory."""
     from pathlib import Path
 
@@ -281,13 +281,13 @@ async def test_parse_csv_file(parser):
 
     except ImportError:
         # If pandas is not available, we still pass the test since core assertions passed
-        print(f"Skipping pandas verification for test_parse_csv_file")
+        print(f"Skipping pandas verification for test_csv")
 
 
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_xlsx_file(parser):
+async def test_xlsx(parser):
     """Test parsing XLSX file from sample directory."""
     from pathlib import Path
 
@@ -425,13 +425,13 @@ async def test_parse_xlsx_file(parser):
 
     except ImportError:
         # If pandas is not available, we still pass the test since core assertions passed
-        print(f"Skipping pandas verification for test_parse_xlsx_file")
+        print(f"Skipping pandas verification for test_xlsx")
 
 
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_empty_txt_file(parser, supported_format_files):
+async def test_empty_txt(parser, supported_format_files):
     """Test parsing an empty text file."""
     txt_files = supported_format_files[".txt"]["files"]
     empty_file = txt_files["empty"]
@@ -452,7 +452,7 @@ async def test_parse_empty_txt_file(parser, supported_format_files):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_formats_comprehensive(parser):
+async def test_formats_comprehensive(parser):
     """Test parsing all supported formats comprehensively."""
     from pathlib import Path
 
@@ -491,7 +491,7 @@ async def test_parse_formats_comprehensive(parser):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_binary_format_metadata(parser):
+async def test_binary_metadata(parser):
     """Test that binary formats (PDF, DOCX) have correct metadata."""
     from pathlib import Path
 
@@ -834,7 +834,7 @@ async def test_large_files_performance(
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_csv_simple(parser, supported_format_files):
+async def test_csv_simple(parser, supported_format_files):
     """Test parsing simple CSV file with Docling's native support."""
     csv_files = supported_format_files[".csv"]["files"]
     csv_file = csv_files["simple"]
@@ -886,13 +886,13 @@ async def test_parse_csv_simple(parser, supported_format_files):
         )
 
     except ImportError:
-        print("Skipping pandas verification for test_parse_csv_simple")
+        print("Skipping pandas verification for test_csv_simple")
 
 
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_csv_complex(parser, supported_format_files):
+async def test_csv_complex(parser, supported_format_files):
     """Test parsing complex CSV with quotes and special characters."""
     csv_files = supported_format_files[".csv"]["files"]
     csv_file = csv_files["complex"]
@@ -941,7 +941,7 @@ async def test_parse_csv_complex(parser, supported_format_files):
         )
 
     except ImportError:
-        print("Skipping pandas verification for test_parse_csv_complex")
+        print("Skipping pandas verification for test_csv_complex")
 
 
 @pytest.mark.asyncio
@@ -1341,7 +1341,7 @@ Gizmo,39.99,75"""
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_workforce_data_xlsx(parser):
+async def test_workforce_data_xlsx(parser):
     """Test parsing workforce_data.xlsx with multiple sheets (Employees, Attendance, Salaries)."""
     from pathlib import Path
 
@@ -1507,7 +1507,7 @@ async def test_parse_workforce_data_xlsx(parser):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_retail_data_xlsx(parser):
+async def test_retail_data_xlsx(parser):
     """Test parsing retail_data.xlsx with multiple sheets (Stores, Sales, Inventory, Returns)."""
     from pathlib import Path
 
