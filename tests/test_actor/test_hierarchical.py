@@ -1233,7 +1233,7 @@ async def main_plan():
 
 
 @pytest.mark.asyncio
-async def test_actor_reuses_skills_from_function_manager(
+async def test_reuses_skills_from_function_manager(
     actor: HierarchicalActor,
     mock_function_manager: MagicMock,
     mock_action_provider: MagicMock,
