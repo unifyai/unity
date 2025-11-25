@@ -7,7 +7,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.unit
 @_handle_project
-def test_blacklist_create_and_filter():
+def test_create_and_filter():
     bl = BlackListManager()
     bl.clear()
 
@@ -51,7 +51,7 @@ def test_blacklist_create_and_filter():
 
 @pytest.mark.unit
 @_handle_project
-def test_blacklist_update_entry():
+def test_update_entry():
     bl = BlackListManager()
     bl.clear()
 
@@ -82,7 +82,7 @@ def test_blacklist_update_entry():
 
 @pytest.mark.unit
 @_handle_project
-def test_blacklist_update_requires_field():
+def test_update_requires_field():
     bl = BlackListManager()
     bl.clear()
 
@@ -98,7 +98,7 @@ def test_blacklist_update_requires_field():
 
 @pytest.mark.unit
 @_handle_project
-def test_blacklist_delete_entry():
+def test_delete_entry():
     bl = BlackListManager()
     bl.clear()
 
@@ -125,7 +125,7 @@ def test_blacklist_delete_entry():
 
 @pytest.mark.unit
 @_handle_project
-def test_blacklist_clear_resets_context():
+def test_clear_resets_context():
     bl = BlackListManager()
     bl.clear()
     bl.create_blacklist_entry(
@@ -140,7 +140,7 @@ def test_blacklist_clear_resets_context():
 
 @pytest.mark.unit
 @_handle_project
-def test_blacklist_filter_shape_contains_shorthand_maps():
+def test_filter_shape_contains_shorthand_maps():
     bl = BlackListManager()
     bl.clear()
     bl.create_blacklist_entry(
