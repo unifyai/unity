@@ -13,7 +13,7 @@ from tests.helpers import _handle_project
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_messages_simple_similarity():
+async def test_simple_similarity():
     tm = TranscriptManager()
     cm = ContactManager()
 
@@ -77,7 +77,7 @@ async def test_search_messages_simple_similarity():
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_messages_cross_contact_and_message_disambiguation():
+async def test_cross_contact_disambiguation():
     tm = TranscriptManager()
     cm = ContactManager()
 
@@ -159,7 +159,7 @@ async def test_search_messages_cross_contact_and_message_disambiguation():
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_messages_sender_bio_only():
+async def test_sender_bio_only():
     tm = TranscriptManager()
     cm = ContactManager()
 
@@ -214,7 +214,7 @@ async def test_search_messages_sender_bio_only():
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_messages_receiver_bio_only_single():
+async def test_receiver_bio_only():
     tm = TranscriptManager()
 
     alice = Contact(first_name="Alice", bio="accountant", contact_id=-1)
@@ -258,7 +258,7 @@ async def test_search_messages_receiver_bio_only_single():
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_messages_receiver_bio_multi_receiver_min_aggregation():
+async def test_receiver_bio_min_aggregation():
     tm = TranscriptManager()
     cm = ContactManager()
 
@@ -304,7 +304,7 @@ async def test_search_messages_receiver_bio_multi_receiver_min_aggregation():
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_messages_contacts_table_output():
+async def test_contacts_table_output():
     tm = TranscriptManager()
 
     # Ensure both participating contacts exist by creating them explicitly
@@ -360,7 +360,7 @@ async def test_search_messages_contacts_table_output():
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_messages_combined_sender_and_receiver_terms():
+async def test_combined_bio_terms():
     tm = TranscriptManager()
     cm = ContactManager()
 
@@ -416,7 +416,7 @@ async def test_search_messages_combined_sender_and_receiver_terms():
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_messages_receiver_only_returns_expected_messages():
+async def test_receiver_only_returns_expected():
     tm = TranscriptManager()
     cm = ContactManager()
 

@@ -12,7 +12,7 @@ from tests.helpers import _handle_project, capture_events
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
-async def test_managermethod_events_for_ask():
+async def test_events_ask():
     tm = TranscriptManager()
 
     user_q = "📝 What did Alice say to Bob yesterday?"  # unique text

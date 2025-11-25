@@ -9,7 +9,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.unit
 @_handle_project
-def test_message_json_shorthand_aliases_keys_no_prune():
+def test_json_shorthand_no_prune():
     msg = Message(
         medium="email",
         sender_id=7,
@@ -43,7 +43,7 @@ def test_message_json_shorthand_aliases_keys_no_prune():
 
 @pytest.mark.unit
 @_handle_project
-def test_message_json_shorthand_with_prune_omits_empty_images():
+def test_json_shorthand_prune_images():
     msg = Message(
         medium="email",
         sender_id=1,

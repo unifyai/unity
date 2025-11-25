@@ -10,7 +10,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
-async def test_lazy_contact_creation_creates_contacts_and_logs_message():
+async def test_creates_contacts_and_logs():
     """Ensure that providing Contact objects lazily creates contacts and logs message with correct IDs."""
     tm = TranscriptManager()
 

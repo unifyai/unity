@@ -24,7 +24,7 @@ def _load_contact_card_png_b64() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_lookup_transcripts_via_image() -> None:
+async def test_lookup_via_image() -> None:
     tm = TranscriptManager()
 
     # Seed transcripts with noise and one message from David Smith

@@ -16,7 +16,7 @@ PNG_1x1_BLUE = make_solid_png_base64(8, 8, (0, 0, 255))
 
 @pytest.mark.unit
 @_handle_project
-def test_images_schema_and_roundtrip():
+def test_schema_roundtrip():
     tm = TranscriptManager()
 
     refs = AnnotatedImageRefs.model_validate(
@@ -65,7 +65,7 @@ def test_images_schema_and_roundtrip():
 
 @pytest.mark.unit
 @_handle_project
-def test_images_accepts_annotated_refs_only():
+def test_accepts_annotated_refs_only():
     refs = AnnotatedImageRefs.model_validate(
         [
             AnnotatedImageRef(
@@ -85,7 +85,7 @@ def test_images_accepts_annotated_refs_only():
 
 @pytest.mark.unit
 @_handle_project
-def test_images_roundtrip_annotated_only():
+def test_roundtrip_annotated_only():
     m = Message(
         medium="sms_message",
         sender_id=1,
@@ -107,7 +107,7 @@ def test_images_roundtrip_annotated_only():
 
 @pytest.mark.unit
 @_handle_project
-def test_transcripts_images_field_schema_is_nested_and_enforced_tm():
+def test_images_field_schema_enforced():
     tm = TranscriptManager()
 
     # 1) The Transcripts context should expose a nested JSON schema for the images field

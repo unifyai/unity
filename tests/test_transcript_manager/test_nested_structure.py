@@ -7,7 +7,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_flat_transcriptmanager_ask():
+async def test_structure_flat_ask():
     """
     Verify a flat, in‑flight TranscriptManager.ask loop reports a minimal structure.
     """
