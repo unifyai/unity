@@ -6,7 +6,7 @@ from unity.web_searcher.web_searcher import WebSearcher
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_real_services_invokes_search_tool():
+async def test_ask_invokes_search_tool():
     """
     Use real WebSearcher.ask, Tavily, and async tool loop. Verify that at least
     one `search` tool call was made by inspecting the conversation history.
@@ -25,7 +25,7 @@ async def test_ask_real_services_invokes_search_tool():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_with_reasoning_steps_wrapper_real():
+async def test_ask_with_reasoning_steps_wrapper():
     """
     With _return_reasoning_steps=True, the real handle.result() should return
     (answer, messages) where messages is the model transcript.
@@ -43,7 +43,7 @@ async def test_ask_with_reasoning_steps_wrapper_real():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_with_parent_context_real():
+async def test_ask_with_parent_context():
     """
     Provide a parent chat context and ensure the call succeeds and history is present.
     """
@@ -68,7 +68,7 @@ async def test_ask_with_parent_context_real():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_with_response_format_real():
+async def test_ask_with_response_format():
     """Verify structured output by providing a Pydantic response_format."""
     from pydantic import BaseModel, Field
 
@@ -87,7 +87,7 @@ async def test_ask_with_response_format_real():
 
 
 @pytest.mark.unit
-def test_web_searcher_clear_initialises_and_resets_caches():
+def test_clear_initialises_and_resets_caches():
     """
     Ensure WebSearcher.clear flushes internal caches and keeps them provisioned.
     Mirrors the ContactManager clear test style by verifying state before/after.
