@@ -143,7 +143,7 @@ class FunctionManager(BaseFunctionManager):
             self = unify.traced(self)
 
         # ------------------------------------------------------------------ #
-        #  File system mirroring (functions folder under FileManager tmp)     #
+        #  File system mirroring (functions folder under FileManager root)    #
         # ------------------------------------------------------------------ #
         try:
             # Resolve a FileManager instance (DI preferred)
@@ -156,15 +156,12 @@ class FunctionManager(BaseFunctionManager):
         self._functions_dir: Optional[Path] = None
         if self._fm is not None:
             try:
-                # Create <tmp>/functions
-                tmp_dir = getattr(self._fm, "_tmp_dir", None)
-                if tmp_dir is None:
-                    import tempfile
+                # Access adapter root directly (LocalFileSystemAdapter._root)
+                adapter = getattr(self._fm, "_adapter", None)
+                root_dir = getattr(adapter, "_root", None) if adapter else None
 
-                    tmp_dir = Path(tempfile.mkdtemp(prefix="unity_functions_"))
-
-                if isinstance(tmp_dir, Path):
-                    functions_dir = tmp_dir / "functions"
+                if root_dir is not None and isinstance(root_dir, Path):
+                    functions_dir = root_dir / "functions"
                     functions_dir.mkdir(parents=True, exist_ok=True)
                     self._functions_dir = functions_dir
                     # Bootstrap: mirror existing functions from context to disk (idempotent)
