@@ -15,7 +15,7 @@ PNG_1x1_GREEN = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8
 
 @pytest.mark.unit
 @_handle_project
-def test_function_manager_fetch_guidance_for_function_and_limits():
+def test_fetch_guidance_for_function_and_limits():
     # Seed functions
     fm = FunctionManager()
     src_a = "def alpha(x: int) -> int:\n    return x + 1\n"
@@ -50,7 +50,7 @@ def test_function_manager_fetch_guidance_for_function_and_limits():
 
 @pytest.mark.unit
 @_handle_project
-def test_function_manager_image_handles_and_attachment():
+def test_image_handles_and_attachment():
     # Seed one image
     im = ImageManager()
     [img_id] = im.add_images(

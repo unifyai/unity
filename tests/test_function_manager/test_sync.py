@@ -10,7 +10,7 @@ from unity.file_manager.managers.local import LocalFileManager as FileManager
 
 @_handle_project
 @pytest.mark.unit
-def test_filesystem_mirror_is_registered_on_add(tmp_path):
+def test_filesystem_mirror_is_registered(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     fm_files = FileManager(root=root.as_posix())
@@ -34,7 +34,7 @@ def test_filesystem_mirror_is_registered_on_add(tmp_path):
 
 @_handle_project
 @pytest.mark.unit
-def test_function_files_are_protected_and_visible_via_file_manager(tmp_path):
+def test_files_are_protected_and_visible(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     fm_files = FileManager(root=root.as_posix())
@@ -52,7 +52,7 @@ def test_function_files_are_protected_and_visible_via_file_manager(tmp_path):
 
 @_handle_project
 @pytest.mark.unit
-def test_sync_from_disk_updates_unify_record(tmp_path):
+def test_sync_from_disk(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     fm_files = FileManager(root=root.as_posix())

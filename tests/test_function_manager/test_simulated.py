@@ -11,7 +11,7 @@ from unity.function_manager.simulated import SimulatedFunctionManager
 # --------------------------------------------------------------------------- #
 
 
-def test_simulated_fm_docstrings_match_base():
+def test_docstrings_match_base():
     """
     Public methods in SimulatedFunctionManager should copy the real
     BaseFunctionManager doc-strings one-for-one (via functools.wraps).
@@ -37,7 +37,7 @@ def test_simulated_fm_docstrings_match_base():
 
 @_handle_project
 @pytest.mark.unit
-def test_sim_fm_add_functions_accepts_single_and_multiple():
+def test_add_functions_accepts_single_and_multiple():
     fm = SimulatedFunctionManager()
 
     # single implementation
@@ -63,7 +63,7 @@ def test_sim_fm_add_functions_accepts_single_and_multiple():
 
 @_handle_project
 @pytest.mark.unit
-def test_sim_fm_list_functions_with_and_without_implementations():
+def test_list_functions_with_and_without_implementations():
     fm = SimulatedFunctionManager()
 
     listing = fm.list_functions()
@@ -89,7 +89,7 @@ def test_sim_fm_list_functions_with_and_without_implementations():
 
 @_handle_project
 @pytest.mark.unit
-def test_sim_fm_get_precondition_returns_none():
+def test_get_precondition_returns_none():
     fm = SimulatedFunctionManager()
     assert fm.get_precondition(function_name="does_not_matter") is None
 
@@ -101,7 +101,7 @@ def test_sim_fm_get_precondition_returns_none():
 
 @_handle_project
 @pytest.mark.unit
-def test_sim_fm_delete_function_acknowledges():
+def test_delete_function_acknowledges():
     fm = SimulatedFunctionManager()
     ack = fm.delete_function(function_id=42, delete_dependents=True)
     assert isinstance(ack, dict) and ack
@@ -117,7 +117,7 @@ def test_sim_fm_delete_function_acknowledges():
 
 @_handle_project
 @pytest.mark.unit
-def test_sim_fm_search_functions_returns_list_of_dicts():
+def test_search_functions_returns_list_of_dicts():
     fm = SimulatedFunctionManager()
     hits = fm.search_functions(filter="'price' in docstring")
     assert isinstance(hits, list) and hits
@@ -134,7 +134,7 @@ def test_sim_fm_search_functions_returns_list_of_dicts():
 
 @_handle_project
 @pytest.mark.unit
-def test_sim_fm_search_functions_by_similarity_bounds_and_shape():
+def test_search_functions_by_similarity_bounds_and_shape():
     fm = SimulatedFunctionManager()
     n = 2
     sims = fm.search_functions_by_similarity(query="add numbers", n=n)
@@ -152,7 +152,7 @@ def test_sim_fm_search_functions_by_similarity_bounds_and_shape():
 
 @_handle_project
 @pytest.mark.unit
-def test_simulated_clear_sync():
+def test_clear_sync():
     """
     SimulatedFunctionManager.clear should reset the manager (hard-coded completion)
     and remain usable afterwards.

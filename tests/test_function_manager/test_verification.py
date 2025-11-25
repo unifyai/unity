@@ -9,7 +9,7 @@ from unity.function_manager.function_manager import FunctionManager
 
 @_handle_project
 @pytest.mark.unit
-def test_add_function_default_verify():
+def test_add_default_verify():
     """Test that functions have verify=True by default."""
     fm = FunctionManager()
     src = "def default_verify_func():\n    pass\n"
@@ -22,7 +22,7 @@ def test_add_function_default_verify():
 
 @_handle_project
 @pytest.mark.unit
-def test_add_function_explicit_verify_true():
+def test_add_explicit_verify_true():
     """Test explicitly setting verify=True."""
     fm = FunctionManager()
     src = "def explicit_verify_true():\n    pass\n"
@@ -34,7 +34,7 @@ def test_add_function_explicit_verify_true():
 
 @_handle_project
 @pytest.mark.unit
-def test_add_function_explicit_verify_false():
+def test_add_explicit_verify_false():
     """Test explicitly setting verify=False."""
     fm = FunctionManager()
     src = "def explicit_verify_false():\n    pass\n"
@@ -46,7 +46,7 @@ def test_add_function_explicit_verify_false():
 
 @_handle_project
 @pytest.mark.unit
-def test_update_function_verify():
+def test_update_verify():
     """Test updating the verify status of a function."""
     fm = FunctionManager()
     src = "def update_verify_func():\n    pass\n"
