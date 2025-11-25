@@ -49,6 +49,20 @@ class GuidanceManager(BaseGuidanceManager):
                 fields=model_to_fields(Guidance),
                 unique_keys={"guidance_id": "int"},
                 auto_counting={"guidance_id": None},
+                foreign_keys=[
+                    {
+                        "name": "images[*].raw_image_ref.image_id",
+                        "references": "Images.image_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "function_ids[*]",
+                        "references": "Functions.function_id", # TODO: change to the actual context
+                        "on_delete": "CASCADE",  # pop on function deletion
+                        "on_update": "CASCADE",
+                    },
+                ],
             ),
         ]
 
