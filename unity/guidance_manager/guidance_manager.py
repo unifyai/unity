@@ -58,7 +58,7 @@ class GuidanceManager(BaseGuidanceManager):
                     },
                     {
                         "name": "function_ids[*]",
-                        "references": "Functions.function_id", # TODO: change to the actual context
+                        "references": "Functions.function_id",  # TODO: change to the actual context
                         "on_delete": "CASCADE",  # pop on function deletion
                         "on_update": "CASCADE",
                     },
@@ -375,20 +375,6 @@ class GuidanceManager(BaseGuidanceManager):
                 "Table of distilled guidance entries from transcripts and images."
             ),
             fields=model_to_fields(Guidance),
-            foreign_keys=[
-                {
-                    "name": "images[*].raw_image_ref.image_id",
-                    "references": f"{self._ctx.replace("Guidance", "Images")}.image_id",
-                    "on_delete": "SET NULL",
-                    "on_update": "CASCADE",
-                },
-                {
-                    "name": "function_ids[*]",
-                    "references": f"{self._ctx.replace("Guidance", "Functions")}.function_id",
-                    "on_delete": "CASCADE",  # pop on function deletion
-                    "on_update": "CASCADE",
-                },
-            ],
         )
 
         # Prefill known custom fields once to include any preexisting non-private columns
