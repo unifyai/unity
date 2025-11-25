@@ -11,7 +11,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_window_cache_is_faster():
+async def test_cache_is_faster():
     """When more than *window* events are published, the oldest should fall off."""
     window = 3
     bus = EventBus()

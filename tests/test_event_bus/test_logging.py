@@ -106,7 +106,7 @@ class _PrivateAttrHandle(SteerableToolHandle):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_manager_logging_sanitizes_iterable_answer_to_string():
+async def test_sanitizes_iterable_answer():
     inner = _TupleAnswerHandle()
     call_id = new_call_id()
     logged = wrap_handle_with_logging(inner, call_id, "UnitTestManager", "ask")
@@ -238,7 +238,7 @@ class _CustomArgsHandle(SteerableToolHandle):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_wrapper_forwards_custom_ask_kwargs():
+async def test_forwards_custom_ask_kwargs():
     """ask() kwargs should pass through the logging wrapper to the inner handle."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
@@ -250,7 +250,7 @@ async def test_logged_wrapper_forwards_custom_ask_kwargs():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_wrapper_preserves_write_only_method_passthrough():
+async def test_preserves_write_only_passthrough():
     """Unknown attributes should be proxied via __getattr__; abort() should work."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(
@@ -268,7 +268,7 @@ async def test_logged_wrapper_preserves_write_only_method_passthrough():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_wrapper_stop_invokes_inner_and_records_reason():
+async def test_stop_invokes_inner():
     """Wrapper stop() should successfully invoke inner stop with reason."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(
@@ -287,7 +287,7 @@ async def test_logged_wrapper_stop_invokes_inner_and_records_reason():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_wrapper_interject_forwards_custom_kwargs():
+async def test_interject_forwards_kwargs():
     """Interject kwargs should be forwarded; current wrapper passes only images kw (expected to fail)."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
@@ -299,7 +299,7 @@ async def test_logged_wrapper_interject_forwards_custom_kwargs():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_wrapper_pause_resume_forward_kwargs():
+async def test_pause_resume_forward_kwargs():
     """Pause/Resume kwargs should be forwarded; current wrapper drops them (expected to fail)."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(
@@ -321,7 +321,7 @@ async def test_logged_wrapper_pause_resume_forward_kwargs():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_handle_reports_same_class_name():
+async def test_handle_reports_same_class():
     """Proxy should present the same class via __class__ spoofing for reflection."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
@@ -333,7 +333,7 @@ async def test_logged_handle_reports_same_class_name():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_handle_includes_all_inner_methods():
+async def test_handle_includes_all_inner_methods():
     """All public callables on the inner handle must be present and callable on the proxy."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
@@ -353,7 +353,7 @@ async def test_logged_handle_includes_all_inner_methods():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_handle_preserves_doc_and_signature_for_unwrapped_methods():
+async def test_preserves_doc_for_unwrapped():
     """For methods not overridden by the proxy, docstrings and signatures should match exactly."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
@@ -388,7 +388,7 @@ async def test_logged_handle_preserves_doc_and_signature_for_unwrapped_methods()
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_handle_doc_and_signature_match_for_overridden_methods():
+async def test_doc_match_for_overridden():
     """Overridden methods should also mirror doc/signature (current behavior expected to fail)."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")
@@ -405,7 +405,7 @@ async def test_logged_handle_doc_and_signature_match_for_overridden_methods():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_wrapper_logs_custom_method_calls():
+async def test_logs_custom_method_calls():
     """Custom async handle methods should emit ManagerMethod events with action=method name."""
     inner = _CustomArgsHandle()
     logged = wrap_handle_with_logging(
@@ -438,7 +438,7 @@ async def test_logged_wrapper_logs_custom_method_calls():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_logged_wrapper_forwards_private_attributes():
+async def test_forwards_private_attributes():
     """Private (single-underscore) and dunder attributes must be forwarded to the inner handle."""
     inner = _PrivateAttrHandle()
     logged = wrap_handle_with_logging(inner, new_call_id(), "UnitTestManager", "ask")

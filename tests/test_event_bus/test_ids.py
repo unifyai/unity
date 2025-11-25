@@ -1,4 +1,4 @@
-# tests/test_event_bus_ids.py
+# tests/test_ids.py
 #
 # Verifies that every Event published through EventBus
 # (a) always carries a non-empty, unique `event_id` and
@@ -32,7 +32,7 @@ class DummyPayload(BaseModel):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_event_ids_are_populated_and_unique() -> None:
+async def test_populated_and_unique() -> None:
     """
     • EventBus.publish must *not* leave `event_id` blank.
     • Every call produces a **new** event_id.
