@@ -6,7 +6,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_function_embedding_and_similarity_search():
+def test_embedding_and_similarity_search():
     """
     Tests that function embeddings are created and that semantic search
     can find functions by similarity.
