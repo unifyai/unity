@@ -25,7 +25,7 @@ from tests.helpers import (
 # ────────────────────────────────────────────────────────────────────────────
 # 0.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_ws_docstrings_match_base():
+def test_docstrings_match_base():
     """
     Public methods in SimulatedWebSearcher should copy the real
     BaseWebSearcher doc-strings one-for-one (via functools.wraps).
@@ -48,7 +48,7 @@ def test_simulated_ws_docstrings_match_base():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_ws():
+async def test_start_and_ask():
     ws = SimulatedWebSearcher("Demo web-search for unit-tests.")
     h = await ws.ask("What happened in vector DBs in Q1 2025?")
     answer = await h.result()
@@ -60,7 +60,7 @@ async def test_start_and_ask_simulated_ws():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_ws_stateful_memory_serial_asks():
+async def test_stateful_memory_serial_asks():
     """
     Two consecutive .ask() calls share context because the manager keeps a
     stateful LLM.
@@ -89,7 +89,7 @@ async def test_ws_stateful_memory_serial_asks():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_interject(monkeypatch):
+async def test_interject(monkeypatch):
     calls = {"interject": 0}
     orig = _SimulatedWebSearcherHandle.interject
 
@@ -119,7 +119,7 @@ async def test_handle_interject(monkeypatch):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_stop():
+async def test_stop():
     ws = SimulatedWebSearcher()
     h = await ws.ask("Generate a long market analysis.")
     await asyncio.sleep(0.05)
@@ -133,7 +133,7 @@ async def test_handle_stop():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_requests_clarification():
+async def test_requests_clarification():
     ws = SimulatedWebSearcher()
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
@@ -162,7 +162,7 @@ async def test_handle_requests_clarification():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_pause_and_resume(monkeypatch):
+async def test_pause_and_resume(monkeypatch):
     call_counts = {"pause": 0, "resume": 0}
 
     original_pause = _SimulatedWebSearcherHandle.pause
@@ -216,7 +216,7 @@ async def test_handle_pause_and_resume(monkeypatch):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_ask():
+async def test_nested_ask():
     ws = SimulatedWebSearcher()
 
     handle = await ws.ask("Summarize key research findings.")
@@ -238,7 +238,7 @@ async def test_handle_ask():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_simulated_ask_with_response_format():
+async def test_ask_with_response_format():
     from pydantic import BaseModel, Field
 
     class SimpleSummary(BaseModel):
@@ -257,7 +257,7 @@ async def test_simulated_ask_with_response_format():
 
 @pytest.mark.unit
 @_handle_project
-def test_simulated_web_searcher_clear_reinitialises():
+def test_clear_reinitialises():
     """
     Ensure SimulatedWebSearcher.clear re-runs the constructor (fresh stateful LLM
     and tools mapping stays provisioned).
@@ -298,7 +298,7 @@ async def test_update_basic_completion():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_paused_finishes_immediately_ws():
+async def test_stop_while_paused_finishes_immediately():
     ws = SimulatedWebSearcher()
     h = await ws.ask("Generate a very long market report.")
     h.pause()
@@ -316,7 +316,7 @@ async def test_stop_while_paused_finishes_immediately_ws():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_waiting_for_clarification_finishes_immediately_ws():
+async def test_stop_while_waiting_for_clarification_finishes_immediately():
     ws = SimulatedWebSearcher()
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()

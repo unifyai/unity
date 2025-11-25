@@ -8,7 +8,7 @@ from tests.test_async_tool_loop.async_helpers import _wait_for_condition
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_web_nested_steer_interject_reaches_inner_ask():
+async def test_nested_steer_interject_reaches_inner_ask():
     """
     Verify that nested_steer can target the inner WebSearcher.ask loop within
     an update→ask nested configuration and that an interjection is delivered to

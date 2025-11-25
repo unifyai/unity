@@ -42,7 +42,7 @@ def test_websites_create_filter_search_delete():
 
 @pytest.mark.unit
 @_handle_project
-def test_web_searcher_clear_resets_websites():
+def test_clear_resets_websites():
     ws = WebSearcher()
     ws._create_website(
         name="Example",
