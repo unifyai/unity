@@ -309,6 +309,7 @@ async def test_async_tool_loop_can_call_append_to_queue_helper():
     # Localized imports to mirror other async tool loop tests
     import unify  # type: ignore
     from unity.common.async_tool_loop import start_async_tool_loop
+    from unity.common.llm_client import new_llm_client
     from tests.helpers import SETTINGS  # reuse cache/tracing settings
     from tests.test_async_tool_loop.async_helpers import (  # wait helpers
         _wait_for_tool_request,
@@ -331,13 +332,7 @@ async def test_async_tool_loop_can_call_append_to_queue_helper():
         return await ts.execute(task_id=task_id)
 
     # LLM client configured like other async tool loop tests
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
 
     # Clear, step-by-step instructions to the model:
     #  1) call `scheduler_execute(task_id=a_id)`

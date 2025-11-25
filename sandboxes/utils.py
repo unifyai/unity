@@ -52,7 +52,7 @@ import struct
 from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 import argparse
-from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from pydantic import BaseModel, Field
 
 # Added for direct logging of generated messages
@@ -1303,10 +1303,9 @@ async def _route_freeform_and_apply(
     chat_context: Optional[list[dict]] = None,
     is_task_running: Optional[bool] = None,
 ) -> bool:
-    import unify as _unify
+    pass
 
-    judge = _unify.Unify(
-        "gpt-5@openai",
+    judge = new_llm_client(
         response_format=_SteeringIntent,
     )
 
@@ -1343,7 +1342,7 @@ async def _route_freeform_and_apply(
     )
 
     intent = _SteeringIntent.model_validate_json(
-        judge.set_system_message(_steering_router_sys()).generate(router_input),
+        await judge.set_system_message(_steering_router_sys()).generate(router_input),
     )
 
     # Prefer passing the user's full utterance as the stop reason when a reason is detected.
@@ -2035,7 +2034,7 @@ class TranscriptGenerator:
     def __init__(
         self,
         *,
-        endpoint: str = "gpt-5@openai",
+        endpoint: str = DEFAULT_MODEL,
         traced: bool = True,
         stateful: bool = True,
         in_conversation_manager: bool = False,
@@ -2982,7 +2981,7 @@ class _SimOverrides(BaseModel):
     rules: List[_SimOverrideRule] = Field(default_factory=list)
 
 
-def parse_simulation_overrides(text: str) -> _SimOverrides:
+async def parse_simulation_overrides(text: str) -> _SimOverrides:
     """LLM-only unified parser for defaults and per-task overrides.
 
     Returns a structured payload that captures both defaults and a set of
@@ -2997,7 +2996,6 @@ def parse_simulation_overrides(text: str) -> _SimOverrides:
       controls (timeouts, steps, ordered timing for tasks), keeping only the
       task request itself.
     """
-    import unify as _unify
 
     sys_msg = (
         "You extract simulation overrides for starting a task/chain.\n"
@@ -3010,14 +3008,9 @@ def parse_simulation_overrides(text: str) -> _SimOverrides:
         "- defaults params (when present) apply to all tasks unless overridden by a rule's params.\n"
     )
 
-    judge = _unify.Unify(
-        "gpt-5@openai",
-        response_format=_SimOverrides,
-        reasoning_effort="high",
-        service_tier="priority",
-    )
+    judge = new_llm_client(response_format=_SimOverrides)
     payload = _SimOverrides.model_validate_json(
-        judge.set_system_message(sys_msg).generate(text),
+        await judge.set_system_message(sys_msg).generate(text),
     )
     return payload
 

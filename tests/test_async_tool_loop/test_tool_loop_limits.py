@@ -6,7 +6,7 @@ from typing import Dict, Callable
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.tool_spec import ToolSpec
-from unity.common.llm_client import new_llm_client
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 
 
 # small helper: pre-seed an assistant tool_call so preflight backfill schedules it immediately
@@ -313,7 +313,7 @@ async def test_max_steps_graceful_termination():
 # 5. tool_policy behaviour
 # ─────────────────────────────────────────────────────────────────────────────
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
 def new_client() -> unify.AsyncUnify:

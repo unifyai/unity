@@ -8,8 +8,11 @@ from typing import Any
 import unify
 
 
+DEFAULT_MODEL = "gpt-5@openai"
+
+
 def new_llm_client(
-    model: str = "gpt-5@openai",
+    model: str = DEFAULT_MODEL,
     *,
     stateful: bool = False,
     **kwargs: Any,

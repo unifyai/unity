@@ -3,9 +3,7 @@ from __future__ import annotations
 from typing import List, Dict, Optional, Callable, Any, Tuple
 import base64
 import asyncio
-import json
 import functools
-import os
 import re
 
 import unify
@@ -14,6 +12,7 @@ from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
+from ..common.llm_client import new_llm_client
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
@@ -120,7 +119,7 @@ class GuidanceManager(BaseGuidanceManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("ask"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
@@ -211,7 +210,7 @@ class GuidanceManager(BaseGuidanceManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("update"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
@@ -338,15 +337,6 @@ class GuidanceManager(BaseGuidanceManager):
                     _time.sleep(0.05)
         except Exception:
             pass
-
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
 
     def _provision_storage(self) -> None:
         """Ensure Guidance context, schema, and custom-field bookkeeping exist."""

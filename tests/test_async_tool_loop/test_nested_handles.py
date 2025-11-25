@@ -2,7 +2,6 @@ import pytest
 import time
 import json
 import asyncio
-import unify
 import threading
 
 from unity.common.async_tool_loop import (
@@ -11,7 +10,7 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
 )
 from unity.common.tool_spec import ToolSpec
-from tests.helpers import SETTINGS, _handle_project
+from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
@@ -1028,13 +1027,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     inner_long_job.__qualname__ = "inner_long_job"
 
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
@@ -1060,13 +1053,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
@@ -1114,13 +1101,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     inner_long_job.__qualname__ = "inner_long_job"
 
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
@@ -1145,13 +1126,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
@@ -1199,13 +1174,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     inner_long_job.__qualname__ = "inner_long_job"
 
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
@@ -1236,13 +1205,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
