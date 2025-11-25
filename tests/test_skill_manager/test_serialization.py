@@ -53,7 +53,7 @@ def _assert_dict_subset(expected: dict, actual: dict):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_serialize_flat_skillmanager_ask():
+async def test_serialize_flat_ask():
     """
     Verify a flat SkillManager.ask snapshot contains the expected minimal shape.
     We assert a human‑readable subset that makes the serialized structure clear.
@@ -103,7 +103,7 @@ async def test_serialize_flat_skillmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_skill_ask_with_interjection():
+async def test_deserialize_and_continue_ask_with_interjection():
     """
     Start from a flat SkillManager.ask snapshot, resume, add an interjection,
     and verify completion and that the interjection appears once in the transcript.
