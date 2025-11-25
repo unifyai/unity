@@ -19,7 +19,6 @@ from typing import (
 from ..constants import LOGGER, SESSION_ID
 from .llm_helpers import short_id
 from .llm_helpers import canonicalize_handle_class_name as _canon_handle_name
-from .llm_client import new_llm_client
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.messages import is_non_final_tool_reply as _is_non_final_tool_reply
@@ -524,6 +523,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # 2.  Prepare an *in-memory* Unify client for the **inspection** loop
         #     (LLM sees only the system header + follow-up user question).
+        from .llm_client import new_llm_client
+
         inspection_client = new_llm_client()
         inspection_client.set_system_message(
             "You are inspecting a running tool-use conversation. The entire "
