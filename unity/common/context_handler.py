@@ -68,7 +68,7 @@ class ContextHandler:
         from unity.secret_manager.secret_manager import SecretManager
         from unity.web_searcher.web_searcher import WebSearcher
         from unity.image_manager.image_manager import ImageManager
-        from unity.file_manager.file_manager import FileManager
+        from unity.file_manager.managers.file_manager import FileManager
         from unity.function_manager.function_manager import FunctionManager
 
         return [
