@@ -231,7 +231,7 @@ async def test_nested_structure_reports_child_tool_and_handle():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_reports_deep_hierarchy_via_task_info():
+async def test_nested_structure_reports_deep_hierarchy():
     nested = NestedHandle()
 
     async def Outer_spawn():  # type: ignore[valid-type]
