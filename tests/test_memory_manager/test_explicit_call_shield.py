@@ -21,7 +21,7 @@ from unity.transcript_manager.types.medium import Medium
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_explicit_conversation_manager_calls_are_visible_in_passive_chunk(
+async def test_explicit_calls_visible_in_passive_chunk(
     monkeypatch,
 ):
     """A ConversationManager-originated explicit tool call should appear in the

@@ -19,7 +19,7 @@ PNG_RED_B64 = make_solid_png_base64(8, 8, (255, 0, 0))
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
-async def test_auto_caption_sync_sets_caption_and_persists(monkeypatch):
+async def test_sync_sets_caption_and_persists(monkeypatch):
     im = ImageManager()
 
     async def _fake_ask(self: ImageHandle, question: str) -> str:
@@ -60,7 +60,7 @@ async def test_auto_caption_sync_sets_caption_and_persists(monkeypatch):
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
-async def test_auto_caption_pending_sets_caption_then_persists_after_resolution(
+async def test_pending_sets_caption_then_persists_after_resolution(
     monkeypatch,
 ):
     im = ImageManager()

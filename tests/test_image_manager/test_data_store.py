@@ -247,7 +247,7 @@ def test_image_handle_raw_caches_gcs_download(monkeypatch):
 
 @pytest.mark.unit
 @_handle_project
-def test_image_manager_clear_empties_data_store():
+def test_clear_empties_data_store():
     im = ImageManager()
     ds = DataStore.for_context(im._ctx, key_fields=("image_id",))
 

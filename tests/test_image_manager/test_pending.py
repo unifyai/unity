@@ -136,7 +136,7 @@ def test_update_metadata_while_pending_reflects_locally():
 
 @pytest.mark.unit
 @_handle_project
-def test_manager_is_pending_id_and_resolution():
+def test_is_pending_id_and_resolution():
     im = ImageManager()
 
     [staged] = im.add_images(

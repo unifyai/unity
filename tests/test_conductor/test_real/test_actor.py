@@ -31,7 +31,7 @@ SANDBOX_REQUEST: str = (
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_real_conductor_actor_request_routes_to_actor_not_task(monkeypatch):
+async def test_request_routes_to_actor(monkeypatch):
     """
     Validate Conductor.request routes sandbox-like requests to Actor.act (real actor),
     and does not execute TaskScheduler.execute. The test stops the actor early after
@@ -114,7 +114,7 @@ async def wait_for_state(task: HierarchicalPlan, expected_state, timeout=60, pol
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_real_conductor_manages_actor_lifecycle_jit_and_interjection(monkeypatch):
+async def test_manages_lifecycle_jit_interjection(monkeypatch):
     """
     Validates that the Conductor can manage a real HierarchicalActor plan
     through its full lifecycle: JIT implementation, interjection handling,
@@ -365,7 +365,7 @@ async def test_real_conductor_manages_actor_lifecycle_jit_and_interjection(monke
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_real_conductor_multiple_interjections_passthrough_reasoning(monkeypatch):
+async def test_multiple_interjections_passthrough(monkeypatch):
     """
     Validates that multiple user interjections are handled via passthrough:
     - The Actor plan applies both modifications and replays from cache
@@ -589,7 +589,7 @@ async def test_real_conductor_multiple_interjections_passthrough_reasoning(monke
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_real_conductor_interject_mid_think_no_duplicate_helpers(monkeypatch):
+async def test_interject_mid_think_no_duplicates(monkeypatch):
     """
     Ensures interjection during Conductor "mid-think" does not cause duplicate helpers:
     - Interjection is forwarded directly to the Actor via passthrough immediately
@@ -770,7 +770,7 @@ async def test_real_conductor_interject_mid_think_no_duplicate_helpers(monkeypat
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_real_conductor_actor_clarification_passthrough(monkeypatch):
+async def test_clarification_passthrough(monkeypatch):
     """
     Verifies clarification flows through Conductor to the Actor and back:
     - The plan calls request_clarification and surfaces a question via the Conductor handle
@@ -877,7 +877,7 @@ async def test_real_conductor_actor_clarification_passthrough(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_real_conductor_actor_handle_ask_passthrough(monkeypatch):
+async def test_handle_ask_passthrough(monkeypatch):
     """
     Verifies outer handle.ask passthrough to the live Actor plan:
     - Start Actor session via Conductor.request

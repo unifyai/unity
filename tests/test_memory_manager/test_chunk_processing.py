@@ -41,7 +41,7 @@ from unity.transcript_manager.types.medium import Medium
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_memory_manager_parse_transcript_for_updates(monkeypatch):
+async def test_parse_transcript_for_updates(monkeypatch):
     """Publishing *three* messages should trigger exactly **one** maintenance
     cycle comprising:
 
