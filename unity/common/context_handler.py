@@ -80,7 +80,7 @@ class ContextHandler:
             GuidanceManager,
             SecretManager,
             WebSearcher,
-            FileManager,
+            # FileManager,
             FunctionManager,
         ]
 
