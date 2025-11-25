@@ -432,7 +432,7 @@ class TaskScheduler(BaseTaskScheduler):
         ] = "default",
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
-        client = new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self.get_tools("ask"))
@@ -512,7 +512,7 @@ class TaskScheduler(BaseTaskScheduler):
         ] = "default",
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
-        client = new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self.get_tools("update"))

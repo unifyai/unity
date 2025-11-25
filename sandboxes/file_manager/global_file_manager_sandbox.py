@@ -31,6 +31,7 @@ load_dotenv()
 import unify
 from pydantic import BaseModel, Field
 from sandboxes.scenario_builder import ScenarioBuilder
+from unity.common.llm_client import new_llm_client
 
 # Ensure repository root resolves for local execution
 ROOT = Path(__file__).resolve().parents[2]
@@ -316,9 +317,9 @@ async def _dispatch_with_context(
         return ("organize" if cmd == "gorganize" else "ask"), handle, cu, cd
 
     # Fallback to natural-language intent for global ask/organize
-    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
+    judge = new_llm_client(response_format=_Intent)
     intent = _Intent.model_validate_json(
-        judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
+        await judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
     fn = gfm.organize if intent.action == "organize" else gfm.ask
     handle, clar_up_q, clar_down_q = await call_manager_with_optional_clarifications(

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import threading
 from typing import Any, Dict, List, Optional, Type
 from pydantic import BaseModel
 
 import unify
 from .prompt_builders import build_ask_prompt, build_simulated_method_prompt
+from ..common.llm_client import new_llm_client
 from ..common.simulated import (
     mirror_web_searcher_tools,
     SimulatedLineage,
@@ -255,14 +254,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         self._ask_tools = mirror_web_searcher_tools()
 
         # Stateful async LLM
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        self._llm = new_llm_client(stateful=True)
 
         # Reference the real prompt as context (no real tools here)
         ask_msg = build_ask_prompt(tools=self._ask_tools)
@@ -309,13 +301,7 @@ class SimulatedWebSearcher(BaseWebSearcher):
         # with the same system message to return structured output.
         llm_for_handle = self._llm
         if response_format is not None:
-            schema_llm = unify.AsyncUnify(
-                "gpt-5@openai",
-                reasoning_effort="high",
-                service_tier="priority",
-                cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-                traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            )
+            schema_llm = new_llm_client()
             # Mirror the stateful system message for continuity
             try:
                 schema_llm.set_system_message(getattr(self._llm, "system_message"))

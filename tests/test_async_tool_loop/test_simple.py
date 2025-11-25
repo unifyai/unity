@@ -28,7 +28,7 @@ import asyncio
 import os
 import time
 from tests.helpers import _handle_project, SETTINGS
-from unity.common.llm_client import new_llm_client
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
 import pytest
@@ -148,7 +148,7 @@ async def test_concurrent_tools_waits_for_all_results():
 
     # Manually constructing to support inheritance, but mirroring new_llm_client defaults
     client = InstrumentedClient(
-        os.getenv("UNIFY_MODEL", "gpt-5@openai"),
+        os.getenv("UNIFY_MODEL", DEFAULT_MODEL),
         reasoning_effort="high",
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,

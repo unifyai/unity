@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional, Union
 import unify
 from .base import BaseFileManager, BaseGlobalFileManager
 from ..common.async_tool_loop import SteerableToolHandle
+from ..common.llm_client import new_llm_client
 from .prompt_builders import (
     build_file_manager_ask_prompt,
     build_file_manager_ask_about_file_prompt,
@@ -289,14 +290,7 @@ class SimulatedFileManager(BaseFileManager):
         self._next_file_id = 1
 
         # Shared, *stateful* **asynchronous** LLM
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        self._llm = new_llm_client(stateful=True)
 
         # Mirror the real file manager's tool exposure programmatically
         try:

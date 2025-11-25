@@ -27,6 +27,7 @@ load_dotenv()
 import unify
 from pydantic import BaseModel, Field
 from sandboxes.scenario_builder import ScenarioBuilder
+from unity.common.llm_client import new_llm_client
 
 # Ensure repository root resolves for local execution
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,16 +108,11 @@ _SIM_PARSER_SYS = (
 )
 
 
-def _parse_simulation_config(text: str) -> _SimConfig:
+async def _parse_simulation_config(text: str) -> _SimConfig:
     try:
-        judge = unify.Unify(
-            "gpt-5@openai",
-            response_format=_SimConfig,
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        judge = new_llm_client(response_format=_SimConfig)
         parsed = _SimConfig.model_validate_json(
-            judge.set_system_message(_SIM_PARSER_SYS).generate(text),
+            await judge.set_system_message(_SIM_PARSER_SYS).generate(text),
         )
         # Trust the LLM for sentence/phrase removal per system prompt guidance.
         core = (parsed.core_text or text).strip()
@@ -183,7 +179,7 @@ async def _build_scenario(custom: Optional[str] = None) -> Optional[str]:
 
     # Allow scenario descriptions to include default simulation controls (steps/timeout)
     try:
-        parsed = _parse_simulation_config(description)
+        parsed = await _parse_simulation_config(description)
         # Update global defaults if provided
         if parsed.steps is not None:
             _DEFAULT_SIM_STEPS = int(parsed.steps)
@@ -302,13 +298,9 @@ async def _dispatch_with_context(
     """
 
     # LLM-only routing
-    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
-    judge = unify.Unify(
-        "gpt-5@openai",
-        response_format=_Intent,
-    )
+    judge = new_llm_client(response_format=_Intent)
     intent = _Intent.model_validate_json(
-        judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
+        await judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
 
     # Immediate terminal confirmation of selected method
@@ -338,7 +330,7 @@ async def _dispatch_with_context(
         )
     elif intent.action == "start":
         # Unified overrides (defaults + rules)
-        overrides = parse_simulation_overrides(raw)
+        overrides = await parse_simulation_overrides(raw)
         core_text = overrides.core_text if overrides.core_text else raw
 
         eff_steps = (
