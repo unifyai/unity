@@ -15,7 +15,7 @@ from unity.skill_manager.simulated import SimulatedSkillManager
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.  Doc-string inheritance
 # ─────────────────────────────────────────────────────────────────────────────
-def test_simulated_skill_docstrings_match_base():
+def test_docstrings_match_base():
     """
     Public methods in SimulatedSkillManager should copy the real
     BaseSkillManager doc-strings one-for-one (via functools.wraps).
@@ -34,7 +34,7 @@ def test_simulated_skill_docstrings_match_base():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_skill_manager():
+async def test_start_and_ask():
     sm = SimulatedSkillManager("Demo skills catalogue for unit-tests.")
     handle = await sm.ask("List your high-level skills.")
     answer = await handle.result()
@@ -46,7 +46,7 @@ async def test_start_and_ask_simulated_skill_manager():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_return_reasoning_steps_simulated_skill_manager():
+async def test_return_reasoning_steps():
     sm = SimulatedSkillManager()
     handle = await sm.ask(
         "List your high-level skills briefly.",
@@ -62,7 +62,7 @@ async def test_return_reasoning_steps_simulated_skill_manager():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_simulated_skill_manager():
+async def test_interject():
     sm = SimulatedSkillManager("Demo skills catalogue")
     handle = await sm.ask("Give me an overview of your skills.")
     await asyncio.sleep(0.05)
@@ -78,7 +78,7 @@ async def test_interject_simulated_skill_manager():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_simulated_skill_manager():
+async def test_stop():
     sm = SimulatedSkillManager()
     handle = await sm.ask("Produce an exhaustive list of capabilities.")
     await asyncio.sleep(0.05)
@@ -93,7 +93,7 @@ async def test_stop_simulated_skill_manager():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_and_resume_simulated_skill_manager():
+async def test_pause_and_resume():
     sm = SimulatedSkillManager()
     handle = await sm.ask("Summarize skills by domain.")
 
@@ -115,7 +115,7 @@ async def test_pause_and_resume_simulated_skill_manager():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_ask_simulated_skill_manager():
+async def test_handle_ask():
     sm = SimulatedSkillManager()
 
     # Start an initial ask to obtain the live handle
@@ -136,7 +136,7 @@ async def test_handle_ask_simulated_skill_manager():
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_paused_finishes_immediately_skill_manager():
+async def test_stop_while_paused_finishes_immediately():
     sm = SimulatedSkillManager()
     handle = await sm.ask("Generate a very long catalogue overview.")
     handle.pause()

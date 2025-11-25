@@ -29,7 +29,7 @@ ALLOWED_FM_TOOLS = {
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_skill_manager_ask_lists_seeded_functions_and_calls_fm_tools():
+async def test_ask_lists_seeded_functions_and_calls_fm_tools():
     fm = FunctionManager()
     src1 = (
         "def add(a: int, b: int) -> int:\n"
@@ -66,7 +66,7 @@ async def test_skill_manager_ask_lists_seeded_functions_and_calls_fm_tools():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_skill_manager_ask_keyword_search_finds_price_skill():
+async def test_ask_keyword_search_finds_price_skill():
     fm = FunctionManager()
     src1 = (
         "def add(a: int, b: int) -> int:\n"
@@ -100,7 +100,7 @@ async def test_skill_manager_ask_keyword_search_finds_price_skill():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_skill_manager_ask_precondition_fetch_is_used():
+async def test_ask_precondition_fetch_is_used():
     fm = FunctionManager()
     src = (
         "def price_total(p: float, tax: float) -> float:\n"
