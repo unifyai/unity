@@ -19,6 +19,7 @@ from typing import (
 from ..constants import LOGGER, SESSION_ID
 from .llm_helpers import short_id
 from .llm_helpers import canonicalize_handle_class_name as _canon_handle_name
+from .llm_client import new_llm_client
 from ._async_tool.loop_config import TOOL_LOOP_LINEAGE
 from ._async_tool.messages import forward_handle_call
 from ._async_tool.messages import is_non_final_tool_reply as _is_non_final_tool_reply
