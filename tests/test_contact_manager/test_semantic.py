@@ -40,7 +40,7 @@ def _count_tool_calls_in_reasoning(reasoning_steps) -> int:
 
 @_handle_project
 @pytest.mark.asyncio
-async def test_semantic_cache_exact_match_no_extra_tool_calls(
+async def test_cache_exact_match(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """
@@ -95,7 +95,7 @@ async def test_semantic_cache_exact_match_no_extra_tool_calls(
 
 @_handle_project
 @pytest.mark.asyncio
-async def test_semantic_cache_similar_queries_benefit(
+async def test_cache_similar_queries(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """
@@ -148,7 +148,7 @@ async def test_semantic_cache_similar_queries_benefit(
 
 @_handle_project
 @pytest.mark.asyncio
-async def test_semantic_cache_partial_use(
+async def test_cache_partial_use(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """

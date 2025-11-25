@@ -15,7 +15,7 @@ def _get_user_contact(cm: ContactManager):
 
 @pytest.mark.unit
 @_handle_project
-def test_move_to_blacklist_email_only_with_full_name_and_bio():
+def test_email_only():
     cm = ContactManager()
     blm = BlackListManager()
     blm.clear()
@@ -50,7 +50,7 @@ def test_move_to_blacklist_email_only_with_full_name_and_bio():
 
 @pytest.mark.unit
 @_handle_project
-def test_move_to_blacklist_phone_only_without_name_bio():
+def test_phone_only():
     cm = ContactManager()
     blm = BlackListManager()
     blm.clear()
@@ -84,7 +84,7 @@ def test_move_to_blacklist_phone_only_without_name_bio():
 
 @pytest.mark.unit
 @_handle_project
-def test_move_to_blacklist_whatsapp_and_email_with_partial_name():
+def test_whatsapp_and_email():
     cm = ContactManager()
     blm = BlackListManager()
     blm.clear()
@@ -119,7 +119,7 @@ def test_move_to_blacklist_whatsapp_and_email_with_partial_name():
 
 @pytest.mark.unit
 @_handle_project
-def test_move_to_blacklist_no_details():
+def test_no_details():
     cm = ContactManager()
     blm = BlackListManager()
     blm.clear()
@@ -140,7 +140,7 @@ def test_move_to_blacklist_no_details():
 
 @pytest.mark.unit
 @_handle_project
-def test_move_to_blacklist_idempotent_no_duplicates():
+def test_idempotent():
     cm = ContactManager()
     blm = BlackListManager()
     blm.clear()

@@ -58,7 +58,7 @@ def _assert_dict_subset(expected: dict, actual: dict):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_serialize_flat_contactmanager_ask():
+async def test_serialize_flat_ask():
     """
     Verify a flat ContactManager.ask snapshot contains the expected minimal shape.
 
@@ -104,7 +104,7 @@ async def test_serialize_flat_contactmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_serialize_flat_contactmanager_update_before_nested(monkeypatch):
+async def test_serialize_flat_update_before_nested(monkeypatch):
     """
     Verify a flat ContactManager.update snapshot when the first-turn nested ask
     has been requested but not adopted (keeps snapshot flat and non-recursive).
@@ -173,7 +173,7 @@ async def test_serialize_flat_contactmanager_update_before_nested(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_serialize_contactmanager_update_then_ask_nested():
+async def test_serialize_update_then_ask_nested():
     """
     Verify a recursive snapshot for ContactManager.update → ContactManager.ask
     (policy requires 'ask' on the first turn).

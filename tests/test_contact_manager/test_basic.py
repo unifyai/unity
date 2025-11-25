@@ -6,7 +6,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.unit
 @_handle_project
-def test_create_contact():
+def test_create():
     contact_manager = ContactManager()
     contact_manager._create_contact(
         first_name="Dan",
@@ -41,7 +41,7 @@ def test_create_contact():
 
 @pytest.mark.unit
 @_handle_project
-def testupdate_contact():
+def test_update():
     contact_manager = ContactManager()
 
     # create
@@ -82,7 +82,7 @@ def testupdate_contact():
 
 @pytest.mark.unit
 @_handle_project
-def test_create_contacts():
+def test_create_multiple():
     contact_manager = ContactManager()
 
     # first
@@ -131,7 +131,7 @@ def test_create_contacts():
 
 @pytest.mark.unit
 @_handle_project
-def test_search_contacts():
+def test_search():
     contact_manager = ContactManager()
     contact_manager._create_contact(
         first_name="Dan",
@@ -145,7 +145,7 @@ def test_search_contacts():
 
 @pytest.mark.unit
 @_handle_project
-def test_create_and_update_timezone():
+def test_timezone():
     cm = ContactManager()
 
     # Create a regular (non-system) contact
@@ -182,7 +182,7 @@ def test_create_and_update_timezone():
 
 @pytest.mark.unit
 @_handle_project
-def test_system_contacts_respond_to_true():
+def test_system_respond_to():
     """Assistant (id 0) and default user (id 1) should have respond_to == True."""
     cm = ContactManager()
 
@@ -202,7 +202,7 @@ def test_system_contacts_respond_to_true():
 
 @pytest.mark.unit
 @_handle_project
-def test_contact_manager_clear():
+def test_clear():
     cm = ContactManager()
 
     # Seed a couple of user contacts (ids should be > 1)

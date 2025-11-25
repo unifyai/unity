@@ -13,7 +13,7 @@ from tests.helpers import _handle_project
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
 @_handle_project
-def test_delete_contact_private():
+def test_delete_private():
     """Creating a contact programmatically and deleting it via the private helper."""
     cm = ContactManager()
 
@@ -36,7 +36,7 @@ def test_delete_contact_private():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
 @_handle_project
-def test_delete_system_contacts_raises():
+def test_delete_system_raises():
     cm = ContactManager()
 
     # Assistant (0) and default user (1) must not be deletable
@@ -52,7 +52,7 @@ def test_delete_system_contacts_raises():
 @pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
-async def test_update_delete_contact_via_nl():
+async def test_update_delete_via_nl():
     """Ensure the LLM can route a deletion request through _delete_contact."""
     cm = ContactManager()
 
