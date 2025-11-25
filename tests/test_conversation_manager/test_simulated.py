@@ -15,7 +15,7 @@ from tests.helpers import _handle_project
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_cm():
+async def test_start_and_ask():
     cm_handle = SimulatedConversationManagerHandle(
         assistant_id="test_assistant",
         contact_id="test_contact",
@@ -32,7 +32,7 @@ async def test_start_and_ask_simulated_cm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_cm_stateful_memory_serial_asks():
+async def test_stateful_memory_serial_asks():
     """
     Two consecutive .ask() calls should share the same conversation context
     via the stateful LLM.
@@ -63,7 +63,7 @@ async def test_cm_stateful_memory_serial_asks():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_cm_stateful_notification_then_ask():
+async def test_stateful_notification_then_ask():
     """
     A .send_notification() call should influence a subsequent .ask() call.
     """
@@ -93,7 +93,7 @@ async def test_cm_stateful_notification_then_ask():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_cm_description_and_guidance():
+async def test_description_and_guidance():
     """
     Tests that the description and simulation_guidance parameters correctly
     influence the LLM's behavior.
@@ -121,7 +121,7 @@ async def test_cm_description_and_guidance():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_cm_ask_with_structured_output():
+async def test_ask_with_structured_output():
     """
     Tests that the ask() method can correctly parse a response into a Pydantic model.
     """
@@ -163,7 +163,7 @@ async def test_cm_ask_with_structured_output():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_simulated_cm(monkeypatch):
+async def test_interject(monkeypatch):
     """Verify that interject is called and influences the conversation state."""
     cm_handle = SimulatedConversationManagerHandle(
         assistant_id="test_assistant",
@@ -185,7 +185,7 @@ async def test_interject_simulated_cm(monkeypatch):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_simulated_cm():
+async def test_stop():
     cm_handle = SimulatedConversationManagerHandle(
         assistant_id="test_assistant",
         contact_id="test_contact",
@@ -208,7 +208,7 @@ async def test_stop_simulated_cm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_and_resume_simulated_cm(monkeypatch):
+async def test_pause_and_resume(monkeypatch):
     """
     Verify that a SimulatedConversationManagerHandle may be paused and resumed.
     """
@@ -259,7 +259,7 @@ async def test_pause_and_resume_simulated_cm(monkeypatch):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_ask_on_simulated_cm():
+async def test_handle_ask():
     """
     The `ask()` method on the handle should return its own handle, and state should
     be preserved across these interactions.
