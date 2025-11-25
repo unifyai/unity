@@ -11,7 +11,7 @@ from tests.test_async_tool_loop.async_helpers import (
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_flat_taskscheduler_ask():
+async def test_flat_ask():
     """
     Verify a flat, in‑flight TaskScheduler.ask loop reports a minimal structure.
     """
@@ -36,7 +36,7 @@ async def test_nested_structure_flat_taskscheduler_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_taskscheduler_execute():
+async def test_execute():
     """
     Verify TaskScheduler.execute returns an ActiveQueue handle that wraps an ActiveTask,
     and assert the full nested structure directly for readability.
@@ -82,7 +82,7 @@ async def test_nested_structure_taskscheduler_execute():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_flat_taskscheduler_update_before_nested(monkeypatch):
+async def test_flat_update_before_nested(monkeypatch):
     """
     Verify a flat, in‑flight TaskScheduler.update loop reports a minimal structure
     when the first‑turn nested ask has been requested but not yet adopted.
@@ -141,7 +141,7 @@ async def test_nested_structure_flat_taskscheduler_update_before_nested(monkeypa
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_structure_taskscheduler_update_then_ask_nested():
+async def test_update_then_ask_nested():
     """
     Verify a nested structure for TaskScheduler.update → TaskScheduler.ask
     (hard-coded policy requires 'ask' on the first turn).

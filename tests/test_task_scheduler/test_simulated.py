@@ -23,7 +23,7 @@ from tests.helpers import (
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_ts_docstrings_match_base():
+def test_docstrings_match_base():
     """
     Public methods in SimulatedTaskScheduler should copy the real
     BaseTaskScheduler doc-strings one-for-one (via functools.wraps).
@@ -47,7 +47,7 @@ def test_simulated_ts_docstrings_match_base():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_ts():
+async def test_start_and_ask():
     ts = SimulatedTaskScheduler("Demo list for unit-tests.")
     handle = await ts.ask("What are my open tasks today?")
     answer = await handle.result()
@@ -59,7 +59,7 @@ async def test_start_and_ask_simulated_ts():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_stateful_memory_serial_asks():
+async def test_stateful_memory_serial_asks():
     """
     Two consecutive .ask() calls should share the same conversation context.
     """
@@ -89,7 +89,7 @@ async def test_ts_stateful_memory_serial_asks():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_stateful_update_then_ask():
+async def test_stateful_update_then_ask():
     """
     An .update() call should influence subsequent .ask() calls.
     """
@@ -119,7 +119,7 @@ async def test_ts_stateful_update_then_ask():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_simulated_ts(monkeypatch):
+async def test_interject(monkeypatch):
     counts = {"interject": 0}
     original_interject = _SimulatedTaskScheduleHandle.interject
 
@@ -151,7 +151,7 @@ async def test_interject_simulated_ts(monkeypatch):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_simulated_ts():
+async def test_stop():
     ts = SimulatedTaskScheduler()
     handle = await ts.ask("Produce a very long report about my tasks.")
     await asyncio.sleep(0.05)
@@ -165,7 +165,7 @@ async def test_stop_simulated_ts():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_requests_clarification():
+async def test_requests_clarification():
     ts = SimulatedTaskScheduler()
 
     up_q: asyncio.Queue[str] = asyncio.Queue()
@@ -193,7 +193,7 @@ async def test_ts_requests_clarification():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_and_resume_simulated_ts(monkeypatch):
+async def test_pause_and_resume(monkeypatch):
     """
     Verify that a `_SimulatedTaskScheduleHandle` may be paused and resumed.
     """
@@ -343,7 +343,7 @@ async def test_execute_requests_clarification():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_simulated_clear():
+async def test_clear():
     """
     SimulatedTaskScheduler.clear should reset the manager (hard-coded completion)
     and remain usable afterwards.
@@ -371,7 +371,7 @@ async def test_simulated_clear():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_paused_finishes_immediately_ts():
+async def test_stop_while_paused_finishes_immediately():
     ts = SimulatedTaskScheduler()
     h = await ts.ask("Generate an exhaustive task summary.")
     await h.pause()
@@ -389,7 +389,7 @@ async def test_stop_while_paused_finishes_immediately_ts():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_waiting_for_clarification_finishes_immediately_ts():
+async def test_stop_while_waiting_for_clarification_finishes_immediately():
     ts = SimulatedTaskScheduler()
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
