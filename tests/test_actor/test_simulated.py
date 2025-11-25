@@ -20,7 +20,7 @@ import base64
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_act_simulated_actor():
+async def test_start_and_act():
     actor = SimulatedActor(duration=0.1)
     handle = await actor.act("Perform a quick demo.")
     result = await handle.result()
@@ -32,7 +32,7 @@ async def test_start_and_act_simulated_actor():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_actor_stateful_memory_serial_asks():
+async def test_stateful_memory_serial_asks():
     """
     Two consecutive activities should share the same stateful LLM context.
     We exercise this by asking questions via the handle's ask() method.
