@@ -12,7 +12,7 @@ class _DummySingleton(metaclass=SingletonABCMeta):
 
 
 @pytest.mark.asyncio
-async def test_singleton_same_instance():
+async def test_same_instance():
     """Multiple constructor calls must return the *identical* object."""
 
     first = _DummySingleton()
@@ -27,7 +27,7 @@ async def test_singleton_same_instance():
 
 
 @pytest.mark.asyncio
-async def test_singleton_clear_creates_fresh_instance():
+async def test_clear_creates_fresh_instance():
     """`SingletonRegistry.clear` must drop the cached instance so that the
     next instantiation yields a *new* object.
     """

@@ -30,7 +30,7 @@ MANAGER_CLASSES = [
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("manager_cls", MANAGER_CLASSES)
-async def test_manager_is_singleton(manager_cls):
+async def test_is_singleton(manager_cls):
     """Every concrete *Manager* class must behave as a *singleton*."""
 
     first = manager_cls()
@@ -48,7 +48,7 @@ async def test_manager_is_singleton(manager_cls):
 @pytest.mark.asyncio
 @_handle_project
 @pytest.mark.parametrize("manager_cls", MANAGER_CLASSES)
-async def test_manager_singleton_after_clear(manager_cls):
+async def test_clear_registry(manager_cls):
     """After `SingletonRegistry.clear` a brand-new instance should be created."""
 
     original = manager_cls()
@@ -62,7 +62,7 @@ async def test_manager_singleton_after_clear(manager_cls):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_manager_singleton_composition():
+async def test_composition():
     """All references to the same manager BETWEEN different managers must return the *same* instance."""
 
     memory_manager = MemoryManager()
