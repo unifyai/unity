@@ -12,7 +12,7 @@ from tests.helpers import _handle_project, capture_events
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
-async def test_managermethod_events_for_ask():
+async def test_events_for_ask():
     km = KnowledgeManager()
 
     user_q = "🔎 How many tables do I have?"
@@ -50,7 +50,7 @@ async def test_managermethod_events_for_ask():
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
-async def test_managermethod_events_for_update():
+async def test_events_for_update():
     km = KnowledgeManager()
 
     nl_cmd = "Create a table Foo with a column bar:string."
@@ -85,7 +85,7 @@ async def test_managermethod_events_for_update():
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
-async def test_managermethod_events_for_refactor():
+async def test_events_for_refactor():
     km = KnowledgeManager()
 
     cmd = "Refactor the Foo table to rename bar → baz."

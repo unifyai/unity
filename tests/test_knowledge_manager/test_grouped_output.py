@@ -7,7 +7,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_grouped_filter_orders_and_early_stop():
+def test_filter_orders_and_early_stop():
     km = KnowledgeManager(grouped=True)
 
     table = "KB_Grouped_Filter"
@@ -63,7 +63,7 @@ def test_grouped_filter_orders_and_early_stop():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_grouped_search_groups_on_low_cardinality_field():
+def test_search_groups_on_low_cardinality_field():
     km = KnowledgeManager(grouped=True)
 
     table = "KB_Grouped_Search"
@@ -92,7 +92,7 @@ def test_grouped_search_groups_on_low_cardinality_field():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_grouped_filter_join_nested_structure():
+def test_filter_join_nested_structure():
     km = KnowledgeManager(grouped=True)
 
     left = "KB_G_Left"
@@ -140,7 +140,7 @@ def test_grouped_filter_join_nested_structure():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_grouped_filter_multi_join_chained():
+def test_filter_multi_join_chained():
     km = KnowledgeManager(grouped=True)
 
     a = "KB_G_A"
@@ -191,7 +191,7 @@ def test_grouped_filter_multi_join_chained():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_grouped_search_join_groups():
+def test_search_join_groups():
     km = KnowledgeManager(grouped=True)
 
     left = "KB_GJ_Left"

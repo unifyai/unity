@@ -13,7 +13,7 @@ def _unwrap_callable(tool):
     return getattr(tool, "fn", tool)
 
 
-def test_all_ask_tools_have_sufficient_docstrings():
+def test_ask_tools_have_docstrings():
     km = KnowledgeManager()
     tools = km.get_tools("ask")
 
@@ -62,7 +62,7 @@ def _build_tools_schema_in_subprocess(method: str) -> str:
     return proc.stdout
 
 
-def test_all_update_tools_have_sufficient_docstrings():
+def test_update_tools_have_docstrings():
     km = KnowledgeManager()
     tools = km.get_tools("update")
 
@@ -77,7 +77,7 @@ def test_all_update_tools_have_sufficient_docstrings():
         ), f"Docstring for tool '{name}' is too short (len={len(doc)})"
 
 
-def test_ask_tool_schemas_are_stable_across_python_sessions():
+def test_ask_schemas_are_stable():
     p1 = _build_tools_schema_in_subprocess("ask")
     p2 = _build_tools_schema_in_subprocess("ask")
     if p1 != p2:
@@ -94,7 +94,7 @@ def test_ask_tool_schemas_are_stable_across_python_sessions():
         )
 
 
-def test_update_tool_schemas_are_stable_across_python_sessions():
+def test_update_schemas_are_stable():
     p1 = _build_tools_schema_in_subprocess("update")
     p2 = _build_tools_schema_in_subprocess("update")
     if p1 != p2:

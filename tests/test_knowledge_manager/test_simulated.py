@@ -334,7 +334,7 @@ async def test_simulated_clear():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_paused_finishes_immediately_km():
+async def test_stop_while_paused_finishes_immediately():
     km = SimulatedKnowledgeManager()
     h = await km.ask("Generate a long knowledge export.")
     h.pause()
@@ -352,7 +352,7 @@ async def test_stop_while_paused_finishes_immediately_km():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_waiting_for_clarification_finishes_immediately_km():
+async def test_stop_while_waiting_for_clarification_finishes_immediately():
     km = SimulatedKnowledgeManager()
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()

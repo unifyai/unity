@@ -7,7 +7,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_multi_join_single_reference_basic():
+def test_multi_join_single_reference_basic():
     km = KnowledgeManager()
 
     authors = "MJ_Single_Authors"
@@ -102,7 +102,7 @@ def test_knowledge_search_multi_join_single_reference_basic():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_multi_join_multi_columns_sum():
+def test_multi_join_multi_columns_sum():
     km = KnowledgeManager()
 
     authors = "MJ_MultiCols_Authors"
@@ -199,7 +199,7 @@ def test_knowledge_search_multi_join_multi_columns_sum():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_multi_join_all_columns_default_derivation():
+def test_multi_join_all_columns_default_derivation():
     km = KnowledgeManager()
 
     authors = "MJ_Expr_Authors"
@@ -303,7 +303,7 @@ def test_knowledge_search_multi_join_all_columns_default_derivation():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_multi_join_mean_of_cosine_ranking():
+def test_multi_join_mean_of_cosine_ranking():
     km = KnowledgeManager()
 
     authors = "MJ_SumCos_Authors"
@@ -410,7 +410,7 @@ def test_knowledge_search_multi_join_mean_of_cosine_ranking():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_multi_join_backfills_when_insufficient_similarity_results():
+def test_multi_join_backfills_when_insufficient_similarity_results():
     km = KnowledgeManager()
 
     left = "KBMJ_Left"
