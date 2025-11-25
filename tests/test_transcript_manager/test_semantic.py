@@ -43,7 +43,7 @@ def _count_tool_calls_in_reasoning(reasoning_steps) -> tuple[int, set[str]]:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_semantic_cache_exact_match():
+async def test_cache_exact_match():
     cm = ContactManager()
     first_contact = cm._create_contact(first_name="John", surname="Doe")
     second_contact = cm._create_contact(first_name="Bob", surname="Alice")
@@ -96,7 +96,7 @@ async def test_semantic_cache_exact_match():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_semantic_cache_no_exact_match():
+async def test_cache_no_exact_match():
     cm = ContactManager()
     first_contact = cm._create_contact(first_name="John", surname="Doe")
     second_contact = cm._create_contact(first_name="Bob", surname="Alice")
@@ -149,7 +149,7 @@ async def test_semantic_cache_no_exact_match():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_semantic_cache_similar_query_benefit():
+async def test_cache_similar_query():
     cm = ContactManager()
     first_contact = cm._create_contact(first_name="John", surname="Doe")
     second_contact = cm._create_contact(first_name="Bob", surname="Alice")

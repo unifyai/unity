@@ -35,7 +35,7 @@ _EXPECTED_KEYS_ORDER = [
 
 @pytest.mark.unit
 @_handle_project
-def test_filter_messages_return_shape(tm_manager_scenario):
+def test_filter_return_shape(tm_manager_scenario):
     tm, _ = tm_manager_scenario
 
     out = tm._filter_messages(limit=1)
@@ -56,7 +56,7 @@ def test_filter_messages_return_shape(tm_manager_scenario):
 
 @pytest.mark.unit
 @_handle_project
-def test_search_messages_return_shape(tm_manager_scenario):
+def test_search_return_shape(tm_manager_scenario):
     tm, _ = tm_manager_scenario
 
     # references=None path returns latest messages directly

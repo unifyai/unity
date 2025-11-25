@@ -11,7 +11,7 @@ import unify
 
 @pytest.mark.unit
 @_handle_project
-def test_log_first_message_rejects_explicit_exchange_id_dict_payload():
+def test_rejects_explicit_id_dict():
     tm = TranscriptManager()
 
     payload = {
@@ -33,7 +33,7 @@ def test_log_first_message_rejects_explicit_exchange_id_dict_payload():
 
 @pytest.mark.unit
 @_handle_project
-def test_log_first_message_rejects_explicit_exchange_id_message_instance():
+def test_rejects_explicit_id_model():
     tm = TranscriptManager()
 
     m = Message(
@@ -55,7 +55,7 @@ def test_log_first_message_rejects_explicit_exchange_id_message_instance():
 
 @pytest.mark.unit
 @_handle_project
-def test_log_first_message_creates_exchange_and_returns_id():
+def test_creates_exchange_returns_id():
     tm = TranscriptManager()
 
     payload = {
@@ -91,7 +91,7 @@ def test_log_first_message_creates_exchange_and_returns_id():
 
 @pytest.mark.unit
 @_handle_project
-def test_log_first_message_sets_initial_metadata():
+def test_sets_initial_metadata():
     tm = TranscriptManager()
 
     payload = {

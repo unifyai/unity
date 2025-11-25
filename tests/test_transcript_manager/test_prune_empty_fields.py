@@ -10,7 +10,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.unit
 @_handle_project
-def test_message_json_omits_empty_fields_and_keeps_non_empty():
+def test_json_omits_empty_fields():
     """
     Before the Message serializer change, model_dump(mode="json") included
     empty containers such as images: [] and screen_share: {}. After the change,
@@ -59,7 +59,7 @@ def test_message_json_omits_empty_fields_and_keeps_non_empty():
 @pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
-async def test_tm_ask_search_messages_tool_omits_empty_fields_in_steps():
+async def test_ask_search_tool_omits_empty():
     """
     Real tool-loop: TM.ask triggers search_messages on first step. Verify the
     tool result inserted into the transcript does not expose empty fields like

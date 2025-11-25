@@ -245,7 +245,7 @@ def _llm_assert_correct(
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", QUESTIONS)
-async def test_ask_semantic_with_llm_judgement(
+async def test_ask_semantic_judgement(
     question: str,
     tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ) -> None:
@@ -262,7 +262,7 @@ async def test_ask_semantic_with_llm_judgement(
 
 @pytest.mark.asyncio
 @pytest.mark.eval
-async def test_ask_allows_interjection(
+async def test_interjection(
     tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ):
     """Ask one semantic question, then interject with a second, and verify both answers appear."""
@@ -293,7 +293,7 @@ async def test_ask_allows_interjection(
 @_handle_project
 @pytest.mark.asyncio
 @pytest.mark.eval
-async def test_ask_honors_stop():
+async def test_stop():
     tm = TranscriptManager()
     handle = await tm.ask(
         "List every message received from Carlos, then provide a detailed summary of each one in chronological order.",
@@ -305,7 +305,7 @@ async def test_ask_honors_stop():
 
 @pytest.mark.asyncio
 @pytest.mark.eval
-async def test_ask_respects_parent_context(
+async def test_parent_context(
     tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ):
     # ── 1.  Seed a “basketball” exchange dated 2025-05-20 ───────────────
@@ -355,7 +355,7 @@ async def test_ask_respects_parent_context(
 
 
 @pytest.mark.asyncio
-async def test_ask_requests_clarification_when_context_missing(
+async def test_clarification_request(
     tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ) -> None:
     """

@@ -25,7 +25,7 @@ from tests.helpers import (
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_tm_docstrings_match_base():
+def test_docstrings_match_base():
     """
     Public methods in SimulatedTranscriptManager should copy the real
     BaseTranscriptManager doc-strings one-for-one (via functools.wraps).
@@ -44,7 +44,7 @@ def test_simulated_tm_docstrings_match_base():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_tm():
+async def test_start_and_ask():
     tm = SimulatedTranscriptManager("Demo transcript DB.")
     handle = await tm.ask("Show me my unread emails.")
     answer = await handle.result()
@@ -56,7 +56,7 @@ async def test_start_and_ask_simulated_tm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_tm_stateful_memory_serial_asks():
+async def test_stateful_memory_serial_asks():
     """
     Two consecutive .ask() calls should share the same conversation context
     because the manager's LLM is stateful.
@@ -274,7 +274,7 @@ async def test_handle_ask():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_paused_finishes_immediately_tm():
+async def test_stop_while_paused():
     tm = SimulatedTranscriptManager()
     h = await tm.ask("Generate a long transcript report.")
     h.pause()
@@ -292,7 +292,7 @@ async def test_stop_while_paused_finishes_immediately_tm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_waiting_for_clarification_finishes_immediately_tm():
+async def test_stop_while_waiting_clarification():
     tm = SimulatedTranscriptManager()
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
@@ -314,7 +314,7 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately_tm():
 # 9.  Simulated programmatic helpers (sync)                                   #
 # ────────────────────────────────────────────────────────────────────────────
 @_handle_project
-def test_simulated_filter_exchanges_sync():
+def test_filter_exchanges_sync():
     """
     SimulatedTranscriptManager.filter_exchanges should return a capped list of exchanges.
     """
@@ -348,7 +348,7 @@ def test_simulated_filter_exchanges_sync():
 
 
 @_handle_project
-def test_simulated_update_contact_id_sync():
+def test_update_contact_id_sync():
     """
     SimulatedTranscriptManager.update_contact_id should report an updated count.
     """
@@ -385,7 +385,7 @@ def test_simulated_update_contact_id_sync():
 
 
 @_handle_project
-def test_simulated_clear_sync():
+def test_clear_sync():
     """
     SimulatedTranscriptManager.clear should reset the manager and remain usable.
     """
@@ -426,7 +426,7 @@ def test_simulated_clear_sync():
 
 
 @_handle_project
-def test_simulated_build_plain_transcript():
+def test_build_plain_transcript():
     """
     build_plain_transcript should render 'Sender: content' given simple dict inputs.
     """
@@ -444,7 +444,7 @@ def test_simulated_build_plain_transcript():
 
 
 @_handle_project
-def test_simulated_log_messages_sync_and_exchange_metadata():
+def test_log_sync_and_metadata():
     """
     Validate log_messages returns Message objects and exchange metadata APIs round-trip.
     """

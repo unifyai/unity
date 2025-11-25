@@ -54,7 +54,7 @@ def _assert_dict_subset(expected: dict, actual: dict):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_serialize_flat_transcriptmanager_ask():
+async def test_serialize_flat_ask():
     """
     Verify a flat TranscriptManager.ask snapshot contains the expected minimal, human-readable shape.
     """
@@ -93,7 +93,7 @@ async def test_serialize_flat_transcriptmanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_transcriptmanager_ask_with_interjection():
+async def test_deserialize_and_continue_ask():
     """
     Start from a flat TranscriptManager.ask snapshot, resume, add an interjection, and verify completion and transcript.
     """

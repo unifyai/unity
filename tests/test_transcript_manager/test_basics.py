@@ -296,7 +296,7 @@ async def test_filter_messages_contacts_table_output():
 
 @pytest.mark.unit
 @_handle_project
-def test_transcript_manager_clear():
+def test_clear():
     tm = TranscriptManager()
 
     # Seed a couple of messages (distinct exchange_ids)

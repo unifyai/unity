@@ -18,7 +18,7 @@ PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 
 @pytest.mark.unit
 @_handle_project
-def test_get_images_for_message_returns_metadata_only_tm():
+def test_get_images_returns_metadata_only():
     tm = TranscriptManager()
     im = ImageManager()
 
@@ -74,7 +74,7 @@ def test_get_images_for_message_returns_metadata_only_tm():
 
 @pytest.mark.unit
 @_handle_project
-def test_attach_image_to_context_promotes_image_block_tm():
+def test_attach_image_promotes_block():
     tm = TranscriptManager()
     im = ImageManager()
 
@@ -99,7 +99,7 @@ def test_attach_image_to_context_promotes_image_block_tm():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_ask_can_use_images_for_color_question_tm():
+async def test_ask_uses_images_for_color():
     """
     Contrived scenario:
     - Create an image (blue pixel) and log a message that references it, framed as a
@@ -179,7 +179,7 @@ async def test_ask_can_use_images_for_color_question_tm():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_ask_boot_option_and_fourth_item_tm():
+async def test_ask_boot_option():
     tm = TranscriptManager()
     im = ImageManager()
 
@@ -270,7 +270,7 @@ async def test_ask_boot_option_and_fourth_item_tm():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_compare_two_screens_requires_raw_context_tm():
+async def test_compare_screens_raw_context():
     tm = TranscriptManager()
     im = ImageManager()
 

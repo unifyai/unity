@@ -12,7 +12,7 @@ from unity.contact_manager.contact_manager import ContactManager
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_transcript_embedding_semantic_search():
+async def test_embedding_semantic_search():
     """
     Test the transcript manager's ability to perform semantic search via nearest message retrieval.
     """

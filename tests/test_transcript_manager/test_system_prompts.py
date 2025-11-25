@@ -63,7 +63,7 @@ def _build_prompt_in_subprocess() -> str:
     return proc.stdout
 
 
-def test_transcript_manager_ask_system_prompt_formatting():
+def test_ask_system_prompt_formatting():
     tm = TranscriptManager()
     tools = dict(tm.get_tools("ask"))
 
@@ -151,7 +151,7 @@ def test_transcript_manager_ask_system_prompt_formatting():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_transcript_manager_ask_prompt_is_stable_across_serial_builds():
+def test_ask_prompt_stability():
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess()
     p2 = _build_prompt_in_subprocess()
