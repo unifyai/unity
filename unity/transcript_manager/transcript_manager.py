@@ -75,6 +75,32 @@ class TranscriptManager(BaseTranscriptManager):
                 fields=model_to_fields(Message),
                 unique_keys={"message_id": "int"},
                 auto_counting={"message_id": None, "exchange_id": None},
+                foreign_keys=[
+                    {
+                        "name": "sender_id",
+                        "references": "Contacts.contact_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "receiver_ids[*]",
+                        "references": "Contacts.contact_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "exchange_id",
+                        "references": "Exchanges.exchange_id",
+                        "on_delete": "CASCADE",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "images[*].raw_image_ref.image_id",
+                        "references": "Images.image_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                ],
             ),
             TableContext(
                 name="Exchanges",
