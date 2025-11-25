@@ -107,7 +107,7 @@ class FunctionManager(BaseFunctionManager):
                 foreign_keys=[
                     {
                         "name": "guidance_ids[*]",
-                        "references": "Guidance.guidance_id", # TODO: change to the actual context
+                        "references": "Guidance.guidance_id",  # TODO: change to the actual context
                         "on_delete": "CASCADE",  # pop on guidance deletion
                         "on_update": "CASCADE",
                     },
@@ -354,7 +354,7 @@ class FunctionManager(BaseFunctionManager):
             foreign_keys=[
                 {
                     "name": "guidance_ids[*]",
-                    "references": f"{self._ctx.replace("Functions", "Guidance")}.guidance_id",
+                    "references": f"{self._ctx.replace('Function', 'Guidance')}.guidance_id",
                     "on_delete": "CASCADE",  # pop on guidance deletion
                     "on_update": "CASCADE",
                 },
