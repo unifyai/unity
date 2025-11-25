@@ -329,7 +329,7 @@ class TaskScheduler(BaseTaskScheduler):
             foreign_keys=[
                 {
                     "name": "entrypoint",
-                    "references": f"{self._ctx.replace("Tasks", "Functions")}.function_id",
+                    "references": f"{self._ctx.replace('Tasks', 'Functions')}.function_id",
                     "on_delete": "SET NULL",
                     "on_update": "CASCADE",
                 },

@@ -34,13 +34,13 @@ def provision_storage(self) -> None:
         foreign_keys=[
             {
                 "name": "sender_id",
-                "references": f"{self._transcripts_ctx.replace("Transcripts", "Contacts")}.contact_id",
+                "references": f"{self._transcripts_ctx.replace('Transcripts', 'Contacts')}.contact_id",
                 "on_delete": "SET NULL",
                 "on_update": "CASCADE",
             },
             {
                 "name": "receiver_ids[*]",
-                "references": f"{self._transcripts_ctx.replace("Transcripts", "Contacts")}.contact_id",
+                "references": f"{self._transcripts_ctx.replace('Transcripts', 'Contacts')}.contact_id",
                 "on_delete": "SET NULL",
                 "on_update": "CASCADE",
             },
@@ -52,7 +52,7 @@ def provision_storage(self) -> None:
             },
             {
                 "name": "images[*].raw_image_ref.image_id",
-                "references": f"{self._transcripts_ctx.replace("Transcripts", "Images")}.image_id",
+                "references": f"{self._transcripts_ctx.replace('Transcripts', 'Images')}.image_id",
                 "on_delete": "SET NULL",
                 "on_update": "CASCADE",
             },
