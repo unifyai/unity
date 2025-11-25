@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 @pytest.mark.unit
 @_handle_project
-def test_create_guidance():
+def test_create():
     gm = GuidanceManager()
     out = gm._add_guidance(
         title="Setup demo",
@@ -30,7 +30,7 @@ def test_create_guidance():
 
 @pytest.mark.unit
 @_handle_project
-def test_update_guidance():
+def test_update():
     gm = GuidanceManager()
     gid = gm._add_guidance(
         title="Onboarding Overview",
@@ -58,7 +58,7 @@ def test_update_guidance():
 
 @pytest.mark.unit
 @_handle_project
-def test_delete_guidance():
+def test_delete():
     gm = GuidanceManager()
     gid = gm._add_guidance(
         title="Billing",
@@ -74,7 +74,7 @@ def test_delete_guidance():
 
 @pytest.mark.unit
 @_handle_project
-def test_list_columns_and_filter_title():
+def test_list_columns_and_filter():
     gm = GuidanceManager()
     cols = gm._list_columns()
     # Basic schema keys should be present
@@ -90,7 +90,7 @@ def test_list_columns_and_filter_title():
 
 @pytest.mark.unit
 @_handle_project
-def test_update_guidance_images_validation():
+def test_update_images_validation():
     gm = GuidanceManager()
     gid = gm._add_guidance(
         title="Docs",
@@ -104,7 +104,7 @@ def test_update_guidance_images_validation():
 
 @pytest.mark.unit
 @_handle_project
-def test_guidance_manager_clear():
+def test_clear():
     gm = GuidanceManager()
 
     # Seed a couple of guidance entries

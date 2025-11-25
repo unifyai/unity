@@ -18,7 +18,7 @@ PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_guidance_persistent_image_context_then_reason():
+async def test_persistent_image_context_then_reason():
     """
     Flow:
     1) Create an image and a guidance row that references it.
@@ -77,7 +77,7 @@ async def test_guidance_persistent_image_context_then_reason():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_guidance_boot_option_and_fourth_item_gm():
+async def test_boot_option_and_fourth_item():
     gm = GuidanceManager()
     im = ImageManager()
 
@@ -163,7 +163,7 @@ async def test_guidance_boot_option_and_fourth_item_gm():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_guidance_compare_two_screens_requires_raw_context_gm():
+async def test_compare_two_screens_requires_raw_context():
     gm = GuidanceManager()
     im = ImageManager()
 

@@ -22,7 +22,7 @@ from tests.helpers import (
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_gm_docstrings_match_base():
+def test_docstrings_match_base():
     """
     Public methods in SimulatedGuidanceManager should copy the real
     BaseGuidanceManager doc-strings one-for-one (via functools.wraps).
@@ -46,7 +46,7 @@ def test_simulated_gm_docstrings_match_base():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_gm():
+async def test_start_and_ask():
     gm = SimulatedGuidanceManager("Demo guidance for unit-tests.")
     h = await gm.ask("List the top 3 guidance items.")
     answer = await h.result()
@@ -58,7 +58,7 @@ async def test_start_and_ask_simulated_gm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_gm_stateful_memory_serial_asks():
+async def test_stateful_memory_serial_asks():
     """
     Two consecutive .ask() calls share context because the manager keeps a
     stateful LLM.
@@ -84,7 +84,7 @@ async def test_gm_stateful_memory_serial_asks():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_gm_stateful_update_then_ask():
+async def test_stateful_update_then_ask():
     gm = SimulatedGuidanceManager()
     title = "Deployment Playbook"
 
@@ -276,7 +276,7 @@ async def test_handle_ask():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_simulated_clear():
+async def test_clear():
     """
     SimulatedGuidanceManager.clear should reset the manager and remain usable.
     """
@@ -301,7 +301,7 @@ async def test_simulated_clear():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_paused_finishes_immediately_gm():
+async def test_stop_while_paused_finishes_immediately():
     gm = SimulatedGuidanceManager()
     h = await gm.ask("Produce an exhaustive guidance export.")
     h.pause()
@@ -319,7 +319,7 @@ async def test_stop_while_paused_finishes_immediately_gm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_waiting_for_clarification_finishes_immediately_gm():
+async def test_stop_while_waiting_for_clarification_finishes_immediately():
     gm = SimulatedGuidanceManager()
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()

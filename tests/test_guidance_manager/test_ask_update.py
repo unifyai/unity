@@ -25,7 +25,7 @@ async def test_ask_semantic_search_text_only():
 @pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
-async def test_update_create_and_then_query():
+async def test_update_then_ask():
     gm = GuidanceManager()
     # Natural-language create
     handle = await gm.update(
