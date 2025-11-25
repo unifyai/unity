@@ -158,10 +158,11 @@ class ContextHandler:
         out = {}
 
         for context in manager.Config.required_contexts:
-            for foreign_key in context.foreign_keys:
-                foreign_key["references"] = (
-                    f"{current_context}/{foreign_key['references']}"
-                )
+            if context.foreign_keys:
+                for foreign_key in context.foreign_keys:
+                    foreign_key["references"] = (
+                        f"{current_context}/{foreign_key['references']}"
+                    )
             data = {
                 "resolved_name": f"{current_context}/{context.name}",
                 "table_context": context,
