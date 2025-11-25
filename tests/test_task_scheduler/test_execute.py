@@ -249,7 +249,7 @@ async def test_execute_result_and_done():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_returns_handle_with_append_to_queue_introspection():
+async def test_execute_handle_introspection():
     """
     The handle returned by TaskScheduler.execute should expose `append_to_queue`
     with the correct signature and a meaningful docstring via standard inspection.
@@ -299,7 +299,7 @@ async def test_execute_returns_handle_with_append_to_queue_introspection():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_async_tool_loop_can_call_append_to_queue_helper():
+async def test_async_tool_loop_calls_append_helper():
     """
     End-to-end: An outer async tool loop (proxying the Conductor) should be able to:
       1) call TaskScheduler.execute to start a task, and then
@@ -441,7 +441,7 @@ async def test_execute_sets_activated_by_explicit():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_update_status_cannot_force_active_and_does_not_set_activation_metadata():
+async def test_update_status_cannot_force_active():
     """Direct status updates cannot set 'active' and should not set 'activated_by'."""
 
     actor = SimulatedActor(steps=None, duration=None)
@@ -538,7 +538,7 @@ async def test_isolated_execute_detaches_entirely(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_isolated_execute_start_at_to_second_when_head_moves(monkeypatch):
+async def test_isolated_execute_start_at_moves(monkeypatch):
     """Branch A (head case): Explicit isolation – if activated task was head, next becomes head and inherits start_at."""
 
     actor = SimulatedActor(steps=0)
