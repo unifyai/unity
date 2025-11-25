@@ -23,11 +23,6 @@ def provision_storage(self) -> None:
             ),
             fields=model_to_fields(FileRow),
         )
-    try:
-        self._store.ensure_context()  # type: ignore[attr-defined]
-    except Exception:
-        # Best-effort
-        pass
 
 
 def get_columns(self, table: Optional[str] = None) -> Dict[str, str]:

@@ -127,7 +127,7 @@ class TaskScheduler(BaseTaskScheduler):
                 foreign_keys=[
                     {
                         "name": "entrypoint",
-                        "references": "Functions.function_id", # TODO: change to the actual context
+                        "references": "Functions.function_id",  # TODO: change to the actual context
                         "on_delete": "SET NULL",
                         "on_update": "CASCADE",
                     },
@@ -344,28 +344,6 @@ class TaskScheduler(BaseTaskScheduler):
         """Ensure Tasks context, schema and local view exist (idempotent)."""
         # Install storage adapter and ensure context/fields exist
         self._store = TasksStore(self._ctx)
-        self._store.ensure_context(
-            unique_keys={"task_id": "int", "instance_id": "int"},
-            auto_counting={
-                "task_id": None,
-                "instance_id": "task_id",
-            },
-            description=(
-                "List of all tasks with their name, description, status, "
-                "schedule, deadline, repeat pattern, priority **and** "
-                "`instance_id` which tracks multiple executions of the "
-                "same logical task."
-            ),
-            fields=model_to_fields(Task),
-            foreign_keys=[
-                {
-                    "name": "entrypoint",
-                    "references": f"{self._ctx.replace("Tasks", "Functions")}.function_id",
-                    "on_delete": "SET NULL",
-                    "on_update": "CASCADE",
-                },
-            ],
-        )
 
         # Centralised local view for queue membership, allocator and light caching.
         self._view = LocalTaskView(self._store)

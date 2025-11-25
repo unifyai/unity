@@ -20,7 +20,6 @@ def provision_storage(self) -> None:
         description="One row per conversation exchange/thread with optional metadata.",
         fields=model_to_fields(Exchange),
     )
-    self._exchanges_store.ensure_context()
 
     # Ensure transcripts context and fields deterministically
     self._store = TableStore(
@@ -31,34 +30,7 @@ def provision_storage(self) -> None:
             "List of *all* timestamped messages sent between *all* contacts across *all* mediums."
         ),
         fields=model_to_fields(Message),
-        foreign_keys=[
-            {
-                "name": "sender_id",
-                "references": f"{self._transcripts_ctx.replace("Transcripts", "Contacts")}.contact_id",
-                "on_delete": "SET NULL",
-                "on_update": "CASCADE",
-            },
-            {
-                "name": "receiver_ids[*]",
-                "references": f"{self._transcripts_ctx.replace("Transcripts", "Contacts")}.contact_id",
-                "on_delete": "SET NULL",
-                "on_update": "CASCADE",
-            },
-            {
-                "name": "exchange_id",
-                "references": f"{self._exchanges_ctx}.exchange_id",
-                "on_delete": "CASCADE",
-                "on_update": "CASCADE",
-            },
-            {
-                "name": "images[*].raw_image_ref.image_id",
-                "references": f"{self._transcripts_ctx.replace("Transcripts", "Images")}.image_id",
-                "on_delete": "SET NULL",
-                "on_update": "CASCADE",
-            },
-        ],
     )
-    self._store.ensure_context()
 
     # No local columns cache; always read from TableStore when needed
 
