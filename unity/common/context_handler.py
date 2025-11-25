@@ -13,6 +13,7 @@ class TableContext(BaseModel):
     fields: Optional[Any] = None
     unique_keys: Optional[Dict[str, str]] = None
     auto_counting: Optional[Dict[str, Optional[str]]] = None
+    foreign_keys: Optional[List[Dict[str, Any]]] = None
 
 
 class ContextHandler:
@@ -99,6 +100,7 @@ class ContextHandler:
                     description=table.description,
                     unique_keys=table.unique_keys,
                     auto_counting=table.auto_counting,
+                    foreign_keys=table.foreign_keys,
                 )
             # TODO: No need to check current fields, this has no effect if fields are already created
             # possibly can be eliminated if get_fields returns the context for the fields
