@@ -7,7 +7,7 @@ from unity.controller.controller import Controller
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_controller_observe_bool():
+async def test_observe_bool():
     """Smoke-test Controller.observe with bool response."""
     c = Controller()
     # minimal cached context
@@ -22,7 +22,7 @@ async def test_controller_observe_bool():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_controller_observe_str():
+async def test_observe_str():
     """Smoke-test observe with string response type."""
     c = Controller()
     c._observe_ctx = {"state": {}}
@@ -37,7 +37,7 @@ async def test_controller_observe_str():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_controller_act_smoke():
+async def test_act_smoke():
     """Smoke-test Controller.act and Redis publications."""
     c = Controller()
     c._observe_ctx = {"state": {"in_textbox": False}}
@@ -55,7 +55,7 @@ async def test_controller_act_smoke():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_controller_screen_observation_linkedin():
+async def test_screen_observation_linkedin():
     """Smoke-test Controller.act and Redis publications."""
     c = Controller()
 
@@ -72,7 +72,7 @@ async def test_controller_screen_observation_linkedin():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_controller_screen_observation_google():
+async def test_screen_observation_google():
     """Smoke-test Controller.act and Redis publications."""
     c = Controller()
 
@@ -89,7 +89,7 @@ async def test_controller_screen_observation_google():
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
-async def test_controller_feedback_loop():
+async def test_feedback_loop():
     """Smoke-test Controller.act and Redis publications."""
     c = Controller()
     c._observe_ctx = {"state": {"in_textbox": False}}

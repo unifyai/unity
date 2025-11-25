@@ -15,14 +15,13 @@ MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_controller_act_tool_loop():
+async def test_act_tool_loop():
     """
     Verify that the Controller.act method can be used as a tool
     within the async-tool-use loop to perform a browser action.
     """
     client = unify.AsyncUnify(
         MODEL_NAME,
-        reasoning_effort="high",
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
@@ -55,7 +54,7 @@ async def test_controller_act_tool_loop():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_controller_observe_tool_loop():
+async def test_observe_tool_loop():
     """
     Verify that the Controller.observe method can be used as a tool
     within the async-tool-use loop to answer a simple question.
@@ -63,7 +62,6 @@ async def test_controller_observe_tool_loop():
     # Create a fresh AsyncUnify client
     client = unify.AsyncUnify(
         MODEL_NAME,
-        reasoning_effort="high",
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
@@ -89,7 +87,7 @@ async def test_controller_observe_tool_loop():
 @pytest.mark.slow
 @pytest.mark.asyncio
 @_handle_project
-async def test_controller_complex_tool_loop():
+async def test_complex_tool_loop():
     """
     Verify that the Controller.observe method can be used as a tool
     within the async-tool-use loop to answer a simple question.
@@ -97,7 +95,6 @@ async def test_controller_complex_tool_loop():
     # Create a fresh AsyncUnify client
     client = unify.AsyncUnify(
         MODEL_NAME,
-        reasoning_effort="high",
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
         traced=SETTINGS.UNIFY_TRACED,
