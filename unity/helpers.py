@@ -179,14 +179,14 @@ def cleanup_dangling_call_processes() -> int:
     if sys.platform.startswith("win"):
         # Windows implementation would use tasklist/taskkill
         print(
-            "Warning: cleanup_dangling_call_processes not yet implemented for Windows"
+            "Warning: cleanup_dangling_call_processes not yet implemented for Windows",
         )
         return 0
 
     try:
         # Find all Python processes running call scripts
         output = subprocess.getoutput(
-            "ps -eo pid,command | grep -E 'medium_scripts/(call|unify_call|realtime_call)\\.py'"
+            "ps -eo pid,command | grep -E 'medium_scripts/(call|unify_call|realtime_call)\\.py'",
         )
 
         # Parse PIDs and commands, excluding the grep process itself
@@ -204,7 +204,7 @@ def cleanup_dangling_call_processes() -> int:
         for pid, command in processes.items():
             try:
                 print(
-                    f"Force killing dangling call process PID {pid} with command {command}"
+                    f"Force killing dangling call process PID {pid} with command {command}",
                 )
                 os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
                 print(f"✅ Killed process {pid}")

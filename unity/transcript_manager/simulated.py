@@ -187,14 +187,14 @@ class _SimulatedTranscriptHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._done.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
 
-    def pause(self) -> str:
+    async def pause(self) -> str:
         if self._paused:
             return "Already paused."
         self._log_pause()
         self._paused = True
         return "Paused."
 
-    def resume(self) -> str:
+    async def resume(self) -> str:
         if not self._paused:
             return "Already running."
         self._log_resume()
@@ -569,10 +569,13 @@ class SimulatedTranscriptManager(BaseTranscriptManager):
         updated_count = 0
         for i, msg in enumerate(list(self._sim_messages)):
             changed = False
-            if int(msg.sender_id) == original_contact_id:
+            if msg.sender_id is not None and int(msg.sender_id) == original_contact_id:
                 msg = msg.model_copy(update={"sender_id": new_contact_id})
                 changed = True
-            if any(rid == original_contact_id for rid in msg.receiver_ids):
+            if any(
+                rid is not None and rid == original_contact_id
+                for rid in msg.receiver_ids
+            ):
                 new_rids = [
                     new_contact_id if rid == original_contact_id else rid
                     for rid in msg.receiver_ids

@@ -8,7 +8,8 @@ from unity.transcript_manager.simulated import (
     SimulatedTranscriptManager,
     _SimulatedTranscriptHandle,
 )
-from unity.transcript_manager.types.message import Message, Medium
+from unity.transcript_manager.types.message import Message
+from unity.transcript_manager.types.medium import Medium
 from datetime import datetime, timezone
 
 # Helper identical to the one used elsewhere in the test-suite

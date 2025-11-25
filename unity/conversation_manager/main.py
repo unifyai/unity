@@ -6,11 +6,10 @@ load_dotenv()
 import os
 import asyncio
 
+from unity.conversation_manager import debug_logger
 from unity.conversation_manager.comms_manager import CommsManager
-from unity.conversation_manager.event_broker import (
-    get_event_broker,
-    create_event_broker,
-)
+from unity.conversation_manager.event_broker import get_event_broker
+from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
 from unity.helpers import cleanup_dangling_call_processes
@@ -81,11 +80,29 @@ async def main(project_name: str = "Assistants"):
         user_turn_end_callback=None,
     )
 
+    # Monkeypatch functions for testing
+    if os.getenv("TEST"):
+
+        def _sync_mock_success(*args, **kwargs):
+            return {"success": True}
+
+        async def _async_mock_success(*args, **kwargs):
+            return {"success": True}
+
+        comms_utils.send_sms_message_via_number = _async_mock_success
+        comms_utils.send_unify_message = _async_mock_success
+        comms_utils.send_email_via_address = _async_mock_success
+        comms_utils.start_call = _async_mock_success
+        conversation_manager.call_manager.start_call = _sync_mock_success
+        conversation_manager.call_manager.start_unify_call = _sync_mock_success
+        debug_logger.log_job_startup = _sync_mock_success
+        debug_logger.mark_job_done = _sync_mock_success
+
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
 
     asyncio.create_task(conversation_manager.wait_for_events()).add_done_callback(
-        log_task_exc
+        log_task_exc,
     )
     asyncio.create_task(conversation_manager.check_inactivity())
     if not os.getenv("TEST"):

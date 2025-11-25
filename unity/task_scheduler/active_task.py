@@ -31,7 +31,7 @@ async def classify_steering_intent(
 ) -> tuple[str, str]:
     """Classify steering into: cancel | defer | pause | resume | continue | none."""
     try:
-        client = new_llm_client("gpt-5@openai")
+        client = new_llm_client()
         system = (
             "You are a router that classifies an in-flight steering message.\n"
             "Labels: cancel | defer | pause | resume | continue | none.\n"
@@ -124,7 +124,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         self._last_intent_reason: Optional[str] = None
 
         # Register the underlying actor handle for standardized wrapper discovery
-        self.wrap_handle(actor_handle)
+        self._wrap_handle(actor_handle)
 
     @classmethod
     async def create(
@@ -346,14 +346,14 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         return ret
 
     @functools.wraps(BaseActiveTask.pause, updated=())
-    def pause(self) -> Optional[str]:
-        ret = self._actor_handle.pause()
+    async def pause(self) -> Optional[str]:
+        ret = await self._actor_handle.pause()
         self._mirror_status(Status.paused)
         return ret
 
     @functools.wraps(BaseActiveTask.resume, updated=())
-    def resume(self) -> Optional[str]:
-        ret = self._actor_handle.resume()
+    async def resume(self) -> Optional[str]:
+        ret = await self._actor_handle.resume()
         self._mirror_status(Status.active)
         return ret
 
@@ -365,7 +365,7 @@ class ActiveTask(BaseActiveTask, HandleWrapperMixin):
         """
         Generates a concise, human-readable summary of the execution from the Actor's action_log which captures a trace of the task's execution.
         """
-        client = new_llm_client("gpt-5@openai")
+        client = new_llm_client()
         prompt = textwrap.dedent(
             f"""
             You are an assistant summarizing a complex task's execution log.

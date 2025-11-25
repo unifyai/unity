@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pytest
 
-from tests.helpers import _handle_project
+from tests.helpers import _handle_project, capture_events
 from unity.events.event_bus import EVENT_BUS
 from unity.events.manager_event_logging import wrap_handle_with_logging, new_call_id
 from unity.common.async_tool_loop import SteerableToolHandle
@@ -39,11 +39,11 @@ class _TupleAnswerHandle(SteerableToolHandle):  # returns [answer, steps]
         self._done = True
         return "Stopped"
 
-    def pause(self):
+    async def pause(self):
         self._paused = True
         return "Paused"
 
-    def resume(self):
+    async def resume(self):
         self._paused = False
         return "Resumed"
 
@@ -82,10 +82,10 @@ class _PrivateAttrHandle(SteerableToolHandle):
     def stop(self, reason: str | None = None, *, parent_chat_context_cont: list[dict] | None = None):  # type: ignore[override]
         return "stopped"
 
-    def pause(self):  # type: ignore[override]
+    async def pause(self):  # type: ignore[override]
         return "paused"
 
-    def resume(self):  # type: ignore[override]
+    async def resume(self):  # type: ignore[override]
         return "resumed"
 
     def done(self):  # type: ignore[override]
@@ -111,23 +111,24 @@ async def test_manager_logging_sanitizes_iterable_answer_to_string():
     call_id = new_call_id()
     logged = wrap_handle_with_logging(inner, call_id, "UnitTestManager", "ask")
 
-    # Invoke result() → wrapper publishes a ManagerMethod event with phase="outgoing"
-    out = await logged.result()
+    # Capture ManagerMethod events to avoid race/I/O latency
+    async with capture_events("ManagerMethod") as captured_events:
+        # Invoke result() → wrapper publishes a ManagerMethod event with phase="outgoing"
+        out = await logged.result()
+
     assert isinstance(out, list) and out[0] == "OK"
 
     # Ensure logs are flushed to backend before searching
     EVENT_BUS.join_published()
 
     # Fetch the newest ManagerMethod event for our manager/method with outgoing phase
-    events = await EVENT_BUS.search(
-        filter=(
-            'type == "ManagerMethod" and '
-            'payload["manager"] == "UnitTestManager" and '
-            'payload["method"] == "ask" and '
-            'payload["phase"] == "outgoing"'
-        ),
-        limit=1,
-    )
+    events = [
+        e
+        for e in captured_events
+        if e.payload.get("manager") == "UnitTestManager"
+        and e.payload.get("method") == "ask"
+        and e.payload.get("phase") == "outgoing"
+    ]
 
     assert len(events) == 1
     evt = events[0]
@@ -197,12 +198,12 @@ class _CustomArgsHandle(SteerableToolHandle):
         return "stopped"
 
     # Pause/Resume with required/optional kwargs
-    def pause(self, *, reason: str, log_to_backend: bool = False) -> str | None:
+    async def pause(self, *, reason: str, log_to_backend: bool = False) -> str | None:
         """Pause processing for a specific reason; optionally log to backend."""
         self.pause_calls.append({"reason": reason, "log_to_backend": log_to_backend})
         return "paused"
 
-    def resume(self, *, resume_token: str | None = None) -> str | None:
+    async def resume(self, *, resume_token: str | None = None) -> str | None:
         """Resume processing using an optional token."""
         self.resume_calls.append({"resume_token": resume_token})
         return "resumed"
@@ -309,8 +310,8 @@ async def test_logged_wrapper_pause_resume_forward_kwargs():
     )
 
     # pass custom kwargs to pause/resume via the wrapper
-    assert logged.pause(reason="testing", log_to_backend=True) == "paused"  # type: ignore[call-arg]
-    assert logged.resume(resume_token="abc") == "resumed"  # type: ignore[call-arg]
+    assert await logged.pause(reason="testing", log_to_backend=True) == "paused"  # type: ignore[call-arg]
+    assert await logged.resume(resume_token="abc") == "resumed"  # type: ignore[call-arg]
     assert inner.pause_calls and inner.pause_calls[-1] == {
         "reason": "testing",
         "log_to_backend": True,
@@ -414,23 +415,23 @@ async def test_logged_wrapper_logs_custom_method_calls():
         "execute",
     )
 
-    # Invoke a custom, non-standard ASYNC method to avoid scheduling races
-    pong = await logged.ping(note="ensure-logged")  # type: ignore[attr-defined]
+    async with capture_events("ManagerMethod") as captured_events:
+        # Invoke a custom, non-standard ASYNC method to avoid scheduling races
+        pong = await logged.ping(note="ensure-logged")  # type: ignore[attr-defined]
+
     assert pong == "pong"
 
     # Ensure all async publish tasks complete before querying the event log
     EVENT_BUS.join_published()
 
     # Verify that a ManagerMethod event was recorded for this custom action
-    events = await EVENT_BUS.search(
-        filter=(
-            'type == "ManagerMethod" and '
-            'payload["manager"] == "UnitTestManager" and '
-            'payload["method"] == "execute" and '
-            'payload.get("action") == "ping"'
-        ),
-        limit=1,
-    )
+    events = [
+        e
+        for e in captured_events
+        if e.payload.get("manager") == "UnitTestManager"
+        and e.payload.get("method") == "execute"
+        and e.payload.get("action") == "ping"
+    ]
 
     assert len(events) == 1
 

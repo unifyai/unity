@@ -12,24 +12,53 @@ from .types.exchange import Exchange
 
 def provision_storage(self) -> None:
     """Ensure contexts, fields, helper columns and local caches exist (idempotent)."""
-    # Ensure transcripts context and fields deterministically
-    self._store = TableStore(
-        self._transcripts_ctx,
-        unique_keys={"message_id": "int"},
-        auto_counting={"message_id": None, "exchange_id": None},
-        description=(
-            "List of *all* timestamped messages sent between *all* contacts across *all* mediums."
-        ),
-        fields=model_to_fields(Message),
-    )
-
     # Exchanges context: one row per exchange_id with optional metadata
     self._exchanges_store = TableStore(
         self._exchanges_ctx,
         unique_keys={"exchange_id": "int"},
+        auto_counting={"exchange_id": None},
         description="One row per conversation exchange/thread with optional metadata.",
         fields=model_to_fields(Exchange),
     )
+    self._exchanges_store.ensure_context()
+
+    # Ensure transcripts context and fields deterministically
+    self._store = TableStore(
+        self._transcripts_ctx,
+        unique_keys={"message_id": "int"},
+        auto_counting={"message_id": None},
+        description=(
+            "List of *all* timestamped messages sent between *all* contacts across *all* mediums."
+        ),
+        fields=model_to_fields(Message),
+        foreign_keys=[
+            {
+                "name": "sender_id",
+                "references": f"{self._transcripts_ctx.replace("Transcripts", "Contacts")}.contact_id",
+                "on_delete": "SET NULL",
+                "on_update": "CASCADE",
+            },
+            {
+                "name": "receiver_ids[*]",
+                "references": f"{self._transcripts_ctx.replace("Transcripts", "Contacts")}.contact_id",
+                "on_delete": "SET NULL",
+                "on_update": "CASCADE",
+            },
+            {
+                "name": "exchange_id",
+                "references": f"{self._exchanges_ctx}.exchange_id",
+                "on_delete": "CASCADE",
+                "on_update": "CASCADE",
+            },
+            {
+                "name": "images[*].raw_image_ref.image_id",
+                "references": f"{self._transcripts_ctx.replace("Transcripts", "Images")}.image_id",
+                "on_delete": "SET NULL",
+                "on_update": "CASCADE",
+            },
+        ],
+    )
+    self._store.ensure_context()
 
     # No local columns cache; always read from TableStore when needed
 

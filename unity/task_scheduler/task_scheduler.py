@@ -336,6 +336,29 @@ class TaskScheduler(BaseTaskScheduler):
         """Ensure Tasks context, schema and local view exist (idempotent)."""
         # Install storage adapter and ensure context/fields exist
         self._store = TasksStore(self._ctx)
+        self._store.ensure_context(
+            unique_keys={"task_id": "int", "instance_id": "int"},
+            auto_counting={
+                "task_id": None,
+                "instance_id": "task_id",
+            },
+            description=(
+                "List of all tasks with their name, description, status, "
+                "schedule, deadline, repeat pattern, priority **and** "
+                "`instance_id` which tracks multiple executions of the "
+                "same logical task."
+            ),
+            fields=model_to_fields(Task),
+            foreign_keys=[
+                {
+                    "name": "entrypoint",
+                    "references": f"{self._ctx.replace("Tasks", "Functions")}.function_id",
+                    "on_delete": "SET NULL",
+                    "on_update": "CASCADE",
+                },
+            ],
+        )
+
         # Centralised local view for queue membership, allocator and light caching.
         self._view = LocalTaskView(self._store)
 
@@ -440,7 +463,7 @@ class TaskScheduler(BaseTaskScheduler):
         ] = "default",
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
-        client = new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self.get_tools("ask"))
@@ -520,7 +543,7 @@ class TaskScheduler(BaseTaskScheduler):
         ] = "default",
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
-        client = new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self.get_tools("update"))

@@ -28,6 +28,7 @@ import asyncio
 import os
 import time
 from tests.helpers import _handle_project, SETTINGS
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
 import pytest
@@ -38,9 +39,6 @@ import unify
 # --------------------------------------------------------------------------- #
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.tool_spec import ToolSpec
-
-
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")  # override if you like
 
 
 # --------------------------------------------------------------------------- #
@@ -82,13 +80,7 @@ def new_client() -> unify.AsyncUnify:
     Return a fresh client *with its own conversation state* so that tests do
     not interfere with one another.
     """
-    return unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    ).set_system_message(
+    return new_llm_client().set_system_message(
         "Feel free to call multiple *different* tools per turn if appropriate.",
     )
 
@@ -154,7 +146,14 @@ async def test_concurrent_tools_waits_for_all_results():
             events.append(("generate", time.monotonic()))
             return await super().generate(**kwargs)
 
-    client = InstrumentedClient(MODEL_NAME)
+    # Manually constructing to support inheritance, but mirroring new_llm_client defaults
+    client = InstrumentedClient(
+        os.getenv("UNIFY_MODEL", DEFAULT_MODEL),
+        reasoning_effort="high",
+        service_tier="priority",
+        cache=SETTINGS.UNIFY_CACHE,
+        traced=SETTINGS.UNIFY_TRACED,
+    )
     client.set_traced(True)
 
     _ = await start_async_tool_loop(
@@ -451,13 +450,7 @@ async def test_no_tools_without_system_message() -> None:
 
         user → assistant
     """
-    client = unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
 
     answer = await start_async_tool_loop(
         client,

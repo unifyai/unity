@@ -1,3 +1,63 @@
-from .file import File
+from .file import FileRecord
+from .filesystem import (
+    FileSystemCapabilities,
+    FileReference,
+    FolderReference,
+)
+from unity.file_manager.parser.types.enums import (
+    FileFormat,
+    MimeType,
+)
+from .config import (
+    FilePipelineConfig,
+    ParseConfig,
+    IngestConfig,
+    EmbeddingsConfig,
+    FileEmbeddingSpec,
+    TableEmbeddingSpec,
+    BusinessContextSpec,
+    TableBusinessContextSpec,
+    PluginsConfig,
+    OutputConfig,
+    DiagnosticsConfig,
+)
+from .parsed import (
+    BaseParsedFile,
+    ParsedPDF,
+    ParsedDocx,
+    ParsedDoc,
+    ParsedXlsx,
+    ParsedCsv,
+    ContentRef,
+    TableRef,
+    FileMetrics,
+)
 
-__all__ = ["File"]
+__all__ = [
+    "FileRecord",
+    "FileSystemCapabilities",
+    "FileReference",
+    "FolderReference",
+    "FileFormat",
+    "MimeType",
+    "FilePipelineConfig",
+    "ParseConfig",
+    "IngestConfig",
+    "EmbeddingsConfig",
+    "FileEmbeddingSpec",
+    "TableEmbeddingSpec",
+    "BusinessContextSpec",
+    "TableBusinessContextSpec",
+    "PluginsConfig",
+    "OutputConfig",
+    "DiagnosticsConfig",
+    "BaseParsedFile",
+    "ParsedPDF",
+    "ParsedDocx",
+    "ParsedDoc",
+    "ParsedXlsx",
+    "ParsedCsv",
+    "ContentRef",
+    "TableRef",
+    "FileMetrics",
+]

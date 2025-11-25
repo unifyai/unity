@@ -6,7 +6,8 @@ import pytest
 import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 from unity.image_manager.types import RawImageRef, ImageRefs
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
@@ -72,13 +73,7 @@ async def test_live_images_overview_is_injected_synthetically() -> None:
     first assistant turn and that its tool result exists.
     """
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. Provide a short final reply.",
     )
@@ -119,13 +114,7 @@ async def test_overview_after_clarification_images() -> None:
         _ = await _clarification_down_q.get()
         return {"ok": True}
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "1️⃣ Call `need_clar`. 2️⃣ When the tool asks a question, answer using the `_clarify_…` helper with the single word 'ok'.",
     )
@@ -190,13 +179,7 @@ async def test_inner_tool_receives_images_mapping() -> None:
                 ids.append(-1)
         return {"received": {"keys": keys, "ids": ids, "question": question}}
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
         '{\n  "question": "Hello world",\n  "images": { "img_key": 42 }\n}. Then provide a short final reply.',
@@ -248,13 +231,7 @@ async def test_various_image_mapping_keys_are_preserved() -> None:
     def analyze(*, question: str, images: dict[str, object]) -> dict:
         return {"received_keys": list((images or {}).keys())}
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
         '{\n  "question": "Hello",\n  "images": { "k1": 42, "k2": 42, "k3": 42 }\n}. '
@@ -300,13 +277,7 @@ async def test_no_implicit_images_pass_when_omitted() -> None:
     def analyze(*, question: str) -> dict:
         return {"ok": True}
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         'You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: { "question": "Hello" }. '
         "Do NOT include an `images` field. Then provide a short final reply.",
@@ -350,13 +321,7 @@ async def test_images_value_may_be_handle_objects() -> None:
         ids = [int(getattr(v, "image_id", -1)) for v in (images or {}).values()]
         return {"ids": ids}
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
         '{\n  "question": "Hello world",\n  "images": { "img_key": { "__handle__": true } }\n}. Then provide a short final reply.',
@@ -405,13 +370,7 @@ async def test_nested_loop_does_not_inherit_parent_images() -> None:
 
     async def spawn_inner() -> dict:
         # Create a brand-new inner client and start a nested loop WITHOUT images
-        inner = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner = new_llm_client()
         inner.set_system_message(
             "You are running inside an automated test. Provide a short final reply.",
         )
@@ -425,13 +384,7 @@ async def test_nested_loop_does_not_inherit_parent_images() -> None:
         return {"inner_ok": True}
 
     # Outer loop with live images present
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "In your FIRST assistant turn, call the tool `spawn_inner`. Then provide a short final reply.",
     )

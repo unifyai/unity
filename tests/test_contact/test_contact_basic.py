@@ -34,6 +34,7 @@ def test_create_contact():
     assert contact.whatsapp_number is None
     assert contact.rolling_summary is None
     assert contact.respond_to is False
+    assert contact.timezone is None
 
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
@@ -122,6 +123,7 @@ def test_create_contacts():
     assert tom_contact.bio is None
     assert tom_contact.rolling_summary is None
     assert tom_contact.respond_to is False
+    assert tom_contact.timezone is None
 
     assert tom_contact.response_policy == custom_policy
     assert dan_contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
@@ -137,7 +139,7 @@ def test_search_contacts():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-#  Timezone (utc_offset_hours) basic read/update                             #
+#  Timezone (timezone) basic read/update                             #
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -153,17 +155,24 @@ def test_create_and_update_timezone():
 
     # Initially timezone should be None
     c = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
-    assert c.utc_offset_hours is None
+    assert c.timezone is None
 
-    # Update timezone to +5.5 hours
-    cm.update_contact(contact_id=cid, utc_offset_hours=5.5)
+    # Update timezone to "Asia/Kolkata"
+    cm.update_contact(contact_id=cid, timezone="Asia/Kolkata")
     c = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
-    assert c.utc_offset_hours == 5.5
+    assert c.timezone == "Asia/Kolkata"
 
-    # Update timezone to -3.0 hours
-    cm.update_contact(contact_id=cid, utc_offset_hours=-3.0)
+    # Update timezone to "America/New_York"
+    cm.update_contact(contact_id=cid, timezone="America/New_York")
     c = cm.filter_contacts(filter=f"contact_id == {cid}")["contacts"][0]
-    assert c.utc_offset_hours == -3.0
+    assert c.timezone == "America/New_York"
+
+    # Try invalid timezone
+    try:
+        cm.update_contact(contact_id=cid, timezone="Invalid/Timezone")
+        assert False, "Should have raised ValueError for invalid timezone"
+    except ValueError:
+        pass
 
 
 # ────────────────────────────────────────────────────────────────────────────

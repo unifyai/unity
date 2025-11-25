@@ -1,3 +1,4 @@
+import zoneinfo
 from pydantic import (
     BaseModel,
     Field,
@@ -27,7 +28,7 @@ class Contact(BaseModel):
         "rolling_summary": "rs",
         "respond_to": "resp",
         "response_policy": "policy",
-        "utc_offset_hours": "tz",
+        "timezone": "tz",
     }
 
     # Dynamic aliases for custom columns (full → shorthand); managers can
@@ -82,12 +83,10 @@ class Contact(BaseModel):
         description="Policy dictating how the assistant should respond to this contact.",
     )
 
-    # Optional numeric timezone offset from UTC, in hours (supports .5 increments)
-    utc_offset_hours: Optional[float] = Field(
+    # IANA timezone identifier (e.g. "America/New_York", "Europe/London")
+    timezone: Optional[str] = Field(
         default=None,
-        description=(
-            "UTC offset in hours (e.g., -5.0, +5.5). Range [-14.0, +14.0]; 0.5 increments only."
-        ),
+        description="IANA Timezone identifier (e.g., 'America/New_York', 'Europe/London').",
     )
 
     @model_validator(mode="before")
@@ -126,6 +125,7 @@ class Contact(BaseModel):
         "whatsapp_number",
         "bio",
         "rolling_summary",
+        "timezone",
         mode="before",
     )
     @classmethod
@@ -138,29 +138,21 @@ class Contact(BaseModel):
             return None
         return v
 
-    @field_validator("utc_offset_hours", mode="before")
+    @field_validator("timezone", mode="before")
     @classmethod
-    def _validate_utc_offset_hours(cls, v):
-        # Treat blank strings as missing
-        if v is None or (isinstance(v, str) and v.strip() == ""):
+    def _validate_timezone(cls, v):
+        if v is None:
+            return None
+        v_str = str(v).strip()
+        if not v_str:
             return None
         try:
-            x = float(v)
+            zoneinfo.ZoneInfo(v_str)
         except Exception:
             raise ValueError(
-                "utc_offset_hours must be a number of hours relative to UTC (e.g., -5.0, +5.5).",
+                f"Invalid timezone identifier '{v}'. Please use a valid IANA timezone (e.g., 'America/New_York').",
             )
-        if x < -14.0 or x > 14.0:
-            raise ValueError("utc_offset_hours must be between -14.0 and +14.0.")
-        # enforce 0.5 hour increments
-        try:
-            if (x * 2) % 1 != 0:
-                raise ValueError
-        except Exception:
-            raise ValueError(
-                "utc_offset_hours must be in 0.5 increments (…, -1.0, -0.5, 0.0, 0.5, 1.0, …).",
-            )
-        return x
+        return v_str
 
     model_config = {"extra": "allow"}
 

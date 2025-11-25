@@ -88,6 +88,11 @@ class PhoneCallReceived(Event):
 
 
 @dataclass
+class PhoneCallAnswered(Event):
+    contact: dict
+
+
+@dataclass
 class UnifyCallReceived(Event):
     """Frontend/worker confirmed agent connected to room; begin LLM."""
 
@@ -459,3 +464,18 @@ class ConductorResumeActor(Event):
     """Signal to resume any previously paused Actor/TaskScheduler execution for the session."""
 
     reason: str = ""
+
+
+@dataclass
+class LLMUserMessage(Event):
+    content: str
+
+
+@dataclass
+class LLMAssistantMessage(Event):
+    content: str
+
+
+@dataclass
+class SummarizeContext(Event):
+    pass

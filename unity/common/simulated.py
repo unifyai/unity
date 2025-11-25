@@ -927,12 +927,17 @@ def build_followup_prompt(
 def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     """Build a tool-dict mirroring the real FileManager's tool exposure.
 
-    kind: "ask" or "update". Uses AST reflection with a static fallback.
+    kind: "ask", "ask_about_file", or "organize". Uses AST reflection with a static fallback.
     """
     from unity.common.llm_helpers import methods_to_tool_dict
-    from unity.file_manager.file_manager import FileManager
+    from unity.file_manager.managers.local import LocalFileManager as FileManager
 
-    target_attr = "_ask_tools" if kind == "ask" else "_update_tools"
+    if kind == "ask_about_file":
+        target_attr = "_ask_about_file_tools"
+    elif kind == "organize":
+        target_attr = "_organize_tools"
+    else:
+        target_attr = "_ask_tools"
 
     try:
         pairs = _extract_owner_method_pairs(
@@ -948,21 +953,51 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Fallback – current canonical tool sets
+    # Fallback – EXACTLY mirror FileManager.__init__ tool exposure
     if kind == "ask":
         return methods_to_tool_dict(
-            FileManager.list,
-            FileManager.exists,
-            FileManager.parse,
+            # Retrieval helpers
+            FileManager._list_columns,
+            FileManager._tables_overview,
             FileManager._filter_files,
             FileManager._search_files,
+            # Inventory listing
+            FileManager.list,
+            # Parse when missing (policy enforced in prompts)
+            FileManager.parse,
+            # Delegate to file-scoped Q&A when needed
+            FileManager.ask_about_file,
+            # Existence probe
+            FileManager.exists,
+            include_class_name=False,
+        )
+    elif kind == "ask_about_file":
+        return methods_to_tool_dict(
+            # Read-only helpers
+            FileManager.parse,
             FileManager._list_columns,
-            FileManager.import_file,
-            FileManager.import_directory,
+            FileManager._tables_overview,
+            FileManager._filter_files,
+            FileManager._search_files,
+            # Join/multi-join tools for file-scoped analysis
+            FileManager._filter_join,
+            FileManager._search_join,
+            FileManager._filter_multi_join,
+            FileManager._search_multi_join,
+            FileManager.exists,
+            include_class_name=False,
+        )
+    elif kind == "organize":
+        return methods_to_tool_dict(
+            # Organize may call ask for discovery; mutations only here
+            FileManager.ask,
+            FileManager._rename_file,
+            FileManager._move_file,
+            FileManager._delete_file,
             include_class_name=False,
         )
     else:
-        # For FileManager, update tools are the same as ask tools since we don't have write operations
+        # Default to ask tools
         return methods_to_tool_dict(
             FileManager.list,
             FileManager.exists,
@@ -970,8 +1005,55 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager._filter_files,
             FileManager._search_files,
             FileManager._list_columns,
-            FileManager.import_file,
-            FileManager.import_directory,
+            include_class_name=False,
+        )
+
+
+def mirror_global_file_manager_tools(kind: str) -> Dict[str, Any]:
+    """Build a tool-dict mirroring the real GlobalFileManager's tool exposure.
+
+    kind: "ask" or "organize". Uses AST reflection with a static fallback.
+    """
+    from unity.common.llm_helpers import methods_to_tool_dict
+    from unity.file_manager.global_file_manager import GlobalFileManager
+
+    target_attr = "_ask_tools" if kind == "ask" else "_organize_tools"
+
+    try:
+        pairs = _extract_owner_method_pairs(
+            GlobalFileManager,
+            target_attr,
+            self_external_map=None,
+            extra_class_names={"GlobalFileManager": GlobalFileManager},
+        )
+        if pairs:
+            tools = _build_tool_dict(pairs)
+            if tools:
+                return tools
+    except Exception as e:
+        print(f"mirror_global_file_manager_tools({kind}) failed: {e}")
+
+    # Fallback – align with new delegation-only model
+    if kind == "ask":
+        # Require listing filesystems first; no low-level ops exposed here
+        return methods_to_tool_dict(
+            GlobalFileManager._list_filesystems,
+            include_class_name=False,
+        )
+    elif kind == "organize":
+        # Organize should have discovery via ask available
+        return methods_to_tool_dict(
+            GlobalFileManager.ask,
+            GlobalFileManager._list_filesystems,
+            include_class_name=False,
+        )
+    else:
+        # Default to ask tools
+        return methods_to_tool_dict(
+            GlobalFileManager._list_filesystems,
+            GlobalFileManager._list_columns,
+            GlobalFileManager._filter_files,
+            GlobalFileManager._search_files,
             include_class_name=False,
         )
 

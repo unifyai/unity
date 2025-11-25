@@ -1,9 +1,8 @@
-import os
 from pathlib import Path
-from typing import Literal
+import sys
 
 from unity.transcript_manager.types.message import UNASSIGNED
-from unity.helpers import run_script, terminate_process
+from unity.helpers import cleanup_dangling_call_processes, run_script, terminate_process
 from unity.conversation_manager.new_events import *
 
 
@@ -11,6 +10,7 @@ class LivekitCallManager:
     def __init__(
         self,
         assistant_id=None,
+        assistant_bio=None,
         assistant_number=None,
         voice_provider=None,
         voice_id=None,
@@ -18,6 +18,7 @@ class LivekitCallManager:
         realtime: bool = False,
     ):
         self.assistant_id = assistant_id
+        self.assistant_bio = assistant_bio
         self.assistant_number = assistant_number
         self.voice_provider = voice_provider
         self.voice_id = voice_id
@@ -29,35 +30,33 @@ class LivekitCallManager:
         self.conference_name = ""
 
     # TODO: support unify calls and clean up boss data passage
-    def start_call(self, contact_phone_number, contact, boss):
+    def start_call(self, contact: dict, boss: dict, outbound: bool = False):
         target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         args = [
-            contact_phone_number,
             self.assistant_number,
             self.voice_provider,
-            self.voice_id if self.voice_id else "None",
-            "None",
-            str(False),
-            str(contact["is_boss"]),
-            contact["contact_id"],
-            contact["first_name"],
-            contact["surname"],
-            contact["email_address"],
-            boss["first_name"],
-            boss["surname"],
-            boss["phone_number"],
-            boss["email_address"],
+            self.voice_id,
+            outbound,
+            json.dumps(contact),
         ]
         if self.realtime:
+            args += [json.dumps(boss), self.assistant_bio]
             target_path = target_path / "realtime_call.py"
         else:
             target_path = target_path / "call.py"
+        args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
-        if not os.getenv("TEST"):
-            self.call_proc = run_script(str(target_path), "dev", *args)
+        self.call_proc = run_script(str(target_path), "dev", *args)
 
-    def start_unify_call(self, agent_name, room_name=None):
-        target_path = target_path / "unify_call.py"
+    def start_unify_call(
+        self,
+        agent_name: str | None,
+        room_name: str | None,
+        contact: dict,
+    ):
+        target_path = (
+            Path(__file__).parent.parent.resolve() / "medium_scripts" / "unify_call.py"
+        )
         agent_name = (
             agent_name
             if agent_name
@@ -77,19 +76,23 @@ class LivekitCallManager:
             )
         )
         args = [
-            self.voice_provider,
-            self.voice_id if self.voice_id else "",
             agent_name,
             room_name,
+            self.voice_provider,
+            self.voice_id,
+            json.dumps(contact),
         ]
+        args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
-        if not os.getenv("TEST"):
-            self.call_proc = run_script(str(target_path), "dev", *args)
+        self.call_proc = run_script(str(target_path), "dev", *args)
 
     def cleanup_call_proc(self):
         print(f"Terminating call process")
         try:
-            terminate_process(self.call_proc, timeout=3)
+            if sys.platform.startswith("win"):
+                terminate_process(self.call_proc, timeout=0.1)
+            else:
+                cleanup_dangling_call_processes()
             self.call_proc = None
             print(f"Call process terminated")
         except Exception as e:

@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 import unify
 from .base import BaseSecretManager
 from .types import Secret
+from ..common.llm_client import new_llm_client
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.simulated import (
@@ -181,14 +182,14 @@ class _SimulatedSecretHandle(SteerableToolHandle, SimulatedHandleMixin):
             pass
         return "Stopped." if reason is None else f"Stopped: {reason}"
 
-    def pause(self) -> str:
+    async def pause(self) -> str:
         if self._paused:
             return "Already paused."
         self._log_pause()
         self._paused = True
         return "Paused."
 
-    def resume(self) -> str:
+    async def resume(self) -> str:
         if not self._paused:
             return "Already running."
         self._log_resume()
@@ -272,14 +273,7 @@ class SimulatedSecretManager(BaseSecretManager):
         self._simulation_guidance = simulation_guidance
 
         # Shared, stateful async LLM
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=True,
-            traced=True,
-            stateful=True,
-        )
+        self._llm = new_llm_client(stateful=True)
 
         # Mirror the real manager's tool exposure using reflection helper
         ask_tools = mirror_secret_manager_tools("ask")

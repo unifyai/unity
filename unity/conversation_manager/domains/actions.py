@@ -1,15 +1,14 @@
 import asyncio
 import inspect
-import os
 from typing import Literal, Optional, Union, TYPE_CHECKING
 import asyncio
 from pydantic import BaseModel, Field, create_model
-from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.new_events import *
 from unity.conversation_manager.domains.utils import log_task_exc
+from unity.conversation_manager.domains.contact_index import Contact
 
 if TYPE_CHECKING:
     from unity.conversation_manager.conversation_manager import ConversationManager
@@ -80,18 +79,28 @@ class WaitForNextEvent(BaseModel):
 #     ...
 
 
+class ContactDetails(BaseModel):
+    first_name: Optional[str]
+    surename: Optional[str]
+
+
+class ContactDetailsPhone(ContactDetails):
+    phone_number: Optional[str]
+
+
+class ContactDetailsEmail(ContactDetails):
+    email_address: Optional[str]
+
+
 class SendEmail(BaseModel):
     """Comms method to send emails"""
 
     action_name: Literal["send_email"]
-    contact_id: int = Field(
+    contact_id: Optional[int] = Field(
         ...,
-        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
+        description="contact id, leave as None if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    email_address: str = Field(
-        ...,
-        description="the email address to send the email to",
-    )
+    contact_details: Optional[ContactDetailsEmail]
     subject: str = Field(
         ...,
         description="the subject of the email, should be the same as the subject of the received email without any prefix.",
@@ -107,11 +116,14 @@ class SendSMS(BaseModel):
     """Comms method to send sms"""
 
     action_name: Literal["send_sms"]
-    contact_id: int = Field(
+    contact_id: Optional[int] = Field(
         ...,
-        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
+        description="contact id, leave as None if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    phone_number: str
+    contact_details: Optional[ContactDetailsPhone] = Field(
+        ...,
+        description="contact details if you can not infer the contac_id (because it is not in the active conversations), contact details will be used to retrieve the contact if it exists or create a new one",
+    )
     message: str
 
 
@@ -119,15 +131,15 @@ class MakeCall(BaseModel):
     """Comms method to make outbound calls"""
 
     action_name: Literal["make_call"]
-    contact_id: int = Field(
+    contact_id: Optional[int] = Field(
         ...,
-        description="contact id, should be -1 if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
+        description="contact id, leave as None if you can not infer the contact from the active conversation, otherwise the contact's id as shown in active conversations",
     )
-    phone_number: str
+    contact_details: Optional[ContactDetailsPhone]
 
 
 class SendUnifyMessage(BaseModel):
-    """Send a message to the boss chat (no-phone medium)"""
+    """Send a message to the boss chat on the unify platform (no-phone medium)"""
 
     action_name: Literal["send_unify_message"]
     message: str
@@ -135,19 +147,12 @@ class SendUnifyMessage(BaseModel):
     contact_id: Literal[1] = 1
 
 
-def build_dynamic_response_models(
-    include_email: bool = True,
-    include_sms: bool = True,
-    include_call: bool = True,
-    realtime=False,
-):
+def build_dynamic_response_models(realtime=False):
     """
-    Dynamically create response models with conditional actions based on available contact info.
+    Create response models.
 
     Args:
-        include_email: Whether SendEmail action should be available
-        include_sms: Whether SendSMS action should be available
-        include_call: Whether MakeCall action should be available
+        realtime: Whether the response model is for realtime mode
 
     Returns:
         dict: Response models for different modes (call, gmeet, text)
@@ -158,14 +163,10 @@ def build_dynamic_response_models(
         ConductorHandleAction,
         WaitForNextEvent,
         SendUnifyMessage,
+        SendEmail,
+        SendSMS,
+        MakeCall,
     ]
-
-    if include_email:
-        available_actions.append(SendEmail)
-    if include_sms:
-        available_actions.append(SendSMS)
-    if include_call:
-        available_actions.append(MakeCall)
 
     # Create dynamic Union of available actions
     ActionsUnion = Union[tuple(available_actions)]
@@ -212,7 +213,7 @@ class Action:
         f = cls.action_handlers.get(action_name)
         if not f:
             raise Exception(
-                f"unregisted action: {action_name}, make sure to register action"
+                f"unregisted action: {action_name}, make sure to register action",
             )
         if inspect.iscoroutinefunction(f):
             if _as_task:
@@ -240,6 +241,73 @@ class Action:
         return wrapper
 
 
+# utils
+async def get_update_or_create_contact(
+    cm: "ConversationManager",
+    contact_id: int = None,
+    details: dict = None,
+):
+    if not contact_id and not details:
+        # bad
+        ...
+    # means update
+    elif contact_id and details:
+        contact = cm.contact_index.get_contact(contact_id=contact_id)
+        data_to_insert = {}
+        for k, v in details:
+            if v:
+                if contact[k] != v:
+                    data_to_insert[k] = v
+        updated_contacts = cm.contact_manager.get_contact_info(
+            contact_id=[c.contact_id for c in cm.contact_index.contacts],
+        )
+        updated_active_contacts = {
+            Contact(
+                **{**c.model_dump(), **uc, "threads": c.threads},
+            )
+            for (cid, c), uc in zip(
+                cm.contact_index.active_conversations.items(),
+                updated_contacts,
+            )
+        }
+        cm.contact_index.contacts = updated_contacts
+        cm.contact_index.active_conversations = updated_active_contacts
+        contact = (
+            cm.contact_index.get_contact(phone_number=phone)
+            if phone
+            else cm.contact_index.get_contact(email=email)
+        )
+        return contact
+
+    # means retrieve if exists, create if not
+    elif details:
+        phone, email = details.get("phone_number"), details.get("email")
+        maybe_contact = cm.contact_index.get_contact(
+            phone_number=phone,
+        ) or cm.contact_index.get_contact(email=email)
+        if maybe_contact:
+            return maybe_contact
+        tool_outcome = await asyncio.to_thread(
+            cm.contact_manager._create_contact,
+            **details,
+        )
+        new_contact_id = tool_outcome["details"]["contact_id"]
+        new_contact = await asyncio.to_thread(
+            cm.contact_manager.get_contact_info,
+            new_contact_id,
+        )
+        cm.contact_index.contacts[new_contact_id] = Contact(
+            **new_contact[new_contact_id],
+        )
+        # all good, maybe no need to get all contacts here
+        return new_contact[new_contact_id]
+
+    # just retrieve
+    elif contact_id:
+        # means just message this person directly
+        return cm.contact_index.get_contact(contact_id=contact_id)
+
+
 # registered actions, make sure to add *args, **kwargs to make calling these actions easier
 # TODO: add sending/performing [action] notification when actions are made
 
@@ -252,35 +320,45 @@ async def wait(cm, action_name, *args, **kwargs):
 
 @Action.register()
 async def send_sms(cm: "ConversationManager", action_name: str, *args, **kwargs):
+    # ToDo: either include contact details in prompt and uncomment this
+    # or remove this altogether
+    # contact_id = kwargs.get("contact_id")
     contact_id = kwargs.get("contact_id")
-    to_number = kwargs.get("phone_number")
+    contact_details = kwargs.get("contact_details")
     message = kwargs.get("message")
-    if not os.getenv("TEST"):
-        response = await comms_utils.send_sms_message_via_number(
-            to_number=to_number, message=message
-        )
-    else:
-        response = {"success": True}
+    contact = await get_update_or_create_contact(
+        cm,
+        contact_id,
+        contact_details,
+    )
+    to_number = contact.get("phone_number")
+    response = await comms_utils.send_sms_message_via_number(
+        to_number=to_number,
+        message=message,
+    )
+
     if response["success"]:
-        contact = cm.contact_index.get_contact(
-            contact_id=contact_id, phone_number=to_number
-        )
+        contact = cm.contact_index.get_contact(phone_number=to_number)
         event = SMSSent(contact=contact, content=message)
     else:
-        event = Error(f"Failed to send sms to {to_number}")
+        if not cm.assistant_number:
+            error_msg = "You don't have a number, please provision one."
+        else:
+            error_msg = f"Failed to send sms to {to_number}"
+        event = Error(error_msg)
     await event_broker.publish("app:comms:sms_sent", event.to_json())
 
 
 @Action.register()
 async def send_unify_message(
-    cm: "ConversationManager", action_name: str, *args, **kwargs
+    cm: "ConversationManager",
+    action_name: str,
+    *args,
+    **kwargs,
 ):
     message = kwargs.get("message")
     contact_id = kwargs.get("contact_id")
-    if not os.getenv("TEST"):
-        response = await comms_utils.send_unify_message(message=message)
-    else:
-        response = {"success": True}
+    response = await comms_utils.send_unify_message(message=message)
     if response["success"]:
         contact = cm.contact_index.get_contact(contact_id=contact_id)
         event = UnifyMessageSent(contact=contact, content=message)
@@ -291,45 +369,64 @@ async def send_unify_message(
 
 @Action.register()
 async def send_email(cm: "ConversationManager", action_name: str, *args, **kwargs):
+    # ToDo: either include contact details in prompt and uncomment this
+    # or remove this altogether
     contact_id = kwargs.get("contact_id")
-    to_email = kwargs.get("email_address")
+    contact_details = kwargs.get("contact_details")
+    contact = await get_update_or_create_contact(
+        cm,
+        contact_id,
+        contact_details,
+    )
+    to_email = contact.get("email")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
     message_id = kwargs.get("message_id")
-    if not os.getenv("TEST"):
-        response = await comms_utils.send_email_via_address(
-            to_email=to_email, subject=subject, body=body, message_id=message_id
-        )
-    else:
-        response = {"success": True}
+    response = await comms_utils.send_email_via_address(
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        message_id=message_id,
+    )
     if response["success"]:
-        contact = cm.contact_index.get_contact(contact_id=contact_id, email=to_email)
+        contact = cm.contact_index.get_contact(email=to_email)
         event = EmailSent(
-            contact=contact, body=body, subject=subject, message_id=message_id
+            contact=contact,
+            body=body,
+            subject=subject,
+            message_id=message_id,
         )
     else:
-        event = Error(f"Failed to send email to {to_email}")
+        if not cm.assistant_email:
+            error_msg = "You don't have an email address, please provision one."
+        else:
+            error_msg = f"Failed to send email to {to_email}"
+        event = Error(error_msg)
     await event_broker.publish("app:comms:email_sent", event.to_json())
 
 
 @Action.register()
 async def make_call(cm: "ConversationManager", action_name: str, *args, **kwargs):
+    # ToDo: either include contact details in prompt and uncomment this
+    # or remove this altogether
     contact_id = kwargs.get("contact_id")
-    from_number = kwargs.get("assistant_number")
-    to_number = kwargs.get("phone_number")
-    if not os.getenv("TEST"):
-        response = await comms_utils.start_call(
-            from_number=from_number, to_number=to_number
-        )
-    else:
-        response = {"success": True}
+    contact_details = kwargs.get("contact_details")
+    contact = await get_update_or_create_contact(
+        cm,
+        contact_id,
+        contact_details,
+    )
+    to_number = contact.get("phone_number")
+    response = await comms_utils.start_call(to_number=to_number)
     if response["success"]:
-        contact = cm.contact_index.get_contact(
-            contact_id=contact_id, phone_number=to_number
-        )
+        contact = cm.contact_index.get_contact(phone_number=to_number)
         event = PhoneCallSent(contact=contact)
     else:
-        event = Error(f"Failed to send call to {to_number}")
+        if not cm.assistant_number:
+            error_msg = "You don't have a number, please provision one."
+        else:
+            error_msg = f"Failed to send call to {to_number}"
+        event = Error(error_msg)
     await event_broker.publish("app:comms:make_call", event.to_json())
 
 
@@ -338,7 +435,10 @@ _next_handle_id = 0
 
 @Action.register(["conductor_ask", "conductor_request"])
 async def conductor_ask_request(
-    cm: "ConversationManager", action_name: str, *args, **kwargs
+    cm: "ConversationManager",
+    action_name: str,
+    *args,
+    **kwargs,
 ):
     """Start a Conductor ask/request, store handle, and publish started."""
     global _next_handle_id
@@ -377,13 +477,16 @@ async def conductor_ask_request(
     asyncio.create_task(managers_utils.conductor_watch_result(handle_id, handle))
     asyncio.create_task(managers_utils.conductor_watch_notifications(handle_id, handle))
     asyncio.create_task(
-        managers_utils.conductor_watch_clarifications(handle_id, handle)
+        managers_utils.conductor_watch_clarifications(handle_id, handle),
     )
 
 
 @Action.register([...])
 async def conductor_handle_actions(
-    cm: "ConversationManager", action_name: str, *args, **kwargs
+    cm: "ConversationManager",
+    action_name: str,
+    *args,
+    **kwargs,
 ):
     handle_id = kwargs["handle_id"]
     query = kwargs["query"]
@@ -445,16 +548,3 @@ async def conductor_handle_actions(
             response=f"Intervened: {action_name} {result}",
         ).to_json(),
     )
-
-
-@Action.register()
-async def summarize_conversation(
-    cm: "ConversationManager", action_name: str, *args, **kwargs
-):
-    pass
-    # cm.transcript_manager
-    # tasks = [
-    #         cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid)
-    #         for cid, contact in zip(cm.contact_index.active_conversations)
-    #     ]
-    # await asyncio.gather(*tasks)

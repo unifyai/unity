@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import json
 import os
 from typing import Any, Callable, Dict, List, Optional
 
 import unify
 import functools
+from unity.common.llm_client import new_llm_client
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
@@ -167,15 +167,6 @@ class SecretManager(BaseSecretManager):
             pass
 
     # --------------------- Internal helpers (LLM client/policies) --------------------- #
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        """Construct a configured AsyncUnify client for the given model."""
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
 
     @staticmethod
     def _default_ask_tool_policy(
@@ -448,7 +439,7 @@ class SecretManager(BaseSecretManager):
         except Exception:
             pass
 
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         # Build tools for read-only inspection
         tools = dict(self.get_tools("ask"))
@@ -536,7 +527,7 @@ class SecretManager(BaseSecretManager):
         except Exception:
             pass
 
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("update"))
         if _clarification_up_q is not None and _clarification_down_q is not None:

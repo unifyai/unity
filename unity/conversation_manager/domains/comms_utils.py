@@ -22,6 +22,8 @@ async def send_sms_message_via_number(to_number: str, message: str) -> str:
         str: The response from the SMS API
     """
     from_number = os.getenv("ASSISTANT_NUMBER")
+    if not from_number:
+        return {"success": False}
 
     print(f"Sending SMS from {from_number} to {to_number}: {message}")
     async with aiohttp.ClientSession() as session:
@@ -104,6 +106,8 @@ async def send_email_via_address(
         str: The response from the email API
     """
     from_email = os.getenv("ASSISTANT_EMAIL")
+    if not from_email:
+        return {"success": False}
 
     print(
         f"Sending email from {from_email} to {to_email}: {body}, {subject} {message_id}",
@@ -127,21 +131,21 @@ async def send_email_via_address(
             return await response.json()
 
 
-async def start_call(
-    from_number: str,
-    to_number: str,
-) -> str:
+async def start_call(to_number: str) -> str:
     """
     Send a call using the call provider API.
 
     Args:
-        from_number: The sender's phone number
         to_number: The recipient's phone number
 
     Returns:
         str: The response
     """
+    from_number = os.getenv("ASSISTANT_NUMBER")
     print(f"Sending call from {from_number} to {to_number}")
+    if not from_number:
+        return {"success": False}
+
     async with aiohttp.ClientSession() as session:
         async with session.post(
             f"{os.getenv('UNITY_COMMS_URL')}/phone/send-call",
@@ -192,7 +196,9 @@ async def add_email_attachments(
                 async with session.get(url, headers=headers, params=params) as resp:
                     data = await resp.read()
 
-                from unity.file_manager.file_manager import FileManager
+                from unity.file_manager.managers.local import (
+                    LocalFileManager as FileManager,
+                )
 
                 file_manager = FileManager()
                 await asyncio.to_thread(

@@ -31,7 +31,8 @@ from .prompt_builder import (
     build_intranet_update_instructions,
     build_intranet_ask_llm_prompt,
 )
-from unity.file_manager.file_manager import FileManager
+from unity.file_manager.managers.local import LocalFileManager as FileManager
+from unity.common.llm_client import new_llm_client
 
 # Import Pydantic models
 try:
@@ -267,47 +268,12 @@ class IntranetRAGAgent:
             include_contacts=False,
         )
 
-        # Build enabled tools
-        self.enabled_tools = self._build_enabled_tools(enabled_tools or ["knowledge"])
-
-        print(f"🤖 RAG Agent initialized with {len(self.enabled_tools)} tools")
+        print(f"🤖 RAG Agent initialized")
         print(f"💬 Conversation Context: {conv_context_length} messages")
 
         # ── Usage-logging context ────────────────
         # Ensure a dedicated, idempotent context exists for usage logs.
         self._logging_ctx = self._ensure_logging_context()
-
-    def _build_enabled_tools(self, tool_categories: List[str]) -> Dict[str, Any]:
-        """
-        Build the tool dictionary for the agent using Unity's methods_to_tool_dict.
-
-        Args:
-            tool_categories: Categories of tools to enable
-
-        Returns:
-            Dict mapping tool names to tool functions
-        """
-        available_tools = {}
-
-        # Knowledge Management Tools
-        from unity.common.llm_helpers import methods_to_tool_dict
-
-        if "knowledge" in tool_categories:
-            km_tools = methods_to_tool_dict(
-                self.knowledge_manager.ask,
-                self.knowledge_manager.update,
-                self.knowledge_manager.refactor,
-            )
-            # Expose FileManager tools for ingestion/reflection flows
-            fm_tools = methods_to_tool_dict(
-                self.file_manager.list,
-                self.file_manager.exists,
-                self.file_manager.ask,
-                self.file_manager.parse,
-            )
-            available_tools.update({**km_tools, **fm_tools})
-
-        return available_tools
 
     async def ask(
         self,
@@ -510,12 +476,9 @@ class IntranetRAGAgent:
             # 3) Create client and set prompt
             import unify
 
-            client = unify.AsyncUnify(
-                "gpt-5@openai",
+            client = new_llm_client(
                 cache=True,
                 traced=True,
-                reasoning_effort="high",
-                service_tier="priority",
                 response_format=RAGLLMResponseRaw,
             )
             client.set_system_message(system_msg)

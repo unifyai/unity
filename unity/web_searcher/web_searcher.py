@@ -1,5 +1,4 @@
 import os
-import json
 from tavily import TavilyClient
 import functools
 from typing import List, Dict, Any, Optional, Type
@@ -15,6 +14,7 @@ from unity.common.async_tool_loop import (
 )
 from unity.constants import is_readonly_ask_guard_enabled
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
+from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
@@ -152,7 +152,7 @@ class WebSearcher(BaseWebSearcher):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("ask"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
@@ -330,7 +330,7 @@ class WebSearcher(BaseWebSearcher):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("update"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
@@ -1021,12 +1021,3 @@ class WebSearcher(BaseWebSearcher):
     # ------------------------------------------------------------------ #
     #  Small internal helpers (LLM client + tool policies)               #
     # ------------------------------------------------------------------ #
-
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )

@@ -1,7 +1,7 @@
 from collections import deque
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import Field
 
@@ -13,11 +13,11 @@ class Contact(ContactType):
     on_call: bool = False
     threads: dict[str, deque] = Field(
         default_factory=lambda: {
-            "sms": deque(maxlen=5),
-            "email": deque(maxlen=5),
-            "phone": deque(maxlen=5),
-            "unify_call": deque(maxlen=5),
-            "unify_message": deque(maxlen=5),
+            "sms": deque(maxlen=25),
+            "email": deque(maxlen=25),
+            "phone": deque(maxlen=25),
+            "unify_call": deque(maxlen=25),
+            "unify_message": deque(maxlen=25),
         },
     )
 
@@ -44,9 +44,10 @@ class EmailMessage:
 
 
 class ContactIndex:
-    def __init__(self):
+    def __init__(self, is_local: bool = False):
         self.active_conversations: dict[str, Contact] = {}
-        self.contacts = None
+        self.contacts: dict[int, Contact] = {}
+        self.is_local = is_local
 
     @property
     def boss_contact(self):
@@ -54,10 +55,11 @@ class ContactIndex:
         return self.contacts.get(1)
 
     def set_contacts(self, contacts: list[dict]):
-        self.contacts = {
-            c["contact_id"]: Contact(**c, is_boss=c["contact_id"] == 1)
-            for c in contacts
-        }
+        print(f"Setting contacts: {contacts}")
+        for c in contacts:
+            self.contacts[c["contact_id"]] = Contact(**c, is_boss=c["contact_id"] == 1)
+        if not self.is_local:
+            self.contacts.pop(-1, None)
 
     # is this supposed to fail for any reason?
     def push_message(
@@ -95,7 +97,10 @@ class ContactIndex:
 
     # should check if the contact exists
     def get_contact(
-        self, contact_id: str = None, phone_number=None, email=None
+        self,
+        contact_id: str = None,
+        phone_number=None,
+        email=None,
     ) -> dict:
         c = None
         if contact_id:

@@ -1,7 +1,8 @@
 import pytest
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import Message, VALID_MEDIA
+from unity.transcript_manager.types.message import Message
+from unity.transcript_manager.types.medium import VALID_MEDIA
 from tests.helpers import _handle_project
 import random
 from unity.contact_manager.contact_manager import ContactManager

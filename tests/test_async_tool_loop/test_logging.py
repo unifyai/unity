@@ -10,7 +10,8 @@ from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
 )
 from unity.events.event_bus import EVENT_BUS
-from tests.helpers import SETTINGS, _handle_project
+from tests.helpers import _handle_project, capture_events
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
@@ -37,13 +38,7 @@ async def test_nested_logging_hierarchy_labels():
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -64,13 +59,7 @@ async def test_nested_logging_hierarchy_labels():
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop: uses the outer tool ────────────────────────────────
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -136,13 +125,7 @@ async def test_single_loop_logging_hierarchy_label():
     def noop_tool() -> str:  # noqa: D401
         return "ok"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "1️⃣  Call `noop_tool`. 2️⃣ Then reply exactly 'done'.",
     )
@@ -197,13 +180,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -224,13 +201,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop: uses the outer tool ────────────────────────────────
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -317,13 +288,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -343,13 +308,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -459,14 +418,14 @@ async def test_deserialize_replay_logs_and_events_single_manager(caplog):
 
     caplog.set_level(_logging.DEBUG, logger="unity")
 
-    resumed = AsyncToolLoopHandle.deserialize(snap)
-    # Complete resumed loop to flush all replay logs/events
-    await resumed.result()
+    async with capture_events("ToolLoop") as captured_events:
+        resumed = AsyncToolLoopHandle.deserialize(snap)
+        # Complete resumed loop to flush all replay logs/events
+        await resumed.result()
 
     # EventBus: at least one ToolLoop event must have origin == 'deserialize'
-    events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=300)
     has_origin_deser = any(
-        (evt.payload or {}).get("origin") == "deserialize" for evt in events
+        (evt.payload or {}).get("origin") == "deserialize" for evt in captured_events
     )
     assert (
         has_origin_deser
@@ -507,8 +466,8 @@ async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog
     # Trigger update with an instruction; first step policy requires `ask`, creating a nested child loop.
     handle = await cm.update("Please check contacts and then do nothing.")
 
-    # Wait until the nested `ask` child has been adopted
-    async def _ask_child_adopted():
+    # Wait until the nested `ask` child has been adopted AND has produced an assistant message
+    async def _ask_child_ready_for_snapshot():
         try:
             task_info = getattr(getattr(handle, "_task", None), "task_info", {})  # type: ignore[attr-defined]
             if isinstance(task_info, dict):
@@ -516,12 +475,18 @@ async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog
                     nm = getattr(meta, "name", None)
                     hd = getattr(meta, "handle", None)
                     if nm == "ask" and hd is not None:
-                        return True
+                        # Ensure it's still alive (if it finished, we missed the window)
+                        if hasattr(hd, "done") and hd.done():
+                            return False
+                        # Check history for assistant message so we have something to assert replay on
+                        hist = hd.get_history()
+                        if any(m.get("role") == "assistant" for m in hist):
+                            return True
         except Exception:
             return False
         return False
 
-    await _wait_for_condition(_ask_child_adopted, poll=0.02, timeout=60.0)
+    await _wait_for_condition(_ask_child_ready_for_snapshot, poll=0.02, timeout=60.0)
 
     # Take recursive snapshot to capture the in-flight child
     snap = handle.serialize(recursive=True)
@@ -531,8 +496,9 @@ async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog
 
     caplog.set_level(_logging.DEBUG, logger="unity")
 
-    resumed = AsyncToolLoopHandle.deserialize(snap)
-    await resumed.result()
+    async with capture_events("ToolLoop") as captured_events:
+        resumed = AsyncToolLoopHandle.deserialize(snap)
+        await resumed.result()
 
     # Logs: tighten to require nested deserialize banner, nested user replay suffix, and nested assistant scheduled marker
     text = caplog.text
@@ -553,12 +519,11 @@ async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog
     ), "Expected nested child assistant scheduled replay marker line"
 
     # Events: at least one nested ToolLoop event with origin == 'deserialize'
-    events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=400)
     has_nested_deser = any(
         isinstance((evt.payload or {}).get("hierarchy"), list)
         and len((evt.payload or {}).get("hierarchy")) >= 2
         and (evt.payload or {}).get("origin") == "deserialize"
-        for evt in events
+        for evt in captured_events
     )
     assert (
         has_nested_deser
@@ -571,7 +536,7 @@ async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog
             r"ContactManager\.update->ContactManager\.ask\([0-9a-f]{4}\)",
             (evt.payload or {}).get("hierarchy_label"),
         )
-        for evt in events
+        for evt in captured_events
     )
     assert (
         has_nested_label

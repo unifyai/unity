@@ -1,0 +1,31 @@
+---
+description: Aggressive Refactoring, Simplification, and Zero Backward Compatibility
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Aggressive Refactoring & Zero Backward Compatibility
+
+## Context
+This project is a prototype in rapid development. We prioritize a clean, minimal, and correct codebase over stability, backward compatibility, or risk aversion.
+
+## Critical Rules
+
+### 1. Zero Backward Compatibility
+- **Assume NO Backward Compatibility**: Unless explicitly requested, break APIs, data structures, and protocols freely.
+- **Immediate Updates**: When changing an interface, update all call sites immediately. Do not create adapters, aliases, or optional parameters to "soften" the change.
+- **Purge Old Patterns**: If you introduce a new design pattern (e.g., for state management), strictly remove all instances of the old pattern. Do not leave mixed patterns in the codebase.
+
+### 2. Destructive vs. Additive Editing
+- **Avoid "Stapling"**: Do not merely add new logic on top of old logic (additive editing). This creates bloat and "staples upon staples".
+- **Rewrite and Simplify**: When requirements change, **rewrite** the affected code to optimally support the *new* requirements as if they were the original ones.
+- **Delete Aggressively**: If code is no longer the "best" way to do something, delete it. Do not comment it out. Do not keep it "just in case".
+
+### 3. No Defensive Coding
+- **No Preemptive Try/Except**: Do not wrap code in try/except blocks to prevent crashes unless you are handling a specific, expected, and recoverable runtime error (e.g., network timeout). Fail loud and fast.
+- **No Defensive Checks**: Do not add null checks or type checks unless strictly necessary for the logic. Trust the type system and the caller contract.
+- **Clean Implementation**: Code should look like the "happy path". Avoid cluttering logic with defensive branches for edge cases that shouldn't happen in a correct system.
+
+### 4. Review and Reflect
+- **Simplify First**: Before adding a feature, ask: "Can I simplify the existing code to make this feature natural to implement?"
+- **Remove Bloat**: actively look for and remove redundant code, unused variables, and overly complex abstractions.

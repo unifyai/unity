@@ -1,6 +1,5 @@
 import asyncio
 import unify
-import os
 import functools
 import json
 from datetime import datetime, timezone
@@ -124,6 +123,7 @@ class SteerableHandle(ABC):
         message: str,
         *,
         parent_chat_context_cont: list[dict] | None = None,
+        images: list | dict | None = None,
     ) -> Awaitable[Optional[str]] | Optional[str]:
         """Inject an additional *user* turn into the running conversation.
 
@@ -135,6 +135,8 @@ class SteerableHandle(ABC):
             The parent chat context continued since the start of this loop.
             When provided, implementations should ensure the LLM sees this
             continuation alongside the interjection.
+        images : list | dict | None, optional
+            Live image references to make available during this interjection.
         """
 
 
@@ -167,7 +169,7 @@ class SteerableToolHandle(SteerableHandle):
         """
 
     @abstractmethod
-    def pause(self) -> Awaitable[Optional[str]] | Optional[str]:
+    async def pause(self) -> Optional[str]:
         """Pause the outer conversational loop without stopping running tools.
 
         Behaviour
@@ -180,7 +182,7 @@ class SteerableToolHandle(SteerableHandle):
         """
 
     @abstractmethod
-    def resume(self) -> Awaitable[Optional[str]] | Optional[str]:
+    async def resume(self) -> Optional[str]:
         """Resume a loop previously paused with :pyfunc:`pause`.
 
         Behaviour
@@ -224,12 +226,19 @@ class SteerableToolHandle(SteerableHandle):
         Behaviour
         ---------
         - Looks up the queued clarification channel for ``call_id`` and delivers
-          the provided ``answer`` to the tool that is currently waiting.
+          the provided ``answer`` to the waiting tool.
         - If the mapping is missing (e.g., the tool already finished or the loop
           resumed on its own), the call is a no‑op.
         - Implementations should not raise in the absence of a matching channel;
           best‑effort delivery is sufficient.
         """
+
+    async def nested_steer(self, spec: dict) -> dict:
+        """Apply a nested steering spec.
+
+        See module-level ``_nested_steer_on`` for details.
+        """
+        return await _nested_steer_on(self, spec)
 
     # --- snapshotting (skeleton; non-abstract stubs in v1) -----------------
     def serialize(self) -> dict:
@@ -479,9 +488,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
                 def stop(self, reason: Optional[str] = None): ...
 
-                def pause(self): ...
+                async def pause(self): ...
 
-                def resume(self): ...
+                async def resume(self): ...
 
                 def done(self):
                     return True
@@ -514,13 +523,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # 2.  Prepare an *in-memory* Unify client for the **inspection** loop
         #     (LLM sees only the system header + follow-up user question).
-        inspection_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        from .llm_client import new_llm_client
+
+        inspection_client = new_llm_client()
         inspection_client.set_system_message(
             "You are inspecting a running tool-use conversation. The entire "
             "transcript so far is attached below (read-only):\n"
@@ -736,6 +741,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         # Record user-visible immediately
         self._append_user_visible_user(message, parent_chat_context_cont)
 
+        # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
+        payload = {
+            "message": message,
+            "parent_chat_context_continuted": parent_chat_context_cont,
+            "images": images,
+            "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
+        }
+        # Use put_nowait to ensure the interjection is registered *synchronously* before
+        # we yield control (e.g. in _record_and_forward). This prevents a race where
+        # a fast-running loop completes its turn and exits before seeing the queued item.
+        self._queue.put_nowait(payload)
+
         # Centralized steering: record steer event; functional forwarding happens via mirror path
         await self._record_and_forward(
             "interject",
@@ -750,15 +767,6 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             had_passthrough=False,
             forwarded_to=[],
         )
-
-        # Buffer then forward to resolver loop. Support dict payloads when continued context provided.
-        payload = {
-            "message": message,
-            "parent_chat_context_continuted": parent_chat_context_cont,
-            "images": images,
-            "trigger_immediate_llm_turn": trigger_immediate_llm_turn,
-        }
-        await self._queue.put(payload)
         # Also mirror as synthetic helper tool_calls immediately (no LLM step)
         try:
             await self._queue.put(
@@ -824,26 +832,24 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             self._stop_event.set()
 
     @functools.wraps(SteerableToolHandle.pause, updated=())
-    def pause(self, **kwargs) -> None:
+    async def pause(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
 
         self._pause_event.clear()
         # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
         try:
-            asyncio.create_task(
-                self._record_and_forward(
-                    "pause",
-                    kwargs=dict(kwargs or {}),
-                    had_passthrough=False,
-                    forwarded_to=[],
-                ),
+            await self._record_and_forward(
+                "pause",
+                kwargs=dict(kwargs or {}),
+                had_passthrough=False,
+                forwarded_to=[],
             )
         except Exception:
             pass
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
-            self._queue.put_nowait(
+            await self._queue.put(
                 {
                     "_mirror": {
                         "method": "pause",
@@ -855,7 +861,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             pass
 
     @functools.wraps(SteerableToolHandle.resume, updated=())
-    def resume(self, **kwargs) -> None:
+    async def resume(self, **kwargs) -> None:
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"▶️ [{_label}] Resume requested")
         # Auto-resume base tools that were started in paused state while the outer loop was paused
@@ -873,19 +879,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         self._pause_event.set()
         # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
         try:
-            asyncio.create_task(
-                self._record_and_forward(
-                    "resume",
-                    kwargs=dict(kwargs or {}),
-                    had_passthrough=False,
-                    forwarded_to=[],
-                ),
+            await self._record_and_forward(
+                "resume",
+                kwargs=dict(kwargs or {}),
+                had_passthrough=False,
+                forwarded_to=[],
             )
         except Exception:
             pass
         # Mirror as synthetic helper tool_call (no LLM step)
         try:
-            self._queue.put_nowait(
+            await self._queue.put(
                 {
                     "_mirror": {
                         "method": "resume",

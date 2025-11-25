@@ -1,0 +1,33 @@
+---
+description: Instructions for local development, test execution, and environment management
+globs: **/*.py, **/*.toml, .git/hooks/*
+---
+
+# Local Development Environment
+
+## Python Interpreter
+- **ALWAYS** use the project's virtual environment interpreter: `.venv/bin/python`.
+- Do not use global python or other system interpreters.
+
+## Running Tests
+- **Command**: `tests/.parallel_run.sh --wait [path]`
+- **Method**: This script runs tests in parallel `tmux` sessions, logs output to `.pytest_logs/<session>.txt`, and waits for completion.
+- **Failure Handling**:
+  - If the script exits with code 1, failures were detected.
+  - Do **NOT** inspect `tmux` panes directly.
+  - **ALWAYS** read the corresponding log file in `.pytest_logs/` for the failed session (e.g., `.pytest_logs/x_❌_tests-contact_manager-test_api.txt`).
+- **Permissions**: Use `required_permissions: ['all']` to ensure access to `.env` and log files.
+
+## Pre-commit Hooks
+- The `pre-commit` tool is installed in the project `dev` dependencies.
+- **Execution**: Run via the python module to ensure path visibility:
+  - `.venv/bin/python -m pre_commit run --all-files`
+- **When to run**: If you modify files and want to ensure they pass CI checks, run pre-commit *before* committing.
+
+## Dependencies
+- This project uses `uv` for dependency management.
+- Config file: `pyproject.toml`
+
+## Edit Safety
+- **Protected Files**: Do not edit `uv.lock` or `package-lock.json` manually. Use the appropriate package manager commands.
+- **Sensitive Files**: Do not output the contents of `.env` or `*.key` files to the chat.

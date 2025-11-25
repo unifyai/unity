@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
 import functools
 from typing import Any, Dict, Optional, List, Callable
 
-import unify
 
+from ..common.llm_client import new_llm_client
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
@@ -74,14 +72,6 @@ class SimulatedSkillManager(BaseSkillManager):
             self._function_columns = []
 
     # Small helper – LLM client factory
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
 
     def _num_functions(self) -> int:
         # Simulated manager returns a small constant for cosmetic display
@@ -142,7 +132,7 @@ class SimulatedSkillManager(BaseSkillManager):
                 on_answer=_on_answer,
             )
 
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
         client.set_system_message(
             build_ask_prompt(
                 tools,
@@ -224,13 +214,13 @@ class _SimulatedSkillHandle(SteerableToolHandle, SimulatedHandleMixin):
         except TypeError:
             return self._inner.stop(reason)  # type: ignore[call-arg]
 
-    def pause(self) -> Optional[str]:
+    async def pause(self) -> Optional[str]:
         self._log_pause()
-        return self._inner.pause()
+        return await self._inner.pause()
 
-    def resume(self) -> Optional[str]:
+    async def resume(self) -> Optional[str]:
         self._log_resume()
-        return self._inner.resume()
+        return await self._inner.resume()
 
     def done(self) -> bool:
         return self._inner.done()

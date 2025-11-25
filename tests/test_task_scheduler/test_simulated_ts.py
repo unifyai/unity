@@ -232,13 +232,16 @@ async def test_pause_and_resume_simulated_ts(monkeypatch):
     ts = SimulatedTaskScheduler()
     handle = await ts.ask("List tomorrow's tasks.")
 
-    pause_reply = handle.pause()
-    assert "pause" in pause_reply.lower()
+    pause_reply = await handle.pause()
+    assert "pause" in (pause_reply or "").lower()
 
     res_task = await _assert_blocks_while_paused(handle.result())
 
-    resume_reply = handle.resume()
-    assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
+    resume_reply = await handle.resume()
+    assert (
+        "resume" in (resume_reply or "").lower()
+        or "running" in (resume_reply or "").lower()
+    )
 
     answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
     assert isinstance(answer, str) and answer.strip()
@@ -371,7 +374,7 @@ async def test_simulated_clear():
 async def test_stop_while_paused_finishes_immediately_ts():
     ts = SimulatedTaskScheduler()
     h = await ts.ask("Generate an exhaustive task summary.")
-    h.pause()
+    await h.pause()
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()

@@ -13,7 +13,7 @@ from .types.function import Function
 from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
-from ..file_manager.file_manager import FileManager
+from ..file_manager.managers.local import LocalFileManager as FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
 from ..common.context_handler import TableContext, ContextHandler
@@ -155,7 +155,7 @@ class FunctionManager(BaseFunctionManager):
             self = unify.traced(self)
 
         # ------------------------------------------------------------------ #
-        #  File system mirroring (functions folder under FileManager tmp)     #
+        #  File system mirroring (functions folder under FileManager root)    #
         # ------------------------------------------------------------------ #
         try:
             # Resolve a FileManager instance (DI preferred)
@@ -168,10 +168,12 @@ class FunctionManager(BaseFunctionManager):
         self._functions_dir: Optional[Path] = None
         if self._fm is not None:
             try:
-                # Create <tmp>/functions
-                tmp_dir = getattr(self._fm, "_tmp_dir", None)
-                if isinstance(tmp_dir, Path):
-                    functions_dir = tmp_dir / "functions"
+                # Access adapter root directly (LocalFileSystemAdapter._root)
+                adapter = getattr(self._fm, "_adapter", None)
+                root_dir = getattr(adapter, "_root", None) if adapter else None
+
+                if root_dir is not None and isinstance(root_dir, Path):
+                    functions_dir = root_dir / "functions"
                     functions_dir.mkdir(parents=True, exist_ok=True)
                     self._functions_dir = functions_dir
                     # Bootstrap: mirror existing functions from context to disk (idempotent)
@@ -341,6 +343,14 @@ class FunctionManager(BaseFunctionManager):
             auto_counting={"function_id": None},
             description="List of functions, with all function details stored.",
             fields=model_to_fields(Function),
+            foreign_keys=[
+                {
+                    "name": "guidance_ids[*]",
+                    "references": f"{self._ctx.replace("Functions", "Guidance")}.guidance_id",
+                    "on_delete": "CASCADE",  # pop on guidance deletion
+                    "on_update": "CASCADE",
+                },
+            ],
         )
 
     def _get_log_by_function_id(
@@ -485,6 +495,7 @@ class FunctionManager(BaseFunctionManager):
         *,
         implementations: Union[str, List[str]],
         preconditions: Optional[Dict[str, Dict]] = None,
+        verify: Optional[Dict[str, bool]] = None,
         overwrite: bool = False,
     ) -> Dict[str, str]:
         """
@@ -493,6 +504,7 @@ class FunctionManager(BaseFunctionManager):
         Args:
             implementations: Function source code (single string or list of strings).
             preconditions: Optional preconditions for functions.
+            verify: Optional verification settings (name -> bool).
             overwrite: If True, update existing functions; if False, skip duplicates.
 
         Returns:
@@ -501,6 +513,8 @@ class FunctionManager(BaseFunctionManager):
 
         if preconditions is None:
             preconditions = {}
+        if verify is None:
+            verify = {}
         if isinstance(implementations, str):
             implementations = [implementations]
 
@@ -581,6 +595,7 @@ class FunctionManager(BaseFunctionManager):
                 docstring = inspect.getdoc(fn_obj) or ""
                 embedding_text = f"Function Name: {name}\nSignature: {signature}\nDocstring: {docstring}"
                 precondition = preconditions.get(name)
+                should_verify = verify.get(name, True)
 
                 entry_data = {
                     "argspec": signature,
@@ -589,6 +604,7 @@ class FunctionManager(BaseFunctionManager):
                     "calls": dependencies_list,
                     "embedding_text": embedding_text,
                     "precondition": precondition,
+                    "verify": should_verify,
                 }
 
                 if name in existing_to_update:
@@ -688,6 +704,7 @@ class FunctionManager(BaseFunctionManager):
                 "argspec": log.entries["argspec"],
                 "docstring": log.entries["docstring"],
                 "guidance_ids": log.entries.get("guidance_ids", []),
+                "verify": log.entries.get("verify", True),
             }
             if include_implementations:
                 data["implementation"] = log.entries["implementation"]

@@ -18,8 +18,8 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
 )
 from unity.common._async_tool.loop import async_tool_loop_inner
-from unity.events.event_bus import EVENT_BUS
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project, capture_events
+from unity.common.llm_client import new_llm_client
 
 
 @unify.traced
@@ -40,13 +40,7 @@ async def test_basic_event_flow() -> None:
         user/msg → assistant/tool-call → tool/result → assistant/final-text
     """
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    ).set_system_message(
+    client = new_llm_client().set_system_message(
         "You are an automated test agent.\n"
         "You MUST call the tool named `echo` exactly once, passing the user's message as the `text` argument.\n"
         "Do NOT reply directly without first calling the `echo` tool (even if you think you know the answer).\n"
@@ -56,21 +50,20 @@ async def test_basic_event_flow() -> None:
     pause_event = asyncio.Event()
     pause_event.set()  # start un-paused
 
-    await async_tool_loop_inner(
-        client=client,
-        message="world",
-        tools={"echo": echo},
-        interject_queue=asyncio.Queue(),
-        cancel_event=asyncio.Event(),
-        pause_event=pause_event,
-        prune_tool_duplicates=True,
-    )
+    async with capture_events("ToolLoop") as captured_events:
+        await async_tool_loop_inner(
+            client=client,
+            message="world",
+            tools={"echo": echo},
+            interject_queue=asyncio.Queue(),
+            cancel_event=asyncio.Event(),
+            pause_event=pause_event,
+            prune_tool_duplicates=True,
+        )
 
-    # Exactly four events should have been published for the run
-    #    (newest-first order → reverse for readability).
-    events = list(
-        reversed(await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=10)),
-    )
+    # Exactly four events should have been published for the run.
+    # Captured events are already in chronological order (oldest first).
+    events = captured_events
     assert len(events) == 4
 
     roles = [evt.payload["message"]["role"] for evt in events]
@@ -98,31 +91,27 @@ async def test_interjection_publishes_user_event() -> None:
     loop is still thinking, then confirm that the event bus recorded it.
     """
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said most recently, and do not include the quoation marks in your response.",
     )
 
-    handle = start_async_tool_loop(
-        client=client,
-        message="first",
-        tools={},  # no tools needed
-        max_consecutive_failures=1,
-    )
+    async with capture_events("ToolLoop") as captured_events:
+        handle = start_async_tool_loop(
+            client=client,
+            message="first",
+            tools={},  # no tools needed
+            max_consecutive_failures=1,
+        )
 
-    # Interject with second.
-    await handle.interject("second")
+        # Interject with second.
+        await handle.interject("second")
 
-    final = await handle.result()
+        final = await handle.result()
+
     assert "you said: second" in final.lower().replace("*", "")
 
-    events = await EVENT_BUS.search(filter="type == 'ToolLoop'", limit=10)
+    events = captured_events
     roles = [evt.payload["message"]["role"] for evt in events]
     assert "user" in roles  # initial user
     # Interjection is now published as a system message that includes the

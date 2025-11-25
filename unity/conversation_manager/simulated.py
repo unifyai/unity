@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 from typing import Literal, Optional, Type, Any
 from pydantic import BaseModel
 import unify
 
+from ..common.llm_client import new_llm_client
 from .base import BaseConversationManagerHandle
 from ..common import SteerableToolHandle
 
@@ -34,14 +34,7 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
         self._simulation_guidance = simulation_guidance
 
         # A shared, stateful LLM for maintaining conversation context
-        self._llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            stateful=True,
-        )
+        self._llm = new_llm_client(stateful=True)
 
         # Initialize the system message for the stateful LLM
         system_msg = self._build_system_message()
@@ -159,11 +152,7 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
         if self._stopped:
             raise RuntimeError("Cannot ask a stopped conversation.")
 
-        ask_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        ask_client = new_llm_client()
         ask_client.set_system_message(self._llm.system_message)
 
         prompt = f"""The external process is asking the user a question. Based on your persona and the conversation history, provide a direct and plausible answer.
@@ -215,10 +204,10 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
             def stop(self, *args, **kwargs):
                 pass
 
-            def pause(self):
+            async def pause(self):
                 pass
 
-            def resume(self):
+            async def resume(self):
                 pass
 
             async def interject(self, *args, **kwargs):
@@ -280,12 +269,12 @@ class SimulatedConversationManagerHandle(BaseConversationManagerHandle):
             "interjection_id": interjection_id,
         }
 
-    def pause(self) -> str:
+    async def pause(self) -> str:
         """Pauses the simulated conversation."""
         self._paused = True
         return "Simulated conversation is paused."
 
-    def resume(self) -> str:
+    async def resume(self) -> str:
         """Resumes a paused conversation."""
         self._paused = False
         return "Simulated conversation is resumed."

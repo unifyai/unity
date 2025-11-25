@@ -2,14 +2,16 @@ import pytest
 import time
 import json
 import asyncio
-import unify
+import threading
 
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
     AsyncToolLoopHandle,
+    SteerableToolHandle,
 )
 from unity.common.tool_spec import ToolSpec
-from tests.helpers import SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
@@ -43,13 +45,7 @@ async def outer_tool() -> AsyncToolLoopHandle:
     """Launch an **inner** async‑tool‑use loop and return its *handle*."""
 
     # brand‑new LLM client dedicated to the nested conversation
-    inner_client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    inner_client = new_llm_client()
     inner_client.set_system_message(
         "You are running inside an automated test. "
         "ONLY do the following steps:\n"
@@ -80,13 +76,7 @@ async def test_nested_async_tool_loop():
     """Full end-to-end check – no mocks, real network call to OpenAI."""
 
     # Outer client that drives the *first* loop
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -177,13 +167,7 @@ async def test_stop_nested_loop_calls_stop(monkeypatch):
     )
 
     # 2.  Fire up the *outer* conversational loop
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test.\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -283,13 +267,7 @@ async def test_interject_nested_handle(monkeypatch):
 
     # 3.  Outer tool: launches nested loop and returns its handle
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "1️⃣  Call `slow_topic`.\n"
             "2️⃣  Wait until the topic changes.\n"
@@ -305,13 +283,7 @@ async def test_interject_nested_handle(monkeypatch):
     outer_tool.__qualname__ = "outer_tool"
 
     # 4.  Top-level loop – assistant must use `_interject_…`
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "1️⃣  Call `outer_tool`.\n"
         "2️⃣  When the *user* says 'switch to dogs', call the helper whose "
@@ -486,13 +458,7 @@ async def test_clarification_nested_handle():
     # ── outer tool launches a nested loop and *exposes the same queues* ──
     async def outer_tool() -> AsyncToolLoopHandle:
         up_q, down_q = asyncio.Queue(), asyncio.Queue()
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "1️⃣  Call `ask_colour`.\n"
             "2️⃣  Wait for the clarification answer.\n."
@@ -527,13 +493,7 @@ async def test_clarification_nested_handle():
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop – the assistant must answer the clar request ——––
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "Call `outer_tool`.  When the tool asks a question, answer **only** with 'blue' via the provided helper.\n"
         "If waiting is still needed, call the `wait` helper; do not reply to the user yet.\n"
@@ -585,13 +545,7 @@ async def test_notification_nested_handle():
         *,
         _notification_up_q: asyncio.Queue | None = None,
     ) -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "1️⃣  Call `inner_progress`.\n"
             "2️⃣  Surface any internal progress updates as they occur.\n"
@@ -611,13 +565,7 @@ async def test_notification_nested_handle():
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop – must surface progress then finish ─────────────────
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -690,13 +638,7 @@ async def test_pause_nested_loop_calls_pause():
     dummy_long_job.__qualname__ = "dummy_long_job"
 
     # outer conversation --------------------------------------------------
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "1️⃣  Call `dummy_long_job`.\n"
         "2️⃣  When the *user* says **pause**, you MUST immediately call exactly once the helper whose name "
@@ -789,13 +731,7 @@ async def test_resume_nested_loop_calls_resume():
     dummy_job.__name__ = "dummy_job"
     dummy_job.__qualname__ = "dummy_job"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test.\n"
         "1️⃣ Call `dummy_job`.\n"
@@ -883,13 +819,7 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     long_tool.__qualname__ = "long_tool"
 
     # ── 3.  Kick off outer loop ───────────────────────────────────────────
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "1️⃣ Call `long_tool`.\n"
         "2️⃣ Wait for completion (use the `wait` helper if exposed) and do not produce any other reply.\n"
@@ -908,13 +838,13 @@ async def test_handle_pause_and_resume_freeze_and_unfreeze_loop(monkeypatch):
     #        result placeholder to be appended while paused, then resume ───
     # Wait deterministically until the assistant has scheduled the tool
     await _wait_for_tool_request(client, "long_tool")
-    outer_handle.pause()
+    await outer_handle.pause()
 
     # Ensure the tool result message for `long_tool` is appended while paused
     await _wait_for_tool_message_prefix(client, "long_tool")
 
     # Resume and finish
-    outer_handle.resume()
+    await outer_handle.resume()
     final_reply = await outer_handle.result()
 
     # ── 5.  Assertions ───────────────────────────────────────────────────
@@ -941,13 +871,7 @@ async def test_handle_result_blocks_until_resume():
     noop_tool.__name__ = "noop_tool"
     noop_tool.__qualname__ = "noop_tool"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "Call `noop_tool` then answer **only** with 'done'. Do not answer while the loop is paused or while tools are running; only answer after completion.",
     )
@@ -960,7 +884,7 @@ async def test_handle_result_blocks_until_resume():
     )
 
     # pause almost immediately
-    h.pause()
+    await h.pause()
 
     with pytest.raises(asyncio.TimeoutError):
         # Shield protects the inner task from the stoplation that
@@ -968,7 +892,7 @@ async def test_handle_result_blocks_until_resume():
         await asyncio.wait_for(asyncio.shield(h.result()), timeout=1)
 
     # resume – now it should finish quickly
-    h.resume()
+    await h.resume()
     final = await asyncio.wait_for(h.result(), timeout=60)
 
     assert "done" in final.strip().lower()
@@ -1025,13 +949,7 @@ async def test_dynamic_handle_public_method():
     long_compute.__qualname__ = "long_compute"
 
     # ── outer conversation that uses `long_compute` ────────────────────
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "1️⃣  Call `long_compute`.\n"
         "2️⃣  When the *user* says 'progress?', you MUST immediately call exactly once the helper whose name starts with `ask_` (e.g. `ask_long_compute_<id>`). Do not call any other helpers before this.\n"
@@ -1109,13 +1027,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     inner_long_job.__qualname__ = "inner_long_job"
 
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
@@ -1141,13 +1053,7 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
@@ -1173,8 +1079,9 @@ async def test_outer_handle_stop_propagates_to_inner_loop_stop():
     final = await outer.result()
     assert final == "processed stopped early, no result"
 
-    # Assert that the inner handle's stop() was invoked exactly once
-    assert stop_calls["count"] == 1, "inner handle stop() was not propagated"
+    # Assert that the inner handle's stop() was invoked at least once
+    # (It might be called twice: once via the mirror message if processed, and once via the safety-net in cancel_pending_tasks)
+    assert stop_calls["count"] >= 1, "inner handle stop() was not propagated"
 
 
 @pytest.mark.asyncio
@@ -1194,13 +1101,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     inner_long_job.__qualname__ = "inner_long_job"
 
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
@@ -1225,13 +1126,7 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
@@ -1248,13 +1143,13 @@ async def test_outer_handle_pause_propagates_to_inner_loop_pause():
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
 
     # Pause outer; should propagate to inner handle if available – wait until observed
-    outer.pause()
+    await outer.pause()
 
     async def _paused_once():
         return pause_calls["count"] >= 1
 
     await _wait_for_condition(_paused_once, poll=0.05, timeout=60.0)
-    outer.resume()  # unfreeze outer so the test completes
+    await outer.resume()  # unfreeze outer so the test completes
 
     await outer.result()
 
@@ -1279,13 +1174,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     inner_long_job.__qualname__ = "inner_long_job"
 
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "1️⃣ Call `inner_long_job`. 2️⃣ Wait for it to finish. 3️⃣ Reply 'done'.",
         )
@@ -1316,13 +1205,7 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "Call `outer_tool` with no arguments, then wait until it completes.",
     )
@@ -1339,13 +1222,13 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
 
     # Pause then resume outer; both should propagate – wait for each transition deterministically
-    outer.pause()
+    await outer.pause()
 
     async def _saw_pause():
         return counts["pause"] >= 1
 
     await _wait_for_condition(_saw_pause, poll=0.05, timeout=60.0)
-    outer.resume()
+    await outer.resume()
 
     async def _saw_resume():
         return counts["resume"] >= 1
@@ -1358,3 +1241,112 @@ async def test_outer_handle_resume_propagates_to_inner_loop_resume():
         "pause": 1,
         "resume": 1,
     }, "pause/resume should each be propagated once"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_outer_stop_calls_inner_stop_on_cancel():
+    """
+    Regression test for a hanging issue where outer_handle.stop()
+    cancelled the wrapper task but failed to call inner_handle.stop().
+
+    If inner_handle.stop() is not called, resources (like threads)
+    might leak or block forever.
+    """
+
+    stop_called = {"count": 0}
+
+    class ThreadedHandle(SteerableToolHandle):
+        def __init__(self):
+            self._done_event = threading.Event()
+
+        async def ask(self, question: str, **kwargs):
+            return "answer"
+
+        def interject(self, message: str, **kwargs):
+            pass
+
+        def stop(self, reason: str | None = None, **kwargs):
+            stop_called["count"] += 1
+            self._done_event.set()
+            return "stopped"
+
+        def pause(self, **kwargs):
+            pass
+
+        def resume(self, **kwargs):
+            pass
+
+        def done(self) -> bool:
+            return self._done_event.is_set()
+
+        async def result(self) -> str:
+            # Simulate a blocking thread wait - mimicking SimulatedActor
+            await asyncio.to_thread(self._done_event.wait)
+            return "done"
+
+        # Event API stubs
+        async def next_clarification(self):
+            return {}
+
+        async def next_notification(self):
+            return {}
+
+        async def answer_clarification(self, cid, ans):
+            pass
+
+    inner_handle = ThreadedHandle()
+
+    async def outer_tool() -> SteerableToolHandle:
+        return inner_handle
+
+    client = new_llm_client()
+    client.set_system_message("Call outer_tool then wait.")
+
+    handle = start_async_tool_loop(
+        client,
+        message="start",
+        tools={"outer_tool": outer_tool},
+        timeout=30,
+    )
+
+    # Wait until tool is active
+    await _wait_for_tool_request(client, "outer_tool")
+
+    # Wait until the handle is likely adopted (placeholder inserted)
+    async def _has_tool_placeholder():
+        return any(
+            m.get("role") == "tool" and m.get("name") == "outer_tool"
+            for m in client.messages
+        )
+
+    await _wait_for_condition(_has_tool_placeholder, poll=0.05, timeout=5.0)
+
+    # FORCE STOP the outer loop
+    # We use _task.cancel() to simulate a hard cancellation (or the race condition where cancellation
+    # is processed before the stop-mirror message). This ensures we verify the safety-net
+    # in tools_data.cancel_pending_tasks is working.
+    # Note: handle.stop() sets an event AND sends a mirror message; if we used that, the
+    # mirror message might be processed first, masking the bug.
+    handle._task.cancel()
+
+    # Wait for cleanup
+    try:
+        await handle.result()
+    except asyncio.CancelledError:
+        pass
+
+    # Wait briefly for propagation (threading event set is immediate but context switch needed)
+    await asyncio.sleep(0.1)
+
+    # Verify inner handle stop was called
+    assert (
+        stop_called["count"] >= 1
+    ), "Inner handle stop() should have been called during outer cancellation"
+
+    # Ensure the thread is unblocked
+    assert inner_handle._done_event.is_set()
+
+    # Clean up
+    if not inner_handle._done_event.is_set():
+        inner_handle._done_event.set()

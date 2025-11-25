@@ -3,13 +3,7 @@ from __future__ import annotations
 import pytest
 
 from unity.task_scheduler.task_scheduler import TaskScheduler
-from unity.events.event_bus import EVENT_BUS
-from tests.helpers import _handle_project
-
-
-async def _gather_events():
-    ev = await EVENT_BUS.search(filter='type == "ManagerMethod"', limit=1000)
-    return [e for e in ev if e.type == "ManagerMethod"]
+from tests.helpers import _handle_project, capture_events
 
 
 @pytest.mark.unit
@@ -18,13 +12,14 @@ async def _gather_events():
 async def test_managermethod_events_for_ask():
     ts = TaskScheduler()
     q = "📋 List all tasks."
-    h = await ts.ask(q)
-    await h.result()
-    EVENT_BUS.join_published()
-    ev = await _gather_events()
+
+    async with capture_events("ManagerMethod") as events:
+        h = await ts.ask(q)
+        await h.result()
+
     incoming = [
         e
-        for e in ev
+        for e in events
         if e.payload.get("manager") == "TaskScheduler"
         and e.payload.get("method") == "ask"
         and e.payload.get("phase") == "incoming"
@@ -33,7 +28,7 @@ async def test_managermethod_events_for_ask():
     call_id = incoming[0].calling_id
     outgoing = [
         e
-        for e in ev
+        for e in events
         if e.calling_id == call_id and e.payload.get("phase") == "outgoing"
     ]
     assert outgoing
@@ -45,13 +40,14 @@ async def test_managermethod_events_for_ask():
 async def test_managermethod_events_for_update():
     ts = TaskScheduler()
     cmd = "Create a task 'Submit report' for tomorrow."
-    h = await ts.update(cmd)
-    await h.result()
-    EVENT_BUS.join_published()
-    ev = await _gather_events()
+
+    async with capture_events("ManagerMethod") as events:
+        h = await ts.update(cmd)
+        await h.result()
+
     incoming = [
         e
-        for e in ev
+        for e in events
         if e.payload.get("manager") == "TaskScheduler"
         and e.payload.get("method") == "update"
         and e.payload.get("phase") == "incoming"
@@ -60,7 +56,7 @@ async def test_managermethod_events_for_update():
     call_id = incoming[0].calling_id
     outgoing = [
         e
-        for e in ev
+        for e in events
         if e.calling_id == call_id and e.payload.get("phase") == "outgoing"
     ]
     assert outgoing
@@ -76,13 +72,13 @@ async def test_managermethod_events_for_execute():
     outcome = ts._create_task(name="Demo", description="Run a demo task")
     task_id = outcome["details"]["task_id"]
 
-    h = await ts.execute(task_id=task_id)
-    await h.result()
-    EVENT_BUS.join_published()
-    ev = await _gather_events()
+    async with capture_events("ManagerMethod") as events:
+        h = await ts.execute(task_id=task_id)
+        await h.result()
+
     incoming = [
         e
-        for e in ev
+        for e in events
         if e.payload.get("manager") == "TaskScheduler"
         and e.payload.get("method") == "execute"
         and e.payload.get("request") == task_id
@@ -91,7 +87,7 @@ async def test_managermethod_events_for_execute():
     call_id = incoming[0].calling_id
     outgoing = [
         e
-        for e in ev
+        for e in events
         if e.calling_id == call_id and e.payload.get("phase") == "outgoing"
     ]
     assert outgoing

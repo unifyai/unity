@@ -17,8 +17,13 @@ class NotificationBar:
         self.notifications = []
 
     def push_notif(
-        self, type, notif_content, timestamp: datetime, pinned=False, id=None
+        self,
+        type,
+        notif_content,
+        timestamp: datetime,
+        pinned=False,
+        id=None,
     ):
         self.notifications.append(
-            Notification(type, notif_content, timestamp, pinned, id)
+            Notification(type, notif_content, timestamp, pinned, id),
         )

@@ -11,6 +11,7 @@ import threading
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
+from ..common.llm_client import new_llm_client
 import unify
 from google.cloud import storage
 from google.oauth2 import service_account
@@ -351,13 +352,7 @@ class ImageHandle:
             async tool loop behavior. We do not prepend the full transcript.
         """
         # Single-call client
-        client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        client = new_llm_client()
 
         # Build a succinct system message tailored to image Q&A
         client.set_system_message(

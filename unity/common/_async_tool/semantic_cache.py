@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
 from unity.common.tool_spec import ToolSpec, normalise_tools
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
@@ -44,7 +45,7 @@ class _Config:
     threshold: float = 0.2
     top_k: int = 1
     embedding_model: str = "text-embedding-3-small"
-    _model: str = "gpt-5@openai"
+    _model: str = DEFAULT_MODEL
     _reasoning_effort = "high"
     _context: str = "Cache"
 
@@ -55,7 +56,7 @@ class _Config:
         return f"{ASSISTANT_CONTEXT}/{self._context}"
 
     def get_client(self):
-        return unify.Unify(self._model, reasoning_effort=self._reasoning_effort)
+        return new_llm_client(self._model)
 
 
 _CONFIG = _Config()
@@ -274,10 +275,12 @@ class _SemanticCacheSaver:
         else:
             client = _CONFIG.get_client()
             client.set_system_message(CLEAN_USER_MESSAGE_PROMPT)
-            result = client.generate(
-                user_message=(
-                    f"Messages: {json.dumps(history)}\n"
-                    f"Clarifications: {json.dumps(clar_list)}"
+            result = asyncio.run(
+                client.generate(
+                    user_message=(
+                        f"Messages: {json.dumps(history)}\n"
+                        f"Clarifications: {json.dumps(clar_list)}"
+                    ),
                 ),
             )
         return result
@@ -298,9 +301,11 @@ class _SemanticCacheSaver:
             you should return indices of the tool calls to prune, that are redundant/duplicate or not relevant to the user query.
             """,
         )
-        res = client.generate(
-            user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(tool_trajectory, indent=2)}",
-            response_format=PruneToolsResponseFormat,
+        res = asyncio.run(
+            client.generate(
+                user_message=f"User query: {user_message}\nTool trajectory: {json.dumps(tool_trajectory, indent=2)}",
+                response_format=PruneToolsResponseFormat,
+            ),
         )
 
         res = PruneToolsResponseFormat.model_validate_json(res)

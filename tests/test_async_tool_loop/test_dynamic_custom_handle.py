@@ -14,14 +14,15 @@ from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
     start_async_tool_loop,
 )
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
 )
 
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
 class CustomArgsHandle(SteerableToolHandle):
@@ -69,11 +70,16 @@ class CustomArgsHandle(SteerableToolHandle):
         self._done_ev.set()
         return "stopped"
 
-    def pause(self, *, reason: str, log_to_backend: bool = False) -> Optional[str]:
+    async def pause(
+        self,
+        *,
+        reason: str,
+        log_to_backend: bool = False,
+    ) -> Optional[str]:
         self.pause_calls.append({"reason": reason, "log_to_backend": log_to_backend})
         return "paused"
 
-    def resume(self, *, resume_token: Optional[str] = None) -> Optional[str]:
+    async def resume(self, *, resume_token: Optional[str] = None) -> Optional[str]:
         self.resume_calls.append({"resume_token": resume_token})
         return "resumed"
 
@@ -111,13 +117,7 @@ async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-def
 
 @pytest.fixture(scope="function")
 def client():
-    return unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    return new_llm_client()
 
 
 @pytest.mark.asyncio
@@ -318,10 +318,10 @@ async def test_dynamic_helpers_use_base_docstrings_when_not_overridden(client):
         def stop(self, reason: Optional[str] = None):
             return "stopped"
 
-        def pause(self):
+        async def pause(self):
             return "paused"
 
-        def resume(self):
+        async def resume(self):
             return "resumed"
 
         def done(self) -> bool:
@@ -425,11 +425,11 @@ async def test_dynamic_helpers_use_overridden_docstrings_when_provided(client):
             """Stop override doc: stop only if safe to cancel."""
             return "stopped"
 
-        def pause(self, *, gate: Optional[str] = None):
+        async def pause(self, *, gate: Optional[str] = None):
             """Pause override doc: only pause if XYZ precondition holds."""
             return "paused"
 
-        def resume(self, *, token: Optional[str] = None):
+        async def resume(self, *, token: Optional[str] = None):
             """Resume override doc: resume with a session token if required."""
             return "resumed"
 
@@ -471,6 +471,7 @@ async def test_dynamic_helpers_use_overridden_docstrings_when_provided(client):
         message="start",
         tools={"spawn_handle": spawn_handle},
         timeout=120,
+        max_steps=10,
     )
 
     await _wait_for_tool_request(client, "spawn_handle")
@@ -520,10 +521,10 @@ async def test_dynamic_helpers_adopt_custom_method_docstring(client):
         def stop(self, reason: Optional[str] = None):
             return "stopped"
 
-        def pause(self):
+        async def pause(self):
             return "paused"
 
-        def resume(self):
+        async def resume(self):
             return "resumed"
 
         def done(self) -> bool:
@@ -630,10 +631,10 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods():
         def stop(self, reason: str | None = None, *, parent_chat_context_cont=None):  # type: ignore[override]
             return "stopped"
 
-        def pause(self):  # type: ignore[override]
+        async def pause(self):  # type: ignore[override]
             return "paused"
 
-        def resume(self):  # type: ignore[override]
+        async def resume(self):  # type: ignore[override]
             return "resumed"
 
         def done(self) -> bool:  # type: ignore[override]
@@ -726,6 +727,132 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods():
     )
     assert is_integer, f"expected integer type for task_id, got: {prop}"
     assert "task_id" in params.get("required", [])
+
+    with suppress(BaseException):
+        pending_task.cancel()
+        await pending_task
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_dynamic_factory_ignores_internal_introspection_methods():
+    """
+    Regression test: Ensure `DynamicToolFactory` does NOT generate tools for
+    internal introspection methods (e.g. `get_wrapped_handles`, `_get_wrapped_handles`,
+    `nested_steer`) even if they are public on the handle class, while correctly
+    exposing other public methods.
+    """
+    from contextlib import suppress
+    from unity.common.async_tool_loop import SteerableToolHandle
+    from unity.common._async_tool.tools_data import ToolsData
+    from unity.common._async_tool.tools_utils import ToolCallMetadata
+    from unity.common._async_tool.dynamic_tools_factory import DynamicToolFactory
+    from unity.common.handle_wrappers import HandleWrapperMixin
+
+    # A custom handle that mixes in wrapper functionality and defines introspection-like methods
+    class IntrospectiveHandle(SteerableToolHandle, HandleWrapperMixin):
+        def __init__(self):
+            self._done_ev = asyncio.Event()
+
+        # Valid public method - SHOULD be exposed
+        def public_action(self, arg: str) -> str:
+            return f"echo: {arg}"
+
+        # Old-style public introspection (simulating pre-fix state to ensure it's ignored if present)
+        # Although we renamed it in the codebase, a user might define it.
+        # Actually, the factory logic uses _discover_custom_public_methods which filters based on SteerableToolHandle.
+        # But `get_wrapped_handles` was NOT on SteerableToolHandle base, hence it was leaking.
+        # We should verify that if a handle HAS `get_wrapped_handles`, it IS exposed (unless we blacklist it).
+        # Wait, the fix was to rename it to `_get_wrapped_handles`.
+        # So this test confirms that `_get_wrapped_handles` is NOT exposed (because it starts with _).
+        # And `nested_steer` is NOT exposed because it is now on SteerableToolHandle base.
+
+        # Internal method - SHOULD NOT be exposed
+        def _internal_method(self):
+            pass
+
+        # Standard steerable methods
+        async def ask(self, q: str, **kw):
+            return self
+
+        async def interject(self, m: str, **kw):
+            pass
+
+        def stop(self, r=None):
+            return "stopped"
+
+        async def pause(self):
+            return "paused"
+
+        async def resume(self):
+            return "resumed"
+
+        def done(self):
+            return True
+
+        async def result(self):
+            return "ok"
+
+        async def next_clarification(self):
+            return {}
+
+        async def next_notification(self):
+            return {}
+
+        async def answer_clarification(self, cid, ans):
+            pass
+
+    # Setup dummy environment
+    class _DummyLogger:
+        log_steps = False
+
+        def info(self, *a, **kw): ...
+        def error(self, *a, **kw): ...
+
+    class _DummyClient:
+        def __init__(self):
+            self.messages = []
+
+    tools_data = ToolsData({}, client=_DummyClient(), logger=_DummyLogger())
+    pending_task = asyncio.create_task(asyncio.sleep(10))
+
+    meta = ToolCallMetadata(
+        name="dummy_tool",
+        call_id="call_123",
+        call_dict={"id": "call_123", "function": {"name": "dummy", "arguments": "{}"}},
+        call_idx=0,
+        chat_context=None,
+        assistant_msg={},
+        is_interjectable=False,
+        tool_schema={},
+        llm_arguments={},
+        raw_arguments_json="{}",
+        handle=IntrospectiveHandle(),
+        interject_queue=None,
+        clar_up_queue=None,
+        clar_down_queue=None,
+        notification_queue=None,
+        pause_event=None,
+    )
+    tools_data.save_task(pending_task, meta)
+
+    # Generate tools
+    factory = DynamicToolFactory(tools_data)
+    factory.generate()
+
+    tools = factory.dynamic_tools
+
+    # Check 1: public_action should be present
+    public_keys = [k for k in tools.keys() if k.startswith("public_action_")]
+    assert public_keys, "Expected public_action to be exposed"
+
+    # Check 2: _get_wrapped_handles (from mixin) should NOT be present
+    internal_keys = [k for k in tools.keys() if "get_wrapped_handles" in k]
+    assert not internal_keys, f"Introspection method leaked: {internal_keys}"
+
+    # Check 3: nested_steer (from base) should NOT be present
+    steer_keys = [k for k in tools.keys() if "nested_steer" in k]
+    assert not steer_keys, f"nested_steer leaked: {steer_keys}"
 
     with suppress(BaseException):
         pending_task.cancel()

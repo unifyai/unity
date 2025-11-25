@@ -29,7 +29,8 @@ def get_images_for_message(self, *, message_id: int) -> List[Dict[str, Any]]:
     image_ids: List[int] = []
     for ref in refs:
         try:
-            image_ids.append(int(ref.raw_image_ref.image_id))
+            if ref.raw_image_ref.image_id is not None:
+                image_ids.append(int(ref.raw_image_ref.image_id))
         except Exception:
             continue
     handles = self._image_manager.get_images(image_ids)
@@ -37,6 +38,8 @@ def get_images_for_message(self, *, message_id: int) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for ref in refs:
         try:
+            if ref.raw_image_ref.image_id is None:
+                continue
             iid = int(ref.raw_image_ref.image_id)
         except Exception:
             continue
@@ -121,8 +124,9 @@ def attach_message_images_to_context(
     annotations_by_index: List[str] = []
     for ref in refs:
         try:
-            ids_to_attach.append(int(ref.raw_image_ref.image_id))
-            annotations_by_index.append(ref.annotation)
+            if ref.raw_image_ref.image_id is not None:
+                ids_to_attach.append(int(ref.raw_image_ref.image_id))
+                annotations_by_index.append(ref.annotation)
         except Exception:
             continue
 

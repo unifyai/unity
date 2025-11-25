@@ -18,8 +18,8 @@ from typing import Dict, Optional, List, Any, TYPE_CHECKING
 import json
 import os
 
-import unify
 
+from ..common.llm_client import new_llm_client
 from ..common.async_tool_loop import SteerableToolHandle
 from ..common.handle_wrappers import HandleWrapperMixin
 from .types.activated_by import ActivatedBy
@@ -55,13 +55,7 @@ class _InterjectionRouter:
                 except Exception:
                     return str(value)
 
-            client = unify.AsyncUnify(
-                "gpt-5@openai",
-                cache=True,
-                traced=True,
-                reasoning_effort="high",
-                service_tier="priority",
-            )
+            client = new_llm_client()
             schema_hint = '{\n  "type": "object",\n  "properties": {\n    "routes": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "task_ids": {"type": "array", "items": {"type": "integer"}},\n          "instruction": {"type": "string"}\n        },\n        "required": ["task_ids", "instruction"]\n      }\n    },\n    "directives": {\n      "type": "array",\n      "items": {\n        "type": "object",\n        "properties": {\n          "kind": {"type": "string", "enum": ["all", "first", "last", "by_description"]},\n          "description_match": {"type": "string"}\n        },\n        "required": ["kind"]\n      }\n    },\n    "uncovered_directives": {"type": "array", "items": {"type": "string"}}\n  },\n  "required": ["routes"]\n}'
             sys = (
                 "You route user interjections to one or more tasks in a queue.\n"
@@ -364,7 +358,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         self._driver = asyncio.create_task(self._drive())
 
     # Standardized wrapper registration: always expose the current inner handle
-    def get_wrapped_handles(self):  # type: ignore[override]
+    def _get_wrapped_handles(self):  # type: ignore[override]
         try:
             return {"current": self._current_handle}
         except Exception:
@@ -782,26 +776,26 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         except Exception:
             return "Stopped."
 
-    def pause(self) -> Optional[str]:  # type: ignore[override]
+    async def pause(self) -> Optional[str]:  # type: ignore[override]
         try:
             if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
                 return "Already completed."
         except Exception:
             pass
         try:
-            ret = self._current_handle.pause()
+            ret = await self._current_handle.pause()
             return ret
         except Exception:
             return "Already completed."
 
-    def resume(self) -> Optional[str]:  # type: ignore[override]
+    async def resume(self) -> Optional[str]:  # type: ignore[override]
         try:
             if hasattr(self._current_handle, "done") and self._current_handle.done():  # type: ignore[attr-defined]
                 return "Already completed."
         except Exception:
             pass
         try:
-            ret = self._current_handle.resume()
+            ret = await self._current_handle.resume()
             return ret
         except Exception:
             return "Already completed."
@@ -835,7 +829,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
             return self._summarise_completions()
         return ""
 
-    async def active_task_done(self) -> str:
+    async def _active_task_done(self) -> str:
         """
         Await until the next task in the queue completes (or return immediately
         if tasks have already completed since the last call) and return a JSON
@@ -1030,13 +1024,7 @@ class ActiveQueue(SteerableToolHandle, HandleWrapperMixin):  # type: ignore[abst
         )
 
         # Use an LLM to decide the appropriate granularity and compose the answer
-        client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=True,
-            traced=True,
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        client = new_llm_client()
 
         sys = (
             "You answer questions about a running chain of tasks. Decide the appropriate level of detail.\n"

@@ -5,12 +5,17 @@ from pathlib import Path
 import pytest
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
-from unity.file_manager.file_manager import FileManager
+from unity.file_manager.managers.local import LocalFileManager as FileManager
 
 
 @_handle_project
 @pytest.mark.unit
-def test_filesystem_mirror_is_registered_on_add():
+def test_filesystem_mirror_is_registered_on_add(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    fm_files = FileManager(root=root.as_posix())
+    fm = FunctionManager(file_manager=fm_files)
+
     src = (
         "def double(x):\n"
         "    y = 0\n"
@@ -18,7 +23,6 @@ def test_filesystem_mirror_is_registered_on_add():
         "        y = y + x\n"
         "    return y\n"
     )
-    fm = FunctionManager()
     result = fm.add_functions(implementations=src)
     assert result == {"double": "added"}
     # Filesystem mirror exists and is registered
@@ -30,8 +34,10 @@ def test_filesystem_mirror_is_registered_on_add():
 
 @_handle_project
 @pytest.mark.unit
-def test_function_files_are_protected_and_visible_via_file_manager():
-    fm_files = FileManager()
+def test_function_files_are_protected_and_visible_via_file_manager(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    fm_files = FileManager(root=root.as_posix())
     fm = FunctionManager(file_manager=fm_files)
 
     src = "def hello():\n    return 'world'\n"
@@ -46,8 +52,10 @@ def test_function_files_are_protected_and_visible_via_file_manager():
 
 @_handle_project
 @pytest.mark.unit
-def test_sync_from_disk_updates_unify_record():
-    fm_files = FileManager()
+def test_sync_from_disk_updates_unify_record(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    fm_files = FileManager(root=root.as_posix())
     fm = FunctionManager(file_manager=fm_files)
 
     src = (
@@ -57,7 +65,10 @@ def test_sync_from_disk_updates_unify_record():
 
     # Modify file on disk
     p = Path(fm.get_function_file_path("compute"))
-    p.write_text("def compute(x: int) -> int:\n    return x * 3\n", encoding="utf-8")
+    p.write_text(
+        "def compute(x: int) -> int:\n    return x * 3\n",
+        encoding="utf-8",
+    )
 
     updated = fm.sync_from_disk()
     assert "compute" in updated

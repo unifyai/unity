@@ -30,6 +30,13 @@ subscription_id = (
         else ""
     )
 ) + "-sub"
+local_contact = {
+    "contact_id": -1,
+    "first_name": os.getenv("USER_NAME"),
+    "surname": "",
+    "phone_number": os.getenv("USER_NUMBER"),
+    "email_address": os.getenv("USER_EMAIL"),
+}
 
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
@@ -161,7 +168,7 @@ class CommsManager:
                 message.ack()
             elif thread in events_map:
                 # Publish contacts
-                contacts = event.get("contacts", [])
+                contacts = [local_contact, *event.get("contacts", [])]
                 asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
                         f"app:comms:contacts",
@@ -235,7 +242,7 @@ class CommsManager:
                 message.ack()
             elif thread == "log_pre_hire_chats":
                 try:
-                    contacts = event.get("contacts", [])
+                    contacts = [local_contact, *event.get("contacts", [])]
                     asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:contacts",
@@ -285,7 +292,7 @@ class CommsManager:
             elif "call" in thread:
                 try:
                     # Publish contacts
-                    contacts = event.get("contacts", [])
+                    contacts = [local_contact, *event.get("contacts", [])]
                     asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:contacts",
@@ -302,7 +309,7 @@ class CommsManager:
                             room_name=event.get("livekit_room"),
                         )
                         topic = "app:comms:unify_call_received"
-                    else:
+                    elif thread == "call":
                         number = event.get("caller_number", event.get("user_number"))
                         contact = next(
                             c for c in contacts if c["phone_number"] == number
@@ -311,7 +318,14 @@ class CommsManager:
                             contact=contact,
                             conference_name=event.get("conference_name", ""),
                         )
-                        topic = "app:comms:call_recieved"
+                        topic = "app:comms:call_received"
+                    else:
+                        number = event.get("user_number")
+                        contact = next(
+                            c for c in contacts if c["phone_number"] == number
+                        )
+                        event = PhoneCallAnswered(contact=contact)
+                        topic = "app:comms:call_answered"
 
                     # Publish the event
                     task = asyncio.run_coroutine_threadsafe(
@@ -322,10 +336,10 @@ class CommsManager:
                     task.result()
                 except json.JSONDecodeError:
                     print(f"Invalid message format for {thread} event")
-                    message.nack()
+                    message.ack()
                 except Exception as e:
                     print(f"Error processing {thread} event: {e}")
-                    message.nack()
+                    message.ack()
             else:
                 print(f"Unknown event type: {thread}")
         except Exception as e:

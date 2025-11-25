@@ -11,9 +11,10 @@ import pytest
 from tests.helpers import _handle_project
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_batch_multiple_files(parser, supported_format_files):
+async def test_parse_batch_multiple_files(parser, supported_format_files):
     """Test batch parsing of multiple files."""
     # Collect files from supported formats
     files = []
@@ -39,17 +40,19 @@ def test_parse_batch_multiple_files(parser, supported_format_files):
         ), f"Expected path ending with {expected_filename}, got {doc.metadata.file_path}"
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_batch_empty_list(parser):
+async def test_parse_batch_empty_list(parser):
     """Test batch parsing with empty file list."""
     documents = parser.parse_batch([])
     assert documents == []
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_batch_single_file(parser, supported_format_files):
+async def test_parse_batch_single_file(parser, supported_format_files):
     """Test batch parsing with single file."""
     txt_files = supported_format_files[".txt"]["files"]
     files = [txt_files["simple"]]
@@ -59,9 +62,10 @@ def test_parse_batch_single_file(parser, supported_format_files):
     assert "simple text file" in documents[0].to_plain_text()
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_batch_with_options(parser, supported_format_files):
+async def test_parse_batch_with_options(parser, supported_format_files):
     """Test batch parsing with custom options."""
     txt_files = supported_format_files[".txt"]["files"]
     files = [
@@ -80,9 +84,10 @@ def test_parse_batch_with_options(parser, supported_format_files):
     # Documents should be parsed with the custom settings
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_batch_mixed_success_failure(
+async def test_parse_batch_mixed_success_failure(
     parser,
     supported_format_files,
     tmp_path: Path,
@@ -107,9 +112,9 @@ def test_parse_batch_mixed_success_failure(
     assert len(documents) == 2  # Only the two valid files
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-@pytest.mark.asyncio
 async def test_parse_batch_async(parser, supported_format_files):
     """Test async batch parsing."""
     # Collect files
@@ -141,9 +146,9 @@ async def test_parse_batch_async(parser, supported_format_files):
         ), f"Expected path ending with {expected_filename}, got {doc.metadata.file_path}"
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-@pytest.mark.asyncio
 async def test_parse_batch_async_empty(parser):
     """Test async batch parsing with empty list."""
     results = []
@@ -153,9 +158,9 @@ async def test_parse_batch_async_empty(parser):
     assert results == []
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-@pytest.mark.asyncio
 async def test_parse_batch_async_large_batch(
     parser,
     supported_format_files,
@@ -183,9 +188,10 @@ async def test_parse_batch_async_large_batch(
         assert expected_content in doc.to_plain_text()
 
 
+@pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-def test_parse_batch_consistent_with_single(parser, supported_format_files):
+async def test_parse_batch_consistent_with_single(parser, supported_format_files):
     """Test that batch parsing gives same results as individual parsing."""
     txt_files = supported_format_files[".txt"]["files"]
     files = [

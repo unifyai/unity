@@ -3,9 +3,7 @@ from __future__ import annotations
 from typing import List, Dict, Optional, Callable, Any, Tuple
 import base64
 import asyncio
-import json
 import functools
-import os
 import re
 
 import unify
@@ -14,6 +12,7 @@ from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.tool_outcome import ToolOutcome
 from ..common.model_to_fields import model_to_fields
 from ..common.context_store import TableStore
+from ..common.llm_client import new_llm_client
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
@@ -132,7 +131,7 @@ class GuidanceManager(BaseGuidanceManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("ask"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
@@ -223,7 +222,7 @@ class GuidanceManager(BaseGuidanceManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("update"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
@@ -351,15 +350,6 @@ class GuidanceManager(BaseGuidanceManager):
         except Exception:
             pass
 
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
-
     def _provision_storage(self) -> None:
         """Ensure Guidance context, schema, and custom-field bookkeeping exist."""
         # Ensure context/fields exist deterministically (idempotent)
@@ -371,6 +361,20 @@ class GuidanceManager(BaseGuidanceManager):
                 "Table of distilled guidance entries from transcripts and images."
             ),
             fields=model_to_fields(Guidance),
+            foreign_keys=[
+                {
+                    "name": "images[*].raw_image_ref.image_id",
+                    "references": f"{self._ctx.replace("Guidance", "Images")}.image_id",
+                    "on_delete": "SET NULL",
+                    "on_update": "CASCADE",
+                },
+                {
+                    "name": "function_ids[*]",
+                    "references": f"{self._ctx.replace("Guidance", "Functions")}.function_id",
+                    "on_delete": "CASCADE",  # pop on function deletion
+                    "on_update": "CASCADE",
+                },
+            ],
         )
 
         # Prefill known custom fields once to include any preexisting non-private columns
@@ -520,6 +524,9 @@ class GuidanceManager(BaseGuidanceManager):
         for r in items:
             if not isinstance(r, AnnotatedImageRef):
                 continue
+            # Skip deleted images (SET NULL from FK policy)
+            if r.raw_image_ref.image_id is None:
+                continue
             iid = int(r.raw_image_ref.image_id)
             image_ids.append(iid)
             annotations_by_id.setdefault(iid, []).append(str(r.annotation))
@@ -662,6 +669,9 @@ class GuidanceManager(BaseGuidanceManager):
         annotations_by_id: Dict[int, List[str]] = {}
         for r in items:
             if not isinstance(r, AnnotatedImageRef):
+                continue
+            # Skip deleted images (SET NULL from FK policy)
+            if r.raw_image_ref.image_id is None:
                 continue
             iid = int(r.raw_image_ref.image_id)
             unique_ids.append(iid)

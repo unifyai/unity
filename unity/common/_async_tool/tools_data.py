@@ -134,6 +134,16 @@ class ToolsData:
 
     async def cancel_pending_tasks(self):
         for task in self.pending:
+            # Explicitly stop active handles because task.cancel() doesn't
+            # propagate to underlying threads (e.g. asyncio.to_thread).
+            info = self.info.get(task)
+            if info and info.handle and hasattr(info.handle, "stop"):
+                try:
+                    res = info.handle.stop("loop cancelled")
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception:
+                    pass
             task.cancel()
         await asyncio.gather(*self.pending, return_exceptions=True)
         self.pending.clear()
@@ -719,7 +729,7 @@ class ToolsData:
                         child_handle,
                         "pause",
                     ):
-                        child_handle.pause()  # type: ignore[attr-defined]
+                        await child_handle.pause()  # type: ignore[attr-defined]
                 except Exception:
                     pass
                 try:

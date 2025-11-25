@@ -3,16 +3,7 @@ from __future__ import annotations
 import pytest
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.events.event_bus import EVENT_BUS
-from tests.helpers import _handle_project
-
-
-async def _gather_managermethod_events():
-    """
-    Convenience helper: fetch *all* ManagerMethod events currently in memory.
-    """
-    events = await EVENT_BUS.search(filter='type == "ManagerMethod"', limit=1000)
-    return [e for e in events if e.type == "ManagerMethod"]
+from tests.helpers import _handle_project, capture_events
 
 
 # ─────────────────────────  ask() logging  ──────────────────────────
@@ -25,13 +16,10 @@ async def test_managermethod_events_for_ask():
     tm = TranscriptManager()
 
     user_q = "📝 What did Alice say to Bob yesterday?"  # unique text
-    handle = await tm.ask(user_q)
-    await handle.result()
 
-    # ensure async logger has flushed
-    EVENT_BUS.join_published()
-
-    events = await _gather_managermethod_events()
+    async with capture_events("ManagerMethod") as events:
+        handle = await tm.ask(user_q)
+        await handle.result()
 
     incoming = [
         e

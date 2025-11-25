@@ -1,20 +1,17 @@
-import os
 import asyncio
 import uuid
 import unify
 import functools
 from typing import Any, Dict, List, Optional, Union
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import json
 
-from unity.file_manager.base import BaseFileManager
-from unity.file_manager.file_manager import FileManager
-from ..common.embed_utils import ensure_vector_column, list_private_fields
+from unity.common.token_utils import count_tokens_per_utf_byte
+from unity.common import token_utils as _tok
+from unity.common.grouping_helpers import build_grouped_dump_payload
 from .types import ColumnType
 from ..common.llm_helpers import (
     methods_to_tool_dict,
-    make_request_clarification_tool,
 )
 from ..common.async_tool_loop import (
     start_async_tool_loop,
@@ -28,16 +25,46 @@ from .prompt_builders import (
     build_ask_prompt,
     build_refactor_prompt,
 )
-from ..common.search_utils import table_search_top_k
 from ..common.context_store import TableStore
-from ..events.event_bus import EVENT_BUS, Event
-from ..common.grouping_helpers import maybe_group_rows
 from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
-from ..common.filter_utils import normalize_filter_expr
 from ..common.context_handler import TableContext, ContextHandler
+from ..common.llm_client import new_llm_client
+from ..common.clarification_tools import add_clarification_tool_with_events
+
+# Module delegations (split helpers for parity with ContactManager)
+from .storage import (
+    provision_storage as _storage_provision,
+    get_columns as _storage_get_columns,
+    tables_overview as _storage_tables_overview,
+    ctx_for_table as _storage_ctx_for_table,
+    create_table as _storage_create_table,
+    rename_table as _storage_rename_table,
+    delete_tables as _storage_delete_tables,
+)
+from .search import (
+    filter as _srch_filter,
+    search as _srch_search,
+    filter_join as _srch_filter_join,
+    search_join as _srch_search_join,
+    filter_multi_join as _srch_filter_multi_join,
+    search_multi_join as _srch_search_multi_join,
+)
+from .ops import (
+    add_rows as _op_add_rows,
+    update_rows as _op_update_rows,
+    delete_rows as _op_delete_rows,
+    transform_column as _op_transform_column,
+    copy_column as _op_copy_column,
+    move_column as _op_move_column,
+    create_empty_column as _op_create_empty_column,
+    create_derived_column as _op_create_derived_column,
+    delete_column as _op_delete_column,
+    vectorize_column as _op_vectorize_column,
+    rename_column as _op_rename_column,
+)
 
 
 class KnowledgeManager(BaseKnowledgeManager):
@@ -52,10 +79,16 @@ class KnowledgeManager(BaseKnowledgeManager):
     def __init__(
         self,
         *,
-        file_manager: Optional[BaseFileManager] = None,
         rolling_summary_in_prompts: bool = True,
         include_contacts: bool = True,
         grouped: bool = False,
+        # Table-dump heuristics
+        full_table_dump: bool = False,
+        per_table_dumps: bool = False,
+        dump_safety_factor: float = 0.9,
+        dump_timeout_s: float = 3.0,
+        dump_scan_page_size: int = 1000,
+        max_input_tokens_override: Optional[int] = None,
     ) -> None:
         """
         Initialise the KnowledgeManager.
@@ -66,8 +99,6 @@ class KnowledgeManager(BaseKnowledgeManager):
 
         Parameters
         ----------
-        file_manager: Optional[BaseFileManager], default ``None``
-            Optional file manager to use for file-related operations.
         rolling_summary_in_prompts : bool, default ``True``
             When enabled, inject a short rolling activity summary (sourced
             from ``MemoryManager``) into system prompts for LLM calls.
@@ -77,11 +108,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             table name ``"Contacts"``.
         """
         super().__init__()
-        if file_manager is not None:
-            self._file_manager = file_manager
-        else:
-            self._file_manager = FileManager()
-
         # Allow ingestion/deprecation only within update/refactor flows
         refactor_tools = methods_to_tool_dict(
             # Ask
@@ -102,8 +128,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             # Rows
             self._delete_rows,
             self._update_rows,
-            # Files
-            self._ingest_documents,
             include_class_name=False,
         )
         self.add_tools("refactor", refactor_tools)
@@ -143,6 +167,18 @@ class KnowledgeManager(BaseKnowledgeManager):
         # into a nested structure to reduce duplication and token usage.
         self._group_results: bool = grouped
 
+        # Heuristic dump settings
+        self._full_table_dump: bool = full_table_dump
+        self._per_table_dumps: bool = per_table_dumps
+        self._dump_safety_factor: float = max(0.1, min(0.99, dump_safety_factor))
+        self._dump_timeout_s: float = max(0.5, dump_timeout_s)
+        self._dump_scan_page_size: int = max(50, dump_scan_page_size)
+        self._max_input_tokens: int = (
+            int(max_input_tokens_override)
+            if max_input_tokens_override is not None
+            else _tok.read_model_max_input_tokens()
+        )
+
         # ------------------------------------------------------------------
         # Optional Contacts-table linkage
         # ------------------------------------------------------------------
@@ -181,6 +217,130 @@ class KnowledgeManager(BaseKnowledgeManager):
         except Exception:
             pass
 
+    async def _maybe_build_show_all_seed(
+        self,
+        message: Union[str, dict, List[Union[str, dict]]],
+        tables_overview: Dict[str, Dict[str, Any]] | None = None,
+    ) -> Optional[List[dict]]:
+        """
+        Decide whether to seed a synthetic first tool call `show_all` that dumps
+        some or all tables, and if so return the seeded transcript. Otherwise None.
+        Uses `unify.get_groups`-based unique value enumeration for token estimation.
+        """
+        try:
+            if not (self._full_table_dump or self._per_table_dumps):
+                return None
+
+            if isinstance(message, list):
+                user_text = (
+                    next(
+                        (
+                            m.get("content")
+                            for m in message
+                            if isinstance(m, dict) and m.get("role") == "user"
+                        ),
+                        None,
+                    )
+                    or ""
+                )
+            elif isinstance(message, dict):
+                user_text = str(message.get("content") or "")
+            else:
+                user_text = message
+
+            overview = tables_overview or self._tables_overview()
+            all_tables = list((overview or {}).keys())
+            if not all_tables:
+                return None
+
+            table_to_ctx = {t: self._ctx_for_table(t) for t in all_tables}
+            # Be robust to tables without a "columns" key in their overview entry
+            table_to_columns: Dict[str, List[str]] = {
+                t: list((lt.get("columns") or {}).keys()) for t, lt in overview.items()
+            }
+
+            est = await _tok.estimate_tables_tokens_parallel(
+                table_to_ctx=table_to_ctx,
+                table_to_columns=table_to_columns,
+                max_input_tokens=self._max_input_tokens,
+                safety_factor=self._dump_safety_factor,
+                max_concurrency=4,
+            )
+            total_est = sum(est.values())
+            budget = int(self._max_input_tokens * self._dump_safety_factor)
+
+            selected: List[str] = []
+            if self._full_table_dump and total_est <= budget:
+                selected = list(all_tables)
+            elif self._per_table_dumps and all_tables:
+                per_tbl_threshold = int(
+                    self._max_input_tokens
+                    * self._dump_safety_factor
+                    / (2 * max(1, len(all_tables))),
+                )
+                selected = [t for t, v in est.items() if v <= per_tbl_threshold]
+
+            if not selected:
+                return None
+
+            payload, per_tbl_payload_tokens = build_grouped_dump_payload(
+                table_to_ctx,
+                selected,
+                limit=self._dump_scan_page_size,
+            )
+            total_payload_tokens = count_tokens_per_utf_byte(payload)
+            sum_per_table_tokens = sum(per_tbl_payload_tokens.values())
+            if sum_per_table_tokens > budget or total_payload_tokens > budget:
+                ranked = sorted(
+                    selected,
+                    key=lambda t: per_tbl_payload_tokens.get(t, 0),
+                    reverse=True,
+                )
+                keep = list(selected)
+                current_sum = sum_per_table_tokens
+                # Drop largest tables until within budget using per-table token sizes
+                while keep and current_sum > budget:
+                    drop = ranked.pop(0)
+                    if drop in keep:
+                        keep.remove(drop)
+                        current_sum -= per_tbl_payload_tokens.get(drop, 0)
+                selected = keep
+                # Rebuild payload for the reduced selection
+                payload, per_tbl_payload_tokens = build_grouped_dump_payload(
+                    {t: table_to_ctx[t] for t in selected},
+                    selected,
+                    limit=self._dump_scan_page_size,
+                )
+
+            if not selected:
+                return None
+
+            call_id = f"show_all_{uuid.uuid4().hex[:8]}"
+            seeded = [
+                {"role": "user", "content": user_text},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": "show_all", "arguments": "{}"},
+                        },
+                    ],
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": "show_all",
+                    "content": payload,
+                },
+            ]
+            return seeded
+        except Exception as e:
+            print(f"Error in _maybe_build_show_all_seed: {e}")
+            return None
+
     # Helpers #
     # --------#
 
@@ -211,14 +371,7 @@ class KnowledgeManager(BaseKnowledgeManager):
             ``include_contacts=False``.
         """
 
-        if table == "Contacts":
-            if not self._include_contacts or self._contacts_ctx is None:
-                raise ValueError(
-                    "This KnowledgeManager instance was initialised with include_contacts=False so it cannot access the Contacts table.",
-                )
-            return self._contacts_ctx
-
-        return f"{self._ctx}/{table}"
+        return _storage_ctx_for_table(self, table)
 
     @staticmethod
     def _default_ask_tool_policy(
@@ -268,59 +421,45 @@ class KnowledgeManager(BaseKnowledgeManager):
         rolling_summary_in_prompts: Optional[bool] = None,
         _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
+        """
+        Structure-changing edits to tables, columns and rows.
 
-        client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        Parameters
+        ----------
+        text : str
+            High-level description of the desired refactor (e.g., create/rename
+            tables, transform columns, delete rows).
+        _return_reasoning_steps : bool, default False
+            When True, ``handle.result()`` returns ``(answer, messages)`` for
+            debugging.
+        _parent_chat_context : list[dict] | None
+            Optional upstream chat messages to seed the loop.
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
+            Duplex queues for interactive clarification.
+        rolling_summary_in_prompts : bool | None
+            Whether to include the rolling activity summary in prompts.
+        _call_id : str | None
+            Correlation id for event logging.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle that yields a natural-language summary of the refactor.
+        """
+
+        client = new_llm_client()
 
         # 1️⃣  Prepare toolset (and optional live clarification helper)
         tools = dict(self.get_tools("refactor"))
 
         if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "KnowledgeManager",
-                                "method": "refactor",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            async def _on_answer(ans: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "KnowledgeManager",
-                                "method": "refactor",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 _clarification_up_q,
                 _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="KnowledgeManager",
+                method="refactor",
+                call_id=_call_id,
             )
 
         # 2️⃣  Build & inject system prompt
@@ -375,59 +514,45 @@ class KnowledgeManager(BaseKnowledgeManager):
         _call_id: Optional[str] = None,
         case_specific_instructions: str | None = None,
     ) -> "SteerableToolHandle":
+        """
+        Write-capable updates to knowledge tables (rows/columns).
 
-        client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        Parameters
+        ----------
+        text : str
+            High-level description of the update request.
+        _return_reasoning_steps : bool, default False
+            When True, ``handle.result()`` returns ``(answer, messages)``.
+        _parent_chat_context : list[dict] | None
+            Optional upstream chat messages to seed the loop.
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
+            Duplex queues for interactive clarification.
+        rolling_summary_in_prompts : bool | None
+            Whether to include the rolling activity summary in prompts.
+        _call_id : str | None
+            Correlation id for event logging.
+        case_specific_instructions : str | None
+            Optional extra guidance injected into the system prompt.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle that yields a summary of operations performed.
+        """
+
+        client = new_llm_client()
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tools = dict(self.get_tools("update"))
 
         if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "KnowledgeManager",
-                                "method": "update",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            async def _on_answer(ans: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "KnowledgeManager",
-                                "method": "update",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 _clarification_up_q,
                 _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="KnowledgeManager",
+                method="update",
+                call_id=_call_id,
             )
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
@@ -486,14 +611,35 @@ class KnowledgeManager(BaseKnowledgeManager):
         response_format: Any | None = None,
         _call_id: Optional[str] = None,
     ) -> "SteerableToolHandle":
+        """
+        Read-only questions over one or multiple knowledge tables.
 
-        client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        Parameters
+        ----------
+        text : str
+            Natural-language question.
+        _return_reasoning_steps : bool, default False
+            When True, ``handle.result()`` returns ``(answer, messages)``.
+        _parent_chat_context : list[dict] | None
+            Optional upstream chat messages to seed the loop.
+        _clarification_up_q / _clarification_down_q : asyncio.Queue[str] | None
+            Duplex queues for interactive clarification.
+        rolling_summary_in_prompts : bool | None
+            Whether to include the rolling activity summary in prompts.
+        case_specific_instructions : str | None
+            Optional extra guidance injected into the system prompt.
+        response_format : Any | None
+            Optional JSON schema or dict-like structure to constrain the output.
+        _call_id : str | None
+            Correlation id for event logging.
+
+        Returns
+        -------
+        SteerableToolHandle
+            Handle that yields the final answer.
+        """
+
+        client = new_llm_client()
 
         # ── 1.  Expose tools + a *dynamic* request_clarification helper ──
         tables_overview = self._tables_overview()
@@ -506,46 +652,13 @@ class KnowledgeManager(BaseKnowledgeManager):
             tools.update(multi_table_tools)
 
         if _clarification_up_q is not None and _clarification_down_q is not None:
-
-            async def _on_request(q: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "KnowledgeManager",
-                                "method": "ask",
-                                "action": "clarification_request",
-                                "question": q,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            async def _on_answer(ans: str):
-                try:
-                    await EVENT_BUS.publish(
-                        Event(
-                            type="ManagerMethod",
-                            calling_id=_call_id,
-                            payload={
-                                "manager": "KnowledgeManager",
-                                "method": "ask",
-                                "action": "clarification_answer",
-                                "answer": ans,
-                            },
-                        ),
-                    )
-                except Exception:
-                    pass
-
-            tools["request_clarification"] = make_request_clarification_tool(
+            add_clarification_tool_with_events(
+                tools,
                 _clarification_up_q,
                 _clarification_down_q,
-                on_request=_on_request,
-                on_answer=_on_answer,
+                manager="KnowledgeManager",
+                method="ask",
+                call_id=_call_id,
             )
 
         # ── 2.  Launch the interactive tool-use loop ──────────────────────
@@ -573,6 +686,8 @@ class KnowledgeManager(BaseKnowledgeManager):
             if use_semantic_cache in ("read", "both")
             else self._default_ask_tool_policy
         )
+        # Maybe seed a synthetic `show_all` dump as the first tool call (ask only)
+        text = await self._maybe_build_show_all_seed(text, tables_overview) or text
 
         handle = start_async_tool_loop(
             client,
@@ -620,11 +735,18 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Mapping of column names to their Unify data types.
         """
-        ret = unify.get_fields(context=self._ctx_for_table(table))
-        return {k: v["data_type"] for k, v in ret.items()}
+        return _storage_get_columns(self, table=table)
 
     @functools.wraps(BaseKnowledgeManager.clear, updated=())
     def clear(self) -> None:
+        """Drop all Knowledge-managed contexts and re-provision storage.
+
+        Behaviour
+        ---------
+        - Deletes every child context under ``self._ctx`` (one per knowledge table).
+        - Then re-provisions optional linked storage (e.g., Contacts) so future
+          calls see a consistent schema.
+        """
         try:
             km_prefix = f"{self._ctx}/"
             ctxs = unify.get_contexts(prefix=km_prefix)
@@ -650,16 +772,7 @@ class KnowledgeManager(BaseKnowledgeManager):
 
     def _provision_storage(self) -> None:
         """Ensure optional linked storage exists (e.g. root-level Contacts)."""
-        if self._contacts_ctx is not None:
-            try:
-                TableStore(
-                    self._contacts_ctx,
-                    unique_keys={"contact_id": "int"},
-                    auto_counting={"contact_id": None},
-                )
-            except Exception:
-                # Best-effort; absence of Contacts must not break KM initialisation
-                pass
+        _storage_provision(self)
 
     # Tables
 
@@ -670,6 +783,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         description: str | None = None,
         columns: Dict[str, ColumnType] | None = None,
         unique_key_name: str = "row_id",
+        auto_counting: Optional[Dict[str, Optional[str]]] = None,
     ) -> Dict[str, str]:
         """
         **Create** a brand-new table in the knowledge store.
@@ -692,33 +806,28 @@ class KnowledgeManager(BaseKnowledgeManager):
                 `team_id`, `company_id`, `product_id`, or anything else. This is
                 managed automatically, it should not be included in the `columns`
                 argument, and data is *never written* to this unique column.
+        auto_counting : dict[str, Optional[str]] | None, default ``None``
+                Optional auto-counting configuration for the table. If provided,
+                the table will be configured to auto-count the provided columns.
+                Keys are column names to auto-increment, values are parent counter
+                names (None for independent counters) e.g.
+                {
+                    "company_id": None,
+                    "department_id": "company_id",
+                }
 
         Returns
         -------
         dict[str, str]
                 Backend response describing success or failure (driver specific).
         """
-        proj = unify.active_project()
-        ctx = f"{self._ctx}/{name}"
-        unify.create_context(
-            ctx,
-            unique_keys={unique_key_name: "int"},
-            auto_counting={unique_key_name: None},
+        return _storage_create_table(
+            self,
+            name=name,
             description=description,
-        )
-
-        # If no initial columns are provided, avoid an unnecessary fields call.
-        if not columns:
-            return {"info": "Context created", "context": ctx, "project": proj}
-
-        # Make sure fields are always mutable by default and skip backfill for a new context
-        materialized_fields = {
-            k: {"type": v, "mutable": True} for k, v in columns.items()
-        }
-        return unify.create_fields(
-            context=ctx,
-            fields=materialized_fields,
-            backfill_logs=False,
+            columns=columns,
+            unique_key_name=unique_key_name,
+            auto_counting=auto_counting,
         )
 
     @read_only
@@ -742,45 +851,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 Mapping ``table_name → {"description": str, "columns": {...}}``.
                 If *include_column_info* is *False* the ``"columns"`` key is omitted.
         """
-        # Single read for Knowledge contexts under this manager
-        km_contexts = unify.get_contexts(prefix=f"{self._ctx}/")
-        tables = {
-            k[len(f"{self._ctx}/") :]: {"description": v}
-            for k, v in km_contexts.items()
-        }
-
-        # Optionally expose root-level Contacts when linkage is enabled (single call)
-        if self._include_contacts and self._contacts_ctx is not None:
-            try:
-                contacts_info = unify.get_context(self._contacts_ctx)
-                if isinstance(contacts_info, dict):
-                    tables["Contacts"] = {
-                        "description": contacts_info.get("description", ""),
-                    }
-            except Exception:
-                # Best-effort: absence of Contacts must not fail overview
-                pass
-
-        if not include_column_info or not tables:
-            return tables
-
-        # Fetch column metadata in parallel to avoid N sequential REST calls
-        columns_by_table: Dict[str, Dict[str, str]] = {}
-        with ThreadPoolExecutor(max_workers=min(8, max(1, len(tables)))) as pool:
-            futures = {
-                pool.submit(self._get_columns, table=table_name): table_name
-                for table_name in tables.keys()
-            }
-            for fut in as_completed(futures):
-                table_name = futures[fut]
-                # Propagate exceptions to match prior behaviour (fail fast)
-                cols = fut.result()
-                columns_by_table[table_name] = cols
-
-        return {
-            name: {**meta, "columns": columns_by_table.get(name, {})}
-            for name, meta in tables.items()
-        }
+        return _storage_tables_overview(self, include_column_info=include_column_info)
 
     def _rename_table(
         self,
@@ -803,9 +874,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend acknowledgement / error message.
         """
-        old_name = f"{self._ctx}/{old_name}"
-        new_name = f"{self._ctx}/{new_name}"
-        return unify.rename_context(old_name, new_name)
+        return _storage_rename_table(self, old_name=old_name, new_name=new_name)
 
     def _delete_tables(
         self,
@@ -828,45 +897,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         list[dict[str, str]]
             Confirmations / errors from the backend.
         """
-        # Build a single, de-duplicated list of fully-qualified contexts to delete
-        contexts_to_delete: List[str] = []
-
-        if isinstance(tables, str):
-            if tables:
-                contexts_to_delete.append(self._ctx_for_table(tables))
-        elif tables:
-            contexts_to_delete.extend(self._ctx_for_table(t) for t in tables)
-
-        if startswith:
-            # One backend read to expand the prefix – avoid any further metadata calls
-            ctx_map = unify.get_contexts(prefix=f"{self._ctx}/{startswith}")
-            # Keys are full context names
-            contexts_to_delete.extend(list(ctx_map.keys()))
-
-        # De-duplicate while preserving order (explicit tables first, then prefix matches)
-        seen: set[str] = set()
-        contexts_to_delete = [
-            c for c in contexts_to_delete if not (c in seen or seen.add(c))
-        ]
-
-        if not contexts_to_delete:
-            return []
-
-        # Fast-path: single deletion avoids thread-pool overhead
-        if len(contexts_to_delete) == 1:
-            return [unify.delete_context(contexts_to_delete[0])]
-
-        # Parallelise deletions to minimise wall-clock time across multiple contexts
-        results: List[Dict[str, str]] = []
-        max_workers = min(8, len(contexts_to_delete))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = [
-                pool.submit(unify.delete_context, ctx) for ctx in contexts_to_delete
-            ]
-            for fut in as_completed(futures):
-                results.append(fut.result())
-
-        return results
+        return _storage_delete_tables(self, tables=tables, startswith=startswith)
 
     # Columns
 
@@ -895,10 +926,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend response.
         """
-        return unify.create_fields(
-            context=self._ctx_for_table(table),
-            fields={column_name: {"type": column_type, "mutable": True}},
-            backfill_logs=False,
+        return _op_create_empty_column(
+            self,
+            table=table,
+            column_name=column_name,
+            column_type=column_type,
         )
 
     def _create_derived_column(
@@ -928,12 +960,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend acknowledgement.
         """
-        equation = equation.replace("{", "{lg:")
-        return unify.create_derived_logs(
-            context=self._ctx_for_table(table),
-            key=column_name,
+        return _op_create_derived_column(
+            self,
+            table=table,
+            column_name=column_name,
             equation=equation,
-            referenced_logs={"lg": {"context": self._ctx_for_table(table)}},
         )
 
     def _delete_column(
@@ -957,40 +988,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend confirmation or error.
         """
-        table_ctx = unify.get_context(self._ctx_for_table(table))
-        keys = table_ctx.get("unique_keys")
-        unique_column_name = keys[0] if isinstance(keys, list) and keys else keys
-        # Guard against removal of mandatory columns
-        if table == "Contacts":
-            try:
-                from unity.contact_manager.types.contact import Contact as _C
-
-                required_cols = set(_C.model_fields.keys()) - set(
-                    ["rolling_summary", "response_policy", "respond_to"],
-                )
-            except Exception:
-                required_cols = {"contact_id"}
-            if column_name in required_cols:
-                raise ValueError(
-                    (
-                        f"Cannot delete required Contacts column '{column_name}'. "
-                        "Contacts core schema is protected. If you need to restructure, "
-                        "use rename_column or create a new optional column and migrate values."
-                    ),
-                )
-        elif column_name == unique_column_name:
-            raise ValueError(
-                (
-                    f"Cannot delete primary key column '{column_name}'. "
-                    "This column uniquely identifies rows. Use rename_column if you need a different name."
-                ),
-            )
-
-        # Prefer field-level deletion endpoint for efficiency; avoids per-log scans
-        return unify.delete_fields(
-            fields=[column_name],
-            context=self._ctx_for_table(table),
-        )
+        return _op_delete_column(self, table=table, column_name=column_name)
 
     def _rename_column(
         self,
@@ -1018,19 +1016,11 @@ class KnowledgeManager(BaseKnowledgeManager):
                 Backend response.
         """
         # Short-circuit obvious no-op and invalid rename targets to avoid any backend call
-        if old_name == new_name:
-            return {
-                "info": "no-op: old and new names are identical",
-                "old_name": old_name,
-                "new_name": new_name,
-            }
-        if new_name == "id":
-            raise ValueError("Cannot rename a column to reserved name 'id'.")
-
-        return unify.rename_field(
-            name=old_name,
+        return _op_rename_column(
+            self,
+            table=table,
+            old_name=old_name,
             new_name=new_name,
-            context=self._ctx_for_table(table),
         )
 
     def _copy_column(
@@ -1062,27 +1052,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         Implemented by attaching the matching logs to the destination context
         via ``unify.add_logs_to_context``.
         """
-        src_ctx = self._ctx_for_table(source_table)
-        dest_ctx = self._ctx_for_table(dest_table)
-
-        log_ids = unify.get_logs(
-            context=src_ctx,
-            filter=f"{column_name} is not None",
-            limit=100_000,
-            return_ids_only=True,
+        return _op_copy_column(
+            self,
+            source_table=source_table,
+            column_name=column_name,
+            dest_table=dest_table,
         )
-        unify.add_logs_to_context(
-            log_ids,
-            context=dest_ctx,
-            project=unify.active_project(),
-        )
-        return {
-            "status": "copied",
-            "rows": len(log_ids),
-            "from": source_table,
-            "to": dest_table,
-            "column": column_name,
-        }
 
     def _move_column(
         self,
@@ -1113,17 +1088,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         Implemented as ``_copy_column`` followed by ``_delete_column`` on the
         source table.
         """
-        copy_res = self._copy_column(
+        return _op_move_column(
+            self,
             source_table=source_table,
             column_name=column_name,
             dest_table=dest_table,
         )
-        del_res = self._delete_column(table=source_table, column_name=column_name)
-        return {
-            "status": "moved",
-            "copy_result": copy_res,
-            "delete_result": del_res,
-        }
 
     def _transform_column(
         self,
@@ -1156,25 +1126,12 @@ class KnowledgeManager(BaseKnowledgeManager):
         2. Delete the original column.
         3. Rename the temporary column back to ``column_name``.
         """
-        tmp_name = f"tmp_{column_name}_{uuid.uuid4().hex[:8]}"
-
-        create_res = self._create_derived_column(
+        return _op_transform_column(
+            self,
             table=table,
-            column_name=tmp_name,
+            column_name=column_name,
             equation=equation,
         )
-        delete_res = self._delete_column(table=table, column_name=column_name)
-        rename_res = self._rename_column(
-            table=table,
-            old_name=tmp_name,
-            new_name=column_name,
-        )
-        return {
-            "status": "transformed",
-            "create_result": create_res,
-            "delete_result": delete_res,
-            "rename_result": rename_res,
-        }
 
     #  Row-level deletion
 
@@ -1207,70 +1164,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Mapping ``table_name → backend message / "no-op"``.
         """
-        if limit > 1000:
-            raise ValueError("Limit must be less than 1000")
-
-        # Resolve target tables without incurring per-table field lookups.
-        if tables is None:
-            km_prefix = f"{self._ctx}/"
-            ctxs = unify.get_contexts(prefix=km_prefix)
-            resolved_tables: List[str] = [k[len(km_prefix) :] for k in ctxs.keys()]
-            # Optionally expose root-level Contacts when linkage is enabled
-            if self._include_contacts and self._contacts_ctx is not None:
-                try:
-                    contacts_info = unify.get_context(self._contacts_ctx)
-                    if isinstance(contacts_info, dict):
-                        resolved_tables.append("Contacts")
-                except Exception:
-                    pass
-        else:
-            resolved_tables = list(tables)
-
-        if not resolved_tables:
-            return {}
-
-        project_name = unify.active_project()
-
-        def _delete_for_table(table_name: str) -> tuple[str, Any]:
-            ctx = self._ctx_for_table(table_name)
-            log_ids = list(
-                unify.get_logs(
-                    context=ctx,
-                    filter=filter,
-                    offset=offset,
-                    limit=limit,
-                    return_ids_only=True,
-                ),
-            )
-            if not log_ids:
-                return table_name, {"status": "no-op"}
-
-            res = unify.delete_logs(
-                logs=log_ids,
-                context=ctx,
-                project=project_name,
-                delete_empty_logs=True,
-            )
-            # Return the full backend response for structured logging
-            return table_name, res
-
-        # Parallelise across tables to minimise wall-clock time when multiple tables are targeted.
-        if len(resolved_tables) == 1:
-            name, msg = _delete_for_table(resolved_tables[0])
-            return {name: msg}
-
-        summaries: Dict[str, Any] = {}
-        max_workers = min(8, max(1, len(resolved_tables)))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {
-                pool.submit(_delete_for_table, table_name): table_name
-                for table_name in resolved_tables
-            }
-            for fut in as_completed(futures):
-                name, msg = fut.result()
-                summaries[name] = msg
-
-        return summaries
+        return _op_delete_rows(
+            self,
+            filter=filter,
+            offset=offset,
+            limit=limit,
+            tables=tables,
+        )
 
     # Row creation / update
 
@@ -1298,11 +1198,7 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
                 Backend confirmation.
         """
-        return unify.create_logs(
-            context=self._ctx_for_table(table),
-            entries=rows,
-            batched=True,
-        )
+        return _op_add_rows(self, table=table, rows=rows)
 
     def _update_rows(
         self,
@@ -1326,257 +1222,255 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, str]
             Backend response from ``unify.update_logs``.
         """
-        ctx = self._ctx_for_table(table)
-        ctx_info = unify.get_context(ctx)
-        keys = ctx_info.get("unique_keys")
-        unique_column_name = keys[0] if isinstance(keys, list) and keys else keys
-        unique_ids = sorted([int(k) for k in updates.keys()])
-        log_ids: List[int] = sorted(
-            unify.get_logs(
-                context=ctx,
-                filter=f"{unique_column_name} in {unique_ids}",
-                return_ids_only=True,
-            ),
-        )
-        entries = [updates[str(unique_id)] for unique_id in unique_ids]
-        res = unify.update_logs(
-            logs=log_ids,
-            context=ctx,
-            entries=entries,
-            overwrite=True,
-        )
-        return res
+        return _op_update_rows(self, table=table, updates=updates)
 
     # File ingestion / deprecation
 
-    async def _ingest_documents(
-        self,
-        *,
-        filenames: Union[str, List[str]],
-        table: str = "Content",
-        replace_existing: bool = True,
-        batch_size: int = 3,
-        embed_along: bool = True,
-        embedding_config: Dict[str, Any] | None = None,
-        **parse_options: Any,
-    ) -> Dict[str, Any]:
-        """
-        Ingest one or more documents efficiently with streaming.
-        This tool handles the complete workflow for document ingestion:
-        1. Stream parse documents in batches
-        2. Delete existing records that match (if replace_existing=True)
-        3. Insert new records as they become available
-        Args:
-            filenames: Single filename (str) or list of filenames to ingest
-            table: Target table (default: "content")
-            replace_existing: Whether to delete old records first
-            batch_size: Number of documents to parse in parallel
-            **parse_options: Options passed to parser
-        Returns:
-            Dict with success status, per-file results, and aggregate statistics
-        """
-        try:
-            if not self._file_manager:
-                return {"success": False, "error": "FileManager not available"}
+    # async def _ingest_documents(
+    #     self,
+    #     *,
+    #     filenames: Union[str, List[str]],
+    #     table: str = "Content",
+    #     replace_existing: bool = True,
+    #     batch_size: int = 3,
+    #     embed_along: bool = True,
+    #     embedding_config: Dict[str, Any] | None = None,
+    #     auto_counting: Dict[str, Optional[str]] | None = None,
+    #     allowed_columns: List[str] | None = None,
+    #     **parse_options: Any,
+    # ) -> Dict[str, Any]:
+    #     """
+    #     Ingest one or more documents efficiently with streaming.
+    #     This tool handles the complete workflow for document ingestion:
+    #     1. Stream parse documents in batches
+    #     2. Delete existing records that match (if replace_existing=True)
+    #     3. Insert new records as they become available
+    #     Args:
+    #         filenames: Single filename (str) or list of filenames to ingest
+    #         table: Target table (default: "content")
+    #         replace_existing: Whether to delete old records first
+    #         batch_size: Number of documents to parse in parallel
+    #         **parse_options: Options passed to parser
+    #     Returns:
+    #         Dict with success status, per-file results, and aggregate statistics
+    #     """
+    #     try:
+    #         if not self._file_manager:
+    #             return {"success": False, "error": "FileManager not available"}
 
-            # Normalize input to always be a list
-            if isinstance(filenames, str):
-                filenames = [filenames]
+    #         # Normalize input to always be a list
+    #         if isinstance(filenames, str):
+    #             filenames = [filenames]
 
-            if not filenames:
-                return {"success": False, "error": "No filenames provided"}
+    #         if not filenames:
+    #             return {"success": False, "error": "No filenames provided"}
 
-            print(
-                f"📄 Processing {len(filenames)} document{'s' if len(filenames) > 1 else ''} with batch size {batch_size}...",
-            )
+    #         print(
+    #             f"📄 Processing {len(filenames)} document{'s' if len(filenames) > 1 else ''} with batch size {batch_size}...",
+    #         )
 
-            # Initialize tracking
-            total_inserted = 0
-            total_deleted = 0
-            file_results = {}
-            batch_records = []
-            batch_files = []
-            processed_count = 0
-            total_inserted_log_event_ids = []
+    #         # Initialize tracking
+    #         total_inserted = 0
+    #         total_deleted = 0
+    #         file_results = {}
+    #         batch_records = []
+    #         batch_files = []
+    #         processed_count = 0
+    #         total_inserted_log_event_ids = []
 
-            # Process documents as they complete parsing
-            async for result in self._file_manager.parse_async(
-                filenames,
-                batch_size=batch_size,
-                **parse_options,
-            ):
-                filename = result.get("filename")
+    #         # Normalise allowed_columns to a set for fast membership tests
+    #         allowed_columns_set = set(allowed_columns) if allowed_columns else None
 
-                if result["status"] == "error":
-                    file_results[filename] = {
-                        "filename": filename,
-                        "success": False,
-                        "error": result["error"],
-                        "inserted": 0,
-                        "deleted": 0,
-                    }
-                    continue
+    #         # Process documents as they complete parsing
+    #         async for result in self._file_manager.parse_async(
+    #             filenames,
+    #             batch_size=batch_size,
+    #             auto_counting=auto_counting,
+    #             document_index_offset=0,
+    #             **parse_options,
+    #         ):
+    #             filename = result.get("filename")
 
-                records = result.get("records", [])
-                if not records:
-                    file_results[filename] = {
-                        "filename": filename,
-                        "success": False,
-                        "error": "No records extracted",
-                        "inserted": 0,
-                        "deleted": 0,
-                    }
-                    continue
+    #             if result["status"] == "error":
+    #                 file_results[filename] = {
+    #                     "filename": filename,
+    #                     "success": False,
+    #                     "error": result["error"],
+    #                     "inserted": 0,
+    #                     "deleted": 0,
+    #                 }
+    #                 continue
 
-                # Delete existing records if requested
-                deleted_count = 0
-                if replace_existing and records:
-                    first_record = records[0]
-                    doc_filters = []
+    #             records = result.get("records", [])
+    #             if not records:
+    #                 file_results[filename] = {
+    #                     "filename": filename,
+    #                     "success": False,
+    #                     "error": "No records extracted",
+    #                     "inserted": 0,
+    #                     "deleted": 0,
+    #                 }
+    #                 continue
 
-                    if doc_id := first_record.get("document_id"):
-                        doc_filters.append(f"document_id == '{doc_id}'")
+    #             # Delete existing records if requested
+    #             deleted_count = 0
+    #             if replace_existing and records:
+    #                 first_record = records[0]
+    #                 doc_filters = []
 
-                    if source_uri := first_record.get("source_uri"):
-                        # Clean up temp directory from path for matching
-                        clean_uri = source_uri
-                        if "/tmp/" in clean_uri:
-                            parts = clean_uri.split("/tmp/")
-                            if len(parts) > 1:
-                                after_tmp = parts[1]
-                                subparts = after_tmp.split("/", 1)
-                                if len(subparts) > 1:
-                                    clean_uri = subparts[1]
-                        # Use Python string method for pattern matching
-                        doc_filters.append(f"source_uri.endswith('{clean_uri}')")
+    #                 if doc_id := first_record.get("document_id"):
+    #                     doc_filters.append(f"document_id == '{doc_id}'")
 
-                    if doc_fingerprint := first_record.get("document_fingerprint"):
-                        doc_filters.append(
-                            f"document_fingerprint == '{doc_fingerprint}'",
-                        )
+    #                 if file_path := first_record.get("file_path"):
+    #                     # Clean up temp directory from path for matching
+    #                     clean_file_path = file_path
+    #                     if "/tmp/" in clean_file_path:
+    #                         parts = clean_file_path.split("/tmp/")
+    #                         if len(parts) > 1:
+    #                             after_tmp = parts[1]
+    #                             subparts = after_tmp.split("/", 1)
+    #                             if len(subparts) > 1:
+    #                                 clean_file_path = subparts[1]
+    #                     # Use Python string method for pattern matching
+    #                     doc_filters.append(f"file_path.endswith('{clean_file_path}')")
 
-                    if doc_filters:
-                        filter_expr = " or ".join(f"({f})" for f in doc_filters)
-                        try:
-                            # Count records to be deleted using IDs-only
-                            target_ctx = self._ctx_for_table(table)
-                            ids_to_delete = unify.get_logs(
-                                context=target_ctx,
-                                filter=filter_expr,
-                                return_ids_only=True,
-                            )
-                            deleted_count = len(ids_to_delete)
+    #                 if doc_fingerprint := first_record.get("document_fingerprint"):
+    #                     doc_filters.append(
+    #                         f"document_fingerprint == '{doc_fingerprint}'",
+    #                     )
 
-                            if deleted_count > 0:
-                                self._delete_rows(tables=[table], filter=filter_expr)
-                                total_deleted += deleted_count
-                                print(
-                                    f"✅ Deleted {deleted_count} old records for {filename}",
-                                )
-                        except Exception as e:
-                            print(
-                                f"❌ Failed to delete old records for {filename}: {e}",
-                            )
+    #                 if doc_filters:
+    #                     filter_expr = " or ".join(f"({f})" for f in doc_filters)
+    #                     try:
+    #                         # Count records to be deleted using IDs-only
+    #                         target_ctx = self._ctx_for_table(table)
+    #                         ids_to_delete = unify.get_logs(
+    #                             context=target_ctx,
+    #                             filter=filter_expr,
+    #                             return_ids_only=True,
+    #                         )
+    #                         deleted_count = len(ids_to_delete)
 
-                # Add to batch
-                batch_records.extend(records)
-                batch_files.append(
-                    {
-                        "filename": filename,
-                        "record_count": len(records),
-                        "deleted_count": deleted_count,
-                    },
-                )
-                processed_count += 1
+    #                         if deleted_count > 0:
+    #                             self._delete_rows(tables=[table], filter=filter_expr)
+    #                             total_deleted += deleted_count
+    #                         print(
+    #                             f"✅ Deleted {deleted_count} old records for {filename}",
+    #                         )
+    #                     except Exception as e:
+    #                         print(
+    #                             f"❌ Failed to delete old records for {filename}: {e}",
+    #                         )
 
-                print(f"✅ Parsed {filename}: {len(records)} records")
+    #             # Add to batch
+    #             # After deletion, filter records to allowed columns if provided
+    #             if allowed_columns_set is not None:
+    #                 filtered_records = []
+    #                 for rec in records:
+    #                     filtered = {
+    #                         k: v for k, v in rec.items() if k in allowed_columns_set
+    #                     }
+    #                     filtered_records.append(filtered)
+    #                 records = filtered_records
 
-                # Insert batch when we have processed batch_size documents or it's the last one
-                if len(batch_files) >= batch_size or processed_count == len(filenames):
-                    if batch_records:
-                        try:
-                            print(
-                                f"📥 Inserting batch of {len(batch_records)} records from {len(batch_files)} documents...",
-                            )
-                            result = self._add_rows(table=table, rows=batch_records)
-                            inserted_log_event_ids = [log.id for log in result]
-                            total_inserted_log_event_ids.extend(inserted_log_event_ids)
-                            total_inserted += len(batch_records)
+    #             batch_records.extend(records)
+    #             batch_files.append(
+    #                 {
+    #                     "filename": filename,
+    #                     "record_count": len(records),
+    #                     "deleted_count": deleted_count,
+    #                 },
+    #             )
+    #             processed_count += 1
 
-                            # Update file results for this batch
-                            for file_info in batch_files:
-                                file_results[file_info["filename"]] = {
-                                    "filename": file_info["filename"],
-                                    "success": True,
-                                    "inserted": file_info["record_count"],
-                                    "deleted": file_info["deleted_count"],
-                                    "error": None,
-                                }
+    #             print(f"✅ Parsed {filename}: {len(records)} records")
 
-                            print(f"✅ Batch inserted successfully")
+    #             # Insert batch when we have processed batch_size documents or it's the last one
+    #             if len(batch_files) >= batch_size or processed_count == len(filenames):
+    #                 if batch_records:
+    #                     try:
+    #                         print(
+    #                             f"📥 Inserting batch of {len(batch_records)} records from {len(batch_files)} documents...",
+    #                         )
+    #                         result = self._add_rows(table=table, rows=batch_records)
+    #                         inserted_log_event_ids = [log.id for log in result]
+    #                         total_inserted_log_event_ids.extend(inserted_log_event_ids)
+    #                         total_inserted += len(batch_records)
 
-                            # Optional: embed along after this batch is inserted
-                            if embed_along and embedding_config:
-                                try:
-                                    tables_cfg = embedding_config.get("tables", {})
-                                    table_cfg = tables_cfg.get(table, {})
-                                    to_embed = table_cfg.get("columns_to_embed", [])
-                                    # Restrict embedding to rows just inserted in this batch
-                                    for col in to_embed:
-                                        src = col.get("source_column")
-                                        dst = col.get("target_column")
-                                        if src and dst:
-                                            print(
-                                                f"🔮 Embedding {table}.{src} -> {dst} (embed_along) for {len(inserted_log_event_ids)} rows",
-                                            )
-                                            self._vectorize_column(
-                                                table=table,
-                                                source_column=src,
-                                                target_column_name=dst,
-                                                from_ids=inserted_log_event_ids,
-                                            )
-                                            print(
-                                                f"✅ Embedded {table}.{src} -> {dst} (embed_along) for {len(inserted_log_event_ids)} rows",
-                                            )
-                                except Exception as e:
-                                    print(f"❌ Failed to embed along: {e}")
+    #                         # Update file results for this batch
+    #                         for file_info in batch_files:
+    #                             file_results[file_info["filename"]] = {
+    #                                 "filename": file_info["filename"],
+    #                                 "success": True,
+    #                                 "inserted": file_info["record_count"],
+    #                                 "deleted": file_info["deleted_count"],
+    #                                 "error": None,
+    #                             }
 
-                        except Exception as e:
-                            # Update file results for failed batch
-                            for file_info in batch_files:
-                                file_results[file_info["filename"]] = {
-                                    "filename": file_info["filename"],
-                                    "success": False,
-                                    "inserted": 0,
-                                    "deleted": file_info["deleted_count"],
-                                    "error": f"Batch insertion failed: {str(e)}",
-                                }
-                            print(f"❌ Failed to insert batch: {e}")
+    #                         print(f"✅ Batch inserted successfully")
 
-                        # Clear batch for next set
-                        batch_records = []
-                        batch_files = []
+    #                         # Optional: embed along after this batch is inserted
+    #                         if embed_along and embedding_config:
+    #                             try:
+    #                                 tables_cfg = embedding_config.get("tables", {})
+    #                                 table_cfg = tables_cfg.get(table, {})
+    #                                 to_embed = table_cfg.get("columns_to_embed", [])
+    #                                 # Restrict embedding to rows just inserted in this batch
+    #                                 for col in to_embed:
+    #                                     src = col.get("source_column")
+    #                                     dst = col.get("target_column")
+    #                                     if src and dst:
+    #                                         print(
+    #                                             f"🔮 Embedding {table}.{src} -> {dst} (embed_along) for {len(inserted_log_event_ids)} rows",
+    #                                         )
+    #                                         self._vectorize_column(
+    #                                             table=table,
+    #                                             source_column=src,
+    #                                             target_column_name=dst,
+    #                                             from_ids=inserted_log_event_ids,
+    #                                         )
+    #                                         print(
+    #                                             f"✅ Embedded {table}.{src} -> {dst} (embed_along) for {len(inserted_log_event_ids)} rows",
+    #                                         )
+    #                             except Exception as e:
+    #                                 print(f"❌ Failed to embed along: {e}")
 
-            # Calculate summary statistics
-            successful_files = sum(
-                1 for fr in file_results.values() if fr.get("success", False)
-            )
-            failed_files = len(filenames) - successful_files
+    #                     except Exception as e:
+    #                         # Update file results for failed batch
+    #                         for file_info in batch_files:
+    #                             file_results[file_info["filename"]] = {
+    #                                 "filename": file_info["filename"],
+    #                                 "success": False,
+    #                                 "inserted": 0,
+    #                                 "deleted": file_info["deleted_count"],
+    #                                 "error": f"Batch insertion failed: {str(e)}",
+    #                             }
+    #                         print(f"❌ Failed to insert batch: {e}")
 
-            return {
-                "success": failed_files == 0,
-                "total_files": len(filenames),
-                "successful_files": successful_files,
-                "failed_files": failed_files,
-                "total_records": total_inserted,
-                "total_inserted": total_inserted,
-                "total_deleted": total_deleted,
-                "file_results": list(file_results.values()),
-                "inserted_log_event_ids": total_inserted_log_event_ids,
-            }
+    #                     # Clear batch for next set
+    #                     batch_records = []
+    #                     batch_files = []
 
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+    #         # Calculate summary statistics
+    #         successful_files = sum(
+    #             1 for fr in file_results.values() if fr.get("success", False)
+    #         )
+    #         failed_files = len(filenames) - successful_files
+
+    #         return {
+    #             "success": failed_files == 0,
+    #             "total_files": len(filenames),
+    #             "successful_files": successful_files,
+    #             "failed_files": failed_files,
+    #             "total_records": total_inserted,
+    #             "total_inserted": total_inserted,
+    #             "total_deleted": total_deleted,
+    #             "file_results": list(file_results.values()),
+    #             "inserted_log_event_ids": total_inserted_log_event_ids,
+    #         }
+
+    #     except Exception as e:
+    #         return {"success": False, "error": str(e)}
 
     # Vector Search Helpers
     def _vectorize_column(
@@ -1603,11 +1497,11 @@ class KnowledgeManager(BaseKnowledgeManager):
         -------
         None
         """
-        context = self._ctx_for_table(table)
-        ensure_vector_column(
-            context,
-            embed_column=target_column_name,
+        return _op_vectorize_column(
+            self,
+            table=table,
             source_column=source_column,
+            target_column_name=target_column_name,
             from_ids=from_ids,
         )
 
@@ -1645,17 +1539,12 @@ class KnowledgeManager(BaseKnowledgeManager):
                 overall, the remainder is backfilled from ``unify.get_logs(limit=k)`` in
                 returned order, skipping duplicates based on each table's unique id.
         """
-        context = self._ctx_for_table(table)
-        rows: List[Dict[str, Any]] = table_search_top_k(
-            context=context,
+        return _srch_search(
+            self,
+            table=table,
             references=references,
             k=k,
-            row_filter=filter,
-        )
-        return maybe_group_rows(
-            rows=rows,
-            exclude_fields=list_private_fields(context),
-            enabled=self._group_results,
+            filter=filter,
         )
 
     @read_only
@@ -1721,38 +1610,18 @@ class KnowledgeManager(BaseKnowledgeManager):
             backfilled from `unify.get_logs(limit=k)` in returned order, skipping
             duplicates based on the joined table's unique id.
         """
-
-        # 1️⃣  Materialize the join into a temporary context
-        dest_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
-        dest_ctx = self._create_join(
-            dest_table=dest_table,
+        return _srch_search_join(
+            self,
             tables=tables,
             join_expr=join_expr,
             select=select,
             mode=mode,
             left_where=left_where,
             right_where=right_where,
+            references=references,
+            k=k,
+            filter=filter,
         )
-
-        try:
-            # 2️⃣  Primary similarity-ranked results
-            rows: List[Dict[str, Any]] = table_search_top_k(
-                context=dest_ctx,
-                references=references,
-                k=k,
-                row_filter=filter,
-            )
-            return maybe_group_rows(
-                rows=rows,
-                exclude_fields=list_private_fields(dest_ctx),
-                enabled=self._group_results,
-            )
-        finally:
-            # 4️⃣  Clean up the temporary context best-effort
-            try:
-                unify.delete_context(dest_ctx)
-            except Exception:
-                pass
 
     @read_only
     def _search_multi_join(
@@ -1803,201 +1672,17 @@ class KnowledgeManager(BaseKnowledgeManager):
             order, skipping duplicates based on the final context's unique id.
         """
 
-        if not joins:
-            raise ValueError("`joins` must contain at least one join step.")
-        # `references` may be None/empty; in that case semantic search returns [], and
-        # we rely entirely on backfill from the final joined context.
-
-        tmp_prefix = f"_tmp_mjoin_{uuid.uuid4().hex[:6]}"
-        tmp_tables: List[str] = []
-        previous_table: Optional[str] = None
-
-        for idx, step in enumerate(joins):
-            local_step = step.copy()  # do not mutate caller's dict
-            raw_tables = local_step.get("tables")
-            raw_tables = [raw_tables] if isinstance(raw_tables, str) else raw_tables
-            if not isinstance(raw_tables, list) or len(raw_tables) != 2:
-                raise ValueError(
-                    f"Step {idx} must specify exactly TWO tables – got {raw_tables!r}",
-                )
-
-            # Substitute `$prev` placeholder
-            step_tables = [
-                (previous_table if t in {"$prev", "__prev__", "_"} else t)
-                for t in raw_tables
-            ]
-            if any(t is None for t in step_tables):
-                raise ValueError(
-                    "Misplaced `$prev` in first join – there is no previous result.",
-                )
-
-            # Fix-up join_expr & columns that reference `$prev`
-            def _replace_prev(
-                s: Optional[Union[str, List[str], Dict[str, str]]],
-            ) -> Optional[Union[str, List[str], Dict[str, str]]]:
-                if s is None or previous_table is None:
-                    return s
-
-                def repl(txt: str) -> str:
-                    return (
-                        txt.replace("$prev", previous_table)
-                        .replace("__prev__", previous_table)
-                        .replace("_.", f"{previous_table}.")
-                    )
-
-                if isinstance(s, str):
-                    return repl(s)
-                elif isinstance(s, dict):
-                    return {repl(k): v for k, v in s.items()}
-                return [repl(c) for c in s]
-
-            join_expr = _replace_prev(local_step.get("join_expr"))
-            select = _replace_prev(local_step.get("select"))
-
-            # Destination table for this hop
-            is_last = idx == len(joins) - 1
-            dest_table = f"{tmp_prefix}_final" if is_last else f"{tmp_prefix}_{idx}"
-            tmp_tables.append(dest_table)
-
-            # Materialise the join (no reads yet)
-            self._create_join(
-                dest_table=dest_table,
-                tables=step_tables,
-                join_expr=join_expr,  # type: ignore[arg-type]
-                select=select,  # type: ignore[arg-type]
-                mode=local_step.get("mode", "inner"),
-                left_where=local_step.get("left_where"),
-                right_where=local_step.get("right_where"),
-            )
-
-            previous_table = dest_table
-
-        assert previous_table is not None  # mypy guard
-
-        final_ctx = self._ctx_for_table(previous_table)
-
-        try:
-            # 1) Primary similarity-ranked results from the final joined context
-            rows: List[Dict[str, Any]] = table_search_top_k(
-                context=final_ctx,
-                references=references,
-                k=k,
-                row_filter=filter,
-            )
-            return maybe_group_rows(
-                rows=rows,
-                exclude_fields=list_private_fields(final_ctx),
-                enabled=self._group_results,
-            )
-        finally:
-            # Clean up temporary contexts (best-effort)
-            try:
-                self._delete_tables(tables=tmp_tables)
-            except Exception:
-                pass
+        return _srch_search_multi_join(
+            self,
+            joins=joins,
+            references=references,
+            k=k,
+            filter=filter,
+        )
 
     # Search
 
     ## private helper
-
-    def _create_join(
-        self,
-        *,
-        dest_table: str,
-        tables: Union[str, List[str]],
-        join_expr: str,
-        select: Dict[str, str],
-        mode: str = "inner",
-        left_where: Optional[str] = None,
-        right_where: Optional[str] = None,
-    ) -> str:
-        """
-        Create one derived table by joining two source tables.
-
-        Parameters
-        ----------
-        dest_table : str
-            Name for the derived table to create (e.g. a unique temporary name
-            such as `"_tmp_join_<id>"`).
-
-        tables : list[str]
-            Exactly two table names, e.g. `["A", "B"]`.
-
-        join_expr : str
-            Boolean join condition using the same table identifiers as in
-            `tables`, e.g. `"A.user_id == B.user_id"`.
-
-        select : dict[str, str]
-            Mapping of source columns to output column names in the derived
-            table, e.g. `{ "A.user_id": "user_identifier", "B.score":
-            "user_score" }`.
-
-        mode : str, default "inner"
-            Join mode. Typical values: "inner", "left", "right", "outer".
-
-        left_where : str | None, default None
-            Optional row-level predicate applied to the left table before the
-            join, e.g. `"user_id == 1"`.
-
-        right_where : str | None, default None
-            Optional row-level predicate applied to the right table before the
-            join.
-
-        Returns
-        -------
-        str
-            The name of the derived table that was created.
-        """
-        # 1️⃣  Resolve & validate the inputs
-        if isinstance(tables, str):
-            tables = [tables]
-        if len(tables) != 2:
-            raise ValueError("❌  Exactly TWO tables are required.")
-
-        left_table, right_table = tables
-        left_ctx, right_ctx = self._ctx_for_table(left_table), self._ctx_for_table(
-            right_table,
-        )
-
-        # Optionally rewrite the pre-filters to the fully-qualified contexts
-        def _rewrite_filter(expr: Optional[str], table: str, ctx: str) -> Optional[str]:
-            return None if expr is None else expr.replace(table, ctx)
-
-        left_where = _rewrite_filter(left_where, left_table, left_ctx)
-        right_where = _rewrite_filter(right_where, right_table, right_ctx)
-
-        # Fully-qualify the join expression / selected columns
-        join_expr = join_expr.replace(left_table, left_ctx).replace(
-            right_table,
-            right_ctx,
-        )
-        select = {
-            c.replace(left_table, left_ctx).replace(right_table, right_ctx): v
-            for c, v in select.items()
-        }
-
-        # 3️⃣  Destination context
-        dest_ctx = self._ctx_for_table(dest_table)
-
-        # 4️⃣  Fire the REST request
-        unify.join_logs(
-            pair_of_args=(
-                {
-                    "context": left_ctx,
-                    **({} if left_where is None else {"filter_expr": left_where}),
-                },
-                {
-                    "context": right_ctx,
-                    **({} if right_where is None else {"filter_expr": right_where}),
-                },
-            ),
-            join_expr=join_expr,
-            mode=mode,
-            new_context=dest_ctx,
-            columns=select,
-        )
-
-        return dest_ctx
 
     @read_only
     def _filter(
@@ -2029,77 +1714,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         dict[str, list[dict[str, Any]]]
                 Mapping ``table_name → [row_dict, …]``.
         """
-        if limit > 1000:
-            raise ValueError("Limit must be less than 1000")
-
-        # Resolve target tables without triggering per-table field reads.
-        # When the caller does not specify tables, list contexts directly
-        # rather than calling `_tables_overview(include_column_info=True)`,
-        # which would fetch columns for every table (unnecessary here).
-        if tables is None:
-            km_prefix = f"{self._ctx}/"
-            ctxs = unify.get_contexts(prefix=km_prefix)
-            resolved_tables: List[str] = [k[len(km_prefix) :] for k in ctxs.keys()]
-            # Optionally expose root-level Contacts when linkage is enabled
-            if self._include_contacts and self._contacts_ctx is not None:
-                try:
-                    contacts_info = unify.get_context(self._contacts_ctx)
-                    if isinstance(contacts_info, dict):
-                        resolved_tables.append("Contacts")
-                except Exception:
-                    pass
-        elif isinstance(tables, str):
-            resolved_tables = [tables]
-        else:
-            resolved_tables = list(tables)
-
-        # Fetch private-field lists and rows per table without serial stalls.
-        # Each table performs at most two backend reads: fields (once) and logs.
-        def _fetch_one(table_name: str) -> tuple[str, List[Dict[str, Any]]]:
-            ctx = self._ctx_for_table(table_name)
-            excl = list_private_fields(ctx)
-            normalized = normalize_filter_expr(filter)
-            rows: List[Dict[str, Any]] = [
-                log.entries
-                for log in unify.get_logs(
-                    context=ctx,
-                    filter=normalized,
-                    offset=offset,
-                    limit=limit,
-                    exclude_fields=excl,
-                )
-            ]
-            return table_name, rows
-
-        results: Dict[str, List[Dict[str, Any]]] = {}
-        # Parallelise when scanning multiple tables to reduce wall-clock time.
-        max_workers = min(8, max(1, len(resolved_tables)))
-        if len(resolved_tables) <= 1:
-            # Avoid thread-pool overhead for the common single-table case
-            name, rows = _fetch_one(resolved_tables[0])
-            ctx = self._ctx_for_table(name)
-            results[name] = maybe_group_rows(
-                rows=rows,
-                exclude_fields=list_private_fields(ctx),
-                enabled=self._group_results,
-            )
-            return results
-
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {
-                pool.submit(_fetch_one, table_name): table_name
-                for table_name in resolved_tables
-            }
-            for fut in as_completed(futures):
-                name, rows = fut.result()
-                ctx = self._ctx_for_table(name)
-                results[name] = maybe_group_rows(
-                    rows=rows,
-                    exclude_fields=list_private_fields(ctx),
-                    enabled=self._group_results,
-                )
-
-        return results
+        return _srch_filter(
+            self,
+            filter=filter,
+            offset=offset,
+            limit=limit,
+            tables=tables,
+        )
 
     @read_only
     def _filter_join(
@@ -2160,59 +1781,17 @@ class KnowledgeManager(BaseKnowledgeManager):
             Rows from the joined result matching the provided filters.
         """
 
-        # ── helper to catch mismatches early ────────────────────────────
-        def _qualified_refs(expr: str) -> set[str]:
-            import re
-
-            return set(
-                m.group(0) for m in re.finditer(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", expr)
-            )
-
-        if result_where:
-            missing = _qualified_refs(result_where) - set(select)
-            if missing:
-                raise ValueError(
-                    "❌  `result_where` references column(s) that are not present in "
-                    "`select`.  Either add them to `select` *or* move the predicate to "
-                    "`left_where` / `right_where` as appropriate.  "
-                    f"Missing: {', '.join(sorted(missing))}",
-                )
-
-        # 1️⃣  Materialise the join (helper handles validation & REST)
-        dest_table = f"_tmp_join_{uuid.uuid4().hex[:8]}"
-        dest_ctx = self._create_join(
-            dest_table=dest_table,
+        return _srch_filter_join(
+            self,
             tables=tables,
             join_expr=join_expr,
             select=select,
             mode=mode,
             left_where=left_where,
             right_where=right_where,
-        )
-
-        # 2️⃣  Read from the derived context
-        rows: List[Dict[str, Any]] = [
-            log.entries
-            for log in unify.get_logs(
-                context=dest_ctx,
-                filter=result_where,
-                offset=result_offset,
-                limit=result_limit,
-                exclude_fields=list_private_fields(dest_ctx),
-            )
-        ]
-
-        # 3️⃣  Clean-up
-        try:
-            unify.delete_context(dest_ctx)
-        except Exception:
-            # Best-effort – if it fails the tmp context will age-out later.
-            pass
-
-        return maybe_group_rows(
-            rows=rows,
-            exclude_fields=list_private_fields(dest_ctx),
-            enabled=self._group_results,
+            result_where=result_where,
+            result_limit=result_limit,
+            result_offset=result_offset,
         )
 
     @read_only
@@ -2264,95 +1843,10 @@ class KnowledgeManager(BaseKnowledgeManager):
             Rows from the final joined result matching the provided filters.
         """
 
-        if not joins:
-            raise ValueError("`joins` must contain at least one join step.")
-
-        tmp_prefix = f"_tmp_mjoin_{uuid.uuid4().hex[:6]}"
-        tmp_tables: List[str] = []
-        previous_table: Optional[str] = None
-
-        for idx, step in enumerate(joins):
-            step = step.copy()  # do not mutate caller's dict
-            raw_tables = step.get("tables")
-            raw_tables = [raw_tables] if isinstance(raw_tables, str) else raw_tables
-            if not isinstance(raw_tables, list) or len(raw_tables) != 2:
-                raise ValueError(
-                    f"Step {idx} must specify exactly TWO tables – got {raw_tables!r}",
-                )
-
-            # Substitute `$prev` placeholder
-            step_tables = [
-                (previous_table if t in {"$prev", "__prev__", "_"} else t)
-                for t in raw_tables
-            ]
-            if any(t is None for t in step_tables):
-                raise ValueError(
-                    "Misplaced `$prev` in first join – there is no previous result.",
-                )
-
-            # Fix-up join_expr & columns that reference `$prev`
-            def _replace_prev(
-                s: Optional[Union[str, List[str], Dict[str, str]]],
-            ) -> Optional[Union[str, List[str], Dict[str, str]]]:
-                if s is None or previous_table is None:
-                    return s
-                repl = (
-                    lambda txt: txt.replace("$prev", previous_table)
-                    .replace("__prev__", previous_table)
-                    .replace("_.", f"{previous_table}.")
-                )
-                if isinstance(s, str):
-                    return repl(s)
-                elif isinstance(s, dict):
-                    return {repl(k): v for k, v in s.items()}
-                return [repl(c) for c in s]
-
-            join_expr = _replace_prev(step.get("join_expr"))
-            select = _replace_prev(step.get("select"))
-
-            # Destination table for this hop
-            is_last = idx == len(joins) - 1
-            dest_table = f"{tmp_prefix}_final" if is_last else f"{tmp_prefix}_{idx}"
-            tmp_tables.append(dest_table)
-
-            # Materialise the join (no reads yet)
-            self._create_join(
-                dest_table=dest_table,
-                tables=step_tables,
-                join_expr=join_expr,  # type: ignore[arg-type]
-                select=select,  # type: ignore[arg-type]
-                mode=step.get("mode", "inner"),
-                left_where=step.get("left_where"),
-                right_where=step.get("right_where"),
-            )
-
-            previous_table = dest_table
-
-        assert previous_table is not None  # mypy guard
-
-        # -------- 4.  Read final result ---------------------------------
-        final_ctx = self._ctx_for_table(previous_table)
-        rows: List[Dict[str, Any]] = [
-            log.entries
-            for log in unify.get_logs(
-                context=final_ctx,
-                filter=result_where,
-                offset=result_offset,
-                limit=result_limit,
-                exclude_fields=list_private_fields(final_ctx),
-            )
-        ]
-
-        # -------- 5.  Clean-up ------------------------------------------
-        try:
-            # do not delete the user-requested *persistent* table
-            self._delete_tables(tables=tmp_tables)
-        except Exception:
-            # best-effort — leave garbage collection to Unify if this fails
-            pass
-
-        return maybe_group_rows(
-            rows=rows,
-            exclude_fields=list_private_fields(final_ctx),
-            enabled=self._group_results,
+        return _srch_filter_multi_join(
+            self,
+            joins=joins,
+            result_where=result_where,
+            result_limit=result_limit,
+            result_offset=result_offset,
         )

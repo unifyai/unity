@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 import unify
 
+from .llm_client import new_llm_client
 from .async_tool_loop import AsyncToolLoopHandle
 from pydantic import BaseModel, Field
 
@@ -124,13 +125,7 @@ class ReadOnlyAskGuardHandle(AsyncToolLoopHandle):
             )
 
         # Build classification client
-        cls_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=True,
-            traced=False,
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        cls_client = new_llm_client()
 
         # Derive a concise label so the LLM knows which manager/method this is
         label = "ask"

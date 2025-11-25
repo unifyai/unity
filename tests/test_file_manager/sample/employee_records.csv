@@ -1,0 +1,7 @@
+EmployeeID,Name,Department,HireDate,Salary,FullTime
+101,Alice Johnson,Engineering,2019-04-22,85000,True
+102,Bob Smith,Marketing,2020-08-13,72000,True
+103,Charlie Davis,Sales,2018-01-10,69000,False
+104,Diana Green,Engineering,2021-11-02,91000,True
+105,Ethan Brown,Finance,2017-05-19,88000,True
+106,Fiona White,HR,2016-09-25,60000,False

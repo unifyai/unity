@@ -19,7 +19,8 @@ from typing import Any, List
 import pytest
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
@@ -30,7 +31,7 @@ from tests.test_async_tool_loop.async_helpers import (
 #  GLOBALS                                                                    #
 # --------------------------------------------------------------------------- #
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
 # --------------------------------------------------------------------------- #
@@ -63,13 +64,7 @@ def new_client() -> unify.AsyncUnify:
     Return a fresh client with its own conversation state so tests do not
     interfere with one another.
     """
-    return unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    return new_llm_client()
 
 
 @unify.traced

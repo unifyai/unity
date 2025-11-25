@@ -1,11 +1,10 @@
 import asyncio
-import os
-from time import perf_counter
 from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
-from unity.conversation_manager.debug_logger import log_job_startup
+from unity.conversation_manager import debug_logger
 from unity.conversation_manager.domains.call_manager import LivekitCallManager
+from unity.conversation_manager.domains.contact_index import Contact
 from unity.conversation_manager.new_events import *
 from unity.conversation_manager.domains import managers_utils
 
@@ -42,41 +41,50 @@ class EventHandler:
         return f(event, cm, *args, **kwargs)
 
 
-CallEvents = Union[PhoneCallReceived, PhoneCallSent, UnifyCallReceived]
+CallEvents = Union[
+    PhoneCallReceived,
+    PhoneCallSent,
+    UnifyCallReceived,
+    PhoneCallAnswered,
+]
 
 
-@EventHandler.register((PhoneCallReceived, PhoneCallSent, UnifyCallReceived))
+@EventHandler.register(
+    (PhoneCallReceived, PhoneCallSent, UnifyCallReceived, PhoneCallAnswered),
+)
 async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
-    if cm.mode in ["phone", "gmeet", "unify_call"]:
+    if cm.mode in ["call", "gmeet", "unify_call"]:
         # can't make call
         # TODO: we should handle this somehow tbh
         # for now do nothing, but we can think of adding a notification of an attempted call
-        ...
+
+        # if an outbound call has been answered, we should send a notification to the call script
+        if isinstance(event, PhoneCallAnswered):
+            await cm.event_broker.publish(
+                "app:call:status",
+                json.dumps({"type": "call_answered"}),
+            )
     else:
         # update state
         message_content = None
         notif_content = None
         boss = cm.contact_index.get_contact(contact_id=1)
+        contact = cm.contact_index.get_contact(
+            phone_number=event.contact["phone_number"],
+        )
         match event:
             case PhoneCallReceived() as e:
-                if not os.getenv("TEST"):
-                    cm.call_manager.start_call(
-                        e.contact["phone_number"], event.contact, boss
-                    )
+                cm.call_manager.start_call(contact, boss)
                 message_content = "<Recvieving Call...>"
-                notif_content = f"Call received from {e.contact['first_name']}"
+                notif_content = f"Call received from {contact['first_name']}"
             case PhoneCallSent() as e:
-                if not os.getenv("TEST"):
-                    cm.call_manager.start_call(
-                        e.contact["phone_number"], event.contact, boss
-                    )
+                cm.call_manager.start_call(contact, boss, outbound=True)
                 message_content = "<Sending Call...>"
-                notif_content = f"Call sent to {e.contact['first_name']}"
+                notif_content = f"Call sent to {contact['first_name']}"
             case UnifyCallReceived() as e:
-                if not os.getenv("TEST"):
-                    cm.call_manager.start_unify_call(e.agent_name, e.room_name)
+                cm.call_manager.start_unify_call(e.agent_name, e.room_name, contact)
                 message_content = "<Recieving Call...>"
-                notif_content = f"Call received from {e.contact['first_name']}"
+                notif_content = f"Call received from {contact['first_name']}"
 
         cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
         cm.contact_index.push_message(
@@ -114,7 +122,10 @@ async def _(
         timestamp=event.timestamp,
     )
     cm.contact_index.push_message(
-        contact, "phone", "<Call Started>", timestamp=event.timestamp
+        contact,
+        "phone",
+        "<Call Started>",
+        timestamp=event.timestamp,
     )
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = True
     await cm.run_llm(delay=0)
@@ -126,24 +137,24 @@ async def _(
         UnifyCallUtterance,
         AssistantPhoneUtterance,
         AssistantUnifyCallUtterance,
-    )
+    ),
 )
-async def _(event: PhoneCallEnded, cm: "ConversationManager", *args, **kwargs):
+async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     # publish transcript
     # asyncio.create_task(managers_utils.log_message(cm, event))
-    if isinstance(event, (PhoneUtterance, AssistantPhoneUtterance)):
-        phone_number = event.contact["phone_number"]
-        contact = cm.contact_index.get_contact(phone_number=phone_number)
-        cm.contact_index.push_message(
-            contact,
-            "phone",
-            event.content,
-            role=(
-                "user"
-                if "assistant" not in event.__class__.__name__.lower()
-                else "assistant"
-            ),
-        )
+    print("publishing utterance", event)
+    contact_id = event.contact["contact_id"]
+    contact = cm.contact_index.get_contact(contact_id=contact_id)
+    cm.contact_index.push_message(
+        contact,
+        "phone",
+        event.content,
+        role=(
+            "user"
+            if "assistant" not in event.__class__.__name__.lower()
+            else "assistant"
+        ),
+    )
     # start filler only in non-realtime
     if isinstance(event, (PhoneUtterance, UnifyCallUtterance)):
         if not cm.call_manager.realtime:
@@ -154,7 +165,10 @@ async def _(event: PhoneCallEnded, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register((PhoneCallEnded, UnifyCallEnded))
 async def _(
-    event: PhoneCallEnded | UnifyCallEnded, cm: "ConversationManager", *args, **kwargs
+    event: PhoneCallEnded | UnifyCallEnded,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
 ):
     cm.mode = "text"
     if isinstance(event, PhoneCallEnded):
@@ -174,7 +188,7 @@ async def _(
         ConductorHandleResponse,
         ConductorResult,
         ConductorClarificationRequest,
-    )
+    ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
     # just run llm here
@@ -189,7 +203,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
         EmailReceived,
         UnifyMessageSent,
         UnifyMessageReceived,
-    )
+    ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
     asyncio.create_task(managers_utils.log_message(cm, event))
@@ -265,30 +279,33 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     cm.set_details(payload)
     cm.call_manager = LivekitCallManager(
         cm.assistant_id,
+        cm.assistant_about,
         cm.assistant_number,
         cm.voice_provider,
         cm.voice_id,
         cm.voice_mode,
     )
-    if not os.getenv("TEST"):
-        kwargs = {
-            "timestamp": payload["timestamp"],
-            "medium": payload["medium"],
-            **cm.get_details(),
-        }
-        asyncio.create_task(asyncio.to_thread(log_job_startup, **kwargs))
+    kwargs = {
+        "timestamp": payload["timestamp"],
+        "medium": payload["medium"],
+        **cm.get_details(),
+    }
+    asyncio.create_task(asyncio.to_thread(debug_logger.log_job_startup, **kwargs))
 
 
 @EventHandler.register(GetContactsResponse)
 async def _(event: GetContactsResponse, cm: "ConversationManager", *args, **kwargs):
     print("recieved and setting contacts")
     cm.contact_index.set_contacts(event.contacts)
-    print(cm.contact_index.contacts)
+    # print(cm.contact_index.contacts)
 
 
 @EventHandler.register(GetBusEventsResponse)
 async def _(
-    event: GetBusEventsResponse, cm: "ConversationManager", *args, **kwargs
+    event: GetBusEventsResponse,
+    cm: "ConversationManager",
+    *args,
+    **kwargs,
 ): ...
 
 
@@ -374,3 +391,44 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
 @EventHandler.register(PreHireMessage)
 async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
     asyncio.create_task(managers_utils.log_message(cm, event))
+
+
+@EventHandler.register(SummarizeContext)
+async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs):
+    async def summarize_task():
+        res = [
+            (
+                cid,
+                cm.prompt_renderer.render_contact(
+                    c,
+                    max_messages=25,
+                    last_snapshot=cm.last_snapshot,
+                ),
+            )
+            for cid, c in cm.contact_index.active_conversations.items()
+        ]
+        tasks = [
+            cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid)
+            for cid, t in res
+        ]
+        try:
+            await asyncio.gather(*tasks)
+            updated_active_contacts = cm.contact_manager.get_contact_info(
+                contact_id=[cid for cid in cm.contact_index.active_conversations],
+            )
+            updated_active_contacts = {
+                cid: Contact(**{**c.model_dump(), **uc, "threads": c.threads})
+                for (cid, c), uc in zip(
+                    cm.contact_index.active_conversations.items(),
+                    updated_active_contacts.values(),
+                )
+            }
+            print("updated contact", updated_active_contacts)
+            cm.contact_index.active_conversations = updated_active_contacts
+            cm.is_summarizing = False
+            cm.chat_history = []
+            print("[ManagersWorker] Contact rolling summary updated")
+        except Exception as e:
+            print(f"[ManagersWorker] Error updating contact rolling summary: {e}")
+
+    asyncio.create_task(summarize_task())

@@ -193,14 +193,14 @@ class _SimulatedKnowledgeHandle(SteerableToolHandle, SimulatedHandleMixin):
         self._done_event.set()
         return "Stopped." if reason is None else f"Stopped: {reason}"
 
-    def pause(self) -> str:
+    async def pause(self) -> str:
         if self._paused:
             return "Already paused."
         self._log_pause()
         self._paused = True
         return "Paused."
 
-    def resume(self) -> str:
+    async def resume(self) -> str:
         if not self._paused:
             return "Already running."
         self._log_resume()

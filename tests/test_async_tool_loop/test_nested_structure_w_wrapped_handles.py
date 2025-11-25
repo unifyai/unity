@@ -32,10 +32,10 @@ class ToyHandle:
         self._done.set()
         return "stopped"
 
-    def pause(self, *_, **__):
+    async def pause(self, *_, **__):
         return "paused"
 
-    def resume(self, *_, **__):
+    async def resume(self, *_, **__):
         return "resumed"
 
     def done(self) -> bool:
@@ -75,10 +75,10 @@ class SteeringHandle:
         self._done.set()
         return "stopped"
 
-    def pause(self, *_, **__):
+    async def pause(self, *_, **__):
         return "paused"
 
-    def resume(self, *_, **__):
+    async def resume(self, *_, **__):
         return "resumed"
 
     def done(self) -> bool:
@@ -90,12 +90,12 @@ class SteeringHandle:
 
 
 class WrapperWithMethod:
-    """Wrapper that uses the standardized get_wrapped_handles method."""
+    """Wrapper that uses the standardized _get_wrapped_handles method."""
 
     def __init__(self, handle):
         self._handles = [handle]
 
-    def get_wrapped_handles(self):
+    def _get_wrapped_handles(self):
         # Demonstrate dict form support too
         return {"actor": self._handles[0]}
 
@@ -109,10 +109,10 @@ def _base_name(val: str | None) -> str:
 
 
 class WrapperWithMixin(HandleWrapperMixin):
-    """Wrapper that uses the mixin and wrap_handle registration."""
+    """Wrapper that uses the mixin and _wrap_handle registration."""
 
     def __init__(self, handle):
-        self.wrap_handle(handle)
+        self._wrap_handle(handle)
 
 
 def _find_child(

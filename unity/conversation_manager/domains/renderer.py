@@ -1,4 +1,3 @@
-from textwrap import dedent
 from datetime import datetime
 
 from unity.conversation_manager.domains.contact_index import (
@@ -20,26 +19,43 @@ class Renderer:
         last_snapshot: datetime = None,
     ):
         return (
-            f"{self.render_notification_bar(notification_bar, last_snapshot)}\n\n"
+            f"{self.render_notification_bar(notification_bar, last_snapshot=last_snapshot)}\n\n"
             f"{self.render_conductor_handles(conductor_handles)}\n\n"
-            f"{self.render_active_conversations(contact_index.active_conversations, last_snapshot)}"
+            f"{self.render_active_conversations(contact_index.active_conversations, last_snapshot=last_snapshot)}"
         )
 
     # contact stuff
     def render_active_conversations(
-        self, active_conversations: dict[str, Contact], last_snapshot=None
+        self,
+        active_conversations: dict[str, Contact],
+        max_messages=5,
+        last_snapshot=None,
     ):
         contacts = "\n\n".join(
-            self.render_contact(c, last_snapshot) for c in active_conversations.values()
+            self.render_contact(
+                c,
+                max_messages=max_messages,
+                last_snapshot=last_snapshot,
+            )
+            for c in active_conversations.values()
         )
         return "<active_conversations>\n" f"{contacts}\n" "</active_conversations>"
 
-    def render_contact(self, contact: Contact, last_snapshot):
-        bio = "<bio>...</bio>"
-        rolling_summary = "<rolling_summary>...</rolling_summary>"
-        response_policy = "<response_policy>...</response_policy>"
+    def render_contact(self, contact: Contact, max_messages=5, last_snapshot=None):
+        bio = f"<bio>{contact.bio}</bio>"
+        rolling_summary = (
+            f"<rolling_summary>{contact.rolling_summary}</rolling_summary>"
+        )
+        response_policy = (
+            f"<response_policy>{contact.response_policy}</response_policy>"
+        )
         threads = "\n\n".join(
-            self.render_thread(t_name, t, last_snapshot)
+            self.render_thread(
+                t_name,
+                t,
+                max_messages=max_messages,
+                last_snapshot=last_snapshot,
+            )
             for t_name, t in contact.threads.items()
             if t
         )
@@ -54,8 +70,10 @@ class Renderer:
             "</contact>"
         )
 
-    def render_thread(self, thread_name, thread, last_snapshot):
-        messages = "\n".join(self.render_message(m, last_snapshot) for m in thread)
+    def render_thread(self, thread_name, thread, max_messages=5, last_snapshot=None):
+        messages = "\n".join(
+            self.render_message(m, last_snapshot) for m in list(thread)[-max_messages:]
+        )
         return f"<{thread_name}>\n" f"{messages}\n" f"</{thread_name}>"
 
     def render_message(self, message: Message, last_snapshot: datetime = None):
@@ -72,7 +90,9 @@ class Renderer:
 
     # notification stuff
     def render_notification_bar(
-        self, notification_bar: NotificationBar, last_snapshot=None
+        self,
+        notification_bar: NotificationBar,
+        last_snapshot=None,
     ):
         pinned_notifs = [n for n in notification_bar.notifications if n.pinned]
         new_notifs = [

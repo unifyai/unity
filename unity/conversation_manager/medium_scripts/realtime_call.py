@@ -33,7 +33,10 @@ from jinja2 import Template
 from livekit.agents import (
     Agent,
     AgentSession,
+    FunctionTool,
     JobContext,
+    llm,
+    ModelSettings,
     RoomInputOptions,
     UserInputTranscribedEvent,
     UserStateChangedEvent,
@@ -48,6 +51,7 @@ from livekit.plugins import (
     # noise_cancellation,
     silero,
 )
+from typing import AsyncIterable
 
 load_dotenv()
 
@@ -70,6 +74,7 @@ boss_surname = ""
 boss_phone_number = ""
 boss_email = ""
 is_boss_user = ""
+assistant_bio = ""
 
 with open(
     Path(__file__).resolve().parent.parent / "prompts" / "realtime_phone_agent.md",
@@ -84,9 +89,37 @@ logger.setLevel(logging.INFO)
 
 
 class Assistant(Agent):
+    def __init__(
+        self,
+        contact: dict,
+        boss: dict,
+        instructions: str = "",
+        outbound: bool = False,
+    ) -> None:
+        self.contact = contact
+        self.boss = boss
+        self.call_received = not outbound
+
+        super().__init__(instructions=instructions)
+
     async def on_user_turn_completed(self, turn_ctx, new_message):
         print(turn_ctx)
         print(new_message)
+
+    async def llm_node(
+        self,
+        chat_ctx: llm.ChatContext,
+        tools: list[FunctionTool],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable[llm.ChatChunk]:
+        print("waiting for call to be received...")
+        while not self.call_received:
+            await asyncio.sleep(0.1)
+        print("call received")
+
+        print("running llm node...")
+        async for chunk in super().llm_node(chat_ctx, tools, model_settings):
+            yield chunk
 
     # async def transcription_node(self, text, model_settings):
     #     async for delta in text:
@@ -95,30 +128,32 @@ class Assistant(Agent):
 
 
 async def entrypoint(ctx: JobContext) -> None:
-    """Main job entry. Runs once per dispatched agent/room.
+    print("Connecting to room...")
+    await ctx.connect()
+    print("Connected to room")
 
-    The worker will call this function whenever it's assigned to a room.
-    """
-    logger.info("connecting to LiveKit room...")
-    await ctx.connect()  # ensures ctx.room is usable
-    contact = {
-        "contact_id": contact_id,
-        "first_name": contact_first_name,
-        "surname": contact_surname,
-        "email_address": contact_email,
-        "phone_number": os.environ["CALL_FROM_NUMBER"],
-        "is_boss": is_boss_user,
-    }
+    # read static config
+    voice_provider = os.environ.get("VOICE_PROVIDER")
+    voice_id = os.environ.get("VOICE_ID")
+    outbound = os.environ.get("OUTBOUND") == "True"
+    assistant_bio = os.environ.get("ASSISTANT_BIO")
+    print("voice_provider", voice_provider)
+    print("voice_id", voice_id)
+    print("outbound", outbound)
 
-    # Configure the OpenAI Realtime model. The default model is 'gpt-realtime', so the
+    # contact/boss payloads passed as json env vars
+    contact = json.loads(os.getenv("CONTACT", "{}"))
+    boss = json.loads(os.getenv("BOSS", "{}"))
+
+    # configure the OpenAI Realtime model. The default model is 'gpt-realtime', so the
     # explicit model= parameter here is optional, but shown for clarity.
     llm = openai_realtime.RealtimeModel(
-        model="gpt-realtime",
-        # Pick a built-in OpenAI voice; 'alloy' is the default. Try 'marin', 'verse', etc.
-        voice="alloy",
-        # Example: run in speech-to-speech (audio) + text mode; set ["text"] to drive a separate TTS.
+        model=voice_provider,
+        # pick a built-in OpenAI voice; 'alloy' is the default. Try 'marin', 'verse', etc.
+        voice=voice_id,
+        # example: run in speech-to-speech (audio) + text mode; set ["text"] to drive a separate TTS.
         modalities=["audio"],
-        # Example (optional): customize server VAD / interrupt behavior
+        # example (optional): customize server VAD / interrupt behavior
         # turn_detection=TurnDetection(
         #     type="server_vad",
         #     threshold=0.5,
@@ -131,7 +166,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     session = AgentSession(
         llm=llm,
-        # If you prefer a separate TTS instead of Realtime audio, set llm.modalities=["text"] above
+        # ff you prefer a separate TTS instead of Realtime audio, set llm.modalities=["text"] above
         # and provide a TTS here, e.g.: tts="cartesia/sonic-2"
         # tts="cartesia/sonic-2",
     )
@@ -156,38 +191,85 @@ async def entrypoint(ctx: JobContext) -> None:
         )
         print(role, text)
 
-    voice_provider = os.environ.get("VOICE_PROVIDER", "cartesia")
-    voice_id = os.environ.get("VOICE_ID", "")
+    async def end_call():
+        print("Initiating graceful shutdown...")
 
-    # Lightweight audio I/O options. You can add noise cancellation, custom VAD, etc.
+        # Send end call event before cleaning tasks and closing connection
+        await event_broker.publish(
+            "app:comms:phone_call_ended",
+            PhoneCallEnded(contact=contact).to_json(),
+        )
+        print("End call event sent")
+
+        # Get all running tasks except current task
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+        if tasks:
+            print(f"Cancelling {len(tasks)} running tasks...")
+            # Cancel all tasks
+            for task in tasks:
+                task.cancel()
+
+            # Wait for tasks to be cancelled gracefully
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                print("All tasks cancelled successfully")
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                print(f"Error during task cancellation: {e}")
+
+        print("Graceful shutdown completed")
+
+    # add inactivity timeout
+    INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
+    last_activity_time = asyncio.get_event_loop().time()
+
+    async def check_inactivity():
+        nonlocal last_activity_time
+        while True:
+            await asyncio.sleep(10)  # check every 10 seconds
+            current_time = asyncio.get_event_loop().time()
+            if current_time - last_activity_time > INACTIVITY_TIMEOUT:
+                print("Inactivity timeout reached, shutting down agent...")
+                await end_call()
+                break  # exit the loop after shutdown
+
+    # start inactivity checker
+    asyncio.create_task(check_inactivity())
+
+    # create a wrapper for the room event handler since it expects a sync function
+    def on_participant_disconnected(*args, **kwargs):
+        asyncio.create_task(end_call())
+
+    ctx.room.on("participant_disconnected", on_participant_disconnected)
+
+    # lightweight audio I/O options. You can add noise cancellation, custom VAD, etc.
     rio = RoomInputOptions(
         # noise_cancellation=noise_cancellation.BVC(),
     )
 
-    # High-level behavior for the assistant.
-    print("HEEEELLOOOOO")
-    boss_first_name = os.environ.get("BOSS_FIRST_NAME", "")
-    boss_surname = os.environ.get("BOSS_SURNAME", "")
-    boss_phone_number = os.environ.get("BOSS_PHONE_NUMBER", "")
-    boss_email = os.environ.get("BOSS_EMAIL", "")
-    contact_first_name = os.environ.get("CONTACT_FIRST_NAME", "")
-    contact_surname = os.environ.get("CONTACT_SURNAME", "")
-    contact_email = os.environ.get("CONTACT_EMAIL", "")
-    is_boss_user = os.environ.get("IS_BOSS_USER", "False")
+    # high-level behavior for the assistant.
     system = Template(SYSTEM_PROMPT).render(
-        boss_first_name=boss_first_name,
-        boss_surname=boss_surname,
-        boss_email_address=boss_email if boss_email != "None" else None,
-        boss_phone_number=boss_phone_number if boss_phone_number != "None" else None,
-        contact_first_name=contact_first_name,
-        contact_surname=contact_surname,
-        contact_phone_number=os.environ["CALL_FROM_NUMBER"],
-        contact_email=contact_email,
-        is_boss_user=True if is_boss_user == "True" else False,
+        bio=assistant_bio,
+        boss_first_name=boss["first_name"],
+        boss_surname=boss["surname"],
+        boss_email_address=boss["email_address"],
+        boss_phone_number=boss["phone_number"],
+        contact_first_name=contact["first_name"],
+        contact_surname=contact["surname"],
+        contact_phone_number=contact["phone_number"],
+        contact_email=contact["email_address"],
+        is_boss_user=contact["is_boss"],
     )
     print("PRINTING SYSTEM PROMPT")
     print(system)
-    agent = Assistant(instructions=system)
+    agent = Assistant(
+        contact=contact,
+        boss=boss,
+        instructions=system,
+        outbound=outbound,
+    )
 
     await event_broker.publish(
         "app:comms:phone_call_started",
@@ -223,76 +305,49 @@ async def entrypoint(ctx: JobContext) -> None:
     await session.start(room=ctx.room, agent=agent, room_input_options=rio)
     asyncio.create_task(wait_for_nudges())
 
-    # Keep the job alive until the room ends or the worker shuts down.
-    # The worker lifecycle will stop this when participants leave.
-    while True:
-        # If your app has a shutdown condition, check it here.
-        await asyncio.sleep(2)
-
 
 if __name__ == "__main__":
-    # Extract phone numbers before passing to agents.cli
-    from_number = ""
     assistant_number = ""
-    to_number = ""
-    voice_provider = "cartesia"
-    voice_id = ""
-    meet_id = ""
-    outbound = "False"
     print("sys.argv", sys.argv)
 
-    if len(sys.argv) > 16:
-        # Remove phone numbers from sys.argv to prevent them from being passed to agents.cli
-        from_number = sys.argv[2]
-        assistant_number = sys.argv[3]
-        voice_provider = sys.argv[4]
-        voice_id = sys.argv[5]
-        outbound = sys.argv[7]
+    if len(sys.argv) > 8:
+        # get static config
+        assistant_number = sys.argv[2]
+        os.environ["VOICE_PROVIDER"] = (
+            sys.argv[3] if sys.argv[3] != "None" else "cartesia"
+        )
+        os.environ["VOICE_ID"] = sys.argv[4] if sys.argv[4] != "None" else ""
+        os.environ["OUTBOUND"] = sys.argv[5]
 
-        # realtime specific stff
-        is_boss_user = sys.argv[8]
-        contact_id = sys.argv[9]
-        contact_first_name = sys.argv[10]
-        contact_surname = sys.argv[11]
-        contact_email = sys.argv[12]
+        # get contact/boss payloads
+        os.environ["CONTACT"] = sys.argv[6]
+        os.environ["BOSS"] = sys.argv[7]
+        print(f"contact: {os.environ['CONTACT']}")
+        print(f"boss: {os.environ['BOSS']}")
+        if not json.loads(os.environ["CONTACT"]) or not json.loads(os.environ["BOSS"]):
+            print("Contact or boss payload is invalid")
+            sys.exit(1)
 
-        # boss details
-        boss_first_name = sys.argv[13]
-        boss_surname = sys.argv[14]
-        boss_phone_number = sys.argv[15]
-        boss_email = sys.argv[16]
+        # get assistant bio
+        os.environ["ASSISTANT_BIO"] = sys.argv[8]
 
-        os.environ["BOSS_FIRST_NAME"] = boss_first_name
-        os.environ["BOSS_SURNAME"] = boss_surname
-        os.environ["BOSS_PHONE_NUMBER"] = boss_phone_number
-        os.environ["BOSS_EMAIL"] = boss_email
-        os.environ["CONTACT_ID"] = contact_id
-        os.environ["CONTACT_FIRST_NAME"] = contact_first_name
-        os.environ["CONTACT_SURNAME"] = contact_surname
-        os.environ["CONTACT_EMAIL"] = contact_email
-        os.environ["IS_BOSS_USER"] = is_boss_user
-
-        sys.argv = sys.argv[:2]  # Keep only script name and "dev" command
-
-    # Store phone numbers in environment variables to be accessed by entrypoint
-    os.environ["CALL_FROM_NUMBER"] = from_number
-    os.environ["VOICE_PROVIDER"] = voice_provider
-    if voice_id != "None":
-        os.environ["VOICE_ID"] = voice_id
-    # os.environ["CALL_TO_NUMBER"] = assistant_number
-    os.environ["OUTBOUND"] = outbound
+        sys.argv = sys.argv[:2]  # keep only script name and "dev" command
+    elif sys.argv[1] != "download-files":
+        print("Not enough arguments provided")
+        sys.exit(1)
 
     agent_name = f"unity_{assistant_number}"
 
     # dispatch agent
-    if sys.argv[1] == "dev":
-        print("Dispatching agent")
+    if sys.argv[1] != "download-files":
+        print(f"Dispatching agent {agent_name}")
         dispatch_agent(agent_name)
-        print("Agent dispatched")
+        print(f"Agent {agent_name} dispatched")
 
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,
             agent_name=agent_name,
+            initialize_process_timeout=60,
         ),
     )

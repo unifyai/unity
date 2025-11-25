@@ -1,4 +1,3 @@
-from datetime import timedelta
 import os
 import asyncio
 import logging
@@ -10,7 +9,7 @@ from pathlib import Path
 from typing import Callable, Optional
 import contextlib
 
-from unity.conversation_manager.debug_logger import log_job_startup, mark_job_done
+from unity.conversation_manager import debug_logger
 from unity.conversation_manager.domains.call_manager import LivekitCallManager
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.event_handlers import EventHandler
@@ -76,7 +75,6 @@ class ConversationManager:
         project_name: str = "Assistants",
         stop: asyncio.Event = None,
         user_turn_end_callback: Optional[Callable[[list[dict]], str]] = None,
-        realtime=False,
     ):
         # assistant details
         self.job_name = job_name
@@ -126,6 +124,7 @@ class ConversationManager:
         # call manager
         self.call_manager = LivekitCallManager(
             self.assistant_id,
+            self.assistant_about,
             self.assistant_number,
             self.voice_provider,
             self.voice_id,
@@ -148,7 +147,7 @@ class ConversationManager:
 
         self.mode = "text"
         self.chat_history = []
-        self.contact_index = ContactIndex()
+        self.contact_index = ContactIndex(is_local=bool(self.assistant_id))
         self.notifications_bar = NotificationBar()
         self.conductor_handles: dict[int, dict] = (
             {}
@@ -185,7 +184,9 @@ class ConversationManager:
     # coro and return
     async def run_llm(self, delay=0, cancel_running=False):
         await self.debouncer.submit(
-            self._run_llm, delay=delay, cancel_running=cancel_running
+            self._run_llm,
+            delay=delay,
+            cancel_running=cancel_running,
         )
 
     async def _run_llm(self):
@@ -200,6 +201,7 @@ class ConversationManager:
         input_message = {"role": "user", "content": prompt}
         boss_contact = self.contact_index.boss_contact
         system_prompt = Template(self.system_prompt).render(
+            bio=self.assistant_about,
             contact_id=boss_contact.contact_id,
             first_name=boss_contact.first_name,
             surname=boss_contact.surname,
@@ -238,7 +240,7 @@ class ConversationManager:
                     topic = "app:comms:phone_utterance"
                     event = AssistantPhoneUtterance(
                         self.contact_index.get_contact(
-                            phone_number=self.call_contact["phone_number"]
+                            phone_number=self.call_contact["phone_number"],
                         ),
                         parsed_out["phone_utterance"],
                     )
@@ -267,9 +269,16 @@ class ConversationManager:
         self.chat_history.append(input_message)
         self.chat_history.append({"role": "assistant", "content": out})
 
-        # if len(self.chat_history) >= int(0.7 * self.max_messages) and not self.is_summarizing:
-        #    print("summarizing conversation...")
-        #    Action.take_action(self, "summarize_conversation")
+        if (
+            len(self.chat_history) >= int(0.7 * self.max_messages)
+            and not self.is_summarizing
+        ):
+            print("summarizing conversation...")
+            await self.event_broker.publish(
+                "app:comms:summarize",
+                SummarizeContext().to_json(),
+            )
+            self.is_summarizing = True
 
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
@@ -303,7 +312,9 @@ class ConversationManager:
                 # process events
                 event = Event.from_json(msg["data"])
                 await EventHandler.handle_event(
-                    event, self, realtime=self.call_manager.realtime
+                    event,
+                    self,
+                    realtime=self.call_manager.realtime,
                 )
 
     async def check_inactivity(self):
@@ -378,9 +389,6 @@ class ConversationManager:
 
     def build_response_model(self):
         self.dynamic_response_models = build_dynamic_response_models(
-            include_email=self.assistant_email not in [None, ""],
-            include_sms=self.assistant_number not in [None, ""],
-            include_call=self.assistant_number not in [None, ""],
             realtime=self.call_manager.realtime,
         )
 
@@ -388,8 +396,8 @@ class ConversationManager:
         """Clean up any running call processes"""
         print(f"Marking job {self.job_name} done")
         self.call_manager.cleanup_call_proc()
-        if self.job_name:
-            mark_job_done(self.job_name)
+        if self.job_name and self.assistant_id:
+            debug_logger.mark_job_done(self.job_name)
         self.stop.set()
 
     async def run_filler_once(self):
@@ -418,7 +426,8 @@ class ConversationManager:
         await self.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
         if filler_text:
             await self.event_broker.publish(
-                channel, json.dumps({"type": "gen_chunk", "chunk": filler_text})
+                channel,
+                json.dumps({"type": "gen_chunk", "chunk": filler_text}),
             )
         await self.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
         self._filler_done.set()

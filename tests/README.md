@@ -80,6 +80,9 @@ Limit the search by passing directories and/or `.py` files. Examples:
 
 # Mix files and directories
 ./.parallel_run.sh tests/api tests/db/test_migrations.py
+
+# Wait for completion and log to files (CI / Agent mode)
+./.parallel_run.sh --wait tests/unit
 ```
 
 How it interprets arguments:
@@ -90,6 +93,21 @@ How it interprets arguments:
   - If you specify individual tests, only those tests are run (one session per test).
   - When you do not specify individual tests, the script creates one session per file.
   - With `-t/--per-test`, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
+
+## Wait Mode and Logs (`--wait`)
+
+Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipelines or automated agents.
+
+```bash
+./.parallel_run.sh --wait tests/my_tests
+```
+
+**Behavior:**
+- Blocks until all tmux sessions complete.
+- If all pass, exits with code `0`.
+- If any fail, exits with code `1` and lists the failed sessions.
+- **Logs**: Each session writes its full pytest output to a file in `.pytest_logs/` named after the session (e.g., `.pytest_logs/tests-unit-test_math.txt`).
+- **Debugging**: When running with `--wait`, inspect these log files to diagnose failures instead of attaching to tmux sessions (though sessions remain open for inspection if they fail).
 
 ## Match tests by filename (glob-style)
 

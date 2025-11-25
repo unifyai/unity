@@ -684,7 +684,7 @@ class TranscriptManager(BaseTranscriptManager):
         # ── 1.  Bulk update all *sender_id* occurrences ────────────────────
         sender_log_ids = unify.get_logs(
             context=self._transcripts_ctx,
-            filter=f"sender_id == {original_contact_id}",
+            filter=f"sender_id is not None and sender_id == {original_contact_id}",
             return_ids_only=True,
         )
         if sender_log_ids:
@@ -1071,6 +1071,29 @@ class TranscriptManager(BaseTranscriptManager):
                 "exchange_id must NOT be provided when starting a new exchange; use TranscriptManager.log_messages(...) if you already have an existing exchange id.",
             )
 
+        # 3) Create Exchange row FIRST to satisfy FK constraint
+        exchange_log = unify.log(
+            context=self._exchanges_ctx,
+            metadata=dict(exchange_initial_metadata or {}),
+            medium=str(payload.get("medium", "")),
+            new=True,
+            mutable=True,
+            params={},
+        )
+
+        # Extract the assigned exchange_id
+        try:
+            exid = int(exchange_log.entries["exchange_id"])
+        except Exception as exc:  # noqa: BLE001 – precise error context
+            raise RuntimeError(
+                "Created exchange lacks an assigned exchange_id.",
+            ) from exc
+        if exid < 0:
+            raise RuntimeError("Created exchange has an unassigned exchange_id.")
+
+        # 4) Add exchange_id to payload and create message SECOND
+        payload["exchange_id"] = exid
+
         created_model = Message(**payload)
         entries = created_model.to_post_json()
 
@@ -1081,53 +1104,6 @@ class TranscriptManager(BaseTranscriptManager):
             mutable=True,
             params={},
         )
-
-        persisted_payload = {k: log.entries.get(k) for k in Message.model_fields.keys()}
-        if persisted_payload.get("message_id") is None:
-            persisted_payload.pop("message_id", None)
-        if persisted_payload.get("exchange_id") is None:
-            persisted_payload.pop("exchange_id", None)
-
-        created = Message(**persisted_payload)
-
-        # 3) Ensure the new exchange_id is present
-        try:
-            exid = int(getattr(created, "exchange_id"))
-        except Exception as exc:  # noqa: BLE001 – precise error context
-            raise RuntimeError(
-                "Created message lacks an assigned exchange_id.",
-            ) from exc
-        if exid < 0:
-            raise RuntimeError("Created message has an unassigned exchange_id.")
-
-        # 4) Ensure the Exchanges row exists and optionally set initial metadata
-        try:
-            row_ids = unify.get_logs(
-                context=self._exchanges_ctx,
-                filter=f"exchange_id == {exid}",
-                return_ids_only=True,
-            )
-            if row_ids:
-                if exchange_initial_metadata is not None:
-                    unify.update_logs(
-                        logs=row_ids,
-                        context=self._exchanges_ctx,
-                        entries={"metadata": dict(exchange_initial_metadata)},
-                        overwrite=True,
-                    )
-            else:
-                unify.log(
-                    context=self._exchanges_ctx,
-                    exchange_id=exid,
-                    metadata=dict(exchange_initial_metadata or {}),
-                    medium=str(getattr(created, "medium", "")),
-                    new=True,
-                    mutable=True,
-                    params={},
-                )
-        except Exception:
-            # Non-fatal: do not fail the message creation due to metadata upsert
-            pass
 
         return exid
 

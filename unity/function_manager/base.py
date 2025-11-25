@@ -41,6 +41,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
         *,
         implementations: Union[str, List[str]],
         preconditions: Optional[Dict[str, Dict]] = None,
+        verify: Optional[Dict[str, bool]] = None,
     ) -> Dict[str, str]:
         """
         Validate, compile and persist one or more function implementations.
@@ -51,6 +52,7 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             *,
             implementations: str | list[str],
             preconditions: dict[str, dict] | None = None,
+            verify: dict[str, bool] | None = None,
         ) -> dict[str, str]
 
         Parameters
@@ -65,6 +67,10 @@ class BaseFunctionManager(BaseStateManager, metaclass=SingletonABCMeta):
             payload is stored as the ``precondition`` field on the corresponding
             ``Function`` record. The expected shape matches the
             ``Function.precondition`` type (``dict[str, Any] | None``).
+        verify : dict[str, bool] | None, default ``None``
+            Optional mapping from function name → verification requirement.
+            If a function name is present and mapped to ``True`` (default) or ``False``,
+            it sets the ``verify`` field on the ``Function`` record.
 
         Returns
         -------
