@@ -58,7 +58,7 @@ def _assert_dict_subset(expected: dict, actual: dict):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_serialize_flat_guidancemanager_ask():
+async def test_serialize_flat_ask():
     """
     Verify a flat GuidanceManager.ask snapshot contains the expected minimal shape.
     We assert a stable, human‑readable subset of the snapshot so readers can see the intended format at a glance.
@@ -99,7 +99,7 @@ async def test_serialize_flat_guidancemanager_ask():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_serialize_flat_guidancemanager_update_before_nested(monkeypatch):
+async def test_serialize_flat_update_before_nested(monkeypatch):
     """
     Verify a flat GuidanceManager.update snapshot when the first-turn nested ask
     has been requested but not adopted (keeps snapshot flat and non-recursive).
@@ -168,7 +168,7 @@ async def test_serialize_flat_guidancemanager_update_before_nested(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_serialize_guidancemanager_update_then_ask_nested():
+async def test_serialize_update_then_ask_nested():
     """
     Verify a recursive snapshot for GuidanceManager.update → GuidanceManager.ask
     (policy requires 'ask' on the first turn).
@@ -248,7 +248,7 @@ async def test_serialize_guidancemanager_update_then_ask_nested():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_ask_with_interjection_guidance():
+async def test_deserialize_and_continue_ask_with_interjection():
     """
     Start from a flat ask snapshot, resume, add an interjection, and verify completion and transcript.
     """
@@ -282,7 +282,7 @@ async def test_deserialize_and_continue_ask_with_interjection_guidance():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_update_before_nested_with_interjection_guidance():
+async def test_deserialize_and_continue_update_before_nested_with_interjection():
     """
     Start from a flat update snapshot taken before nested 'ask' is adopted, resume,
     add an interjection, and verify completion and transcript.
@@ -317,7 +317,7 @@ async def test_deserialize_and_continue_update_before_nested_with_interjection_g
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_and_continue_update_then_ask_nested_with_interjection_guidance():
+async def test_deserialize_and_continue_update_then_ask_nested_with_interjection():
     """
     Start from a recursive update→ask snapshot, resume, add an interjection, and verify continuation.
     """

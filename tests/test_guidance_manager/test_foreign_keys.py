@@ -42,7 +42,7 @@ def _make_test_image_b64(
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_guidance_images_valid_reference():
+def test_fk_images_valid_reference():
     """Test that guidance can reference valid image IDs in nested structure."""
     gm = GuidanceManager()
     im = ImageManager()
@@ -83,7 +83,7 @@ def test_fk_guidance_images_valid_reference():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_guidance_images_set_null_on_delete():
+def test_fk_images_set_null_on_delete():
     """Test SET NULL: Deleting image replaces image_id with None in-place."""
     gm = GuidanceManager()
     im = ImageManager()
@@ -152,7 +152,7 @@ def test_fk_guidance_images_set_null_on_delete():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_guidance_images_multiple_deletes():
+def test_fk_images_multiple_deletes():
     """Test SET NULL with multiple sequential image deletes."""
     gm = GuidanceManager()
     im = ImageManager()
@@ -217,7 +217,7 @@ def test_fk_guidance_images_multiple_deletes():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_guidance_images_null_does_not_break_manager():
+def test_fk_images_null_tolerance():
     """Test that guidance with None image_ids (after SET NULL) loads correctly."""
     gm = GuidanceManager()
     im = ImageManager()
@@ -289,7 +289,7 @@ def test_fk_guidance_images_null_does_not_break_manager():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_guidance_function_ids_valid_reference():
+def test_fk_function_ids_valid_reference():
     """Test that guidance can reference valid function IDs."""
     gm = GuidanceManager()
     fm = FunctionManager()
@@ -322,7 +322,7 @@ def test_fk_guidance_function_ids_valid_reference():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_guidance_function_ids_set_null_on_delete():
+def test_fk_function_ids_set_null_on_delete():
     """Test SET NULL: Deleting function removes it from guidance.function_ids array."""
     gm = GuidanceManager()
     fm = FunctionManager()
@@ -361,7 +361,7 @@ def test_fk_guidance_function_ids_set_null_on_delete():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_guidance_function_ids_empty_array():
+def test_fk_function_ids_empty_array():
     """Test that empty function_ids array is valid."""
     gm = GuidanceManager()
 
@@ -383,7 +383,7 @@ def test_fk_guidance_function_ids_empty_array():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_guidance_combined_images_and_functions():
+def test_fk_combined_images_and_functions():
     """Test combined FK constraints: images + function_ids."""
     gm = GuidanceManager()
     im = ImageManager()

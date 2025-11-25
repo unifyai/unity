@@ -9,7 +9,7 @@ from unity.guidance_manager.guidance_manager import GuidanceManager
 
 @pytest.mark.unit
 @_handle_project
-def test_guidance_function_ids_roundtrip_and_fetch():
+def test_function_ids_roundtrip_and_fetch():
     # Seed two functions
     src_a = (
         "def alpha(a: int) -> int:\n"
@@ -57,7 +57,7 @@ def test_guidance_function_ids_roundtrip_and_fetch():
 
 @pytest.mark.unit
 @_handle_project
-def test_guidance_attach_functions_limit_and_update():
+def test_attach_functions_limit_and_update():
     # Seed two functions
     src_x = "def inc(x: int) -> int:\n" '    """Increment"""\n' "    return x + 1\n"
     src_y = "def dbl(y: int) -> int:\n" '    """Double"""\n' "    return y * 2\n"
@@ -96,7 +96,7 @@ def test_guidance_attach_functions_limit_and_update():
 
 @pytest.mark.unit
 @_handle_project
-def test_guidance_columns_include_function_ids():
+def test_columns_include_function_ids():
     gm = GuidanceManager()
     cols = gm._list_columns()
     assert "function_ids" in cols
