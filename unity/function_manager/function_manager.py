@@ -334,6 +334,14 @@ class FunctionManager(BaseFunctionManager):
             auto_counting={"function_id": None},
             description="List of functions, with all function details stored.",
             fields=model_to_fields(Function),
+            foreign_keys=[
+                {
+                    "name": "guidance_ids[*]",
+                    "references": f"{self._ctx.replace("Functions", "Guidance")}.guidance_id",
+                    "on_delete": "CASCADE",  # pop on guidance deletion
+                    "on_update": "CASCADE",
+                },
+            ],
         )
         self._store.ensure_context()
 

@@ -349,6 +349,20 @@ class GuidanceManager(BaseGuidanceManager):
                 "Table of distilled guidance entries from transcripts and images."
             ),
             fields=model_to_fields(Guidance),
+            foreign_keys=[
+                {
+                    "name": "images[*].raw_image_ref.image_id",
+                    "references": f"{self._ctx.replace("Guidance", "Images")}.image_id",
+                    "on_delete": "SET NULL",
+                    "on_update": "CASCADE",
+                },
+                {
+                    "name": "function_ids[*]",
+                    "references": f"{self._ctx.replace("Guidance", "Functions")}.function_id",
+                    "on_delete": "CASCADE",  # pop on function deletion
+                    "on_update": "CASCADE",
+                },
+            ],
         )
         self._store.ensure_context()
 
@@ -499,6 +513,9 @@ class GuidanceManager(BaseGuidanceManager):
         for r in items:
             if not isinstance(r, AnnotatedImageRef):
                 continue
+            # Skip deleted images (SET NULL from FK policy)
+            if r.raw_image_ref.image_id is None:
+                continue
             iid = int(r.raw_image_ref.image_id)
             image_ids.append(iid)
             annotations_by_id.setdefault(iid, []).append(str(r.annotation))
@@ -641,6 +658,9 @@ class GuidanceManager(BaseGuidanceManager):
         annotations_by_id: Dict[int, List[str]] = {}
         for r in items:
             if not isinstance(r, AnnotatedImageRef):
+                continue
+            # Skip deleted images (SET NULL from FK policy)
+            if r.raw_image_ref.image_id is None:
                 continue
             iid = int(r.raw_image_ref.image_id)
             unique_ids.append(iid)
