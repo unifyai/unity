@@ -15,7 +15,7 @@ from tests.test_screen_share_manager.conftest import PNG_RED_B64
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_core_flow_should_detect_and_annotate_events(mocked_manager):
+async def test_core_flow_detects_and_annotates(mocked_manager):
     """Tests the primary API flow: start turn, push speech, end turn, and annotate."""
     manager, mocks = mocked_manager
 
@@ -55,7 +55,7 @@ async def test_core_flow_should_detect_and_annotate_events(mocked_manager):
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_silent_events_should_be_stored_and_processed_in_next_turn(
+async def test_silent_events_stored_and_processed_next_turn(
     mocked_manager,
 ):
     """Tests that a visual event detected without speech is stored and returned in the next turn."""
@@ -84,7 +84,7 @@ async def test_silent_events_should_be_stored_and_processed_in_next_turn(
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_turn_management_should_collect_multiple_speech_events(mocked_manager):
+async def test_collects_multiple_speech_events(mocked_manager):
     """Ensures a manual turn correctly collects multiple speech events for analysis."""
     manager, mocks = mocked_manager
     mocks["detect"].generate.return_value = json.dumps({"moments": []})
@@ -104,7 +104,7 @@ async def test_turn_management_should_collect_multiple_speech_events(mocked_mana
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_push_speech_should_be_ignored_when_no_turn_is_active(manager, caplog):
+async def test_push_speech_ignored_when_no_turn_active(manager, caplog):
     """Tests that pushing speech outside a started turn is ignored with a warning."""
     await manager.push_speech("hello outside", 0.0, 0.5)
     assert "no turn is in progress" in caplog.text.lower()
@@ -113,7 +113,7 @@ async def test_push_speech_should_be_ignored_when_no_turn_is_active(manager, cap
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_turn_management_should_be_safe_with_overlapping_starts(mocked_manager):
+async def test_safe_with_overlapping_starts(mocked_manager):
     """Tests that starting a new turn while one is in progress is safe and does not crash."""
     manager, _ = mocked_manager
     manager.start_turn()
@@ -125,7 +125,7 @@ async def test_turn_management_should_be_safe_with_overlapping_starts(mocked_man
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_inactivity_flush_should_trigger_for_silent_visual_events(mocked_manager):
+async def test_inactivity_flush_triggers_for_silent_visual_events(mocked_manager):
     """Tests that a silent visual event triggers analysis after an inactivity period."""
     manager, _ = mocked_manager
     manager.settings.inactivity_timeout_sec = 0.1
@@ -161,7 +161,7 @@ async def test_inactivity_flush_should_trigger_for_silent_visual_events(mocked_m
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_concurrency_should_remain_stable_under_load(manager):
+async def test_concurrency_stable_under_load(manager):
     """Tests that pushing frames and speech concurrently does not crash the manager."""
 
     async def push_frames():

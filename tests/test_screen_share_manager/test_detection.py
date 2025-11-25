@@ -20,7 +20,7 @@ from tests.test_screen_share_manager.conftest import (
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_detection_should_handle_empty_turn():
+async def test_should_handle_empty_turn():
     """Tests that detection with no events enqueues an empty list without error."""
     manager = ScreenShareManager()
     await manager.start()
@@ -35,7 +35,7 @@ async def test_detection_should_handle_empty_turn():
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_detection_should_retry_on_llm_failure(mocked_manager):
+async def test_should_retry_on_llm_failure(mocked_manager):
     """Tests that the detection LLM call is retried on failure, per the decorator."""
     manager, mocks = mocked_manager
     manager.settings.llm_retry_max_tries = 3
@@ -57,7 +57,7 @@ async def test_detection_should_retry_on_llm_failure(mocked_manager):
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_detection_should_handle_invalid_llm_json(mocked_manager):
+async def test_should_handle_invalid_llm_json(mocked_manager):
     """Ensures the manager does not crash if the detection LLM returns malformed JSON."""
     manager, mocks = mocked_manager
     mocks["detect"].generate.return_value = "This is not valid JSON"
@@ -76,7 +76,7 @@ async def test_detection_should_handle_invalid_llm_json(mocked_manager):
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_detection_should_handle_llm_timeouts(mocked_manager):
+async def test_should_handle_llm_timeouts(mocked_manager):
     """Tests that the manager handles LLM timeouts gracefully without crashing."""
     manager, mocks = mocked_manager
     mocks["detect"].generate.side_effect = asyncio.TimeoutError()
@@ -93,7 +93,7 @@ async def test_detection_should_handle_llm_timeouts(mocked_manager):
 @pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
-async def test_detection_consolidates_speech_with_subsequent_visual_outcome(
+async def test_consolidates_speech_with_subsequent_visual_outcome(
     mocked_manager,
 ):
     """
