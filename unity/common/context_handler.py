@@ -149,7 +149,9 @@ class ContextHandler:
         manager,
         current_context: str,
     ) -> Dict[str, Dict]:
-        assert hasattr(manager, "Config"), "Manager must have a Config class attribute"
+        assert hasattr(
+            manager, "Config"
+        ), f"Manager {manager.__name__} must have a Config class attribute"
         assert hasattr(
             manager.Config,
             "required_contexts",
