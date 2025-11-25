@@ -27,7 +27,7 @@ def _load_png_b64(filename: str) -> str:
         "Organize Weekly Rota",  # scenario B – Organize first
     ],
 )
-async def test_taskscheduler_ask_live_images_queue_order(first_head: str) -> None:
+async def test_ask_live_images_queue_order(first_head: str) -> None:
     ts = TaskScheduler()
 
     # Seed three tasks and materialize a single queue; switch head based on param
@@ -157,7 +157,7 @@ async def test_taskscheduler_ask_live_images_queue_order(first_head: str) -> Non
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_taskscheduler_update_live_images_reorder_three_tasks() -> None:
+async def test_update_live_images_reorder_three_tasks() -> None:
     ts = TaskScheduler()
 
     # Seed three tasks and materialize a single queue with a fixed initial order

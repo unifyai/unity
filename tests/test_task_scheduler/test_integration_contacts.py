@@ -11,7 +11,7 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 
 @pytest.mark.unit
 @_handle_project
-def test_ts_tools_expose_contact_manager_ask():
+def test_tools_expose_contact_ask():
     """TaskScheduler should surface ContactManager.ask inside its tool dictionaries."""
 
     ts = TaskScheduler()
@@ -43,7 +43,7 @@ from unity.contact_manager.contact_manager import ContactManager
 @pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_ask_calls_contact_manager_ask(monkeypatch):
+async def test_ask_calls_contact_manager_ask(monkeypatch):
     """A contact-oriented question should cause TaskScheduler.ask to call ContactManager.ask exactly once."""
 
     # --------------------------------------------------------------------
@@ -109,7 +109,7 @@ async def test_ts_ask_calls_contact_manager_ask(monkeypatch):
 @pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_update_calls_contact_manager_ask(monkeypatch):
+async def test_update_calls_contact_manager_ask(monkeypatch):
     """Trigger-based task creation referencing a contact name must query ContactManager.ask exactly once."""
 
     # --------------------------------------------------------------------

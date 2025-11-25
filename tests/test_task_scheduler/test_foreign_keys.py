@@ -30,7 +30,7 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_task_entrypoint_valid_reference():
+def test_entrypoint_valid_reference():
     """Test that tasks can reference valid function IDs as entrypoint."""
     fm = FunctionManager()
     ts = TaskScheduler()
@@ -62,7 +62,7 @@ def test_fk_task_entrypoint_valid_reference():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_task_entrypoint_set_null_on_delete():
+def test_entrypoint_set_null_on_delete():
     """Test SET NULL: Task survives function deletion with entrypoint becoming null."""
     fm = FunctionManager()
     ts = TaskScheduler()
@@ -102,7 +102,7 @@ def test_fk_task_entrypoint_set_null_on_delete():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_task_entrypoint_null_does_not_break_scheduler_init():
+def test_entrypoint_null_does_not_break_scheduler_init():
     """Test that tasks with null entrypoint (after FK SET NULL) load without errors."""
     fm = FunctionManager()
     ts = TaskScheduler()
@@ -158,7 +158,7 @@ def test_fk_task_entrypoint_null_does_not_break_scheduler_init():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_task_entrypoint_explicit_none_on_create():
+def test_entrypoint_explicit_none_on_create():
     """Test that tasks can be created with entrypoint=None explicitly."""
     ts = TaskScheduler()
 
@@ -188,7 +188,7 @@ def test_fk_task_entrypoint_explicit_none_on_create():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_task_entrypoint_clone_after_set_null():
+def test_entrypoint_clone_after_set_null():
     """Test that cloning a task after its entrypoint is nulled works correctly."""
     fm = FunctionManager()
     ts = TaskScheduler()

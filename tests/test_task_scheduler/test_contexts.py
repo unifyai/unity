@@ -20,7 +20,7 @@ def _contains(txt: str, *needles: str) -> bool:
 # ----------------------------------------------------------------------------
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_ask_uses_parent_context():
+async def test_ask_uses_parent_context():
     """
     The user previously agreed to call the “Hotfix security vulnerability”
     task **Thunderbolt**.  That context is passed in; no clarification should
@@ -60,7 +60,7 @@ async def test_ts_ask_uses_parent_context():
 # ----------------------------------------------------------------------------
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_ask_requests_clarification():
+async def test_ask_requests_clarification():
     """
     There are **two** queued tasks.  Asking “What is the description of the
     queued task?” is ambiguous; the model must request clarification, then
@@ -115,7 +115,7 @@ async def test_ts_ask_requests_clarification():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_update_uses_parent_context():
+async def test_update_uses_parent_context():
     """
     User nicknames 'Hotfix security vulnerability' as *Thunderbolt* in a
     prior exchange.  update() must interpret that nickname without asking.
@@ -159,7 +159,7 @@ async def test_ts_update_uses_parent_context():
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_ts_update_requests_clarification():
+async def test_update_requests_clarification():
     """
     Two queued tasks – user says “Set the queued task priority to high”.
     update() should ask *which* queued task, wait for answer, then update.
