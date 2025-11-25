@@ -9,7 +9,7 @@ from unity.events.event_bus import EventBus, Event
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_join_initialization_sets_flag() -> None:
+async def test_join_sets_flag() -> None:
     """Calling ``join_initialization`` must complete the background hydration
     and set :pyattr:`EventBus.initialized` to *True*.
     """
@@ -26,7 +26,7 @@ async def test_join_initialization_sets_flag() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_join_initialization_idempotent() -> None:
+async def test_join_idempotent() -> None:
     """Subsequent calls to ``join_initialization`` after the first one should
     return quickly and leave the state unchanged."""
 
@@ -44,7 +44,7 @@ async def test_join_initialization_idempotent() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_reset_deletes_type_contexts_and_clears_events() -> None:
+async def test_reset_deletes_contexts_and_clears_history() -> None:
     """reset(delete_contexts=True) must drop per-type contexts and clear history.
 
     After publishing an event to create the per-type context, calling reset should

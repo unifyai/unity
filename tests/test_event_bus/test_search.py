@@ -27,7 +27,7 @@ def ts(i: int) -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_deque_only():
+async def test_deque_only():
     bus = EventBus()
     await bus.publish(mk_evt(level="INFO", msg="one"))
     await bus.publish(mk_evt(level="WARN", msg="two"))
@@ -41,7 +41,7 @@ async def test_search_deque_only():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_grouped_and_limit_dict():
+async def test_grouped_and_limit_dict():
     bus = EventBus()
     await bus.publish(mk_evt(level="INFO"))
     await bus.publish(mk_evt(level="WARN"))
@@ -55,7 +55,7 @@ async def test_search_grouped_and_limit_dict():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_hybrid_reads():
+async def test_hybrid_reads():
     bus = EventBus()
     bus.set_default_window(1)  # deque keeps 1
 
@@ -72,7 +72,7 @@ async def test_search_hybrid_reads():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_search_with_offset_across_backend():
+async def test_with_offset_across_backend():
     """
     Skip 2 newest rows (offset=2) and return the next 2
     even though the deque window is only 1 deep.
@@ -101,7 +101,7 @@ async def test_search_with_offset_across_backend():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_flat_ordering_across_types():
+async def test_flat_ordering():
     """
     With no filter and a scalar limit, verify that the flat list is
     newest-first across *all* event-types.
@@ -135,7 +135,7 @@ async def test_flat_ordering_across_types():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_event_type_alias_in_filter():
+async def test_type_alias_in_filter():
     """
     Local evaluator must accept `event_type` as an alias for `type`.
     """
@@ -149,7 +149,7 @@ async def test_event_type_alias_in_filter():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_limit_dict_with_unknown_type():
+async def test_limit_dict_unknown_type():
     """
     If the caller specifies a per-type limit for a type that doesn't
     exist, the search should silently ignore it.

@@ -9,7 +9,7 @@ from unity.events.event_bus import EventBus, Event
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_join_callbacks_waits_for_pending() -> None:
+async def test_waits_for_pending() -> None:
     """join_callbacks must block until callbacks already running are done."""
 
     bus = EventBus()
@@ -47,7 +47,7 @@ async def test_join_callbacks_waits_for_pending() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_join_callbacks_ignores_future_callbacks() -> None:
+async def test_ignores_future() -> None:
     """join_callbacks must only wait for callbacks that were *already* pending at invocation."""
 
     bus = EventBus()
@@ -108,7 +108,7 @@ async def test_join_callbacks_ignores_future_callbacks() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_join_callbacks_waits_for_cascade() -> None:
+async def test_waits_for_cascade() -> None:
     """join_callbacks() must wait for callbacks spawned *within* other
     callbacks (same root-sequence) but still ignore unrelated fresh activity."""
 
