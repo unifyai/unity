@@ -73,7 +73,7 @@ def test_to_placeholder_public_method(secret_manager_context):
 
 
 @pytest.mark.unit
-def test_secret_manager_clear(secret_manager_context):
+def test_clear(secret_manager_context):
     sm = SecretManager()
 
     # Seed a couple of secrets

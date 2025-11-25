@@ -9,7 +9,7 @@ from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_secret_manager_ask_guard_triggers_when_enabled(monkeypatch):
+async def test_ask_guard_triggers_when_enabled(monkeypatch):
     """
     When UNITY_READONLY_ASK_GUARD is enabled, SecretManager.ask should be guarded:
     mutation intent triggers an early stop and returns the early response.
