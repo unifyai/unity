@@ -13,7 +13,7 @@ from tests.helpers import _handle_project
 
 def _load_contact_card_png_b64() -> str:
     here = os.path.dirname(__file__)
-    img_path = os.path.join(here, "contact_details.png")
+    img_path = os.path.join(here, "details.png")
     with open(img_path, "rb") as f:
         data = f.read()
     return base64.b64encode(data).decode("ascii")
@@ -21,7 +21,7 @@ def _load_contact_card_png_b64() -> str:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_lookup_contact_via_image(contact_manager_scenario) -> None:
+async def test_lookup_via_image(contact_manager_scenario) -> None:
     cm, _ = contact_manager_scenario
 
     # Persist a real image row and build typed ImageRefs for the loop
@@ -100,7 +100,7 @@ async def test_lookup_contact_via_image(contact_manager_scenario) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_update_contact_from_image(contact_manager_scenario) -> None:
+async def test_update_from_image(contact_manager_scenario) -> None:
     cm, _ = contact_manager_scenario
 
     # Persist image and provide typed ImageRefs

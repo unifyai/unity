@@ -10,7 +10,7 @@ from unity.contact_manager.contact_manager import ContactManager
 
 @pytest.mark.unit
 @_handle_project
-def test_contact_json_shorthand_aliases_keys_no_prune():
+def test_json_shorthand_aliases():
     c = Contact(
         contact_id=42,
         first_name="Alice",
@@ -35,7 +35,7 @@ def test_contact_json_shorthand_aliases_keys_no_prune():
 
 @pytest.mark.unit
 @_handle_project
-def test_contact_json_shorthand_with_prune_omits_empty_fields():
+def test_json_shorthand_prune():
     c = Contact(
         contact_id=7,
         first_name="Bob",
@@ -57,7 +57,7 @@ def test_contact_json_shorthand_with_prune_omits_empty_fields():
 
 @pytest.mark.unit
 @_handle_project
-def test_custom_column_shorthand_map_and_json_alias():
+def test_custom_column_shorthand():
     cm = ContactManager()
 
     # Create a custom column and register a shorthand alias on the Contact model
@@ -89,7 +89,7 @@ def test_custom_column_shorthand_map_and_json_alias():
 
 @pytest.mark.unit
 @_handle_project
-def test_custom_column_shorthand_inverse_round_trip():
+def test_custom_column_inverse():
     cm = ContactManager()
 
     # Create another custom column and register a shorthand alias, then verify forward/inverse maps agree

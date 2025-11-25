@@ -55,7 +55,7 @@ def _clear_cached_assistant(monkeypatch):
 
 @pytest.mark.unit
 @_handle_project
-def test_dummy_assistant_created(monkeypatch):
+def test_dummy_assistant(monkeypatch):
     """When the account has no assistants, a dummy assistant with ID 0 should be created."""
 
     # Force assistant discovery helper to return an empty list (new location)
@@ -86,7 +86,7 @@ def test_dummy_assistant_created(monkeypatch):
 
 @pytest.mark.unit
 @_handle_project
-def test_real_assistant_synced(monkeypatch):
+def test_real_assistant(monkeypatch):
     """If exactly one assistant is returned by the API, its details should populate contact ID 0."""
 
     sample_info = [

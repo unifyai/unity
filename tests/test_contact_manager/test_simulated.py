@@ -21,7 +21,7 @@ from tests.helpers import (
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_cm_docstrings_match_base():
+def test_docstrings_match_base():
     """
     Public methods in SimulatedContactManager should copy the real
     BaseContactManager doc-strings one-for-one (via functools.wraps).
@@ -45,7 +45,7 @@ def test_simulated_cm_docstrings_match_base():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_cm():
+async def test_start_and_ask():
     cm = SimulatedContactManager("Demo CRM for unit-tests.")
     h = await cm.ask("List all my contacts.")
     answer = await h.result()
@@ -57,7 +57,7 @@ async def test_start_and_ask_simulated_cm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_cm_stateful_memory_serial_asks():
+async def test_stateful_serial_asks():
     """
     Two consecutive .ask() calls share context because the manager keeps a
     stateful LLM.
@@ -81,7 +81,7 @@ async def test_cm_stateful_memory_serial_asks():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_cm_stateful_update_then_ask():
+async def test_stateful_update_then_ask():
     cm = SimulatedContactManager()
     full_name = "Johnathan Doe"
     email = "john.doe@example.com"
@@ -277,7 +277,7 @@ async def test_handle_ask():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_paused_finishes_immediately_cm():
+async def test_stop_while_paused():
     cm = SimulatedContactManager()
     h = await cm.ask("Produce a long contact export.")
     # Enter paused state
@@ -298,7 +298,7 @@ async def test_stop_while_paused_finishes_immediately_cm():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_while_waiting_for_clarification_finishes_immediately_cm():
+async def test_stop_while_waiting_clarification():
     cm = SimulatedContactManager()
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
@@ -322,7 +322,7 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately_cm():
 # 10.  Simulated private helpers                                             #
 # ────────────────────────────────────────────────────────────────────────────
 @_handle_project
-def test_simulated_filter_contacts_sync():
+def test_filter_sync():
     """
     SimulatedContactManager.filter_contacts should produce a plausible list of
     contacts synchronously (cannot be called from an active event loop).
@@ -338,7 +338,7 @@ def test_simulated_filter_contacts_sync():
 
 
 @_handle_project
-def test_simulated_update_contact_sync():
+def test_update_sync():
     """
     SimulatedContactManager.update_contact should return a structured confirmation
     with 'outcome' and 'details.contact_id'.
@@ -352,7 +352,7 @@ def test_simulated_update_contact_sync():
 
 
 @_handle_project
-def test_simulated_clear_sync():
+def test_clear_sync():
     """
     SimulatedContactManager.clear should reset the manager (hard-coded completion)
     and remain usable afterwards.

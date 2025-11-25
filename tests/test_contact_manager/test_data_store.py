@@ -69,7 +69,7 @@ def test_data_store_deleted_after_delete():
 
 @pytest.mark.unit
 @_handle_project
-def testfilter_contacts_repopulates_data_store():
+def test_filter_repopulates():
     cm = ContactManager()
 
     ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
@@ -93,7 +93,7 @@ def testfilter_contacts_repopulates_data_store():
 
 @pytest.mark.unit
 @_handle_project
-def test_search_contacts_repopulates_data_store():
+def test_search_repopulates():
     cm = ContactManager()
 
     ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
@@ -115,7 +115,7 @@ def test_search_contacts_repopulates_data_store():
 
 @pytest.mark.unit
 @_handle_project
-def test_system_contacts_present_in_data_store_after_init():
+def test_system_present_after_init():
     cm = ContactManager()
 
     ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
@@ -153,7 +153,7 @@ def test_data_store_hygiene_after_custom_column_delete():
 
 @pytest.mark.unit
 @_handle_project
-def test_data_store_after_merge_contacts():
+def test_after_merge():
     cm = ContactManager()
     ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
 
@@ -198,7 +198,7 @@ def test_data_store_never_contains_vector_columns():
 
 @pytest.mark.unit
 @_handle_project
-def test_get_contact_info_prefers_cache_and_falls_back_to_backend_single_and_multi():
+def test_get_info_cache_fallback():
     cm = ContactManager()
     ds = DataStore.for_context(cm._ctx, key_fields=("contact_id",))
 

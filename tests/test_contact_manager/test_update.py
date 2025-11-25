@@ -46,7 +46,7 @@ def _programmatic_contact_check(
 @pytest.mark.unit
 @pytest.mark.asyncio
 @pytest.mark.parametrize("identify_by", ["name", "email", "id"])
-async def test_update_selects_move_to_blacklist_tool(identify_by: str):
+async def test_selects_move_to_blacklist(identify_by: str):
     """
     Verify that ContactManager.update routes to the _move_to_blacklist tool when asked in English,
     identifying the target contact by name, by contact detail, or by id.
@@ -104,7 +104,7 @@ async def test_update_selects_move_to_blacklist_tool(identify_by: str):
 @_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_update_create_new_contact(
+async def test_create_new(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test creating a new contact using the update method via natural language."""
@@ -134,7 +134,7 @@ async def test_update_create_new_contact(
 @pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_update_existing_contact_details(
+async def test_existing_details(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test updating an existing contact's details via natural language."""
@@ -171,7 +171,7 @@ async def test_update_existing_contact_details(
 @pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_update_with_parent_context_identification(
+async def test_with_parent_context(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test update with parent context to identify the contact."""
@@ -214,7 +214,7 @@ async def test_update_with_parent_context_identification(
 @pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_update_with_clarification_needed(
+async def test_with_clarification(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test update requiring clarification when multiple contacts match.
@@ -302,7 +302,7 @@ async def test_update_with_clarification_needed(
 @pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_update_interjection_modification(
+async def test_interjection(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test interjecting to modify details during an update operation."""
@@ -325,7 +325,7 @@ async def test_update_interjection_modification(
 @_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_update_stop_operation(
+async def test_stop(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test stopping an update operation."""
@@ -351,7 +351,7 @@ async def test_update_stop_operation(
 @pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_update_add_bio(
+async def test_add_bio(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Add or change the *bio* field on an existing contact."""
@@ -381,7 +381,7 @@ async def test_update_add_bio(
 @pytest.mark.slow
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_update_set_timezone_from_location_hint(
+async def test_set_timezone_hint(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Ensure the assistant can set utc_offset_hours based on a location hint.

@@ -156,7 +156,7 @@ QUESTIONS_CONTACT_ASK = [
 @pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question, expected_fragment", QUESTIONS_CONTACT_ASK)
-async def test_ask_semantic_queries(
+async def test_ask_semantic(
     question: str,
     expected_fragment: str,
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -187,7 +187,7 @@ async def test_ask_semantic_queries(
 @_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_ask_with_parent_context(
+async def test_ask_parent_context(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test ask method with parent_chat_context for disambiguation."""
@@ -227,7 +227,7 @@ async def test_ask_with_parent_context(
 @_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_ask_sensible_time_email_negative_due_to_timezone(
+async def test_ask_time_check(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """If it's 17:00 UTC and the contact is at UTC+9, local time is ~02:00 → not sensible."""
@@ -274,7 +274,7 @@ async def test_ask_sensible_time_email_negative_due_to_timezone(
 @_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_ask_with_clarification(
+async def test_ask_clarification(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test ask method with clarification request and response when query is ambiguous."""
@@ -321,7 +321,7 @@ async def test_ask_with_clarification(
 @_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_ask_interjection(
+async def test_ask_interject(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test interjecting a new query while an ask operation is in progress."""
@@ -362,7 +362,7 @@ async def test_ask_interjection(
 @_handle_project
 @pytest.mark.eval
 @pytest.mark.asyncio
-async def test_ask_stop_operation(
+async def test_ask_stop(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
 ):
     """Test stopping an ask operation."""

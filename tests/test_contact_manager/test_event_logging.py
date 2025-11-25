@@ -9,7 +9,7 @@ from tests.helpers import _handle_project, capture_events
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
-async def test_managermethod_events_for_ask():
+async def test_ask_events():
     cm = ContactManager()
 
     user_q = "📅 Echo back today's date, please."  # unique text → easy filtering
@@ -45,7 +45,7 @@ async def test_managermethod_events_for_ask():
 @pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
-async def test_managermethod_events_for_update():
+async def test_update_events():
     cm = ContactManager()
 
     nl_cmd = "Create a contact named Logan Paul, email logan@example.com."

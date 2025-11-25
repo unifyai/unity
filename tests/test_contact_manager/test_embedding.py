@@ -17,7 +17,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_contact_embedding_and_search():
+def test_embedding_and_search():
     cm = ContactManager()
 
     # ------------------------------------------------------------------ #

@@ -7,7 +7,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_contacts_single_reference_basic():
+def test_single_reference_basic():
     cm = ContactManager()
 
     entries = [
@@ -32,7 +32,7 @@ def test_search_contacts_single_reference_basic():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_contacts_multi_columns_json_and_vec_created():
+def test_multi_columns_json_vec():
     cm = ContactManager()
 
     # Distribute signal across two columns
@@ -59,7 +59,7 @@ def test_search_contacts_multi_columns_json_and_vec_created():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_contacts_all_columns_default_derivation():
+def test_all_columns_default():
     cm = ContactManager()
 
     # Create a custom column to be included in the composite expression
@@ -104,7 +104,7 @@ def test_search_contacts_all_columns_default_derivation():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_contacts_mean_of_cosine_ranking():
+def test_mean_cosine_ranking():
     cm = ContactManager()
 
     # Ensure custom column exists
@@ -157,7 +157,7 @@ def test_search_contacts_mean_of_cosine_ranking():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_search_contacts_backfills_when_insufficient_similarity_results():
+def test_backfills_insufficient_results():
     cm = ContactManager()
 
     # Create several contacts with minimal bios so similarity on bio returns < k

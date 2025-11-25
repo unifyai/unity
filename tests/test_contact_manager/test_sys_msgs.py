@@ -74,7 +74,7 @@ def _build_prompt_in_subprocess(method: str) -> str:
     return proc.stdout
 
 
-def test_contact_manager_ask_system_prompt_formatting():
+def test_ask_system_prompt_formatting():
     cm = ContactManager()
     tools = dict(cm.get_tools("ask"))
     prompt = build_ask_prompt(
@@ -140,7 +140,7 @@ def test_contact_manager_ask_system_prompt_formatting():
     )
 
 
-def test_contact_manager_update_system_prompt_formatting():
+def test_update_system_prompt_formatting():
     cm = ContactManager()
     tools = dict(cm.get_tools("update"))
     prompt = build_update_prompt(
@@ -212,7 +212,7 @@ def test_contact_manager_update_system_prompt_formatting():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_contact_manager_ask_prompt_is_stable_across_serial_builds():
+def test_ask_prompt_stable():
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess("ask")
     p2 = _build_prompt_in_subprocess("ask")
@@ -223,7 +223,7 @@ def test_contact_manager_ask_prompt_is_stable_across_serial_builds():
         )
 
 
-def test_contact_manager_update_prompt_is_stable_across_serial_builds():
+def test_update_prompt_stable():
     # Build prompts in two separate Python processes to catch cross-session drift
     p1 = _build_prompt_in_subprocess("update")
     p2 = _build_prompt_in_subprocess("update")

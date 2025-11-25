@@ -79,7 +79,7 @@ def test_delete_required_column_raises():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
 @_handle_project
-def test_create_contact_with_custom_field():
+def test_create_with_custom_field():
     cm = ContactManager()
 
     cm._create_custom_column(column_name="department", column_type="str")
@@ -99,7 +99,7 @@ def test_create_contact_with_custom_field():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
 @_handle_project
-def testupdate_contact_custom_field():
+def test_update_custom_field():
     cm = ContactManager()
 
     cm._create_custom_column(column_name="age", column_type="int")

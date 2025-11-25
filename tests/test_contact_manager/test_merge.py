@@ -15,7 +15,7 @@ from tests.helpers import _handle_project
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
 @_handle_project
-def test_merge_contacts_private():
+def test_private():
     """Programmatically merge two contacts and verify the result."""
 
     cm = ContactManager()
@@ -78,7 +78,7 @@ def test_merge_contacts_private():
 
 @pytest.mark.unit
 @_handle_project
-def test_merge_contacts_updates_transcripts():
+def test_updates_transcripts():
     """Merging contacts should rewrite historic transcript ids."""
 
     cm = ContactManager()
@@ -145,7 +145,7 @@ def test_merge_contacts_updates_transcripts():
 @pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
-async def test_merge_contacts_via_update():
+async def test_via_update():
     """Ask the LLM (update method) to merge two contacts."""
 
     cm = ContactManager()
