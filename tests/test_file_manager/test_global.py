@@ -7,7 +7,7 @@ from tests.test_file_manager.helpers import ask_judge
 
 
 @pytest.mark.asyncio
-async def test_global_fm_basic_ask_and_organize(
+async def test_basic_ask_and_organize(
     fm_root,
     file_manager,
     global_file_manager,
@@ -69,7 +69,7 @@ async def test_global_fm_basic_ask_and_organize(
 
 
 @pytest.mark.asyncio
-async def test_global_fm_organize_rename_and_move(
+async def test_organize_rename_and_move(
     fm_root,
     file_manager,
     global_file_manager,
@@ -140,7 +140,7 @@ async def test_global_fm_organize_rename_and_move(
 
 
 @pytest.mark.asyncio
-async def test_global_list_filesystems_and_policy(global_file_manager):
+async def test_list_filesystems_and_policy(global_file_manager):
     gfm = global_file_manager
     # Check helper returns class names
     filesystems = gfm._list_filesystems()
@@ -169,7 +169,7 @@ async def test_global_list_filesystems_and_policy(global_file_manager):
 
 
 @pytest.mark.asyncio
-async def test_global_fm_organize_delete_file(
+async def test_organize_delete(
     fm_root,
     file_manager,
     global_file_manager,
@@ -217,7 +217,7 @@ async def test_global_fm_organize_delete_file(
 
 
 @pytest.mark.asyncio
-async def test_global_fm_clarification_integration(global_file_manager):
+async def test_clarification_integration(global_file_manager):
     gfm = global_file_manager
     with patch(
         "unity.common.clarification_tools.add_clarification_tool_with_events",
@@ -239,7 +239,7 @@ async def test_global_fm_clarification_integration(global_file_manager):
 
 
 @pytest.mark.asyncio
-async def test_global_ask_exposes_class_named_tools(file_manager, global_file_manager):
+async def test_ask_exposes_class_named_tools(file_manager, global_file_manager):
     gfm = global_file_manager
 
     with patch(
@@ -265,7 +265,7 @@ async def test_global_ask_exposes_class_named_tools(file_manager, global_file_ma
 
 
 @pytest.mark.asyncio
-async def test_global_organize_exposes_class_named_tools(global_file_manager):
+async def test_organize_exposes_class_named_tools(global_file_manager):
     gfm = global_file_manager
 
     with patch(

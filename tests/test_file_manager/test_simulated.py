@@ -30,7 +30,7 @@ def simulated_file_manager():
 
 # 1.  Doc-string inheritance                                                 #
 # ────────────────────────────────────────────────────────────────────────────
-def test_simulated_fm_docstrings_match_base():
+def test_docstrings_match_base():
     """
     Public methods in SimulatedFileManager should copy the real
     BaseFileManager doc-strings one-for-one (via functools.wraps).
@@ -48,7 +48,7 @@ def test_simulated_fm_docstrings_match_base():
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_fm(simulated_file_manager):
+async def test_start_and_ask(simulated_file_manager):
     fm = simulated_file_manager
     # Add a sample file
     fm.add_simulated_file(
@@ -67,7 +67,7 @@ async def test_start_and_ask_simulated_fm(simulated_file_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_about_file_simulated_fm(simulated_file_manager):
+async def test_ask_about_file(simulated_file_manager):
     fm = simulated_file_manager
     file_content = "Notes about Mars missions and space exploration"
     fm.add_simulated_file(
@@ -90,7 +90,7 @@ async def test_ask_about_file_simulated_fm(simulated_file_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_organize_simulated_fm(simulated_file_manager):
+async def test_organize(simulated_file_manager):
     fm = simulated_file_manager
     fm.add_simulated_file(
         "docA.txt",
@@ -121,7 +121,7 @@ async def test_organize_simulated_fm(simulated_file_manager):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_fm_stateful_serial_asks(simulated_file_manager):
+async def test_stateful_serial_asks(simulated_file_manager):
     """
     Two consecutive .ask() calls should share context.
     """
@@ -159,7 +159,7 @@ async def test_fm_stateful_serial_asks(simulated_file_manager):
 # 4.  Basic synchronous methods                                              #
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_simulated_fm_synchronous_operations(simulated_file_manager):
+async def test_synchronous_operations(simulated_file_manager):
     """Test the synchronous methods like list, exists, parse."""
     fm = simulated_file_manager
 
@@ -219,7 +219,7 @@ async def test_simulated_fm_synchronous_operations(simulated_file_manager):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_simulated_fm(monkeypatch, simulated_file_manager):
+async def test_interject(monkeypatch, simulated_file_manager):
     calls = {"interject": 0}
     orig = sim_mod._SimulatedFileHandle.interject
 
@@ -270,7 +270,7 @@ async def test_interject_simulated_fm(monkeypatch, simulated_file_manager):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_stop_simulated_fm(simulated_file_manager):
+async def test_stop(simulated_file_manager):
     fm = simulated_file_manager
     fm.add_simulated_file(
         "large.txt",
@@ -291,7 +291,7 @@ async def test_stop_simulated_fm(simulated_file_manager):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_fm_requests_clarification(simulated_file_manager):
+async def test_requests_clarification(simulated_file_manager):
     fm = simulated_file_manager
     fm.add_simulated_file(
         "data.txt",
@@ -331,7 +331,7 @@ async def test_fm_requests_clarification(simulated_file_manager):
 # ────────────────────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 @_handle_project
-async def test_pause_and_resume_simulated_fm(monkeypatch, simulated_file_manager):
+async def test_pause_and_resume(monkeypatch, simulated_file_manager):
     """
     Ensure a `_SimulatedFileHandle` can be paused and resumed.
     """
@@ -534,7 +534,7 @@ def simulated_global_file_manager():
     yield gfm
 
 
-def test_simulated_gfm_docstrings_match_base():
+def test_global_docstrings_match_base():
     from unity.file_manager.base import BaseGlobalFileManager
     from unity.file_manager.simulated import SimulatedGlobalFileManager
 
@@ -551,7 +551,7 @@ def test_simulated_gfm_docstrings_match_base():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_start_and_ask_simulated_gfm(simulated_global_file_manager):
+async def test_global_start_and_ask(simulated_global_file_manager):
     gfm = simulated_global_file_manager
     handle = await gfm.ask("List available filesystems and provide a brief overview.")
     answer = await handle.result()
@@ -560,7 +560,7 @@ async def test_start_and_ask_simulated_gfm(simulated_global_file_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_gfm_requests_clarification(simulated_global_file_manager):
+async def test_global_requests_clarification(simulated_global_file_manager):
     gfm = simulated_global_file_manager
     up_q: asyncio.Queue[str] = asyncio.Queue()
     down_q: asyncio.Queue[str] = asyncio.Queue()
@@ -581,7 +581,7 @@ async def test_gfm_requests_clarification(simulated_global_file_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_gfm_pause_and_resume(simulated_global_file_manager):
+async def test_global_pause_and_resume(simulated_global_file_manager):
     gfm = simulated_global_file_manager
     handle = await gfm.ask("Provide an overview across all managers.")
 
@@ -600,7 +600,7 @@ async def test_gfm_pause_and_resume(simulated_global_file_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_gfm_organize_basic(simulated_global_file_manager):
+async def test_global_organize_basic(simulated_global_file_manager):
     gfm = simulated_global_file_manager
     handle = await gfm.organize("Propose a re-organisation plan across filesystems.")
     answer = await handle.result()

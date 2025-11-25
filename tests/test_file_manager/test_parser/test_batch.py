@@ -14,7 +14,7 @@ from tests.helpers import _handle_project
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_batch_multiple_files(parser, supported_format_files):
+async def test_batch_multiple_files(parser, supported_format_files):
     """Test batch parsing of multiple files."""
     # Collect files from supported formats
     files = []
@@ -43,7 +43,7 @@ async def test_parse_batch_multiple_files(parser, supported_format_files):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_batch_empty_list(parser):
+async def test_batch_empty_list(parser):
     """Test batch parsing with empty file list."""
     documents = parser.parse_batch([])
     assert documents == []
@@ -52,7 +52,7 @@ async def test_parse_batch_empty_list(parser):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_batch_single_file(parser, supported_format_files):
+async def test_batch_single_file(parser, supported_format_files):
     """Test batch parsing with single file."""
     txt_files = supported_format_files[".txt"]["files"]
     files = [txt_files["simple"]]
@@ -65,7 +65,7 @@ async def test_parse_batch_single_file(parser, supported_format_files):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_batch_with_options(parser, supported_format_files):
+async def test_batch_with_options(parser, supported_format_files):
     """Test batch parsing with custom options."""
     txt_files = supported_format_files[".txt"]["files"]
     files = [
@@ -87,7 +87,7 @@ async def test_parse_batch_with_options(parser, supported_format_files):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_batch_mixed_success_failure(
+async def test_batch_mixed_success_failure(
     parser,
     supported_format_files,
     tmp_path: Path,
@@ -115,7 +115,7 @@ async def test_parse_batch_mixed_success_failure(
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_batch_async(parser, supported_format_files):
+async def test_batch_async(parser, supported_format_files):
     """Test async batch parsing."""
     # Collect files
     txt_files = supported_format_files[".txt"]["files"]
@@ -149,7 +149,7 @@ async def test_parse_batch_async(parser, supported_format_files):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_batch_async_empty(parser):
+async def test_batch_async_empty(parser):
     """Test async batch parsing with empty list."""
     results = []
     async for index, doc in parser.parse_batch_async([]):
@@ -161,7 +161,7 @@ async def test_parse_batch_async_empty(parser):
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_batch_async_large_batch(
+async def test_batch_async_large_batch(
     parser,
     supported_format_files,
     tmp_path: Path,
@@ -191,7 +191,7 @@ async def test_parse_batch_async_large_batch(
 @pytest.mark.asyncio
 @pytest.mark.unit
 @_handle_project
-async def test_parse_batch_consistent_with_single(parser, supported_format_files):
+async def test_batch_consistent_with_single(parser, supported_format_files):
     """Test that batch parsing gives same results as individual parsing."""
     txt_files = supported_format_files[".txt"]["files"]
     files = [
