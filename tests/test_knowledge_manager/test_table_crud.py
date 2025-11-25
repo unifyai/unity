@@ -175,7 +175,7 @@ def test_rename_table():
 
 @pytest.mark.unit
 @_handle_project
-def test_knowledge_manager_clear():
+def test_clear():
     km = KnowledgeManager()
 
     # Seed a couple of knowledge tables

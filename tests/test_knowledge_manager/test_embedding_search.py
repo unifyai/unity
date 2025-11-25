@@ -6,7 +6,7 @@ import pytest
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_embedding():
+def test_embedding_search_basic():
     # Initialize and start the KnowledgeManager thread
     manager = KnowledgeManager()
 

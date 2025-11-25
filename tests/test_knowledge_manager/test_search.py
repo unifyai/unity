@@ -7,7 +7,7 @@ from tests.helpers import _handle_project
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_single_reference_basic():
+def test_search_single_reference_basic():
     km = KnowledgeManager()
 
     table = "KB_Single"
@@ -45,7 +45,7 @@ def test_knowledge_search_single_reference_basic():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_multi_columns_json_and_vec_created():
+def test_search_multi_columns_json_and_vec_created():
     km = KnowledgeManager()
 
     table = "KB_MultiCols"
@@ -84,7 +84,7 @@ def test_knowledge_search_multi_columns_json_and_vec_created():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_all_columns_default_derivation():
+def test_search_all_columns_default_derivation():
     km = KnowledgeManager()
 
     table = "KB_Expr"
@@ -128,7 +128,7 @@ def test_knowledge_search_all_columns_default_derivation():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_mean_of_cosine_ranking():
+def test_search_mean_of_cosine_ranking():
     km = KnowledgeManager()
 
     table = "KB_SumCos"
@@ -177,7 +177,7 @@ def test_knowledge_search_mean_of_cosine_ranking():
 @pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
-def test_knowledge_search_backfills_when_insufficient_similarity_results():
+def test_search_backfills_when_insufficient_similarity_results():
     km = KnowledgeManager()
 
     table = "KB_Backfill"

@@ -24,7 +24,7 @@ from tests.helpers import _handle_project
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_km_ask_joins_contact_and_company():
+async def test_ask_joins_contact_and_company():
     """
     The KM should discover the employer via CM.ask and then look up the
     company's employee count in its own tables.
@@ -62,7 +62,7 @@ async def test_km_ask_joins_contact_and_company():
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
-async def test_km_update_updates_contact():
+async def test_update_updates_contact():
     """
     A natural-language *store* instruction routed through KM should trigger
     ContactManager.update to add WhatsApp info.
