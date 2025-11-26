@@ -254,24 +254,29 @@ async def get_update_or_create_contact(
     elif contact_id and details:
         contact = cm.contact_index.get_contact(contact_id=contact_id)
         data_to_insert = {}
-        for k, v in details:
+        for k, v in details.items():
             if v:
                 if contact[k] != v:
                     data_to_insert[k] = v
-        updated_contacts = cm.contact_manager.get_contact_info(
-            contact_id=[c.contact_id for c in cm.contact_index.contacts],
+        updated_contacts_raw = cm.contact_manager.get_contact_info(
+            contact_id=list(cm.contact_index.contacts.keys()),
         )
-        updated_active_contacts = {
-            Contact(
-                **{**c.model_dump(), **uc, "threads": c.threads},
-            )
-            for (cid, c), uc in zip(
-                cm.contact_index.active_conversations.items(),
-                updated_contacts,
-            )
-        }
-        cm.contact_index.contacts = updated_contacts
-        cm.contact_index.active_conversations = updated_active_contacts
+        # Update contacts dict with Contact objects
+        for cid, uc in updated_contacts_raw.items():
+            if cid in cm.contact_index.contacts:
+                existing = cm.contact_index.contacts[cid]
+                cm.contact_index.contacts[cid] = Contact(
+                    **{**existing.model_dump(), **uc, "threads": existing.threads},
+                )
+            else:
+                cm.contact_index.contacts[cid] = Contact(**uc)
+        # Update active_conversations similarly
+        for cid, c in cm.contact_index.active_conversations.items():
+            if cid in updated_contacts_raw:
+                uc = updated_contacts_raw[cid]
+                cm.contact_index.active_conversations[cid] = Contact(
+                    **{**c.model_dump(), **uc, "threads": c.threads},
+                )
         contact = (
             cm.contact_index.get_contact(phone_number=phone)
             if phone
