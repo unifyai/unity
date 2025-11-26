@@ -55,6 +55,7 @@ def build_ask_prompt(
     # Resolve canonical tool names dynamically
     filter_tasks_fname = tool_name(tools, "filter_tasks")
     search_tasks_fname = tool_name(tools, "search_tasks")
+    reduce_fname = tool_name(tools, "reduce")
     list_queues_fname = tool_name(tools, "list_queues")
     get_queue_fname = tool_name(tools, "get_queue")
     get_queue_for_task_fname = tool_name(tools, "get_queue_for_task")
@@ -112,6 +113,10 @@ def build_ask_prompt(
                     else ""
                 )
             ),
+            "",
+            "─ Numeric aggregations ─",
+            f"• For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.",
+            f"  `{reduce_fname}(metric='sum', keys='task_id', group_by='status')`",
             "",
             "Anti‑patterns to avoid",
             "---------------------",

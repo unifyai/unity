@@ -54,6 +54,7 @@ from .images import (
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
+from ..common.metrics_utils import reduce_logs
 
 
 class TranscriptManager(BaseTranscriptManager):
@@ -92,6 +93,7 @@ class TranscriptManager(BaseTranscriptManager):
             **methods_to_tool_dict(
                 self._filter_messages,
                 self._search_messages,
+                self._reduce,
                 include_class_name=False,
             ),
         }
@@ -607,6 +609,58 @@ class TranscriptManager(BaseTranscriptManager):
             Search results with contact information.
         """
         return _search_messages_impl(self, references=references, k=k)
+
+    @read_only
+    def _reduce(
+        self,
+        *,
+        metric: str,
+        keys: str | list[str],
+        filter: Optional[str | dict[str, str]] = None,
+        group_by: Optional[str | list[str]] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over the primary transcripts/messages table.
+
+        Parameters
+        ----------
+        metric : str
+            Reduction metric to compute. Supported values (case-insensitive) are
+            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
+            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        keys : str | list[str]
+            One or more numeric message fields to aggregate (for example
+            ``\"message_id\"`` or duration/length columns). A single column name
+            returns a scalar; a list of column names computes the metric
+            independently per key and returns a ``{key -> value}`` mapping.
+        filter : str | dict[str, str] | None, default None
+            Optional row-level filter expression(s) in the same Python syntax as
+            :py:meth:`_filter_messages`. When a string, the expression is applied
+            uniformly; when a dict, each key maps to its own filter expression.
+        group_by : str | list[str] | None, default None
+            Optional message field(s) to group by, for example ``\"medium\"`` or
+            ``\"sender_id\"``. Use a single column name for one grouping level,
+            or a list such as ``[\"medium\", \"sender_id\"]`` to group
+            hierarchically in that order. When provided, the result becomes a
+            nested mapping keyed by group values, mirroring
+            :func:`unify.get_logs_metric`.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the transcripts context:
+
+            * Single key, no grouping  → scalar (float/int/str/bool).
+            * Multiple keys, no grouping → ``dict[key -> scalar]``.
+            * With grouping             → nested ``dict`` keyed by group values.
+        """
+        return reduce_logs(
+            context=self._transcripts_ctx,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
+        )
 
     @read_only
     def _filter_messages(

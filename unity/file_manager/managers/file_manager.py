@@ -43,6 +43,7 @@ from unity.common.model_to_fields import model_to_fields
 from unity.common.filter_utils import normalize_filter_expr
 from unity.common.llm_client import new_llm_client
 from unity.common.embed_utils import ensure_vector_column
+from unity.common.metrics_utils import reduce_logs
 from .search import (
     resolve_table_ref as _srch_resolve_table_ref,
     create_join as _srch_create_join,
@@ -171,6 +172,7 @@ class FileManager(BaseFileManager):
             self._tables_overview,
             self._filter_files,
             self._search_files,
+            self._reduce,
             # Inventory listing
             self.list,
             # Parse when missing (policy enforced in prompts)
@@ -201,6 +203,7 @@ class FileManager(BaseFileManager):
             self._tables_overview,
             self._filter_files,
             self._search_files,
+            self._reduce,
             self.exists,
             include_class_name=False,
         )
@@ -2248,6 +2251,75 @@ class FileManager(BaseFileManager):
             return int(ret or 0)
         except Exception:
             return 0
+
+    @read_only
+    def _reduce(
+        self,
+        *,
+        table: Optional[str] = None,
+        metric: str,
+        keys: str | List[str],
+        filter: Optional[str | Dict[str, str]] = None,
+        group_by: Optional[str | List[str]] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over the FileRecords index or a resolved table.
+
+        Parameters
+        ----------
+        table : str | None, default None
+            Table reference to aggregate. Accepted forms mirror
+            :py:meth:`_filter_files` and :py:meth:`_search_files`:
+            logical names from :py:meth:`_tables_overview` such as
+            ``\"FileRecords\"``, path-first forms like ``\"<file_path>\"`` or
+            ``\"<file_path>.Tables.<label>\"``, or legacy refs such as
+            ``\"<file_path>:<table>\"``. When ``None``, aggregates over the
+            main FileRecords index.
+        metric : str
+            Reduction metric to compute. Supported values (case-insensitive) are
+            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
+            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        keys : str | list[str]
+            One or more numeric columns in the resolved context to aggregate. A
+            single column name returns a scalar; a list of column names
+            computes the metric independently per key and returns a
+            ``{key -> value}`` mapping.
+        filter : str | dict[str, str] | None, default None
+            Optional row-level filter expression(s) using the same Python
+            syntax as :py:meth:`_filter_files`. When a string, the expression
+            is applied uniformly; when a dict, each key maps to its own filter
+            expression.
+        group_by : str | list[str] | None, default None
+            Optional column(s) to group by. Use a single column name for one
+            grouping level, or a list such as ``[\"status\", \"file_id\"]`` to
+            group hierarchically in that order. When provided, the result
+            becomes a nested mapping keyed by group values, mirroring
+            :func:`unify.get_logs_metric` behaviour.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the resolved context:
+
+            * Single key, no grouping  → scalar (float/int/str/bool).
+            * Multiple keys, no grouping → ``dict[key -> scalar]``.
+            * With grouping             → nested ``dict`` keyed by group values.
+        """
+        if table is None:
+            ctx = self._ctx
+        else:
+            try:
+                ctx = self._resolve_table_ref(table)
+            except Exception:
+                ctx = table
+
+        return reduce_logs(
+            context=ctx,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
+        )
 
     @read_only
     def _list_columns(

@@ -39,6 +39,7 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
     tables_overview_fname = _tool_name(tools, "tables_overview")
     filter_files_fname = _tool_name(tools, "filter_files")
     search_files_fname = _tool_name(tools, "search_files")
+    reduce_fname = _tool_name(tools, "reduce")
     filter_join_fname = _tool_name(tools, "filter_join")
     search_join_fname = _tool_name(tools, "search_join")
     filter_mjoin_fname = _tool_name(tools, "filter_multi_join")
@@ -103,6 +104,12 @@ def build_shared_retrieval_usage(tools: Dict[str, Callable]) -> str:
             "• Choose only the minimal, most relevant columns for filters; avoid broad multi‑column predicates unless necessary.",
             "• Do not OR across many similar fields (e.g., several date columns); pick the best single column based on schema/description and question intent.",
             "• Only combine multiple columns when unavoidable; even then keep limits low (<100) and validate with small pages first.",
+            "",
+            # Numeric aggregations
+            "Numeric aggregations",
+            "--------------------",
+            f"• For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.",
+            f"  `{reduce_fname}(table='<file_path>.Tables.<label>', metric='sum', keys='amount', group_by='category')`",
             "",
             # Dict-based content_id usage
             "Dict-based hierarchical IDs (per-file Content)",
