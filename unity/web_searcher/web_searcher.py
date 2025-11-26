@@ -24,7 +24,6 @@ from unity.events.event_bus import EVENT_BUS, Event
 from unity.web_searcher import prompt_builders
 from .base import BaseWebSearcher
 from ..common.tool_outcome import ToolOutcome
-from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from ..common.embed_utils import ensure_vector_column
 from ..common.filter_utils import normalize_filter_expr
@@ -245,16 +244,6 @@ class WebSearcher(BaseWebSearcher):
                 self._last_crawls: Dict[str, Any] = {}
             if not hasattr(self, "_last_maps"):
                 self._last_maps: Dict[str, Any] = {}
-            # Provision Websites store
-            self._websites_store = TableStore(
-                self._websites_ctx,
-                unique_keys={"website_id": "int", "host": "str", "name": "str"},
-                auto_counting={"website_id": None},
-                description=(
-                    "Catalog of websites of interest for WebSearcher routing/policies."
-                ),
-                fields=model_to_fields(Website),
-            )
         except Exception:
             # Best-effort only; callers operate without caches if needed
             pass
