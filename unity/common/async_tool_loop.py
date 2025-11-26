@@ -1,6 +1,5 @@
 import asyncio
 import unify
-import os
 import functools
 import json
 from datetime import datetime, timezone
@@ -524,13 +523,9 @@ class AsyncToolLoopHandle(SteerableToolHandle):
 
         # 2.  Prepare an *in-memory* Unify client for the **inspection** loop
         #     (LLM sees only the system header + follow-up user question).
-        inspection_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        from .llm_client import new_llm_client
+
+        inspection_client = new_llm_client()
         inspection_client.set_system_message(
             "You are inspecting a running tool-use conversation. The entire "
             "transcript so far is attached below (read-only):\n"

@@ -1,11 +1,11 @@
 import os
-import json
 from tavily import TavilyClient
 import functools
 from typing import List, Dict, Any, Optional, Type
 from pydantic import BaseModel
 import asyncio
 import unify
+import functools
 from pathlib import Path
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
@@ -14,6 +14,7 @@ from unity.common.async_tool_loop import (
 )
 from unity.constants import is_readonly_ask_guard_enabled
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
+from unity.common.llm_client import new_llm_client
 from unity.common.llm_helpers import (
     methods_to_tool_dict,
     make_request_clarification_tool,
@@ -90,7 +91,6 @@ class WebSearcher(BaseWebSearcher):
             from ..actor.hierarchical_actor import HierarchicalActor
 
             self._hierarchical_actor = HierarchicalActor()
-            # self._ensure_default_function_exists()
         return self._hierarchical_actor
 
     def _ensure_default_function_exists(self) -> None:
@@ -139,7 +139,7 @@ class WebSearcher(BaseWebSearcher):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("ask"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
@@ -243,17 +243,21 @@ class WebSearcher(BaseWebSearcher):
                 fields=model_to_fields(Website),
             )
             self._websites_store.ensure_context()
-            try:
-                ensure_vector_column(
-                    self._websites_ctx,
-                    embed_column="notes_emb",
-                    source_column="notes",
-                    derived_expr=None,
-                )
-            except Exception:
-                pass
         except Exception:
             # Best-effort only; callers operate without caches if needed
+            pass
+
+    @functools.cache
+    def _ensure_notes_vector(self) -> None:
+        # Ensure vector for notes (best-effort)
+        try:
+            ensure_vector_column(
+                self._websites_ctx,
+                embed_column="notes_emb",
+                source_column="notes",
+                derived_expr=None,
+            )
+        except Exception:
             pass
 
     @functools.wraps(BaseWebSearcher.clear, updated=())
@@ -314,7 +318,7 @@ class WebSearcher(BaseWebSearcher):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         _call_id: Optional[str] = None,
     ) -> SteerableToolHandle:
-        client = self._new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         tools = dict(self.get_tools("update"))
         if _clarification_up_q is not None and _clarification_down_q is not None:
@@ -550,6 +554,7 @@ class WebSearcher(BaseWebSearcher):
         """
         if not isinstance(notes, str) or not notes.strip():
             return []
+        self._ensure_notes_vector()
         rows = table_search_top_k(
             context=self._websites_ctx,
             references={"notes": notes},
@@ -627,10 +632,10 @@ class WebSearcher(BaseWebSearcher):
         self._ensure_default_function_exists()
         function_id = (
             actor_fn_id
-            if isinstance(actor_fn_id, int) and actor_fn_id >= 0
+            if actor_fn_id is not None and actor_fn_id >= 0
             else self._default_function_id
         )
-        if not function_id:
+        if function_id is None:
             return "Failed gated website search: Both actor entrypoint and default function are unavailable. Unable to resolve."
 
         # Start the actor plan with explicit entrypoint args
@@ -1004,12 +1009,3 @@ class WebSearcher(BaseWebSearcher):
     # ------------------------------------------------------------------ #
     #  Small internal helpers (LLM client + tool policies)               #
     # ------------------------------------------------------------------ #
-
-    def _new_llm_client(self, model: str) -> "unify.AsyncUnify":
-        return unify.AsyncUnify(
-            model,
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )

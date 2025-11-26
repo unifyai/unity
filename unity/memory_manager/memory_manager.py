@@ -8,8 +8,8 @@ import functools
 from typing import Optional, Callable, Dict, Any
 from dataclasses import dataclass
 
-import unify
 
+from ..common.llm_client import new_llm_client
 from ..contact_manager.contact_manager import ContactManager
 from ..transcript_manager.transcript_manager import TranscriptManager
 from ..knowledge_manager.knowledge_manager import KnowledgeManager
@@ -347,13 +347,7 @@ class MemoryManager(BaseMemoryManager):
         }
 
         # ─ 2.  LLM client
-        llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        llm = new_llm_client()
         llm.set_system_message(
             pb.build_contact_update_prompt(
                 tools,
@@ -455,13 +449,7 @@ class MemoryManager(BaseMemoryManager):
             "set_bio": set_bio,
         }
 
-        llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        llm = new_llm_client()
         contacts = await asyncio.to_thread(
             self._contact_manager.filter_contacts,
             filter=f"contact_id == {contact_id}",
@@ -580,13 +568,7 @@ class MemoryManager(BaseMemoryManager):
             latest_summary_val = None  # best-effort fallback
 
         # ------------------------------------------------------------------
-        llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        llm = new_llm_client()
         contact_label = (
             f"{contact_name_val} (id {contact_id})"
             if contact_name_val
@@ -687,13 +669,7 @@ class MemoryManager(BaseMemoryManager):
             latest_policy_val = None  # best-effort fallback
 
         # ------------------------------------------------------------------
-        llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        llm = new_llm_client()
         contact_label = (
             f"{contact_name_val} (id {contact_id})"
             if contact_name_val
@@ -751,13 +727,7 @@ class MemoryManager(BaseMemoryManager):
             include_class_name=True,
         )
 
-        llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        llm = new_llm_client()
         llm.set_system_message(
             pb.build_knowledge_prompt(
                 tools,
@@ -795,13 +765,7 @@ class MemoryManager(BaseMemoryManager):
             include_class_name=True,
         )
 
-        llm = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        llm = new_llm_client()
 
         llm.set_system_message(
             pb.build_task_prompt(

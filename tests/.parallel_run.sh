@@ -303,6 +303,7 @@ if (( ${#files[@]} == 0 )); then
 fi
 
 declare -a made_sessions=()
+declare -a session_ids=()
 for target in "${files[@]}"; do
   base_sess="$(session_basename_for "$target")"
   session="$(unique_session_name "$base_sess")"
@@ -317,12 +318,16 @@ for target in "${files[@]}"; do
 
   # Create the session first (no command), set remain-on-exit, then send the command.
   cmd="$(run_cmd "$target" "$log_file")"
-  tmux new-session -d -s "$session" -n "$wname" "$cmd"
+
+  # Capture session ID to track this specific run robustly
+  sid=$(tmux new-session -d -P -F "#{session_id}" -s "$session" -n "$wname" "$cmd")
+
   pending_name="$(unique_session_name "? ⏳ $session")"
-  tmux rename-session -t "$session" "$pending_name"
+  tmux rename-session -t "$sid" "$pending_name"
   session="$pending_name"
 
   made_sessions+=( "$session" )
+  session_ids+=( "$sid" )
 done
 
 echo "Created ${#made_sessions[@]} tmux sessions:"
@@ -348,15 +353,38 @@ echo "  • Inside tmux:  tmux switch-client -t <session>"
 
 if (( WAIT_FOR_COMPLETION )); then
   echo "Waiting for tests to complete..."
-  while tmux ls 2>/dev/null | grep -q "? ⏳"; do
+
+  while true; do
+    pending_count=0
+    for sid in "${session_ids[@]}"; do
+      # Check name of our specific session IDs only
+      current_name=$(tmux display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+      # Look for ASCII marker "?" (with or without emoji following) to detect pending state
+      if [[ "$current_name" == "?"* ]]; then
+        ((pending_count++))
+      fi
+    done
+
+    if (( pending_count == 0 )); then
+      break
+    fi
     sleep 1
   done
 
   echo "All tests completed."
-  if tmux ls 2>/dev/null | grep -q "x ❌"; then
-    echo "Failures detected in the following sessions:"
-    tmux ls | grep "x ❌"
-    echo "Logs are available in .pytest_logs/"
+
+  failures=0
+  for sid in "${session_ids[@]}"; do
+    current_name=$(tmux display-message -p -t "$sid" "#{session_name}" 2>/dev/null || echo "")
+    # Look for ASCII marker "x" (with or without emoji following) to detect failure
+    if [[ "$current_name" == "x"* ]]; then
+      echo "Failure detected in session: $current_name"
+      failures=1
+    fi
+  done
+
+  if (( failures )); then
+    echo "Failures detected. Logs are available in .pytest_logs/"
     exit 1
   else
     echo "All tests passed!"

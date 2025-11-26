@@ -12,7 +12,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.unit
 @_handle_project
-def test_exchanges_row_created_for_explicit_exchange_id():
+def test_row_created_explicit_id():
     tm = TranscriptManager()
 
     ex_id = 424242
@@ -40,7 +40,7 @@ def test_exchanges_row_created_for_explicit_exchange_id():
 
 @pytest.mark.unit
 @_handle_project
-def test_get_exchange_metadata_returns_exchange_model():
+def test_get_metadata_returns_model():
     tm = TranscriptManager()
 
     ex_id = 555001
@@ -65,7 +65,7 @@ def test_get_exchange_metadata_returns_exchange_model():
 
 @pytest.mark.unit
 @_handle_project
-def test_update_exchange_metadata_updates_existing_row():
+def test_update_metadata_updates_row():
     tm = TranscriptManager()
 
     # Create a fresh exchange via the new helper
@@ -96,7 +96,7 @@ def test_update_exchange_metadata_updates_existing_row():
 
 @pytest.mark.unit
 @_handle_project
-def test_update_exchange_metadata_upserts_when_missing():
+def test_update_metadata_upserts():
     tm = TranscriptManager()
 
     exid = 987654321
@@ -112,7 +112,7 @@ def test_update_exchange_metadata_upserts_when_missing():
 
 @pytest.mark.unit
 @_handle_project
-def test_filter_exchanges_by_metadata_value():
+def test_filter_by_metadata():
     tm = TranscriptManager()
 
     # Seed two new exchanges with distinct metadata
@@ -153,7 +153,7 @@ def test_filter_exchanges_by_metadata_value():
 
 @pytest.mark.unit
 @_handle_project
-def test_filter_exchanges_by_nested_metadata_and_membership():
+def test_filter_by_nested_metadata():
     tm = TranscriptManager()
 
     # Seed nested metadata with tags

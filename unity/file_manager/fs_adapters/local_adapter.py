@@ -246,6 +246,7 @@ class LocalFileSystemAdapter(BaseFileSystemAdapter):
         dest = (self._root / name).resolve()
         if dest != p:
             try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(p, dest)
             except Exception:
                 # As best-effort registration, if copy fails and file already exists under dest, accept

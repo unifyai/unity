@@ -29,17 +29,16 @@ def _ensure_columns_exist(self, extra_fields: Dict[str, Any]) -> None:
             pass
 
 
-def sync_assistant_contact(self) -> None:
+def sync_assistant_contact(self, assistant_log) -> None:
     """Ensure assistant contact (id == 0) exists and is correct."""
     from .. import ASSISTANT as _GLOBAL_ASSISTANT  # local import to avoid cycles
-
-    assistants = fetch_assistant_info(self)
 
     # 1) Prefer the assistant provided by unity.init
     if _GLOBAL_ASSISTANT is not None:
         selected = _GLOBAL_ASSISTANT
     else:
         # 2) Otherwise map the active context (if numeric) onto the list index
+        assistants = fetch_assistant_info(self)
         ctxs = unify.get_active_context()
         read_ctx = ctxs.get("read")
         try:
@@ -85,20 +84,17 @@ def sync_assistant_contact(self) -> None:
     # canonical contacts until frontend configuration is available.
     base_fields["utc_offset_hours"] = 0.0
 
-    existing_logs = unify.get_logs(
-        context=self._ctx,
-        filter="contact_id == 0",
-        limit=1,
-        from_fields=self._allowed_fields(),
-    )
-
-    if existing_logs:
+    if assistant_log is not None:
         try:
-            entries = existing_logs[0].entries
+            entries = assistant_log.entries
             current = entries.get("utc_offset_hours")
             if current != 0.0:
                 # Only update the timezone field to avoid clobbering other values
-                self.update_contact(contact_id=0, utc_offset_hours=0.0)
+                self.update_contact(
+                    contact_id=0,
+                    utc_offset_hours=0.0,
+                    _log_id=assistant_log.id,
+                )
             else:
                 # Warm local cache when no change needed
                 self._data_store.put(entries)
@@ -155,7 +151,7 @@ def fetch_user_info(self) -> Dict[str, Any]:
     }
 
 
-def sync_user_contact(self) -> None:
+def sync_user_contact(self, user_log) -> None:
     """Ensure default user contact (id == 1) exists and is correct."""
     user_info = fetch_user_info(self)
 
@@ -195,20 +191,17 @@ def sync_user_contact(self) -> None:
     if extra_fields:
         _ensure_columns_exist(self, extra_fields)
 
-    existing_logs = unify.get_logs(
-        context=self._ctx,
-        filter="contact_id == 1",
-        limit=1,
-        from_fields=self._allowed_fields(),
-    )
-
-    if existing_logs:
+    if user_log is not None:
         try:
-            entries = existing_logs[0].entries
+            entries = user_log.entries
             current = entries.get("utc_offset_hours")
             if current != 0.0:
                 # Only update the timezone field to avoid clobbering other values
-                self.update_contact(contact_id=1, utc_offset_hours=0.0)
+                self.update_contact(
+                    contact_id=1,
+                    utc_offset_hours=0.0,
+                    _log_id=user_log.id,
+                )
             else:
                 # Warm local cache when no change needed
                 self._data_store.put(entries)

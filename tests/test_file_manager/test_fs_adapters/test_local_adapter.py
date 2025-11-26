@@ -8,7 +8,7 @@ from unity.file_manager.fs_adapters.local_adapter import LocalFileSystemAdapter
 
 
 @pytest.mark.asyncio
-async def test_local_adapter_basic_iter_get_open(tmp_path):
+async def test_basic_iter_get_open(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     (root / "a.txt").write_text("hello", encoding="utf-8")
@@ -27,7 +27,7 @@ async def test_local_adapter_basic_iter_get_open(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_local_adapter_rename_and_move(tmp_path):
+async def test_rename_and_move(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     (root / "x.txt").write_text("x", encoding="utf-8")
@@ -49,7 +49,7 @@ async def test_local_adapter_rename_and_move(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_local_adapter_import_and_register(tmp_path):
+async def test_import_and_register(tmp_path):
     root = tmp_path / "root"
     src = tmp_path / "src"
     root.mkdir()
@@ -68,7 +68,7 @@ async def test_local_adapter_import_and_register(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_local_adapter_downloads(tmp_path):
+async def test_downloads(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     ad = LocalFileSystemAdapter(root.as_posix())
@@ -84,7 +84,7 @@ async def test_local_adapter_downloads(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_local_adapter_delete(tmp_path):
+async def test_delete(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     ad = LocalFileSystemAdapter(root.as_posix())

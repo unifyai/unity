@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime, UTC
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.transcript_manager.types.message import VALID_MEDIA
+from unity.transcript_manager.types.medium import VALID_MEDIA
 from tests.helpers import _handle_project
 from unity.contact_manager.types.contact import Contact
 
@@ -29,7 +29,7 @@ def _base_message(seed: int) -> dict:
 
 @pytest.mark.unit
 @_handle_project
-def test_log_messages_basic_logging_with_explicit_exchange_id():
+def test_basic_logging_explicit_id():
     tm = TranscriptManager()
 
     ex_id = 135790
@@ -60,7 +60,7 @@ def test_log_messages_basic_logging_with_explicit_exchange_id():
 
 @pytest.mark.unit
 @_handle_project
-def test_log_messages_missing_exchange_id_raises_helpful_error():
+def test_missing_id_raises_error():
     tm = TranscriptManager()
 
     # Intentionally omit exchange_id → should raise with guidance to use the new API

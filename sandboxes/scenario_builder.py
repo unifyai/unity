@@ -33,8 +33,8 @@ import json
 from datetime import datetime, timezone
 from typing import Callable, Dict, Any, Optional
 
-import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from sandboxes.utils import await_with_interrupt
 
 __all__ = ["ScenarioBuilder"]
@@ -74,7 +74,7 @@ class ScenarioBuilder:
         *,
         description: str,
         tools: Dict[str, Callable],
-        endpoint: str = "gpt-5@openai",
+        endpoint: str = DEFAULT_MODEL,
         traced: bool = True,
         stateful: bool = True,
         enable_voice: bool = False,
@@ -88,13 +88,10 @@ class ScenarioBuilder:
         # no accidental leakage of private helpers.
         self._tools: Dict[str, Callable] = dict(tools)
 
-        self._client = unify.AsyncUnify(
-            endpoint,
-            cache=True,
+        self._client = new_llm_client(
+            model=endpoint,
             traced=traced,
             stateful=stateful,
-            reasoning_effort="high",
-            service_tier="priority",
         )
         self._enable_voice = enable_voice
         self._clarifications_enabled = clarifications_enabled

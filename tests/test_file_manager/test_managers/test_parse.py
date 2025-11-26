@@ -10,7 +10,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_parse_single_file(file_manager, supported_file_examples: dict):
+async def test_parse_single(file_manager, supported_file_examples: dict):
     """Test parsing a single file."""
     # Get the first available test file
     filename, example_data = next(iter(supported_file_examples.items()))
@@ -35,7 +35,7 @@ async def test_parse_single_file(file_manager, supported_file_examples: dict):
 
 
 @pytest.mark.asyncio
-async def test_parse_multiple_files(file_manager, supported_file_examples: dict):
+async def test_parse_multiple(file_manager, supported_file_examples: dict):
     """Test parsing multiple files at once."""
     # Import all example files
     display_names = []
@@ -77,7 +77,7 @@ async def test_parse_with_options(file_manager, supported_file_examples: dict):
 
 
 @pytest.mark.asyncio
-async def test_parse_empty_file(file_manager, sample_files: Path):
+async def test_parse_empty(file_manager, sample_files: Path):
     """Test parsing an empty file."""
     # Use empty file by absolute path
     empty_file = sample_files / "empty.txt"
@@ -107,7 +107,7 @@ async def test_parse_empty_file(file_manager, sample_files: Path):
 
 
 @pytest.mark.asyncio
-async def test_parse_supported_formats(file_manager, supported_file_examples: dict):
+async def test_parse_supported(file_manager, supported_file_examples: dict):
     """Test parsing files in all supported formats."""
     # Add all example files to the file manager
     display_names = []
@@ -146,7 +146,7 @@ async def test_parse_supported_formats(file_manager, supported_file_examples: di
 
 
 @pytest.mark.asyncio
-async def test_parse_multiple_supported_files(
+async def test_parse_multiple_supported(
     file_manager,
     supported_file_examples: dict,
 ):

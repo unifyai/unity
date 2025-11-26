@@ -17,7 +17,7 @@ from unity.file_manager.parser import DoclingParser
 
 @pytest.mark.unit
 @_handle_project
-def test_txt_file_parsing(parser: DoclingParser, supported_format_files):
+def test_txt_parsing(parser: DoclingParser, supported_format_files):
     """Test that .txt files are parsed correctly."""
     # Parse simple text
     txt_files = supported_format_files[".txt"]["files"]
@@ -141,7 +141,7 @@ def test_various_text_formats(parser: DoclingParser, supported_format_files):
 
 @pytest.mark.unit
 @_handle_project
-def test_empty_file_handling(parser: DoclingParser, tmp_path: Path):
+def test_empty_file(parser: DoclingParser, tmp_path: Path):
     """Test handling of empty files."""
     empty_file = tmp_path / "empty.txt"
     empty_file.write_text("", encoding="utf-8")
@@ -155,7 +155,7 @@ def test_empty_file_handling(parser: DoclingParser, tmp_path: Path):
 
 @pytest.mark.unit
 @_handle_project
-def test_large_text_handling(parser: DoclingParser, tmp_path: Path):
+def test_large_text(parser: DoclingParser, tmp_path: Path):
     """Test handling of larger text files."""
     # Create a file with many paragraphs
     paragraphs = [f"Paragraph {i}: " + "Lorem ipsum " * 50 for i in range(20)]
@@ -180,7 +180,7 @@ def test_large_text_handling(parser: DoclingParser, tmp_path: Path):
 
 @pytest.mark.unit
 @_handle_project
-def test_parser_metadata(parser: DoclingParser, supported_format_files):
+def test_metadata(parser: DoclingParser, supported_format_files):
     """Test that parser metadata is correctly set."""
     txt_files = supported_format_files[".txt"]["files"]
     document = parser.parse(txt_files["simple"])

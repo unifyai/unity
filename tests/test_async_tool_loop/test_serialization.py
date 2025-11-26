@@ -146,7 +146,7 @@ def test_loop_snapshot_unsupported_version():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_contact_manager_resume():
+async def test_deserialize_manager_resume():
     cm = ContactManager()
 
     # Start a loop and immediately snapshot (may still be in-flight)
@@ -161,7 +161,7 @@ async def test_deserialize_contact_manager_resume():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_transcript_manager_resume():
+async def test_deserialize_alternative_manager_resume():
     tm = TranscriptManager()
 
     # Seed a minimal prompt that will exercise search tools

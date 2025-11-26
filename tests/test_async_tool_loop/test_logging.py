@@ -10,7 +10,8 @@ from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
 )
 from unity.events.event_bus import EVENT_BUS
-from tests.helpers import SETTINGS, _handle_project, capture_events
+from tests.helpers import _handle_project, capture_events
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
@@ -37,13 +38,7 @@ async def test_nested_logging_hierarchy_labels():
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -64,13 +59,7 @@ async def test_nested_logging_hierarchy_labels():
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop: uses the outer tool ────────────────────────────────
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -136,13 +125,7 @@ async def test_single_loop_logging_hierarchy_label():
     def noop_tool() -> str:  # noqa: D401
         return "ok"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "1️⃣  Call `noop_tool`. 2️⃣ Then reply exactly 'done'.",
     )
@@ -197,13 +180,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -224,13 +201,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop: uses the outer tool ────────────────────────────────
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -317,13 +288,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = unify.AsyncUnify(
-            "gpt-5@openai",
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -343,13 +308,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -422,7 +381,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_replay_logs_and_events_single_manager(caplog):
+async def test_deserialize_replay_logs_with_manager(caplog):
     """
     Verify that deserialization replays seeded assistant/tool messages with:
     - EventBus ToolLoop events carrying origin == 'deserialize'
@@ -495,7 +454,7 @@ async def test_deserialize_replay_logs_and_events_single_manager(caplog):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog):
+async def test_deserialize_replay_nested_loops(caplog):
     """
     Verify deserialization replay for a nested loop triggered by ContactManager.update
     (whose default tool policy requires `ask` on the first step).

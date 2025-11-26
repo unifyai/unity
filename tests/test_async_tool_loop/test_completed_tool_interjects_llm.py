@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import pytest
-import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 
 # ────────────────────────────────────────────────────────────────────────────
 # Dummy tools – one finishes almost instantly, the other a little later
@@ -63,11 +63,8 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(caplog) -> No
         " Important: while at least one requested tool call is still running and not all results are available, you must call ONLY the helper tool named `wait` immediately and nothing else; do not produce any assistant text on that turn. Once all requested tool results have arrived, produce the final assistant reply."
     )
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
+    client = new_llm_client(
         system_message=system_prompt,
-        reasoning_effort="high",
-        service_tier="priority",
     )
 
     tools = {"fast_task": fast_task, "very_slow_task": very_slow_task}
@@ -187,11 +184,8 @@ async def test_llm_step_is_preempted_by_late_tool_completion() -> None:
         "assistant messages in between."
     )
 
-    client = unify.AsyncUnify(
-        endpoint="gpt-5@openai",
+    client = new_llm_client(
         system_message=system_prompt,
-        reasoning_effort="high",
-        service_tier="priority",
     )
 
     tools = {"fast_task": fast_task, "slow_task": slow_task}

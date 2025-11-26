@@ -1,0 +1,30 @@
+---
+description: No Temporal, Chat-Specific, or "New" Comments
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# No Temporal or Chat-Specific Comments
+
+## Context
+Code comments and docstrings must be **timeless** and describe the code as it currently exists. They must **never** reflect the history of changes, the current chat session, or the fact that code is "new".
+
+## Critical Rules
+
+### 1. No "New" or "Updated" Markers
+- **Forbidden**: Never use words like "New", "Updated", "Added", "Modified", "Refactored" in comments to mark changes.
+- **Reasoning**: Code is only "new" for the moment it is written. Next week, it is old. These comments rot immediately and create noise.
+- **Correct Approach**: Just write the comment describing what the code does. Git history tracks what is new.
+
+### 2. No Chat Context
+- **Forbidden**: Do not reference "the user request", "this chat", "per instruction", or specific reasoning from the current conversation.
+- **Reasoning**: The codebase must stand alone. Context from a chat session is lost to future readers.
+- **Correct Approach**: If a complex decision needs explanation, document the *technical why* (e.g., "Use X because Y is slow"), not the *conversational why* ("User asked for X").
+
+### 3. Clean Documentation
+- **Focus**: Comments should explain **why** tricky code exists or **how** it functions.
+- **Avoid**: "Here is the implementation of..." or "Standardized composer utilities". The code itself shows it is an implementation.
+- **Example**:
+  - BAD: `# NEW: Added this function to handle retries`
+  - BAD: `# Updated to support the new API`
+  - GOOD: `# Retries the request with exponential backoff to handle transient network errors.`

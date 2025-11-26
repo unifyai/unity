@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Union, Callable, Tuple
 from typing import Literal, overload
 from dataclasses import dataclass
-
+from functools import cached_property
 
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -239,16 +239,7 @@ class TaskScheduler(BaseTaskScheduler):
         self.add_tools("update", update_tools)
 
         # active task
-        if actor is None:
-            # Allow tests to override default simulated duration via env var
-            try:
-                _dur_env = os.environ.get("UNITY_SIM_ACTOR_DURATION")
-                _duration = float(_dur_env) if _dur_env is not None else 20.0
-            except Exception:
-                _duration = 20.0
-            self._actor = SimulatedActor(duration=_duration)
-        else:
-            self._actor = actor
+        self.__actor = actor
 
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs["read"], ctxs["write"]
@@ -308,6 +299,18 @@ class TaskScheduler(BaseTaskScheduler):
         # this cache remains coherent without extra backend reads between tool calls.
         self._num_tasks_cached: Optional[int] = None
 
+    @cached_property
+    def _actor(self) -> BaseActor:
+        if self.__actor is None:
+            # Allow tests to override default simulated duration via env var
+            try:
+                _dur_env = os.environ.get("UNITY_SIM_ACTOR_DURATION")
+                _duration = float(_dur_env) if _dur_env is not None else 20.0
+            except Exception:
+                _duration = 20.0
+            self.__actor = SimulatedActor(duration=_duration)
+        return self.__actor
+
     # ------------------------------ Provisioning ----------------------------- #
     def _provision_storage(self) -> None:
         """Ensure Tasks context, schema and local view exist (idempotent)."""
@@ -326,6 +329,14 @@ class TaskScheduler(BaseTaskScheduler):
                 "same logical task."
             ),
             fields=model_to_fields(Task),
+            foreign_keys=[
+                {
+                    "name": "entrypoint",
+                    "references": f"{self._ctx.replace('Tasks', 'Functions')}.function_id",
+                    "on_delete": "SET NULL",
+                    "on_update": "CASCADE",
+                },
+            ],
         )
 
         # Centralised local view for queue membership, allocator and light caching.
@@ -432,7 +443,7 @@ class TaskScheduler(BaseTaskScheduler):
         ] = "default",
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
-        client = new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         # Build a live tools dictionary so the prompt reflects reality
         tools = dict(self.get_tools("ask"))
@@ -512,7 +523,7 @@ class TaskScheduler(BaseTaskScheduler):
         ] = "default",
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ) -> SteerableToolHandle:
-        client = new_llm_client("gpt-5@openai")
+        client = new_llm_client()
 
         # Build a live tools dictionary first (prompt needs it)
         tools = dict(self.get_tools("update"))
