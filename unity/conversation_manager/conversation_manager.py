@@ -12,7 +12,10 @@ import contextlib
 from unity.singleton_registry import SingletonABCMeta
 from unity.common.async_tool_loop import SteerableToolHandle
 from unity.conversation_manager import debug_logger
-from unity.conversation_manager.domains.call_manager import LivekitCallManager
+from unity.conversation_manager.domains.call_manager import (
+    CallConfig,
+    LivekitCallManager,
+)
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
@@ -125,14 +128,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
         self.debouncer = Debouncer()
 
         # call manager
-        self.call_manager = LivekitCallManager(
-            self.assistant_id,
-            self.assistant_about,
-            self.assistant_number,
-            self.voice_provider,
-            self.voice_id,
-            self.voice_mode,
-        )
+        self.call_manager = LivekitCallManager(self.get_call_config())
 
         # renderer
         self.prompt_renderer = Renderer()
@@ -157,12 +153,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
         )  # dict[int, {"handle": "SteerableTool", "query": "str", "handle_actions": []}]
         self.last_snapshot = datetime.now()
         self._current_snapshot = None
-        self.call_exchange_id = None
-        self.unify_call_exchange_id = None
-        self.call_start_timestamp = None
-        self.unify_call_start_timestamp = None
-        self.conference_name = ""
-        self.call_contact = None
         self.is_summarizing = None
         self.max_messages = 30
 
@@ -176,7 +166,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         # proactive speech
         self.proactive_speech = ProactiveSpeech()
-        self.proactive_speech_task: asyncio.Task | None = None
+        self._proactive_speech_task: asyncio.Task | None = None
 
         # ask handles
         self.active_ask_handle: Optional["SteerableToolHandle"] = None
@@ -250,7 +240,7 @@ class ConversationManager(metaclass=SingletonABCMeta):
                     topic = "app:comms:phone_utterance"
                     event = AssistantPhoneUtterance(
                         self.contact_index.get_contact(
-                            phone_number=self.call_contact["phone_number"],
+                            phone_number=self.call_manager.call_contact["phone_number"],
                         ),
                         parsed_out["phone_utterance"],
                     )
@@ -307,8 +297,19 @@ class ConversationManager(metaclass=SingletonABCMeta):
 
         print("[Proactive Speech] Creating proactive speech task...")
         # Create a task to run the decision and potential wait
-        self.proactive_speech_task = asyncio.create_task(self._proactive_speech_loop())
-        self.proactive_speech_task.add_done_callback(log_task_exc)
+        self._proactive_speech_task = asyncio.create_task(self._proactive_speech_loop())
+        self._proactive_speech_task.add_done_callback(log_task_exc)
+
+    async def cancel_proactive_speech(self):
+        if self._proactive_speech_task and not self._proactive_speech_task.done():
+            # Don't cancel if we are running inside the task (recursion case)
+            if self._proactive_speech_task == asyncio.current_task():
+                return
+
+            self._proactive_speech_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._proactive_speech_task
+            self._proactive_speech_task = None
 
     async def _proactive_speech_loop(self):
         try:
@@ -323,7 +324,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             conversation_turns = []
             last_message_timestamp = None
 
-            contact = self.call_contact or self.contact_index.get_contact(contact_id=1)
+            contact = self.call_manager.call_contact or self.contact_index.get_contact(
+                contact_id=1
+            )
             if (
                 contact
                 and contact["contact_id"] in self.contact_index.active_conversations
@@ -380,7 +383,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
             await asyncio.sleep(decision.delay)
 
             # Record in contact_index
-            contact = self.call_contact or self.contact_index.get_contact(contact_id=1)
+            contact = self.call_manager.call_contact or self.contact_index.get_contact(
+                contact_id=1
+            )
             if contact:
                 self.contact_index.push_message(
                     contact,
@@ -417,17 +422,6 @@ class ConversationManager(metaclass=SingletonABCMeta):
             raise
         except Exception as e:
             print(f"Error in proactive speech loop: {e}")
-
-    async def cancel_proactive_speech(self):
-        if self.proactive_speech_task and not self.proactive_speech_task.done():
-            # Don't cancel if we are running inside the task (recursion case)
-            if self.proactive_speech_task == asyncio.current_task():
-                return
-
-            self.proactive_speech_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self.proactive_speech_task
-            self.proactive_speech_task = None
 
     async def wait_for_events(self):
         async with self.event_broker.pubsub() as pubsub:
@@ -535,6 +529,16 @@ class ConversationManager(metaclass=SingletonABCMeta):
             "user_email": self.user_email,
             "assistant_email": self.assistant_email,
         }
+
+    def get_call_config(self) -> CallConfig:
+        return CallConfig(
+            assistant_id=self.assistant_id,
+            assistant_bio=self.assistant_about,
+            assistant_number=self.assistant_number,
+            voice_provider=self.voice_provider,
+            voice_id=self.voice_id,
+            voice_mode=self.voice_mode,
+        )
 
     def build_response_model(self):
         self.dynamic_response_models = build_dynamic_response_models(

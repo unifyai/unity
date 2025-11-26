@@ -174,7 +174,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         recent_transcript_for_prompt: str = ""
         try:
             contact = (
-                self.conversation_manager.call_contact
+                self.conversation_manager.call_manager.call_contact
                 or self.conversation_manager.contact_index.get_contact(
                     contact_id=self.contact_id,
                 )

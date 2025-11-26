@@ -95,10 +95,12 @@ async def main(project_name: str = "Assistants"):
         comms_utils.start_call = _async_mock_success
         conversation_manager.call_manager.start_call = _sync_mock_success
         conversation_manager.call_manager.start_unify_call = _sync_mock_success
+        conversation_manager.schedule_proactive_speech = _async_mock_success
         debug_logger.log_job_startup = _sync_mock_success
         debug_logger.mark_job_done = _sync_mock_success
         managers_utils.log_message = _async_mock_success
         managers_utils.publish_bus_events = _async_mock_success
+        managers_utils.init_conv_manager = _async_mock_success
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
