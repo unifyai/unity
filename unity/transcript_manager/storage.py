@@ -7,20 +7,10 @@ import unify
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from .types.message import Message
-from .types.exchange import Exchange
 
 
 def provision_storage(self) -> None:
     """Ensure contexts, fields, helper columns and local caches exist (idempotent)."""
-    # Exchanges context: one row per exchange_id with optional metadata
-    self._exchanges_store = TableStore(
-        self._exchanges_ctx,
-        unique_keys={"exchange_id": "int"},
-        auto_counting={"exchange_id": None},
-        description="One row per conversation exchange/thread with optional metadata.",
-        fields=model_to_fields(Exchange),
-    )
-
     # Ensure transcripts context and fields deterministically
     self._store = TableStore(
         self._transcripts_ctx,
