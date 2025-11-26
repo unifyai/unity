@@ -18,7 +18,7 @@ from .base import BaseActiveTask
 from ..actor.base import BaseActor
 from unity.common.async_tool_loop import SteerableToolHandle
 from .types.status import Status
-from .llm import new_llm_client
+from ..common.llm_client import new_llm_client
 import logging
 from ..common.handle_wrappers import HandleWrapperMixin
 
