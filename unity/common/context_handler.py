@@ -41,6 +41,15 @@ class ContextHandler:
             return type(manager).__name__
 
     @classmethod
+    def refresh(
+        cls,
+        manager: Union[BaseStateManager, Type[BaseStateManager]],
+        ctx_name: str,
+    ):
+        cls.forget(manager, ctx_name)
+        return cls.get_context(manager, ctx_name)
+
+    @classmethod
     def forget(
         cls,
         manager: Union[BaseStateManager, Type[BaseStateManager]],
