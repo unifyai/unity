@@ -7,6 +7,7 @@ from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..knowledge_manager.types import ColumnType
 from ..common.tool_outcome import ToolOutcome
 from ..common.tool_spec import read_only, manager_tool
+from ..common.metrics_utils import reduce_logs
 
 import unify
 from .types.contact import Contact
@@ -128,6 +129,7 @@ class ContactManager(BaseContactManager):
                 self._list_columns,
                 self.filter_contacts,
                 self._search_contacts,
+                self._reduce,
                 include_class_name=False,
             ),
         }
@@ -481,6 +483,58 @@ class ContactManager(BaseContactManager):
         """
         cols = self._get_columns()
         return cols if include_types else list(cols)
+
+    @read_only
+    def _reduce(
+        self,
+        *,
+        metric: str,
+        keys: str | list[str],
+        filter: Optional[str | dict[str, str]] = None,
+        group_by: Optional[str | list[str]] = None,
+    ) -> Any:
+        """
+        Compute basic reduction metrics over the Contacts table.
+
+        Parameters
+        ----------
+        metric : str
+            Reduction metric to compute. Supported values (case-insensitive) are
+            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
+            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        keys : str | list[str]
+            One or more numeric contact fields to aggregate, for example
+            ``\"contact_id\"`` or numeric custom columns. A single column name
+            returns a scalar; a list of column names computes the metric
+            independently per key and returns a ``{key -> value}`` mapping.
+        filter : str | dict[str, str] | None, default None
+            Optional row-level filter expression(s) in the same Python syntax as
+            :py:meth:`filter_contacts`. When a string, the expression is applied
+            uniformly; when a dict, each key maps to its own filter expression.
+        group_by : str | list[str] | None, default None
+            Optional contact field(s) to group by, for example ``\"respond_to\"``
+            or a segmenting custom column. Use a single column name for one
+            grouping level, or a list such as ``[\"respond_to\", \"contact_id\"]``
+            to group hierarchically in that order. When provided, the result
+            becomes a nested mapping keyed by group values, mirroring
+            :func:`unify.get_logs_metric` behaviour.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the Contacts context:
+
+            * Single key, no grouping  → scalar (float/int/str/bool).
+            * Multiple keys, no grouping → ``dict[key -> scalar]``.
+            * With grouping             → nested ``dict`` keyed by group values.
+        """
+        return reduce_logs(
+            context=self._ctx,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
+        )
 
     @read_only
     def filter_contacts(

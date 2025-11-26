@@ -623,6 +623,7 @@ def mirror_contact_manager_tools(kind: str) -> Dict[str, Any]:
             ContactManager._list_columns,
             ContactManager.filter_contacts,
             ContactManager._search_contacts,
+            ContactManager._reduce,
             include_class_name=False,
         )
     else:
@@ -721,6 +722,7 @@ def mirror_transcript_manager_tools() -> Dict[str, Any]:
         ContactManager.filter_contacts,
         TranscriptManager._filter_messages,
         TranscriptManager._search_messages,
+        TranscriptManager._reduce,
         include_class_name=False,
     )
 
@@ -765,6 +767,7 @@ def mirror_task_scheduler_tools(kind: str) -> Dict[str, Any]:
                 TaskScheduler._search_tasks,
                 TaskScheduler._get_queue,
                 TaskScheduler._get_queue_for_task,
+                TaskScheduler._reduce,
                 include_class_name=False,
             ),
         )
@@ -857,6 +860,7 @@ def mirror_knowledge_manager_tools(kind: str) -> Dict[str, Any]:
             KM._tables_overview,
             KM._filter,
             KM._search,
+            KM._reduce,
             KM._filter_join,
             KM._filter_multi_join,
             include_class_name=False,
@@ -961,6 +965,7 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager._tables_overview,
             FileManager._filter_files,
             FileManager._search_files,
+            FileManager._reduce,
             # Inventory listing
             FileManager.list,
             # Parse when missing (policy enforced in prompts)
@@ -979,6 +984,7 @@ def mirror_file_manager_tools(kind: str) -> Dict[str, Any]:
             FileManager._tables_overview,
             FileManager._filter_files,
             FileManager._search_files,
+            FileManager._reduce,
             # Join/multi-join tools for file-scoped analysis
             FileManager._filter_join,
             FileManager._search_join,

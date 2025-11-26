@@ -32,6 +32,7 @@ from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
+from ..common.metrics_utils import reduce_logs
 
 # Module delegations (split helpers for parity with ContactManager)
 from .storage import (
@@ -138,6 +139,7 @@ class KnowledgeManager(BaseKnowledgeManager):
                 self._tables_overview,
                 self._filter,
                 self._search,
+                self._reduce,
                 include_class_name=False,
             ),
         }
@@ -1723,6 +1725,64 @@ class KnowledgeManager(BaseKnowledgeManager):
             offset=offset,
             limit=limit,
             tables=tables,
+        )
+
+    @read_only
+    def _reduce(
+        self,
+        *,
+        table: str,
+        metric: str,
+        keys: str | List[str],
+        filter: Optional[str | Dict[str, str]] = None,
+        group_by: Optional[str | List[str]] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over a single knowledge table.
+
+        Parameters
+        ----------
+        table : str
+            Logical table name managed by this KnowledgeManager (for example
+            ``\"Content\"``, ``\"Products\"``, or ``\"Contacts\"`` when linkage
+            is enabled).
+        metric : str
+            Reduction metric to compute. Supported values (case-insensitive) are
+            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
+            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        keys : str | list[str]
+            One or more numeric columns in ``table`` to aggregate. A single
+            column name returns a scalar; a list of column names computes the
+            metric independently per key and returns a ``{key -> value}``
+            mapping.
+        filter : str | dict[str, str] | None, default None
+            Optional row-level filter expression(s) using the same Python
+            syntax as the :py:meth:`_filter` tool. When a string, the
+            expression is applied uniformly; when a dict, each key maps to its
+            own filter expression.
+        group_by : str | list[str] | None, default None
+            Optional column(s) to group by. Use a single column name for one
+            grouping level, or a list such as ``[\"category\", \"row_id\"]`` to
+            group hierarchically in that order. When provided, the result
+            becomes a nested mapping keyed by group values, mirroring
+            :func:`unify.get_logs_metric` behaviour.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the resolved table context:
+
+            * Single key, no grouping  → scalar (float/int/str/bool).
+            * Multiple keys, no grouping → ``dict[key -> scalar]``.
+            * With grouping             → nested ``dict`` keyed by group values.
+        """
+        ctx = self._ctx_for_table(table)
+        return reduce_logs(
+            context=ctx,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
         )
 
     @read_only
