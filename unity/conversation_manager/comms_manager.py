@@ -168,7 +168,7 @@ class CommsManager:
                 message.ack()
             elif thread in events_map:
                 # Publish contacts
-                contacts = [local_contact, *event.get("contacts", [])]
+                contacts = [*event.get("contacts", []), local_contact]
                 asyncio.run_coroutine_threadsafe(
                     self.message_queue.publish(
                         f"app:comms:contacts",
@@ -242,7 +242,7 @@ class CommsManager:
                 message.ack()
             elif thread == "log_pre_hire_chats":
                 try:
-                    contacts = [local_contact, *event.get("contacts", [])]
+                    contacts = [*event.get("contacts", []), local_contact]
                     asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:contacts",
@@ -292,7 +292,7 @@ class CommsManager:
             elif "call" in thread:
                 try:
                     # Publish contacts
-                    contacts = [local_contact, *event.get("contacts", [])]
+                    contacts = [*event.get("contacts", []), local_contact]
                     asyncio.run_coroutine_threadsafe(
                         self.message_queue.publish(
                             f"app:comms:contacts",
