@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, wait
 
 from unity.common.tool_spec import ToolSpec, normalise_tools
-from unity.common.llm_client import DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 
 from .tools_data import create_tool_call_message
 from ..semantic_search import escape_single_quotes
@@ -45,8 +45,6 @@ class _Config:
     threshold: float = 0.2
     top_k: int = 1
     embedding_model: str = "text-embedding-3-small"
-    _model: str = DEFAULT_MODEL
-    _reasoning_effort = "high"
     _context: str = "Cache"
 
     @property
@@ -56,7 +54,7 @@ class _Config:
         return f"{ASSISTANT_CONTEXT}/{self._context}"
 
     def get_client(self):
-        return unify.Unify(self._model, reasoning_effort=self._reasoning_effort)
+        return new_llm_client(async_client=False)
 
 
 _CONFIG = _Config()
