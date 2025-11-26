@@ -1563,12 +1563,16 @@ class _ActionProviderProxy:
                 backend._current_capture_queue = capture_q
 
             try:
-                tool_output = await real_attr(
-                    *args,
-                    wait=wait,
-                    context=context,
-                    **kwargs,
-                )
+                # Skip passing tracking context dict and wait for 'reason' - it has different signature
+                if name == "reason":
+                    tool_output = await real_attr(*args, **kwargs)
+                else:
+                    tool_output = await real_attr(
+                        *args,
+                        wait=wait,
+                        context=context,
+                        **kwargs,
+                    )
             except BrowserAgentError as e:
                 if e.error_type == "cancelled":
                     logger.info(
