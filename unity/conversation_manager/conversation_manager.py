@@ -147,7 +147,7 @@ class ConversationManager:
 
         self.mode = "text"
         self.chat_history = []
-        self.contact_index = ContactIndex(is_local=bool(self.assistant_id))
+        self.contact_index = ContactIndex()
         self.notifications_bar = NotificationBar()
         self.conductor_handles: dict[int, dict] = (
             {}
