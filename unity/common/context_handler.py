@@ -33,14 +33,24 @@ class ContextHandler:
         return list(unify.get_contexts().keys())
 
     @staticmethod
-    def _get_manager_name(manager: BaseStateManager) -> str:
+    def _get_manager_name(manager: BaseStateManager | str) -> str:
+        if isinstance(manager, str):
+            return manager
         try:
             return manager.__name__
         except:
             return type(manager).__name__
 
     @classmethod
-    def get_context(cls, manager: BaseStateManager, ctx_name: str) -> Optional[str]:
+    def forget(cls, manager: BaseStateManager | str, ctx_name: str):
+        manager_name = cls._get_manager_name(manager)
+        key = (manager_name, ctx_name)
+        cls._available_contexts.pop(key, None)
+
+    @classmethod
+    def get_context(
+        cls, manager: BaseStateManager | str, ctx_name: str
+    ) -> Optional[str]:
         manager_name = cls._get_manager_name(manager)
         key = (manager_name, ctx_name)
         ret = cls._available_contexts.get(key)
