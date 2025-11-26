@@ -18,7 +18,6 @@ from google.oauth2 import service_account
 from google.cloud.exceptions import NotFound
 
 
-from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from ..common.semantic_search import backfill_rows, fetch_top_k_by_references
 from .base import BaseImageManager
@@ -654,8 +653,8 @@ class ImageManager(BaseImageManager):
                 f"Failed to initialize Google Cloud Storage client: {e}",
             ) from e
 
-        # Ensure context/fields exist deterministically
-        self._provision_storage()
+        # Cache built-in fields for fast whitelisting
+        self._BUILTIN_FIELDS: tuple[str, ...] = tuple(Image.model_fields.keys())
 
         # Pending id generation (process-local)
         self._PENDING_BASE: int = 10**12
@@ -1320,8 +1319,6 @@ class ImageManager(BaseImageManager):
         except Exception:
             pass
 
-        self._provision_storage()
-
         # Clear local DataStore cache for this context
         try:
             self._data_store.clear()
@@ -1340,17 +1337,3 @@ class ImageManager(BaseImageManager):
                     _time.sleep(0.05)
         except Exception:
             pass
-
-    # ------------------------------ Internals -----------------------------
-    def _provision_storage(self) -> None:
-        """Ensure Images context and schema exist deterministically."""
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"image_id": "int"},
-            auto_counting={"image_id": None},
-            description="Collection of images with timestamps, captions, and raw base64 data.",
-            fields=model_to_fields(Image),
-        )
-
-        # Cache built-in fields for fast whitelisting
-        self._BUILTIN_FIELDS: tuple[str, ...] = tuple(Image.model_fields.keys())
