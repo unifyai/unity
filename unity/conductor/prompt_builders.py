@@ -287,9 +287,10 @@ def build_request_prompt(
             else "- Perform safe organization via GlobalFileManager.organize (rename/move only; no create/delete)"
         ),
         "- Use ask for discovery, then call organize to apply changes.",
-        "\nWebsite Configuration",
-        "-----------------------",
-        "- Saving/registering/configuring websites always goes to WebSearcher.update.",
+        "\nWebsite Configuration (WebSearcher, not KnowledgeManager)",
+        "------------------------------------------------------------",
+        "- Saving/registering/configuring websites always goes to WebSearcher.update — NOT KnowledgeManager.",
+        "- WebSearcher owns the Websites catalog. Do not store website info in the knowledge base.",
         f"- Flow: `{secret_ask_fname}` (find credentials) → `{web_update_fname}` (register site with credentials).",
         "Task execution policy — mandatory execute when asked to run/start:",
         f"- If the user says 'run', 'start', 'execute', 'begin', or 'launch' a task, you MUST call `{task_execute_fname}` exactly once.",
