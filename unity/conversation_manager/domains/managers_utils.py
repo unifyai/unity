@@ -359,6 +359,7 @@ async def init_conv_manager(cm: "ConversationManager"):
                 event_broker=cm.event_broker,
                 conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
                 contact_id="1",
+                transcript_manager=cm.transcript_manager,
                 conversation_manager=cm,
             )
             print("[ManagersWorker] ConversationManagerHandle initialized")
