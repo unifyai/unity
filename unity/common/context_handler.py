@@ -49,7 +49,9 @@ class ContextHandler:
 
     @classmethod
     def get_context(
-        cls, manager: BaseStateManager | str, ctx_name: str
+        cls,
+        manager: BaseStateManager | str,
+        ctx_name: str,
     ) -> Optional[str]:
         manager_name = cls._get_manager_name(manager)
         key = (manager_name, ctx_name)
@@ -78,7 +80,6 @@ class ContextHandler:
         from unity.secret_manager.secret_manager import SecretManager
         from unity.web_searcher.web_searcher import WebSearcher
         from unity.image_manager.image_manager import ImageManager
-        from unity.file_manager.managers.file_manager import FileManager
         from unity.function_manager.function_manager import FunctionManager
 
         return [
@@ -160,7 +161,8 @@ class ContextHandler:
         current_context: str,
     ) -> Dict[str, Dict]:
         assert hasattr(
-            manager, "Config"
+            manager,
+            "Config",
         ), f"Manager {manager.__name__} must have a Config class attribute"
         assert hasattr(
             manager.Config,
