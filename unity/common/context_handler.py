@@ -1,10 +1,9 @@
 import unify
-from typing import List, Dict
+from typing import List, Dict, Optional, Any, Union, Type
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from unity.common.state_managers import BaseStateManager
 from unify import create_context, create_fields
 from pydantic import BaseModel
-from typing import Optional, Any
 
 
 class TableContext(BaseModel):
@@ -33,16 +32,20 @@ class ContextHandler:
         return list(unify.get_contexts().keys())
 
     @staticmethod
-    def _get_manager_name(manager: BaseStateManager | str) -> str:
-        if isinstance(manager, str):
-            return manager
+    def _get_manager_name(
+        manager: Union[BaseStateManager, Type[BaseStateManager]],
+    ) -> str:
         try:
             return manager.__name__
         except:
             return type(manager).__name__
 
     @classmethod
-    def forget(cls, manager: BaseStateManager | str, ctx_name: str):
+    def forget(
+        cls,
+        manager: Union[BaseStateManager, Type[BaseStateManager]],
+        ctx_name: str,
+    ):
         manager_name = cls._get_manager_name(manager)
         key = (manager_name, ctx_name)
         cls._available_contexts.pop(key, None)
@@ -50,7 +53,7 @@ class ContextHandler:
     @classmethod
     def get_context(
         cls,
-        manager: BaseStateManager | str,
+        manager: Union[BaseStateManager, Type[BaseStateManager]],
         ctx_name: str,
     ) -> Optional[str]:
         manager_name = cls._get_manager_name(manager)
