@@ -383,7 +383,7 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
         contact_id,
         contact_details,
     )
-    to_email = contact.get("email")
+    to_email = contact.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
     message_id = kwargs.get("message_id")

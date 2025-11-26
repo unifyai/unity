@@ -98,6 +98,7 @@ async def main(project_name: str = "Assistants"):
         debug_logger.log_job_startup = _sync_mock_success
         debug_logger.mark_job_done = _sync_mock_success
         managers_utils.log_message = _async_mock_success
+        managers_utils.publish_bus_events = _async_mock_success
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
