@@ -160,10 +160,10 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         if not cm.call_manager.realtime:
             await cm.cancel_filler()
             asyncio.create_task(cm.run_filler_once())
-        
+
         # Cancel proactive speech on user utterance
         await cm.cancel_proactive_speech()
-        
+
         # Route to active ask handle or Main CM Brain
         if cm.active_ask_handle and not cm.active_ask_handle.done():
             print(f"🔀 ROUTING: Forwarding to ConversationManagerHandle.ask")
@@ -336,31 +336,36 @@ async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
 
 
 @EventHandler.register(NotificationInjectedEvent)
-async def _(event: NotificationInjectedEvent, cm: "ConversationManager", *args, **kwargs):
+async def _(
+    event: NotificationInjectedEvent, cm: "ConversationManager", *args, **kwargs
+):
     print(f"Received NotificationInjectedEvent: {event.content}")
-    
+
     # Push to notification bar
     cm.notifications_bar.push_notif(
         event.source,
         event.content,
         event.timestamp,
         pinned=event.pinned,
-        id=event.interjection_id
+        id=event.interjection_id,
     )
-    
+
     # Cancel proactive speech because we are injecting something
     await cm.cancel_proactive_speech()
-    
+
     # Trigger LLM to react to the notification
     await cm.run_llm(delay=0, cancel_running=True)
 
 
 @EventHandler.register(NotificationUnpinnedEvent)
-async def _(event: NotificationUnpinnedEvent, cm: "ConversationManager", *args, **kwargs):
+async def _(
+    event: NotificationUnpinnedEvent, cm: "ConversationManager", *args, **kwargs
+):
     print(f"Received NotificationUnpinnedEvent: {event.interjection_id}")
-    
+
     # Remove from notification bar
     cm.notifications_bar.remove_notif(event.interjection_id)
+
 
 @EventHandler.register(ConductorResult)
 async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
@@ -479,7 +484,7 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
 @EventHandler.register(DirectSpeechEvent)
 async def _(event: DirectSpeechEvent, cm: "ConversationManager", *args, **kwargs):
     print(f"Received DirectSpeechEvent: {event.content}")
-    
+
     # Speak to voice layer using appropriate channel
     if cm.mode in ["call", "unify_call", "gmeet"]:
         if cm.call_manager.realtime:
@@ -492,7 +497,9 @@ async def _(event: DirectSpeechEvent, cm: "ConversationManager", *args, **kwargs
             # STT-TTS pipeline: Send to response_gen channel
             channel = f"app:{cm.mode}:response_gen"
             await cm.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
-            await cm.event_broker.publish(channel, json.dumps({"type": "gen_chunk", "chunk": event.content}))
+            await cm.event_broker.publish(
+                channel, json.dumps({"type": "gen_chunk", "chunk": event.content})
+            )
             await cm.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
 
     # Record in contact_index for transcript access
@@ -504,4 +511,3 @@ async def _(event: DirectSpeechEvent, cm: "ConversationManager", *args, **kwargs
         role="assistant",
         timestamp=event.timestamp,
     )
-

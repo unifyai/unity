@@ -9,7 +9,7 @@ import asyncio
 from unity.conversation_manager import debug_logger
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.event_broker import get_event_broker
-from unity.conversation_manager.domains import comms_utils
+from unity.conversation_manager.domains import comms_utils, managers_utils
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
 from unity.helpers import cleanup_dangling_call_processes
@@ -97,6 +97,7 @@ async def main(project_name: str = "Assistants"):
         conversation_manager.call_manager.start_unify_call = _sync_mock_success
         debug_logger.log_job_startup = _sync_mock_success
         debug_logger.mark_job_done = _sync_mock_success
+        managers_utils.log_message = _async_mock_success
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
