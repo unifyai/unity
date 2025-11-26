@@ -155,7 +155,7 @@ def stub_controller_deps(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 from unity.singleton_registry import SingletonRegistry
-from unity.common.context_handler import ContextRegistry
+from unity.common.context_registry import ContextRegistry
 
 
 @pytest.fixture(autouse=True)

@@ -29,7 +29,7 @@ from ..common.embed_utils import ensure_vector_column
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k
 from .types.website import Website
-from ..common.context_handler import TableContext, ContextRegistry
+from ..common.context_registry import ContextRegistry, TableContext
 
 
 class WebSearcher(BaseWebSearcher):

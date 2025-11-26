@@ -54,7 +54,7 @@ from .images import (
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
-from ..common.context_handler import TableContext, ContextRegistry
+from ..common.context_registry import ContextRegistry, TableContext
 from ..common.model_to_fields import model_to_fields
 from ..common.metrics_utils import reduce_logs
 

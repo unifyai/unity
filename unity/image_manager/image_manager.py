@@ -25,7 +25,7 @@ from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
 from ..common.filter_utils import normalize_filter_expr
 from ..common.data_store import DataStore
-from ..common.context_handler import TableContext, ContextRegistry
+from ..common.context_registry import ContextRegistry, TableContext
 import itertools
 
 

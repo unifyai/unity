@@ -85,7 +85,7 @@ from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.sentinels import _UnsetSentinel
-from ..common.context_handler import TableContext, ContextRegistry
+from ..common.context_registry import ContextRegistry, TableContext
 
 
 # Sentinel for optional-argument presence detection

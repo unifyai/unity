@@ -12,7 +12,7 @@ from ..common.metrics_utils import reduce_logs
 import unify
 from .types.contact import Contact
 from .base import BaseContactManager
-from ..common.context_handler import TableContext, ContextRegistry
+from ..common.context_registry import ContextRegistry, TableContext
 from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,

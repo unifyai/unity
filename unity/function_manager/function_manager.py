@@ -15,7 +15,7 @@ from ..common.model_to_fields import model_to_fields
 from ..file_manager.managers.local import LocalFileManager as FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
-from ..common.context_handler import TableContext, ContextRegistry
+from ..common.context_registry import ContextRegistry, TableContext
 
 
 logger = logging.getLogger(__name__)

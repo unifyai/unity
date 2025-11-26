@@ -33,7 +33,7 @@ from ..image_manager.image_manager import ImageManager
 from ..image_manager.types import AnnotatedImageRefs, AnnotatedImageRef
 from ..common.embed_utils import list_private_fields
 from ..common.filter_utils import normalize_filter_expr
-from ..common.context_handler import TableContext, ContextRegistry
+from ..common.context_registry import TableContext, ContextRegistry
 
 
 class GuidanceManager(BaseGuidanceManager):

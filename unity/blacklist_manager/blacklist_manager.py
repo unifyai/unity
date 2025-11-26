@@ -11,7 +11,7 @@ from ..common.filter_utils import normalize_filter_expr
 from ..blacklist_manager.types.blacklist import BlackList
 from ..transcript_manager.types.medium import Medium
 from .base import BaseBlackListManager
-from ..common.context_handler import TableContext, ContextRegistry
+from ..common.context_registry import ContextRegistry, TableContext
 
 
 class BlackListManager(BaseBlackListManager):

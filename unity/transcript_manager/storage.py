@@ -4,7 +4,7 @@ from typing import Dict, Optional, Set
 
 import unify
 
-from ..common.context_handler import ContextRegistry
+from ..common.context_registry import ContextRegistry
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from .types.message import Message

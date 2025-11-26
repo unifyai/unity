@@ -34,7 +34,7 @@ from .base import BaseSecretManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k, is_plain_identifier
-from ..common.context_handler import TableContext, ContextRegistry
+from ..common.context_registry import ContextRegistry, TableContext
 
 
 class SecretManager(BaseSecretManager):
