@@ -29,7 +29,7 @@ from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
-from ..common.context_handler import TableContext, ContextHandler
+from ..common.context_handler import TableContext, ContextRegistry
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
 from ..common.metrics_utils import reduce_logs
@@ -202,14 +202,14 @@ class KnowledgeManager(BaseKnowledgeManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a KnowledgeManager."
-        self._ctx = ContextHandler.get_context(self, "Knowledge")
+        self._ctx = ContextRegistry.get_context(self, "Knowledge")
 
         # Only compute the Contacts context if the caller requested integration.
         self._contacts_ctx: Optional[str]
         if include_contacts:
             from unity.contact_manager.contact_manager import ContactManager
 
-            self._contacts_ctx = ContextHandler.get_context(ContactManager, "Contacts")
+            self._contacts_ctx = ContextRegistry.get_context(ContactManager, "Contacts")
         else:
             self._contacts_ctx = None
 

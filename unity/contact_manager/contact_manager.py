@@ -12,7 +12,7 @@ from ..common.metrics_utils import reduce_logs
 import unify
 from .types.contact import Contact
 from .base import BaseContactManager
-from ..common.context_handler import TableContext, ContextHandler
+from ..common.context_handler import TableContext, ContextRegistry
 from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -117,7 +117,7 @@ class ContactManager(BaseContactManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a ContactManager."
-        self._ctx = ContextHandler.get_context(self, "Contacts")
+        self._ctx = ContextRegistry.get_context(self, "Contacts")
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("contact_id",))
@@ -343,7 +343,7 @@ class ContactManager(BaseContactManager):
         # No per-instance custom field state to reset
 
         # Ensure the schema exists again via shared provisioning helper
-        ContextHandler.refresh(self, "Contacts")
+        ContextRegistry.refresh(self, "Contacts")
 
         self._provision_storage()
 

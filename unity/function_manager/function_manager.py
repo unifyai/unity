@@ -15,7 +15,7 @@ from ..common.model_to_fields import model_to_fields
 from ..file_manager.managers.local import LocalFileManager as FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
-from ..common.context_handler import TableContext, ContextHandler
+from ..common.context_handler import TableContext, ContextRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ class FunctionManager(BaseFunctionManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a FunctionManager."
-        self._ctx = ContextHandler.get_context(self, "Functions")
+        self._ctx = ContextRegistry.get_context(self, "Functions")
 
         # Add tracing
         if traced:
@@ -448,7 +448,7 @@ class FunctionManager(BaseFunctionManager):
             pass
 
         # Force re-provisioning
-        ContextHandler.refresh(self, "Functions")
+        ContextRegistry.refresh(self, "Functions")
 
         # Verify visibility before proceeding
         try:

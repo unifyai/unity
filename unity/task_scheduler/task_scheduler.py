@@ -85,7 +85,7 @@ from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
 from ..common.sentinels import _UnsetSentinel
-from ..common.context_handler import TableContext, ContextHandler
+from ..common.context_handler import TableContext, ContextRegistry
 
 
 # Sentinel for optional-argument presence detection
@@ -291,7 +291,7 @@ class TaskScheduler(BaseTaskScheduler):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TaskScheduler."
-        self._ctx = ContextHandler.get_context(self, "Tasks")
+        self._ctx = ContextRegistry.get_context(self, "Tasks")
 
         # Install storage adapter and ensure context/fields exist
         self._provision_storage()

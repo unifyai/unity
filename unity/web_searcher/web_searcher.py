@@ -29,7 +29,7 @@ from ..common.embed_utils import ensure_vector_column
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k
 from .types.website import Website
-from ..common.context_handler import TableContext, ContextHandler
+from ..common.context_handler import TableContext, ContextRegistry
 
 
 class WebSearcher(BaseWebSearcher):
@@ -69,7 +69,7 @@ class WebSearcher(BaseWebSearcher):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must match for WebSearcher."
-        self._websites_ctx = ContextHandler.get_context(self, "Websites")
+        self._websites_ctx = ContextRegistry.get_context(self, "Websites")
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
             self._search,
@@ -286,7 +286,7 @@ class WebSearcher(BaseWebSearcher):
         except Exception:
             pass
 
-        ContextHandler.refresh(self, "Websites")
+        ContextRegistry.refresh(self, "Websites")
 
         # Attempt to ensure context visibility before reads
         try:

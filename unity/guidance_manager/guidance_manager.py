@@ -33,7 +33,7 @@ from ..image_manager.image_manager import ImageManager
 from ..image_manager.types import AnnotatedImageRefs, AnnotatedImageRef
 from ..common.embed_utils import list_private_fields
 from ..common.filter_utils import normalize_filter_expr
-from ..common.context_handler import TableContext, ContextHandler
+from ..common.context_handler import TableContext, ContextRegistry
 
 
 class GuidanceManager(BaseGuidanceManager):
@@ -84,7 +84,7 @@ class GuidanceManager(BaseGuidanceManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a GuidanceManager."
 
-        self._ctx = ContextHandler.get_context(self, "Guidance")
+        self._ctx = ContextRegistry.get_context(self, "Guidance")
 
         # Built-in fields derived from Guidance model
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(Guidance.model_fields.keys())
@@ -338,7 +338,7 @@ class GuidanceManager(BaseGuidanceManager):
             pass
 
         # Ensure the schema exists again via shared provisioning helper
-        ContextHandler.refresh(self, "Guidance")
+        ContextRegistry.refresh(self, "Guidance")
         self._provision_storage()
 
         # Verify the context is visible before attempting reads

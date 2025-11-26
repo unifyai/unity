@@ -11,7 +11,7 @@ from ..common.filter_utils import normalize_filter_expr
 from ..blacklist_manager.types.blacklist import BlackList
 from ..transcript_manager.types.medium import Medium
 from .base import BaseBlackListManager
-from ..common.context_handler import TableContext, ContextHandler
+from ..common.context_handler import TableContext, ContextRegistry
 
 
 class BlackListManager(BaseBlackListManager):
@@ -53,7 +53,7 @@ class BlackListManager(BaseBlackListManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a BlackListManager."
 
-        self._ctx = ContextHandler.get_context(self, "BlackList")
+        self._ctx = ContextRegistry.get_context(self, "BlackList")
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(
@@ -75,7 +75,7 @@ class BlackListManager(BaseBlackListManager):
             pass
 
         # Force re-provisioning by clearing TableStore ensure memo for this context
-        ContextHandler.refresh(self, "BlackList")
+        ContextRegistry.refresh(self, "BlackList")
 
         # Verify visibility before proceeding
         try:

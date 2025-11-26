@@ -25,7 +25,7 @@ from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
 from ..common.filter_utils import normalize_filter_expr
 from ..common.data_store import DataStore
-from ..common.context_handler import TableContext, ContextHandler
+from ..common.context_handler import TableContext, ContextRegistry
 import itertools
 
 
@@ -630,7 +630,7 @@ class ImageManager(BaseImageManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating an ImageManager."
 
-        self._ctx = ContextHandler.get_context(self, "Images")
+        self._ctx = ContextRegistry.get_context(self, "Images")
 
         # Local DataStore mirror for Images (write-through on reads/writes)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("image_id",))
@@ -1308,7 +1308,7 @@ class ImageManager(BaseImageManager):
             pass
 
         # Ensure the schema exists again via shared provisioning helper
-        ContextHandler.refresh(self, "Images")
+        ContextRegistry.refresh(self, "Images")
 
         # Clear local DataStore cache for this context
         try:

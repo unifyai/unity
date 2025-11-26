@@ -16,7 +16,7 @@ class TableContext(BaseModel):
     foreign_keys: Optional[List[Dict[str, Any]]] = None
 
 
-class ContextHandler:
+class ContextRegistry:
     _setup_complete = False
     _registry = {}
 

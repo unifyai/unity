@@ -34,7 +34,7 @@ from .base import BaseSecretManager
 from .prompt_builders import build_ask_prompt, build_update_prompt
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k, is_plain_identifier
-from ..common.context_handler import TableContext, ContextHandler
+from ..common.context_handler import TableContext, ContextRegistry
 
 
 class SecretManager(BaseSecretManager):
@@ -72,7 +72,7 @@ class SecretManager(BaseSecretManager):
             read_ctx == write_ctx
         ), "read and write contexts must match for SecretManager."
 
-        self._ctx = ContextHandler.get_context(self, "Secrets")
+        self._ctx = ContextRegistry.get_context(self, "Secrets")
 
         # Ensure storage/schema exists deterministically (idempotent)
         self._provision_storage()
@@ -140,7 +140,7 @@ class SecretManager(BaseSecretManager):
             pass
 
         # Force re-provisioning even if previously ensured
-        ContextHandler.refresh(self, "Secrets")
+        ContextRegistry.refresh(self, "Secrets")
 
         # Re-create schema and vectors
         self._provision_storage()
