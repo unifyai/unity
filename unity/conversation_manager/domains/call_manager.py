@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 
 from unity.helpers import cleanup_dangling_call_processes, run_script, terminate_process
-from unity.conversation_manager.new_events import *
+from unity.conversation_manager.events import *
 
 
 @dataclass

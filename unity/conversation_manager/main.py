@@ -13,7 +13,7 @@ from unity.conversation_manager.domains import comms_utils, managers_utils
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
-from unity.conversation_manager.new_events import SummarizeContext
+from unity.conversation_manager.events import SummarizeContext
 from unity.helpers import cleanup_dangling_call_processes
 
 

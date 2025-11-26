@@ -14,7 +14,7 @@ import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from .base import BaseConversationManagerHandle
-from .new_events import (
+from .events import (
     NotificationInjectedEvent,
     NotificationUnpinnedEvent,
     DirectSpeechEvent,
