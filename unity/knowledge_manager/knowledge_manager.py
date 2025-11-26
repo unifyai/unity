@@ -35,7 +35,6 @@ from ..common.clarification_tools import add_clarification_tool_with_events
 
 # Module delegations (split helpers for parity with ContactManager)
 from .storage import (
-    provision_storage as _storage_provision,
     get_columns as _storage_get_columns,
     tables_overview as _storage_tables_overview,
     ctx_for_table as _storage_ctx_for_table,
@@ -211,12 +210,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             self._contacts_ctx = ContextHandler.get_context(ContactManager, "Contacts")
         else:
             self._contacts_ctx = None
-
-        # Ensure any additional storage requirements are provisioned
-        try:
-            self._provision_storage()
-        except Exception:
-            pass
 
     async def _maybe_build_show_all_seed(
         self,
@@ -763,17 +756,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             pass
 
         # Re-provision any required/linked storage
-        try:
-            self._provision_storage()
-        except Exception:
-            pass
-
-    # Private #
-    # --------#
-
-    def _provision_storage(self) -> None:
-        """Ensure optional linked storage exists (e.g. root-level Contacts)."""
-        _storage_provision(self)
 
     # Tables
 
