@@ -25,7 +25,6 @@ from .prompt_builders import (
     build_ask_prompt,
     build_refactor_prompt,
 )
-from ..common.context_store import TableStore
 from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
