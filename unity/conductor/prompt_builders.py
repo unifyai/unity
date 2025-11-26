@@ -322,7 +322,6 @@ def build_request_prompt(
                 f"- Use `{actor_act_fname}` for ad-hoc, conversational sandbox sessions (onboarding, live screen/browser guidance) that don't need task tracking.",
                 "Routing rule (important): If the user requests a live walkthrough or immediate interactive guidance — phrases like 'open a browser', 'walk me through', 'let's set this up together', 'troubleshoot with me now' — call the Actor immediately. Do NOT create or update a task first.",
                 "Only one can run at a time; while one is active, the other surface is hidden.",
-                f"Actor is for live browser/UI sessions only – do NOT use `{actor_act_fname}` for saving/updating catalogs (use the owning manager's update method instead).",
             ],
         )
 
