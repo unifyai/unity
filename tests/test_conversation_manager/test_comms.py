@@ -18,7 +18,7 @@ from tests.test_conversation_manager.helpers import (
     send_incoming_sms,
     send_incoming_unify_message,
 )
-from unity.conversation_manager.new_events import PhoneCallEnded, UnifyCallEnded
+from unity.conversation_manager.events import PhoneCallEnded, UnifyCallEnded
 
 
 contacts = [
