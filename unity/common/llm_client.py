@@ -14,13 +14,16 @@ DEFAULT_MODEL = "gpt-5@openai"
 def new_llm_client(
     model: str = DEFAULT_MODEL,
     *,
+    async_client: bool = True,
     stateful: bool = False,
     **kwargs: Any,
-) -> "unify.AsyncUnify":
+) -> "unify.AsyncUnify | unify.Unify":
     """
-    Create a configured AsyncUnify client.
+    Create a configured Unify client.
 
     Defaults to "gpt-5@openai" with sane defaults for reasoning effort and service tier.
+    Returns an AsyncUnify client by default, or a synchronous Unify client when
+    async_client=False.
     """
     config = {
         "cache": json.loads(os.environ.get("UNIFY_CACHE", "true")),
@@ -31,4 +34,6 @@ def new_llm_client(
     }
     config.update(kwargs)
 
-    return unify.AsyncUnify(model, **config)
+    if async_client:
+        return unify.AsyncUnify(model, **config)
+    return unify.Unify(model, **config)
