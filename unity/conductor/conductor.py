@@ -416,6 +416,8 @@ class Conductor(BaseConductor):
             loop_id=f"{self.__class__.__name__}.{self.ask.__name__}",
             parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
+            max_steps=None,
+            timeout=None,
             # Keep behaviour close to the real Conductor: force one tool call on turn 0, then auto
             tool_policy=tool_policy,
             semantic_cache=use_semantic_cache,
@@ -618,6 +620,8 @@ class Conductor(BaseConductor):
             loop_id=f"{self.__class__.__name__}.{self.request.__name__}",
             parent_chat_context=_parent_chat_context,
             log_steps=_log_tool_steps,
+            max_steps=None,
+            timeout=None,
             # Hide Actor.act and TaskScheduler.execute while a session is active
             tool_policy=self._mask_act_execute_policy(),
             handle_cls=ConductorRequestHandle,
