@@ -1,18 +1,13 @@
 import os
 import unify
-from typing import Any, Dict
+from typing import Any
 from pydantic import BaseModel
 import inspect
-from unity.common.async_tool_loop import (
-    SteerableToolHandle,
-)
 
-# from unity.conversation_manager import comms_actions
 from unity.controller.browser import Browser
 from unity.contact_manager.contact_manager import ContactManager
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-from unity.common.llm_helpers import methods_to_tool_dict
 from unity.secret_manager.secret_manager import SecretManager
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.handle import ConversationManagerHandle
@@ -119,10 +114,17 @@ class ActionProvider:
                     "ASSISTANT_ID environment variable is not set. "
                     "Cannot create ConversationManagerHandle.",
                 )
+            from unity.singleton_registry import SingletonRegistry
+            from unity.conversation_manager.conversation_manager import (
+                ConversationManager,
+            )
+
+            cm_instance = SingletonRegistry.get(ConversationManager)
             self._conversation_manager = ConversationManagerHandle(
                 event_broker=event_broker,
                 conversation_id=assistant_id,
                 contact_id=1,
+                conversation_manager=cm_instance,
             )
         return self._conversation_manager
 
@@ -168,104 +170,6 @@ class ActionProvider:
                 **self._browser_kwargs_map[self._browser_mode],
             )
         return self._browser
-
-    # --- Communication Actions ---
-
-    async def send_sms_message(
-        self,
-        description: str,
-        parent_chat_context: list[dict] | None = None,
-    ) -> SteerableToolHandle:
-        """
-        Understands a natural language request to send an SMS. This tool orchestrates a multi-step process:
-        1. It uses the ContactManager to find the recipient's phone number based on the description.
-        2. It uses other tools to gather necessary information and draft a precise message.
-        3. It then calls the low-level `_send_sms_message_via_number` to finally send the message.
-        You should provide a clear and complete description, e.g., "Send a text to John Doe letting him know his appointment is confirmed for 3 PM tomorrow."
-        """
-        return await comms_actions.send_sms_message(description, parent_chat_context)
-
-    async def send_email(
-        self,
-        description: str,
-        parent_chat_context: list[dict] | None = None,
-    ) -> SteerableToolHandle:
-        """
-        Understands a natural language request to send an email. This tool orchestrates a multi-step process:
-        1. It uses the ContactManager to find the recipient's email address based on the description.
-        2. It uses other tools like the KnowledgeManager or TranscriptManager to draft the email content.
-        3. It then calls the low-level `_send_email_via_address` to send the email.
-        You should provide a clear and complete description, e.g., "Email Jane Doe to follow up on our conversation from yesterday about the project proposal."
-        """
-        return await comms_actions.send_email(description, parent_chat_context)
-
-    async def send_whatsapp_message(
-        self,
-        description: str,
-        parent_chat_context: list[dict] | None = None,
-    ) -> SteerableToolHandle:
-        """
-        Understands a natural language request to send a WhatsApp message. This tool orchestrates a multi-step process:
-        1. It uses the ContactManager to find the recipient's WhatsApp-enabled phone number.
-        2. It drafts a message based on the provided description and context.
-        3. It calls the low-level `_send_whatsapp_message_via_number` to dispatch the message.
-        You should provide a clear and complete description, e.g., "Send a WhatsApp message to the team group to remind them of the 10 AM meeting."
-        """
-        return await comms_actions.send_whatsapp_message(
-            description,
-            parent_chat_context,
-        )
-
-    def start_call(
-        self,
-        phone_number: str,
-        purpose: str,
-        task_context: Dict[str, str] = None,
-    ) -> SteerableToolHandle:
-        """
-        Initiates an outbound phone call to a specified number for a given purpose.
-        This function returns a steerable 'Call' handle that allows for interactive, real-time conversation.
-        Args:
-            phone_number: The destination phone number to call.
-            purpose: A clear and concise description of why the call is being made. This purpose will be used to guide the conversation.
-            task_context: The broader task context for the call, with name and description attributes. Use None if there is no task context.
-        """
-        return comms_actions.Call.create(
-            phone_number,
-            purpose,
-            task_context,
-            tools=methods_to_tool_dict(
-                self.contact_manager.ask,
-                self.transcript_manager.ask,
-                self.knowledge_manager.ask,
-                self.task_scheduler.ask,
-            ),
-        )
-
-    def join_meet(
-        self,
-        meet_id: str,
-        purpose: str,
-        task_context: Dict[str, str] = None,
-    ):
-        """
-        Joins a Google Meet call.
-        Args:
-            meet_id: The ID of the Google Meet call.
-            purpose: A clear and concise description of why the call is being made. This purpose will be used to guide the conversation.
-            task_context: The broader task context for the call, with name and description attributes. Use None if there is no task context.
-        """
-        return comms_actions.GoogleMeet.create(
-            meet_id,
-            purpose,
-            task_context,
-            tools=methods_to_tool_dict(
-                self.contact_manager.ask,
-                self.transcript_manager.ask,
-                self.knowledge_manager.ask,
-                self.task_scheduler.ask,
-            ),
-        )
 
     # --- Generic Reasoning Action ---
     async def reason(
