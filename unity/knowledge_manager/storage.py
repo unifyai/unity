@@ -4,8 +4,6 @@ import unify
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Union
 
-from ..common.context_store import TableStore
-
 
 def ctx_for_table(self, table: str) -> str:
     """
@@ -23,21 +21,6 @@ def ctx_for_table(self, table: str) -> str:
             )
         return self._contacts_ctx  # type: ignore[attr-defined]
     return f"{self._ctx}/{table}"
-
-
-def provision_storage(self) -> None:
-    """Ensure optional linked storage exists (e.g. root-level Contacts)."""
-    contacts_ctx = getattr(self, "_contacts_ctx", None)
-    if contacts_ctx is not None:
-        try:
-            TableStore(
-                contacts_ctx,
-                unique_keys={"contact_id": "int"},
-                auto_counting={"contact_id": None},
-            ).ensure_context()
-        except Exception:
-            # Best-effort; absence of Contacts must not break KM initialisation
-            pass
 
 
 def get_columns(self, *, table: str) -> Dict[str, str]:

@@ -12,6 +12,7 @@ from ..common.metrics_utils import reduce_logs
 import unify
 from .types.contact import Contact
 from .base import BaseContactManager
+from ..common.context_registry import ContextRegistry, TableContext
 from ..common.data_store import DataStore
 from ..common.llm_helpers import (
     methods_to_tool_dict,
@@ -21,6 +22,7 @@ from ..common.async_tool_loop import (
     SteerableToolHandle,
     TOOL_LOOP_LINEAGE,
 )
+from ..common.model_to_fields import model_to_fields
 from ..events.manager_event_logging import log_manager_call
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
@@ -57,6 +59,17 @@ from .search import (
 
 
 class ContactManager(BaseContactManager):
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Contacts",
+                description="List of contacts, with all contact details stored.",
+                fields=model_to_fields(Contact),
+                unique_keys={"contact_id": "int"},
+                auto_counting={"contact_id": None},
+            ),
+        ]
+
     # ──────────────────────────────────────────────────────────────────────
     #  Class-level constants / configuration
     # ──────────────────────────────────────────────────────────────────────
@@ -104,7 +117,7 @@ class ContactManager(BaseContactManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a ContactManager."
-        self._ctx = f"{read_ctx}/Contacts"
+        self._ctx = ContextRegistry.get_context(self, "Contacts")
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("contact_id",))
@@ -330,16 +343,7 @@ class ContactManager(BaseContactManager):
         # No per-instance custom field state to reset
 
         # Ensure the schema exists again via shared provisioning helper
-        try:
-            # Remove any previous ensure memo and force re-provisioning
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
+        ContextRegistry.refresh(self, "Contacts")
 
         self._provision_storage()
 

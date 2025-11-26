@@ -155,6 +155,7 @@ def stub_controller_deps(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 from unity.singleton_registry import SingletonRegistry
+from unity.common.context_registry import ContextRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -162,6 +163,7 @@ def _clear_singletons_between_tests():
     """Ensure *singleton* instances never leak from one test to the next."""
     yield
     SingletonRegistry.clear()  # Clear the registry after each test
+    ContextRegistry.clear()  # Clear the context handler after each test
 
 
 # --------------------------------------------------------------------------- #

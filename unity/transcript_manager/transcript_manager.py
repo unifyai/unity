@@ -54,6 +54,8 @@ from .images import (
     attach_message_images_to_context as _attach_message_images_to_context_impl,
 )
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
+from ..common.context_registry import ContextRegistry, TableContext
+from ..common.model_to_fields import model_to_fields
 from ..common.metrics_utils import reduce_logs
 
 
@@ -65,6 +67,50 @@ class TranscriptManager(BaseTranscriptManager):
 
     # Vector embedding column names
     _MSG_EMB = "_content_emb"
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Transcripts",
+                description="List of all timestamped messages sent between all contacts across all mediums.",
+                fields=model_to_fields(Message),
+                unique_keys={"message_id": "int"},
+                auto_counting={"message_id": None},
+                foreign_keys=[
+                    {
+                        "name": "sender_id",
+                        "references": "Contacts.contact_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "receiver_ids[*]",
+                        "references": "Contacts.contact_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "exchange_id",
+                        "references": "Exchanges.exchange_id",
+                        "on_delete": "CASCADE",
+                        "on_update": "CASCADE",
+                    },
+                    {
+                        "name": "images[*].raw_image_ref.image_id",
+                        "references": "Images.image_id",
+                        "on_delete": "SET NULL",
+                        "on_update": "CASCADE",
+                    },
+                ],
+            ),
+            TableContext(
+                name="Exchanges",
+                description="One row per conversation exchange/thread with optional metadata.",
+                fields=model_to_fields(Exchange),
+                unique_keys={"exchange_id": "int"},
+                auto_counting={"exchange_id": None},
+            ),
+        ]
 
     # ──────────────────────────────────────────────────────────────────────
     #  Construction & tool registration
@@ -117,14 +163,8 @@ class TranscriptManager(BaseTranscriptManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a TranscriptManager."
 
-        if read_ctx:
-            self._transcripts_ctx = f"{read_ctx}/Transcripts"
-        else:
-            self._transcripts_ctx = "Transcripts"
-        if read_ctx:
-            self._exchanges_ctx = f"{read_ctx}/Exchanges"
-        else:
-            self._exchanges_ctx = "Exchanges"
+        self._transcripts_ctx = ContextRegistry.get_context(self, "Transcripts")
+        self._exchanges_ctx = ContextRegistry.get_context(self, "Exchanges")
 
         # Image support: lazy-safe image manager and image-aware tools
         _ensure_image_manager(self)

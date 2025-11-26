@@ -5,19 +5,30 @@ import functools
 
 import unify
 
-from ..common.context_store import TableStore
 from ..common.data_store import DataStore
 from ..common.model_to_fields import model_to_fields
 from ..common.filter_utils import normalize_filter_expr
 from ..blacklist_manager.types.blacklist import BlackList
 from ..transcript_manager.types.medium import Medium
 from .base import BaseBlackListManager
+from ..common.context_registry import ContextRegistry, TableContext
 
 
 class BlackListManager(BaseBlackListManager):
     """
     Manages a minimal catalogue of blacklisted contact details, keyed by ``blacklist_id``.
     """
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="BlackList",
+                description="List of blacklisted contact details (per medium).",
+                fields=model_to_fields(BlackList),
+                unique_keys={"blacklist_id": "int"},
+                auto_counting={"blacklist_id": None},
+            ),
+        ]
 
     # ------------------------------------------------------------------ #
     # Construction                                                       #
@@ -42,7 +53,7 @@ class BlackListManager(BaseBlackListManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a BlackListManager."
 
-        self._ctx = f"{read_ctx}/BlackList" if read_ctx else "BlackList"
+        self._ctx = ContextRegistry.get_context(self, "BlackList")
 
         # Local DataStore mirror (write-through only; never read from it)
         self._data_store = DataStore.for_context(
@@ -52,23 +63,6 @@ class BlackListManager(BaseBlackListManager):
 
         # Immutable built-in columns derived directly from the model
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(BlackList.model_fields.keys())
-
-        # Ensure context/schema (idempotent)
-        self._provision_storage()
-
-    # ------------------------------------------------------------------ #
-    # Storage provisioning                                                #
-    # ------------------------------------------------------------------ #
-    def _provision_storage(self) -> None:
-        """Ensure BlackList context and schema exist deterministically."""
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"blacklist_id": "int"},
-            auto_counting={"blacklist_id": None},
-            description="List of blacklisted contact details (per medium).",
-            fields=model_to_fields(BlackList),
-        )
-        self._store.ensure_context()
 
     # ------------------------------------------------------------------ #
     # Public API                                                         #
@@ -81,18 +75,7 @@ class BlackListManager(BaseBlackListManager):
             pass
 
         # Force re-provisioning by clearing TableStore ensure memo for this context
-        try:
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        # Recreate schema
-        self._provision_storage()
+        ContextRegistry.refresh(self, "BlackList")
 
         # Verify visibility before proceeding
         try:
