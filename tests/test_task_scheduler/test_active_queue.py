@@ -39,7 +39,7 @@ async def _make_ordered_queue(ts: TaskScheduler, names: list[str]) -> list[int]:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
+async def test_passthrough_then_switch_to_multitask(monkeypatch):
     """Start with a singleton queue (passthrough), then append a follower and
     verify the handle switches to multi-task behaviour (CHAIN preamble in ask).
 
@@ -115,7 +115,7 @@ async def test_active_queue_passthrough_then_switch_to_multitask(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_queue_by_numeric_id_forwards_and_runs_followers(monkeypatch):
+async def test_execute_by_numeric_id_forwards_and_runs_followers(monkeypatch):
     # Steps-based actor: immediate completion to avoid timing races
     class _Short(SimulatedActor):  # type: ignore[misc]
         def __init__(self, *a, **kw):
@@ -217,7 +217,7 @@ async def test_chain_execution_preserves_schedule_and_start_at(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
+async def test_execute_then_defer_on_second_stops_queue_and_reinstate(
     monkeypatch,
 ):
     # Steps-based actor: each task completes after a single interject
@@ -304,7 +304,7 @@ async def test_execute_queue_then_defer_on_second_stops_queue_and_reinstate(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_queue_by_numeric_id_completes_all(monkeypatch):
+async def test_execute_by_numeric_id_completes_all(monkeypatch):
     """Numeric id path: starting at head should run through all followers to completion."""
 
     # Steps-based actor: immediate completion per task
@@ -340,7 +340,7 @@ async def test_execute_queue_by_numeric_id_completes_all(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_queue_pause_resume_and_completion(monkeypatch):
+async def test_pause_resume_and_completion(monkeypatch):
     """
     Make SimulatedActor step-based (no duration) to avoid races. Pause/resume
     while current task is certainly active.
@@ -438,7 +438,7 @@ async def test_queue_pause_resume_and_completion(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_queue_interject_routing_multi_task(monkeypatch):
+async def test_interject_routing_multi_task(monkeypatch):
     """
     Interjections can be routed by an LLM to multiple tasks:
       - current task receives its instructions immediately
@@ -577,7 +577,7 @@ async def test_queue_interject_routing_multi_task(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_queue_handle_ask_includes_queue_context(monkeypatch):
+async def test_handle_ask_includes_queue_context(monkeypatch):
     """
     Verify that _ChainHandle.ask prepends a queue-wide context preamble so
     questions can be answered about the whole queue, not just the active task.
@@ -673,7 +673,7 @@ async def test_queue_handle_ask_includes_queue_context(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_queue_result_summarises_all_completed_tasks(monkeypatch):
+async def test_result_summarises_all_completed_tasks(monkeypatch):
     """
     Verify that the queue handle's final result summarises all completed tasks.
     """
@@ -710,7 +710,7 @@ async def test_queue_result_summarises_all_completed_tasks(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
+async def test_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
     """
     While a queue is running, dynamically remove an existing follower and add a new
     follower behind the current task. The queue should reflect the live queue at the
@@ -837,7 +837,7 @@ async def test_queue_dynamic_queue_edit_add_and_remove_followers(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_append_to_queue_singleton_adds_follower_and_runs(monkeypatch):
+async def test_append_singleton_adds_follower_and_runs(monkeypatch):
     """
     Append a new task to a singleton queue during execution, then complete both
     tasks and verify the final summary includes the appended follower.
@@ -928,7 +928,7 @@ async def test_append_to_queue_singleton_adds_follower_and_runs(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_append_to_queue_emits_notification(monkeypatch):
+async def test_append_emits_notification(monkeypatch):
     """Appending should emit a queue.appended notification event."""
 
     class _StepOnly(SimulatedActor):  # type: ignore[misc]
@@ -977,7 +977,7 @@ async def test_append_to_queue_emits_notification(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_done_aggregates_all_when_called_late(monkeypatch):
+async def test_task_done_aggregates_all_when_called_late(monkeypatch):
     """
     If called after multiple tasks completed, _active_task_done should return
     a JSON mapping containing all completions since never having been called.
@@ -1027,7 +1027,7 @@ async def test_active_task_done_aggregates_all_when_called_late(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_task_done_incremental(monkeypatch):
+async def test_task_done_incremental(monkeypatch):
     """
     Consecutive calls to _active_task_done should return only new completions
     since the previous call.
@@ -1108,7 +1108,7 @@ async def test_active_task_done_incremental(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_queue_interject_image_seen_by_simulation(monkeypatch):
+async def test_interject_image_seen_by_simulation(monkeypatch):
     """
     Singleton queue passthrough: interject with an image via ActiveQueue handle,
     then ask about the file; reply should reference a sheet/spreadsheet, proving
@@ -1177,7 +1177,7 @@ async def test_active_queue_interject_image_seen_by_simulation(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_execute_by_id_returns_active_queue_handle(monkeypatch):
+async def test_execute_by_id_returns_active_handle(monkeypatch):
     """Executing by id returns an ActiveQueue handle (composite queue wrapper)."""
 
     # Immediate completion per task to avoid timing races
@@ -1219,7 +1219,7 @@ async def test_execute_by_id_returns_active_queue_handle(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
+async def test_singleton_passthrough_to_inner_handle(monkeypatch):
     """
     For a true singleton queue (exactly one task at creation), the queue handle
     should pass through interject, ask, and result directly to the inner task
@@ -1313,7 +1313,7 @@ async def test_singleton_queue_passthrough_to_inner_handle(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_queue_emits_notifications(monkeypatch):
+async def test_emits_notifications(monkeypatch):
     """
     Verify that ActiveQueue emits queue-level notifications for task lifecycle:
     - queue.task.completed for each task
@@ -1382,7 +1382,7 @@ async def test_active_queue_emits_notifications(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helper_append_to_queue_is_exposed_and_callable():
+async def test_dynamic_helper_append_is_exposed_and_callable():
     """
     Verify that the custom steering utility `append_to_queue` is surfaced by the
     async tool loop's dynamic helper generation with an expressive docstring and
@@ -1547,7 +1547,7 @@ async def test_dynamic_helper_append_to_queue_is_exposed_and_callable():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_inner_task_clarification_bubbles_up_to_outer(monkeypatch):
+async def test_inner_clarification_bubbles_up_to_outer(monkeypatch):
     """
     Verify that an inner task can request clarification and that the question
     is emitted to the provided clarification_up_q, with the answer received on
@@ -1600,7 +1600,7 @@ async def test_inner_task_clarification_bubbles_up_to_outer(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_active_queue_requests_clarification_at_queue_level(monkeypatch):
+async def test_requests_clarification_at_queue_level(monkeypatch):
     """
     Verify that ActiveQueue itself can request clarifications for ambiguous
     multi-task interjections. The question should surface on clarification_up_q.

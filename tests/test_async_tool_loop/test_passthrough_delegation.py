@@ -158,7 +158,7 @@ async def test_outer_interjection_forwarded_to_inner(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch):
+async def test_interject_multicasts_passthrough(monkeypatch):
     """An early interjection must be forwarded to ALL passthrough handles."""
 
     # Counters to verify both inner handles receive the interjection
@@ -248,7 +248,7 @@ async def test_interject_multicasts_to_multiple_passthrough_handles(monkeypatch)
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
+async def test_ask_multicasts_passthrough(monkeypatch):
     """Programmatic ask() on the outer handle should be sent to every passthrough handle."""
 
     class MockPassthrough(SteerableToolHandle):
@@ -367,7 +367,7 @@ async def test_ask_multicasts_to_all_passthrough_handles(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_passthrough_clarification_bubbles_and_can_be_answered(monkeypatch):
+async def test_passthrough_clarification_bubbles(monkeypatch):
     """Clarification from a passthrough handle bubbles to the outer loop and can be answered programmatically."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -465,7 +465,7 @@ async def test_passthrough_clarification_bubbles_and_can_be_answered(monkeypatch
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handles():
+async def test_steering_propagates_passthrough():
     """Outer pause/resume/stop should be forwarded to all active passthrough handles."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -578,7 +578,7 @@ async def test_programmatic_pause_resume_stop_propagate_to_all_passthrough_handl
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_interject_with_kwargs_forwarded_to_passthrough_handle(
+async def test_interject_kwargs_forwarded(
     monkeypatch,
 ):
     """Programmatic outer.interject(..., priority=..., metadata=...) forwards kwargs to a passthrough child."""
@@ -698,7 +698,7 @@ async def test_programmatic_interject_with_kwargs_forwarded_to_passthrough_handl
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_pause_resume_stop_kwargs_forwarded(monkeypatch):
+async def test_steering_kwargs_forwarded(monkeypatch):
     """Programmatic pause/resume/stop kwargs are forwarded to a passthrough child that overrides their signatures."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -815,7 +815,7 @@ async def test_programmatic_pause_resume_stop_kwargs_forwarded(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
+async def test_no_extra_turn_passthrough_handover(monkeypatch):
     """Outer loop continues after passthrough and performs exactly one follow-up
     LLM step once the inner tool completes.
 
@@ -905,7 +905,7 @@ async def test_no_extra_llm_turn_during_passthrough_handover(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_with_images_multicasts_to_all_passthrough_handles(monkeypatch):
+async def test_ask_images_multicasts_passthrough(monkeypatch):
     """
     Programmatic outer.ask(..., images=...) should be forwarded to all active
     passthrough handles' ask methods, carrying the images payload.
@@ -1225,7 +1225,7 @@ async def test_adoption_syncs_pause_state_when_paused(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
+async def test_adoption_respects_resumed_state(monkeypatch):
     """If the outer loop is resumed by adoption time, the adopted passthrough handle receives no pause/resume replay."""
 
     from unity.common.async_tool_loop import SteerableToolHandle
@@ -1319,7 +1319,7 @@ async def test_adoption_applies_no_pause_resume_when_resumed(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
+async def test_interject_immediate_and_mirrored(monkeypatch):
     """Programmatic interject should:
     - forward immediately to adopted passthrough handle(s) (no LLM step)
     - produce an assistant helper tool_call 'interject_*' and an ack tool message
@@ -1456,7 +1456,7 @@ async def test_programmatic_interject_is_immediate_and_mirrored(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
+async def test_ask_immediate_and_mirrored(monkeypatch):
     """Programmatic ask should:
     - forward immediately to adopted passthrough handle(s) (no LLM step)
     - produce an assistant helper tool_call 'ask_*' and an ack tool message
@@ -1596,7 +1596,7 @@ async def test_programmatic_ask_is_immediate_and_mirrored(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_custom_method_only_propagates_to_matching_passthrough_handles(
+async def test_custom_method_propagates_matching(
     monkeypatch,
 ):
     """
@@ -1785,7 +1785,7 @@ async def test_custom_method_only_propagates_to_matching_passthrough_handles(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
+async def test_adoption_replay_mirrors_interject(monkeypatch):
     """An interject sent before adoption should be mirrored on adoption and functionally forwarded once."""
 
     calls = {"count": 0}
@@ -1878,7 +1878,7 @@ async def test_adoption_replay_mirrors_pre_adoption_interject_once(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_replayed_only_to_newly_adopted_child(monkeypatch):
+async def test_interject_replayed_to_new_child(monkeypatch):
     """
     Multi-child adoption: send interject after both delegates are scheduled but before
     the second delegate returns its handle. Expect:

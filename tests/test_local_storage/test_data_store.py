@@ -16,7 +16,7 @@ def _stable_project_and_clean_registry(monkeypatch):
 
 
 @pytest.mark.unit
-def test_singleton_per_project_and_context(monkeypatch):
+def test_singleton_per_project_context(monkeypatch):
     monkeypatch.setattr(unify, "active_project", lambda: "P1")
 
     a = DataStore.for_context("Ctx/A", key_fields=("id",))
@@ -32,7 +32,7 @@ def test_singleton_per_project_and_context(monkeypatch):
 
 
 @pytest.mark.unit
-def test_single_key_put_get_update_delete():
+def test_crud_single_key():
     ds = DataStore.for_context("C/Contacts", key_fields=("contact_id",))
 
     # Put with private fields and vector columns – they should be filtered out
@@ -72,7 +72,7 @@ def test_single_key_put_get_update_delete():
 
 
 @pytest.mark.unit
-def test_composite_key_multiple_forms_and_snapshot():
+def test_composite_key_snapshot():
     ds = DataStore.for_context("C/Tasks", key_fields=("task_id", "instance_id"))
 
     ds.put({"task_id": 10, "instance_id": 0, "status": "queued", "_meta": "x"})
@@ -90,7 +90,7 @@ def test_composite_key_multiple_forms_and_snapshot():
 
 
 @pytest.mark.unit
-def test_miss_update_and_delete_raise_keyerror():
+def test_miss_raises_keyerror():
     ds = DataStore.for_context("C/Tasks", key_fields=("task_id", "instance_id"))
 
     with pytest.raises(KeyError):
@@ -101,7 +101,7 @@ def test_miss_update_and_delete_raise_keyerror():
 
 
 @pytest.mark.unit
-def test_clear_and_len_and_repr():
+def test_clear_len_repr():
     ds = DataStore.for_context("C/Contacts", key_fields=("contact_id",))
     ds.put({"contact_id": 1, "first_name": "A"})
     ds.put({"contact_id": 2, "first_name": "B"})
@@ -113,7 +113,7 @@ def test_clear_and_len_and_repr():
 
 
 @pytest.mark.unit
-def test_key_coercion_of_negative_numbers_in_strings():
+def test_negative_number_key_coercion():
     ds = DataStore.for_context("C/Contacts", key_fields=("contact_id",))
     ds.put({"contact_id": -12, "first_name": "Neg"})
 

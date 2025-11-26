@@ -322,7 +322,7 @@ async def test_unify_message_to_phone_call(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_phone_call_flow(test_redis_client, event_capture):
+async def test_phone_call(test_redis_client, event_capture):
     """Test phone call flow."""
     # Clear any events from initialization
     event_capture.clear()
@@ -480,7 +480,7 @@ async def test_phone_call_to_unify_message(test_redis_client, event_capture):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_unify_call_flow(test_redis_client, event_capture):
+async def test_unify_call(test_redis_client, event_capture):
     """Test unify call flow."""
     # Clear any events from initialization
     event_capture.clear()

@@ -26,7 +26,7 @@ from unity.guidance_manager.guidance_manager import GuidanceManager
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_function_guidance_ids_valid_reference():
+def test_fk_guidance_ids_valid_reference():
     """Test that functions can reference valid guidance IDs."""
     gm = GuidanceManager()
     fm = FunctionManager()
@@ -69,7 +69,7 @@ def test_fk_function_guidance_ids_valid_reference():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_function_guidance_ids_set_null_on_delete():
+def test_fk_guidance_ids_set_null_on_delete():
     """Test SET NULL: Deleting guidance removes it from function.guidance_ids array."""
     gm = GuidanceManager()
     fm = FunctionManager()
@@ -126,7 +126,7 @@ def test_fk_function_guidance_ids_set_null_on_delete():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_function_guidance_ids_empty_array():
+def test_fk_guidance_ids_empty_array():
     """Test that empty guidance_ids array is valid."""
     fm = FunctionManager()
 
@@ -142,7 +142,7 @@ def test_fk_function_guidance_ids_empty_array():
 
 @_handle_project
 @pytest.mark.unit
-def test_fk_function_guidance_ids_multiple_deletes():
+def test_fk_guidance_ids_multiple_deletes():
     """Test SET NULL with multiple sequential deletes."""
     gm = GuidanceManager()
     fm = FunctionManager()

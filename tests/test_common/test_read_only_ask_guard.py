@@ -15,7 +15,7 @@ from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_guard_triggers_early_stop_and_returns_early_response(monkeypatch):
+async def test_guard_blocks_mutation(monkeypatch):
     """
     When the classifier flags mutation intent, the guard should stop the outer
     loop and `result()` should return the early response. The assistant message
@@ -88,7 +88,7 @@ async def test_guard_triggers_early_stop_and_returns_early_response(monkeypatch)
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_guard_allows_normal_completion_when_no_mutation(monkeypatch):
+async def test_guard_allows_readonly(monkeypatch):
     """
     When classifier returns mutation_intent=False, the guard should not stop the
     loop and the normal assistant answer should be returned.

@@ -12,7 +12,7 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_file_manager_initialization(file_manager):
+async def test_initialization(file_manager):
     fm = file_manager
     assert fm is not None
     assert hasattr(fm, "_adapter")
@@ -24,14 +24,14 @@ async def test_file_manager_initialization(file_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_file_exists_not_found(file_manager):
+async def test_exists_not_found(file_manager):
     fm = file_manager
     assert not fm.exists("nonexistent.txt")
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_file_list_empty(file_manager):
+async def test_list_empty(file_manager):
     fm = file_manager
     # List may not be empty if previous tests ran; ensure idempotency by using a new name
     assert isinstance(fm.list(), list)
@@ -39,7 +39,7 @@ async def test_file_list_empty(file_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_file_import_and_exists(file_manager, supported_file_examples: dict):
+async def test_import_and_exists(file_manager, supported_file_examples: dict):
     filename, example_data = next(iter(supported_file_examples.items()))
     fm = file_manager
     display_name = str(example_data["path"])  # absolute path
@@ -49,7 +49,7 @@ async def test_file_import_and_exists(file_manager, supported_file_examples: dic
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_file_import_directory(file_manager, sample_files: Path):
+async def test_import_directory(file_manager, sample_files: Path):
     fm = file_manager
     # Parse all files in the directory by absolute path; ensure existence and success
     files = [str(p) for p in sample_files.iterdir() if p.is_file()]
@@ -65,7 +65,7 @@ async def test_file_import_directory(file_manager, sample_files: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_public_import_file(file_manager, sample_files: Path):
+async def test_public_import(file_manager, sample_files: Path):
     fm = file_manager
     sample_file = next(sample_files.iterdir())
     display_name = str(sample_file)
@@ -89,7 +89,7 @@ async def test_public_import_directory(file_manager, sample_files: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_file_import_unique_names(file_manager, tmp_path: Path):
+async def test_import_unique_names_batch(file_manager, tmp_path: Path):
     fm = file_manager
     dir1 = tmp_path / "dir1"
     dir2 = tmp_path / "dir2"
@@ -106,7 +106,7 @@ async def test_file_import_unique_names(file_manager, tmp_path: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_import_file_unique_names(file_manager, tmp_path: Path):
+async def test_import_unique_names_single(file_manager, tmp_path: Path):
     fm = file_manager
     d1 = tmp_path / "one"
     d2 = tmp_path / "two"
@@ -123,7 +123,7 @@ async def test_import_file_unique_names(file_manager, tmp_path: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_file_import_nonexistent_file(file_manager):
+async def test_exists_nonexistent(file_manager):
     fm = file_manager
     missing = "/nonexistent/file.txt"
     assert not fm.exists(missing)
@@ -131,7 +131,7 @@ async def test_file_import_nonexistent_file(file_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_file_import_nonexistent_directory(file_manager):
+async def test_import_nonexistent_directory(file_manager):
     fm = file_manager
     # Parsing from a nonexistent directory should surface as not found errors
     res = fm.parse(["/nonexistent/directory/x.txt"])
@@ -143,7 +143,7 @@ async def test_file_import_nonexistent_directory(file_manager):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_parse_nonexistent_file(file_manager):
+async def test_parse_nonexistent(file_manager):
     fm = file_manager
     result = fm.parse("nonexistent.txt")
     assert "nonexistent.txt" in result
@@ -179,7 +179,7 @@ async def test_filter_by_content_id_dict(file_manager, supported_file_examples: 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_parse_multiple_files_mixed(file_manager, supported_file_examples: dict):
+async def test_parse_multiple_mixed(file_manager, supported_file_examples: dict):
     fm = file_manager
     filename, example_data = next(iter(supported_file_examples.items()))
     existing = str(example_data["path"])  # absolute path

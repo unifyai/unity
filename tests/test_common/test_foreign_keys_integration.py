@@ -31,7 +31,7 @@ from unity.transcript_manager.transcript_manager import TranscriptManager
 
 @_handle_project
 @pytest.mark.integration
-def test_integration_contact_deletion_effects_on_transcripts():
+def test_delete_contact_transcripts_fk():
     """
     Test contact deletion effects on transcripts:
     - sender_id: SET NULL (message survives with null sender)
@@ -149,7 +149,7 @@ def test_integration_contact_deletion_effects_on_transcripts():
 
 @_handle_project
 @pytest.mark.integration
-def test_integration_image_deletion_set_null_in_transcripts_and_guidance():
+def test_delete_image_nullifies_refs():
     """
     Test that deleting an image sets image_id to None (in-place) in both
     transcript messages and guidance entries that reference it.
@@ -278,7 +278,7 @@ def test_integration_image_deletion_set_null_in_transcripts_and_guidance():
 
 @_handle_project
 @pytest.mark.integration
-def test_integration_function_guidance_bidirectional_fk_cascade():
+def test_function_guidance_bidirectional_cascade():
     """
     Test bidirectional CASCADE FK relationship between Functions and Guidance.
 
@@ -394,7 +394,7 @@ def test_integration_function_guidance_bidirectional_fk_cascade():
 
 @_handle_project
 @pytest.mark.integration
-def test_integration_function_deletion_effects_on_tasks_and_guidance():
+def test_delete_function_cascades_tasks_guidance():
     """
     Test that deleting a function:
     - Sets task.entrypoint to null (SET NULL)
@@ -472,7 +472,7 @@ def test_integration_function_deletion_effects_on_tasks_and_guidance():
 
 @_handle_project
 @pytest.mark.integration
-def test_integration_complex_workflow_with_all_fks():
+def test_complex_fk_workflow():
     """
     Test complex workflow involving all managers with FK relationships:
     - Contacts, Images, Functions, Guidance, Tasks, Transcripts
@@ -662,7 +662,7 @@ def test_integration_complex_workflow_with_all_fks():
 
 @_handle_project
 @pytest.mark.integration
-def test_integration_bulk_delete_with_set_null():
+def test_bulk_delete_preserves_fk_integrity():
     """
     Test bulk deletion operations with FK SET NULL behavior.
     Deleting senders should preserve messages with null sender_id.
@@ -733,7 +733,7 @@ def test_integration_bulk_delete_with_set_null():
 
 @_handle_project
 @pytest.mark.integration
-def test_integration_circular_references_no_infinite_loop():
+def test_circular_fk_deletion_safety():
     """
     Test that circular FK references (Functions ↔ Guidance) don't cause
     infinite loops on deletion, even though both use CASCADE.
@@ -807,7 +807,7 @@ def test_integration_circular_references_no_infinite_loop():
 
 @_handle_project
 @pytest.mark.integration
-def test_integration_exchange_cascade_deletes_messages():
+def test_delete_exchange_cascades_messages():
     """
     Test that deleting an exchange cascades to delete all its messages.
 

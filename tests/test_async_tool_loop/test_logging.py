@@ -381,7 +381,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_replay_logs_and_events_single_manager(caplog):
+async def test_deserialize_replay_logs_with_manager(caplog):
     """
     Verify that deserialization replays seeded assistant/tool messages with:
     - EventBus ToolLoop events carrying origin == 'deserialize'
@@ -454,7 +454,7 @@ async def test_deserialize_replay_logs_and_events_single_manager(caplog):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_deserialize_replay_nested_labels_and_events_contact_update(caplog):
+async def test_deserialize_replay_nested_loops(caplog):
     """
     Verify deserialization replay for a nested loop triggered by ContactManager.update
     (whose default tool policy requires `ask` on the first step).

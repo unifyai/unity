@@ -55,7 +55,7 @@ class TableStore:
             unique_keys=self._unique_keys or None,
             auto_counting=self._auto_counting or None,
             description=self._description,
-            foreign_keys=self._foreign_keys or None,
+            # foreign_keys=self._foreign_keys or None,
         )
 
         # Ensure required fields exist (idempotent per-field)

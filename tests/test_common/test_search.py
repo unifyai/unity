@@ -11,7 +11,7 @@ from unity.common.search_utils import table_search_top_k
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_concurrent_semantic_search_helper_no_failures(capfd):
+async def test_concurrent_semantic_search(capfd):
     """
     Minimal concurrent test on the underlying semantic search helper.
 

@@ -326,7 +326,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_functional_tool_pause_resume_helpers_called_once(client):
+async def test_pause_resume_helpers_called_once(client):
     """
     Same scenario as above but we *count* helper invocations in the chat log.
 
@@ -642,7 +642,7 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_resume_when_no_pending_tools_allows_llm_turn(client):
+async def test_resume_allows_llm_turn(client):
     """
     If the loop is paused while no tools are pending, resuming should immediately
     allow the next LLM turn to proceed and finish.
@@ -814,7 +814,7 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_hide_next_notification_and_clarification(client):
+async def test_helpers_hide_notification_clarification(client):
     """
     Verify dynamic tools do NOT expose `next_notification_…` or `next_clarification_…`
     for an in‑flight inner handle (would fail before the management-set change).
@@ -922,7 +922,7 @@ async def test_dynamic_helpers_hide_next_notification_and_clarification(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_hide_get_history_for_async_handle(client):
+async def test_helpers_hide_get_history(client):
     """
     Verify dynamic tools do NOT expose `get_history_…` for an in‑flight nested
     AsyncToolLoopHandle (this would have been exposed before dynamic base-method
@@ -1077,7 +1077,7 @@ async def test_new_tool_scheduled_while_paused_starts_paused(client, monkeypatch
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_resume_unblocks_paused_base_tool_without_helper(client, monkeypatch):
+async def test_resume_unblocks_base_tool(client, monkeypatch):
     """
     A base tool scheduled while the outer loop is paused should resume
     running immediately when `handle.resume()` is called, even if the LLM
