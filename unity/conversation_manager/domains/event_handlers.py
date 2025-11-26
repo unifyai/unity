@@ -474,3 +474,34 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
             print(f"[ManagersWorker] Error updating contact rolling summary: {e}")
 
     asyncio.create_task(summarize_task())
+
+
+@EventHandler.register(DirectSpeechEvent)
+async def _(event: DirectSpeechEvent, cm: "ConversationManager", *args, **kwargs):
+    print(f"Received DirectSpeechEvent: {event.content}")
+    
+    # Speak to voice layer using appropriate channel
+    if cm.mode in ["call", "unify_call", "gmeet"]:
+        if cm.call_manager.realtime:
+            # Realtime API: Send as notification
+            await cm.event_broker.publish(
+                "app:call:call_notifs",
+                json.dumps({"content": event.content}),
+            )
+        else:
+            # STT-TTS pipeline: Send to response_gen channel
+            channel = f"app:{cm.mode}:response_gen"
+            await cm.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
+            await cm.event_broker.publish(channel, json.dumps({"type": "gen_chunk", "chunk": event.content}))
+            await cm.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
+
+    # Record in contact_index for transcript access
+    contact = cm.call_contact or cm.contact_index.get_contact(contact_id=1)
+    cm.contact_index.push_message(
+        contact,
+        "phone" if cm.mode == "call" else "unify_call",
+        message_content=event.content,
+        role="assistant",
+        timestamp=event.timestamp,
+    )
+
