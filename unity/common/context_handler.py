@@ -121,21 +121,18 @@ class ContextHandler:
     ):
         table = entry["table_context"]
         target_name = entry["resolved_name"]
-        try:
-            if target_name not in remote_contexts:
-                create_context(
-                    target_name,
-                    description=table.description,
-                    unique_keys=table.unique_keys,
-                    auto_counting=table.auto_counting,
-                    foreign_keys=table.foreign_keys,
-                )
-            # TODO: No need to check current fields, this has no effect if fields are already created
-            # possibly can be eliminated if get_fields returns the context for the fields
-            if table.fields:
-                create_fields(table.fields, context=target_name)
-        except Exception as e:
-            return None
+        if target_name not in remote_contexts:
+            create_context(
+                target_name,
+                description=table.description,
+                unique_keys=table.unique_keys,
+                auto_counting=table.auto_counting,
+                foreign_keys=table.foreign_keys,
+            )
+        # TODO: No need to check current fields, this has no effect if fields are already created
+        # possibly can be eliminated if get_fields returns the context for the fields
+        if table.fields:
+            create_fields(table.fields, context=target_name)
 
         cls._available_contexts[(manager_name, table.name)] = target_name
 
