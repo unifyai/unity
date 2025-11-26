@@ -204,11 +204,13 @@ class KnowledgeManager(BaseKnowledgeManager):
         self._ctx = ContextHandler.get_context(self, "Knowledge")
 
         # Only compute the Contacts context if the caller requested integration.
-        self._contacts_ctx = (
-            (f"{read_ctx}/Contacts" if read_ctx else "Contacts")
-            if include_contacts
-            else None
-        )
+        self._contacts_ctx: Optional[str]
+        if include_contacts:
+            from unity.contact_manager.contact_manager import ContactManager
+
+            self._contacts_ctx = ContextHandler.get_context(ContactManager, "Contacts")
+        else:
+            self._contacts_ctx = None
 
         # Ensure any additional storage requirements are provisioned
         try:
