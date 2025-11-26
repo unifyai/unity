@@ -1,0 +1,6 @@
+---
+description: No Fast Paths or Heuristics
+globs: ["**/*"]
+alwaysApply: true
+---
+We should not apply any "fast paths" or heuristics based on regex or substring detection from user commands. If a method needs to respond correctly to a certain type of user input, then this must **always** be addressed by prompting the model and/or improving docstrings of the exposed tools in order to **nudge** the LLM in the right direction.
