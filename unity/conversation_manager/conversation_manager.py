@@ -19,7 +19,7 @@ from unity.conversation_manager.domains.call_manager import (
 from unity.conversation_manager.domains.contact_index import ContactIndex
 from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.renderer import Renderer
-from unity.conversation_manager.new_events import *
+from unity.conversation_manager.events import *
 
 from unity.conversation_manager.domains.llm import LLM
 from unity.conversation_manager.domains.actions import (
