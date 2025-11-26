@@ -15,7 +15,6 @@ class LivekitCallManager:
         voice_provider=None,
         voice_id=None,
         voice_mode=None,
-        realtime: bool = False,
     ):
         self.assistant_id = assistant_id
         self.assistant_bio = assistant_bio

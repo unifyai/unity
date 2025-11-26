@@ -254,12 +254,12 @@ async def get_update_or_create_contact(
     elif contact_id and details:
         contact = cm.contact_index.get_contact(contact_id=contact_id)
         data_to_insert = {}
-        for k, v in details:
+        for k, v in details.items():
             if v:
                 if contact[k] != v:
                     data_to_insert[k] = v
         updated_contacts = cm.contact_manager.get_contact_info(
-            contact_id=[c.contact_id for c in cm.contact_index.contacts],
+            contact_id=[c.contact_id for c in cm.contact_index.contacts.values()],
         )
         updated_active_contacts = {
             Contact(

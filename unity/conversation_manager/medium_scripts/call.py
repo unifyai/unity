@@ -1,9 +1,6 @@
 import sys
 import json
 import os
-
-
-sys.path.append("..")
 import asyncio
 
 from dotenv import load_dotenv
@@ -15,29 +12,36 @@ from livekit.plugins import (
     cartesia,
     deepgram,
     elevenlabs,
-    # noise_cancellation,
     silero,
 )
 
 if sys.platform == "darwin":
     from livekit.plugins import noise_cancellation
+
 from livekit.plugins.turn_detector.english import EnglishModel
 from livekit.agents import ChatContext, ChatMessage
+from livekit.agents import ModelSettings, llm, FunctionTool
 
-from livekit.agents import ModelSettings, llm, FunctionTool, Agent
 from typing import AsyncIterable
-
-from unity.conversation_manager.event_broker import get_event_broker
-
 
 load_dotenv()
 
-from unity.conversation_manager.new_events import *
+from unity.conversation_manager.new_events import *  # noqa: F403
 from unity.conversation_manager.utils import dispatch_agent
 
-event_broker = get_event_broker()
+# NEW: shared helpers
+from unity.conversation_manager.medium_scripts.common import (
+    event_broker,
+    create_end_call,
+    setup_inactivity_timeout,
+    setup_participant_disconnect_handler,
+    publish_call_started,
+    configure_from_cli,
+    should_dispatch_agent,
+)
+
 chunk_queue = asyncio.Queue()
-current_running_response: asyncio.Task = None
+current_running_response: asyncio.Task | None = None
 
 # globals initialized lazily or via prewarm to avoid duplicate heavy init
 STT = None
@@ -53,7 +57,7 @@ def prewarm(_ctx=None):
         LLM = openai.LLM(model="gpt-4o")
         VAD = silero.VAD.load(min_speech_duration=0.15)
         print("Prewarm complete")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"Prewarm failed: {e}")
         # ensure fallback path runs by resetting all globals
         STT = None
@@ -150,60 +154,13 @@ async def entrypoint(ctx: agents.JobContext):
         turn_detection=EnglishModel(),
     )
 
-    async def end_call():
-        print("Initiating graceful shutdown...")
-
-        # send end call event before cleaning tasks and closing connection
-        await event_broker.publish(
-            "app:comms:phone_call_ended",
-            PhoneCallEnded(contact=contact).to_json(),
-        )
-        print("End call event sent")
-
-        # get all running tasks except current task
-        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-
-        if tasks:
-            print(f"Cancelling {len(tasks)} running tasks...")
-            # cancel all tasks
-            for task in tasks:
-                task.cancel()
-
-            # wait for tasks to be cancelled gracefully
-            try:
-                await asyncio.gather(*tasks, return_exceptions=True)
-                print("All tasks cancelled successfully")
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                print(f"Error during task cancellation: {e}")
-
-        print("Graceful shutdown completed")
-
-    # add inactivity timeout
-    INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
-    last_activity_time = asyncio.get_event_loop().time()
-
-    async def check_inactivity():
-        nonlocal last_activity_time
-        while True:
-            await asyncio.sleep(10)  # check every 10 seconds
-            current_time = asyncio.get_event_loop().time()
-            if current_time - last_activity_time > INACTIVITY_TIMEOUT:
-                print("Inactivity timeout reached, shutting down agent...")
-                await end_call()
-                break  # exit the loop after shutdown
-
-    # start inactivity checker
-    asyncio.create_task(check_inactivity())
-
-    # create a wrapper for the room event handler since it expects a sync function
-    def on_participant_disconnected(*args, **kwargs):
-        asyncio.create_task(end_call())
-
-    ctx.room.on("participant_disconnected", on_participant_disconnected)
+    # NEW: shared end_call + inactivity + participant disconnect handler
+    end_call = create_end_call(contact)
+    touch_activity = setup_inactivity_timeout(end_call)
+    setup_participant_disconnect_handler(ctx.room, end_call)
 
     assistant = Assistant(contact=contact, outbound=outbound)
+
     await session.start(
         room=ctx.room,
         agent=assistant,
@@ -214,19 +171,17 @@ async def entrypoint(ctx: agents.JobContext):
         ),
     )
 
-    await event_broker.publish(
-        "app:comms:phone_call_started",
-        PhoneCallStarted(contact=contact).to_json(),
-    )
+    # publish call started (shared helper)
+    await publish_call_started(contact)
+    touch_activity()
 
     async def response_task():
-        nonlocal session, last_activity_time
+        nonlocal session
         handle = await session.generate_reply()
-        last_activity_time = asyncio.get_event_loop().time()  # Update activity time
+        touch_activity()
         return handle.chat_items[-1].text_content, handle.interrupted
 
     def on_response_end(t: asyncio.Task):
-        nonlocal last_activity_time
         print("FIRED!!!")
         try:
             result = t.result()
@@ -234,51 +189,26 @@ async def entrypoint(ctx: agents.JobContext):
                 print("RESULT", result)
                 try:
                     phone_utterance = result[0]
-                except:
+                except Exception:  # noqa: BLE001
                     phone_utterance = ""
-                    # if phone_utterance:
-                    #     # send assistant response as an event to be added in past events
-                    #     msg = {
-                    #                 "to": "past",
-                    #                 "topic": from_number,
-                    #                 "event": PhoneUtterance(
-                    #                     role="Assistant",
-                    #                     content=phone_utterance,
-                    #                 ).to_dict(),
-                    #             }
-                    #     asyncio.create_task(
-                    #         event_broker.publish("app:comms:phone_utterance",
-                    #             json.dumps({
-                    #                 "to": "past",
-                    #                 "topic": from_number,
-                    #                 "event": PhoneUtterance(
-                    #                     role="Assistant",
-                    #                     content=phone_utterance,
-                    #                 ).to_dict(),
-                    #             }),
-                    #         ),
-                    #     )
-                    # Update activity time on assistant response
-                    last_activity_time = asyncio.get_event_loop().time()
-                    # send interupt as an event to be added to pending events (?)
-                    # this might confuse things a bit actually, maybe it should be sent to past events instead
-                    # to prevent re-triggering events if nothing happens
-                    # another way would be to signal the event manager that the user is talking now and prevent any
-                    # agent response until the user finishes talking
-                    if result[1]:
-                        asyncio.create_task(
-                            event_broker.publish(
-                                "app:comms:interrupt",
-                                Interrupt(
-                                    contact=os.environ["CALL_FROM_NUMBER"],
-                                ).to_json(),
-                            ),
-                        )
+
+                # We could publish assistant utterances here if needed.
+                # Update activity time on assistant response
+                touch_activity()
+
+                if result[1]:
+                    asyncio.create_task(
+                        event_broker.publish(
+                            "app:comms:interrupt",
+                            Interrupt(
+                                contact=os.environ["CALL_FROM_NUMBER"],
+                            ).to_json(),
+                        ),
+                    )
         except asyncio.CancelledError:
             pass
 
     async def collect_events():
-        nonlocal last_activity_time
         global chunk_queue
 
         async with event_broker.pubsub() as pubsub:
@@ -295,8 +225,10 @@ async def entrypoint(ctx: agents.JobContext):
                     print("done", msg)
                     msg = json.loads(msg["data"])
                     print("GOT", msg)
+
                     # Update activity time on any event
-                    last_activity_time = asyncio.get_event_loop().time()
+                    touch_activity()
+
                     # handle msg
                     if msg["type"] == "call_answered":
                         print("call received")
@@ -310,43 +242,19 @@ async def entrypoint(ctx: agents.JobContext):
                     elif msg["type"] == "stop":
                         print("STOPPING CALL")
                         await end_call()
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     print(f"Error in collect_events: {e}")
-                    # Connection will be handled by utils module
                     break  # Exit the loop on error
 
     asyncio.create_task(collect_events())
 
 
 if __name__ == "__main__":
-    assistant_number = ""
-    print("sys.argv", sys.argv)
-
-    if len(sys.argv) > 6:
-        # get static config
-        assistant_number = sys.argv[2]
-        os.environ["VOICE_PROVIDER"] = (
-            sys.argv[3] if sys.argv[3] != "None" else "cartesia"
-        )
-        os.environ["VOICE_ID"] = sys.argv[4] if sys.argv[4] != "None" else ""
-        os.environ["OUTBOUND"] = sys.argv[5]
-
-        # get contact payloads
-        os.environ["CONTACT"] = sys.argv[6]
-        print(f"contact: {os.environ['CONTACT']}")
-        if not json.loads(os.environ["CONTACT"]):
-            print("Contact payload is invalid")
-            sys.exit(1)
-
-        sys.argv = sys.argv[:2]  # keep only script name and "dev" command
-    elif sys.argv[1] != "download-files":
-        print("Not enough arguments provided")
-        sys.exit(1)
-
-    agent_name = f"unity_{assistant_number}"
+    # Shared CLI handling
+    agent_name = configure_from_cli(extra_env=[("CONTACT", True)])
 
     # dispatch agent
-    if sys.argv[1] != "download-files":
+    if should_dispatch_agent():
         print(f"Dispatching agent {agent_name}")
         dispatch_agent(agent_name)
         print(f"Agent {agent_name} dispatched")
