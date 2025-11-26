@@ -32,17 +32,6 @@ import itertools
 class ImageHandle:
     """A lightweight handle around a single stored image."""
 
-    class Config:
-        required_contexts = [
-            TableContext(
-                name="Images",
-                description="Collection of images with timestamps, captions, and raw base64 data.",
-                fields=model_to_fields(Image),
-                unique_keys={"image_id": "int"},
-                auto_counting={"image_id": None},
-            ),
-        ]
-
     def __init__(
         self,
         *,
