@@ -135,6 +135,7 @@ def build_ask_prompt(
             f'\n• Web – live facts (weather today)\n  `{web_ask_fname}(text="What\'s the weather in Berlin today?")`'
             f'\n• Web – live facts (headlines this week)\n  `{web_ask_fname}(text="What are the major world news headlines this week?")`'
             f'\n• Web – live facts (yesterday\'s decision)\n  `{web_ask_fname}(text="Did the UN Security Council approve the resolution yesterday?")`'
+            f'\n• Web – search gated site (uses saved credentials)\n  `{web_ask_fname}(text="Search my Medium reading list for articles about LLM fine-tuning")`'
         )
         if web_ask_fname
         else ""
@@ -210,6 +211,8 @@ def build_request_prompt(
     task_update_fname = _tool_name(tools, "taskscheduler_update")
     task_execute_fname = _tool_name(tools, "taskscheduler_execute")
     web_ask_fname = _tool_name(tools, "websearcher_ask")
+    web_update_fname = _tool_name(tools, "websearcher_update")
+    secret_ask_fname = _tool_name(tools, "secretmanager_ask")
     actor_act_fname = _tool_name(tools, "actor_act")
     fm_ask_fname = _tool_name(tools, "globalfilemanager_ask")
     fm_organize_fname = _tool_name(tools, "globalfilemanager_organize")
@@ -284,6 +287,10 @@ def build_request_prompt(
             else "- Perform safe organization via GlobalFileManager.organize (rename/move only; no create/delete)"
         ),
         "- Use ask for discovery, then call organize to apply changes.",
+        "\nWebsite Configuration",
+        "-----------------------",
+        "- Saving/registering/configuring websites always goes to WebSearcher.update.",
+        f"- Flow: `{secret_ask_fname}` (find credentials) → `{web_update_fname}` (register site with credentials).",
         "Task execution policy — mandatory execute when asked to run/start:",
         f"- If the user says 'run', 'start', 'execute', 'begin', or 'launch' a task, you MUST call `{task_execute_fname}` exactly once.",
         f"- Do NOT use `{task_update_fname}` as a substitute for starting a task. Only use `{task_update_fname}` to create a missing task or to adjust fields prior to execution, then call `{task_execute_fname}`.",
@@ -315,6 +322,7 @@ def build_request_prompt(
                 f"- Use `{actor_act_fname}` for ad-hoc, conversational sandbox sessions (onboarding, live screen/browser guidance) that don't need task tracking.",
                 "Routing rule (important): If the user requests a live walkthrough or immediate interactive guidance — phrases like 'open a browser', 'walk me through', 'let's set this up together', 'troubleshoot with me now' — call the Actor immediately. Do NOT create or update a task first.",
                 "Only one can run at a time; while one is active, the other surface is hidden.",
+                f"Actor is for live browser/UI sessions only – do NOT use `{actor_act_fname}` for saving/updating catalogs (use the owning manager's update method instead).",
             ],
         )
 
@@ -335,6 +343,7 @@ def build_request_prompt(
         "• Never satisfy a read-only sub-request using the narrative result of a write; always call the appropriate `ask` tool.",
         f"• Read-only tools include: {read_only_tools_line}.",
         f"• Write tools include: `{contact_update_fname}`, `{knowledge_update_fname}`, `{guidance_update_fname}`, `{task_update_fname}`"
+        + (f", `{web_update_fname}`" if web_update_fname else "")
         + (f", `{fm_organize_fname}`" if fm_organize_fname else "")
         + ".",
     ]
@@ -381,6 +390,19 @@ def build_request_prompt(
             f'• Create or update guidance\n  `{guidance_update_fname}(text="Create guidance: Troubleshooting VPN issues")`',
         ],
     )
+
+    # Gated website examples (WebSearcher owns website configuration)
+    if secret_ask_fname and web_update_fname:
+        usage_examples += (
+            f"\n• Register gated websites (find credentials, then save to WebSearcher)\n"
+            f'  1) `{secret_ask_fname}(text="Find credentials for medium.com and nytimes.com")`\n'
+            f'  2) `{web_update_fname}(text="Register medium.com and nytimes.com as gated websites with the credentials found. Mark as subscribed.")`'
+        )
+    if web_ask_fname:
+        usage_examples += (
+            f"\n• Search a gated website\n"
+            f'  `{web_ask_fname}(text="Search my Medium reading list for articles about vector databases")`'
+        )
 
     if actor_act_fname:
         usage_examples += (
