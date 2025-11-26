@@ -42,52 +42,35 @@ class ContextHandler:
             return type(manager).__name__
 
     @classmethod
-    def refresh(
+    def _get_contexts_for_manager(
         cls,
         manager: Union[BaseStateManager, Type[BaseStateManager]],
-        ctx_name: str,
-    ):
-        """Refresh the context by forgetting it and then getting it again."""
-        cls.forget(manager, ctx_name)
-        return cls.get_context(manager, ctx_name)
+        current_context: str,
+    ) -> Dict[str, Dict]:
+        """Extract the contexts for a manager, resolving context names to fully qualified names."""
+        assert hasattr(
+            manager,
+            "Config",
+        ), f"Manager {manager.__name__} must have a Config class attribute"
+        assert hasattr(
+            manager.Config,
+            "required_contexts",
+        ), "Config must have a required_contexts class attribute"
 
-    @classmethod
-    def forget(
-        cls,
-        manager: Union[BaseStateManager, Type[BaseStateManager]],
-        ctx_name: str,
-    ):
-        """Remove the context from the registry."""
-        manager_name = cls._get_manager_name(manager)
-        key = (manager_name, ctx_name)
-        cls._registry.pop(key, None)
+        out = {}
 
-    @classmethod
-    def clear(cls) -> None:
-        """Remove all cached contexts from the registry, primarily for test isolation."""
-        cls._registry.clear()
-
-    @classmethod
-    def get_context(
-        cls,
-        manager: Union[BaseStateManager, Type[BaseStateManager]],
-        ctx_name: str,
-    ) -> Optional[str]:
-        """Get the context from the registry, creating it if it doesn't exist."""
-        manager_name = cls._get_manager_name(manager)
-        key = (manager_name, ctx_name)
-        ret = cls._registry.get(key)
-        if ret is None:
-            active_context = cls._get_active_context()
-            contexts = cls._get_contexts_for_manager(manager, active_context)
-            available_contexts = cls._get_available_contexts()
-            ret = cls._create_context_wrapper(
-                manager_name,
-                contexts[ctx_name],
-                available_contexts,
-            )
-
-        return ret
+        for context in manager.Config.required_contexts:
+            if context.foreign_keys:
+                for foreign_key in context.foreign_keys:
+                    foreign_key["references"] = (
+                        f"{current_context}/{foreign_key['references']}"
+                    )
+            data = {
+                "resolved_name": f"{current_context}/{context.name}",
+                "table_context": context,
+            }
+            out[context.name] = data
+        return out
 
     @classmethod
     def _get_managers(cls) -> List[Union[BaseStateManager, Type[BaseStateManager]]]:
@@ -145,6 +128,54 @@ class ContextHandler:
         return target_name
 
     @classmethod
+    def refresh(
+        cls,
+        manager: Union[BaseStateManager, Type[BaseStateManager]],
+        ctx_name: str,
+    ):
+        """Refresh the context by forgetting it and then getting it again."""
+        cls.forget(manager, ctx_name)
+        return cls.get_context(manager, ctx_name)
+
+    @classmethod
+    def forget(
+        cls,
+        manager: Union[BaseStateManager, Type[BaseStateManager]],
+        ctx_name: str,
+    ):
+        """Remove the context from the registry."""
+        manager_name = cls._get_manager_name(manager)
+        key = (manager_name, ctx_name)
+        cls._registry.pop(key, None)
+
+    @classmethod
+    def clear(cls) -> None:
+        """Remove all cached contexts from the registry, primarily for test isolation."""
+        cls._registry.clear()
+
+    @classmethod
+    def get_context(
+        cls,
+        manager: Union[BaseStateManager, Type[BaseStateManager]],
+        ctx_name: str,
+    ) -> Optional[str]:
+        """Get the context from the registry, creating it if it doesn't exist."""
+        manager_name = cls._get_manager_name(manager)
+        key = (manager_name, ctx_name)
+        ret = cls._registry.get(key)
+        if ret is None:
+            active_context = cls._get_active_context()
+            contexts = cls._get_contexts_for_manager(manager, active_context)
+            available_contexts = cls._get_available_contexts()
+            ret = cls._create_context_wrapper(
+                manager_name,
+                contexts[ctx_name],
+                available_contexts,
+            )
+
+        return ret
+
+    @classmethod
     def setup(cls):
         """Setup the context handler by creating the contexts for all managers."""
         if cls._setup_complete:
@@ -174,34 +205,3 @@ class ContextHandler:
                 future.result()
 
         cls._setup_complete = True
-
-    @classmethod
-    def _get_contexts_for_manager(
-        cls,
-        manager: Union[BaseStateManager, Type[BaseStateManager]],
-        current_context: str,
-    ) -> Dict[str, Dict]:
-        """Extract the contexts for a manager, resolving context names to fully qualified names."""
-        assert hasattr(
-            manager,
-            "Config",
-        ), f"Manager {manager.__name__} must have a Config class attribute"
-        assert hasattr(
-            manager.Config,
-            "required_contexts",
-        ), "Config must have a required_contexts class attribute"
-
-        out = {}
-
-        for context in manager.Config.required_contexts:
-            if context.foreign_keys:
-                for foreign_key in context.foreign_keys:
-                    foreign_key["references"] = (
-                        f"{current_context}/{foreign_key['references']}"
-                    )
-            data = {
-                "resolved_name": f"{current_context}/{context.name}",
-                "table_context": context,
-            }
-            out[context.name] = data
-        return out
