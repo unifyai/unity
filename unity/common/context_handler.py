@@ -60,6 +60,11 @@ class ContextHandler:
         cls._available_contexts.pop(key, None)
 
     @classmethod
+    def clear(cls) -> None:
+        """Remove **all** cached contexts – primarily for test isolation."""
+        cls._available_contexts.clear()
+
+    @classmethod
     def get_context(
         cls,
         manager: Union[BaseStateManager, Type[BaseStateManager]],
