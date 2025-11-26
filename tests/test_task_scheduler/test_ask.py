@@ -278,3 +278,33 @@ async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
         assert handle.done()
     except Exception as exc:
         raise exc
+
+
+@pytest.mark.eval
+@pytest.mark.asyncio
+@pytest.mark.timeout(300)
+async def test_ask_uses_reduce_for_numeric_aggregation(
+    ts_scenario: TaskScheduler,
+) -> None:
+    """Verify LLM uses reduce tool for numeric aggregation questions."""
+    handle = await ts_scenario.ask(
+        text="What is the sum of all task_id values?",
+        _return_reasoning_steps=True,
+    )
+    answer, steps = await handle.result()
+
+    # Assert reduce tool was called
+    reduce_called = any(
+        any(
+            "reduce" in (tc.get("function", {}).get("name", "") or "").lower()
+            for tc in (step.get("tool_calls") or [])
+        )
+        for step in steps
+        if step.get("role") == "assistant"
+    )
+    assert reduce_called, assertion_failed(
+        "reduce tool to be called",
+        f"steps without reduce: {[s for s in steps if s.get('role') == 'assistant']}",
+        steps,
+        "LLM should use reduce tool for numeric aggregation",
+    )

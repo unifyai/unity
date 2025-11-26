@@ -214,14 +214,14 @@ async def test_handle_pause_and_resume(monkeypatch):
     handle = await tm.ask("List unread DMs.")
 
     # Pause the handle.
-    pause_reply = handle.pause()
+    pause_reply = await handle.pause()
     assert "pause" in pause_reply.lower()
 
     # Start result() – it should block while paused.
     res_task = await _assert_blocks_while_paused(handle.result())
 
     # Resume and ensure execution proceeds.
-    resume_reply = handle.resume()
+    resume_reply = await handle.resume()
     assert "resume" in resume_reply.lower() or "running" in resume_reply.lower()
 
     answer = await asyncio.wait_for(res_task, timeout=DEFAULT_TIMEOUT)
@@ -277,7 +277,7 @@ async def test_handle_ask():
 async def test_stop_while_paused():
     tm = SimulatedTranscriptManager()
     h = await tm.ask("Generate a long transcript report.")
-    h.pause()
+    await h.pause()
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()
@@ -484,3 +484,18 @@ def test_log_sync_and_metadata():
 
     # Should not raise
     tm.join_published()
+
+
+@_handle_project
+def test_simulated_transcript_manager_reduce_shapes():
+    tm = SimulatedTranscriptManager()
+
+    scalar = tm.reduce(metric="sum", keys="message_id")
+    assert isinstance(scalar, (int, float))
+
+    multi = tm.reduce(metric="max", keys=["message_id"])
+    assert isinstance(multi, dict)
+    assert set(multi.keys()) == {"message_id"}
+
+    grouped = tm.reduce(metric="sum", keys="message_id", group_by="medium")
+    assert isinstance(grouped, dict)

@@ -405,3 +405,18 @@ async def test_stop_while_waiting_for_clarification_finishes_immediately():
     out = await asyncio.wait_for(h.result(), timeout=DEFAULT_TIMEOUT)
     assert isinstance(out, str)
     assert h.done()
+
+
+@_handle_project
+def test_simulated_task_scheduler_reduce_shapes():
+    ts = SimulatedTaskScheduler()
+
+    scalar = ts.reduce(metric="sum", keys="task_id")
+    assert isinstance(scalar, (int, float))
+
+    multi = ts.reduce(metric="max", keys=["task_id"])
+    assert isinstance(multi, dict)
+    assert set(multi.keys()) == {"task_id"}
+
+    grouped = ts.reduce(metric="sum", keys="task_id", group_by="status")
+    assert isinstance(grouped, dict)

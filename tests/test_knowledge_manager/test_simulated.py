@@ -250,14 +250,14 @@ async def test_pause_and_resume_simulated_km(monkeypatch):
     handle = await km.ask("Summarise everything we know about quantum gravity.")
 
     # Pause the handle
-    pause_msg = handle.pause()
+    pause_msg = await handle.pause()
     assert "pause" in pause_msg.lower() or "paused" in pause_msg.lower()
 
     # Start result() while still paused – it should await
     res_task = await _assert_blocks_while_paused(handle.result())
 
     # Resume execution
-    resume_msg = handle.resume()
+    resume_msg = await handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
     # Now result() should finish
@@ -329,6 +329,26 @@ async def test_simulated_clear():
     ), "Answer should be non-empty after clear()"
 
 
+@_handle_project
+def test_simulated_knowledge_manager_reduce_shapes():
+    km = SimulatedKnowledgeManager()
+
+    scalar = km.reduce(table="Content", metric="sum", keys="row_id")
+    assert isinstance(scalar, (int, float))
+
+    multi = km.reduce(table="Content", metric="max", keys=["row_id"])
+    assert isinstance(multi, dict)
+    assert set(multi.keys()) == {"row_id"}
+
+    grouped = km.reduce(
+        table="Content",
+        metric="sum",
+        keys="row_id",
+        group_by="row_id",
+    )
+    assert isinstance(grouped, dict)
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # 12.  Stop while paused should finish immediately                           #
 # ────────────────────────────────────────────────────────────────────────────
@@ -337,7 +357,7 @@ async def test_simulated_clear():
 async def test_stop_while_paused_finishes_immediately():
     km = SimulatedKnowledgeManager()
     h = await km.ask("Generate a long knowledge export.")
-    h.pause()
+    await h.pause()
     res_task = asyncio.create_task(h.result())
     await asyncio.sleep(0.1)
     assert not res_task.done()
