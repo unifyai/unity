@@ -58,7 +58,10 @@ class ContactIndex:
         print(f"Setting contacts: {contacts}")
         for c in contacts:
             self.contacts[c["contact_id"]] = Contact(**c, is_boss=c["contact_id"] == 1)
-        if not self.is_local:
+        if (
+            not self.is_local
+            or self.contacts[1].first_name == self.contacts[-1].first_name
+        ):
             self.contacts.pop(-1, None)
 
     # is this supposed to fail for any reason?
