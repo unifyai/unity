@@ -4,8 +4,8 @@ import asyncio
 import json
 import uuid
 import time
-from typing import Optional, Type, TypeVar, Literal
-from datetime import datetime, timezone
+import inspect
+from typing import Optional, Type, TypeVar, TYPE_CHECKING
 import os
 import redis.asyncio as redis
 from pydantic import BaseModel
@@ -13,20 +13,21 @@ from enum import Enum
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 from unity.transcript_manager.transcript_manager import TranscriptManager
-from unity.common.tool_spec import ToolSpec
 from .base import BaseConversationManagerHandle
-from .new_events import NotificationInjectedEvent, NotificationUnpinnedEvent
+from .new_events import (
+    NotificationInjectedEvent,
+    NotificationUnpinnedEvent,
+    DirectSpeechEvent,
+)
 import logging
+
+
+if TYPE_CHECKING:
+    from unity.conversation_manager.conversation_manager import ConversationManager
 
 T = TypeVar("T", bound=[BaseModel, Enum])
 
 logger = logging.getLogger(__name__)
-
-
-# Helper function to format timestamps for transcript queries
-def _to_iso(ts: float) -> str:
-    """Converts a UNIX timestamp to a timezone-aware ISO 8601 string."""
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
 class ConversationManagerHandle(BaseConversationManagerHandle):
@@ -45,6 +46,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         contact_id: int,
         *,
         transcript_manager: TranscriptManager | None = None,
+        conversation_manager: "ConversationManager",
     ):
         """
         Initializes the handle for a specific conversation.
@@ -53,42 +55,26 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         self.conversation_id = conversation_id
         self.contact_id = contact_id
         self._tm = transcript_manager or TranscriptManager()
+        self.conversation_manager = conversation_manager
 
         self._steering_channel = "app:comms:steering"
         self._stopped = False
         self._final_result = "Handle is active."
 
-    # ────────────────────────────────────────────────────────────────────
-    # Non-Blocking Tools for LLM-Orchestrated Polling
-    # ────────────────────────────────────────────────────────────────────
-
-    async def _tool_get_latest_user_messages(
+    # ─────────────────────────────────────────────────────────────
+    # Conversation-Specific Operations
+    # ─────────────────────────────────────────────────────────────
+    async def get_full_transcript(
         self,
-        delay: float = 2.0,
         max_messages: int = 20,
-        since_ts: float | None = None,
-        sender_filter: Literal["user", "assistant", "all"] = "user",
     ) -> dict:
         """
         Polls the durable transcript store for recent messages in this conversation.
         """
-        if delay > 0:
-            await asyncio.sleep(delay)
-
-        clauses = []
-        if sender_filter == "user":
-            clauses.append("sender_id != 0")  # 0 is the assistant id
-        elif sender_filter == "assistant":
-            clauses.append("sender_id == 0")
-
-        filter_expr = " and ".join(clauses)
-        logger.info(f'TOOL: Polling transcript with filter: "{filter_expr}"')
 
         # _filter_messages is synchronous, so we run it in a thread to avoid blocking.
         def _fetch_from_transcript():
-            return self._tm._filter_messages(filter=filter_expr, limit=max_messages)[
-                "messages"
-            ]
+            return self._tm._filter_messages(limit=max_messages)["messages"]
 
         try:
             # Await the thread-based call
@@ -122,24 +108,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
             "count": len(messages),
         }
 
-    async def get_full_transcript(
-        self,
-        max_messages: int = 50,
-    ) -> dict:
-        """
-        Retrieves the full conversation transcript from the rolling window,
-        including both user and assistant messages.
-        """
-        return await self._tool_get_latest_user_messages(
-            delay=0,
-            max_messages=max_messages,
-            sender_filter="all",
-        )
-
-    # ─────────────────────────────────────────────────────────────
-    # Conversation-Specific Operations
-    # ─────────────────────────────────────────────────────────────
-
     async def send_notification(
         self,
         content: str,
@@ -158,7 +126,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         if interjection_id is None:
             interjection_id = str(uuid.uuid4().hex[:12])
 
-        # Include target conversation ID so CM knows if the event is for it
         event = NotificationInjectedEvent(
             content=content,
             source=source,
@@ -185,254 +152,468 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         *,
         response_format: Optional[Type[T]] = None,
         overall_timeout: int = 300,
+        task_instructions: Optional[str] = None,
     ) -> SteerableToolHandle:
         """
-        Ask the active conversation a targeted question and return a steerable handle.
+        Asks a question to the user and returns a handle to the running sub-conversation.
 
-        Use this method to obtain information from the user within the current live conversation
-        without creating a new session. The returned handle supports mid‑flight steering via
-        pause(), resume(), interject(), and stop(), and yields the final answer through result().
-        The helper prefers inferring from the recent transcript first and will interject only
-        when necessary to resolve ambiguity.
-
-        Parameters
-        ----------
-        question : str
-            Natural‑language question for the user.
-        response_format : Optional[Type[T]]
-            Optional Pydantic model or Enum describing the expected structured answer.
-            When provided, the final result is validated and parsed into that type.
-        overall_timeout : int
-            Maximum seconds to wait for the tool loop to complete before raising a timeout.
-
-        Returns
-        -------
-        SteerableToolHandle
-            Await result() to obtain the final (optionally structured) answer, or steer
-            mid‑flight using the standard handle controls.
+        Args:
+            question: The question to ask the user
+            response_format: Optional Pydantic model or Enum type for structured responses
+            overall_timeout: Maximum time to wait for a response (seconds)
+            task_instructions: Optional specific instructions for this task to be injected into the prompt
         """
         if self._stopped:
             raise RuntimeError("Cannot ask a stopped handle.")
 
+        cm_handle = self
+
         ask_start_ts = time.time()
-        llm = unify.AsyncUnify(
-            "claude-4.5-sonnet@anthropic",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-        )
+
+        # Build recent transcript from contact_index for LLM context
+        recent_transcript_for_prompt: str = ""
+        try:
+            contact = (
+                self.conversation_manager.call_contact
+                or self.conversation_manager.contact_index.get_contact(
+                    contact_id=self.contact_id,
+                )
+            )
+
+            if (
+                contact
+                and contact["contact_id"]
+                in self.conversation_manager.contact_index.active_conversations
+            ):
+                active_contact = (
+                    self.conversation_manager.contact_index.active_conversations[
+                        contact["contact_id"]
+                    ]
+                )
+                phone_thread = active_contact.threads.get("phone", [])
+                recent_msgs_raw = list(phone_thread)[-20:] if phone_thread else []
+
+                prompt_lines: list[str] = []
+                for msg in recent_msgs_raw:
+                    role = "assistant" if msg.name == "You" else "user"
+                    content = (msg.content or "").strip()
+
+                    # Skip system messages
+                    if content.startswith("<") and content.endswith(">"):
+                        continue
+
+                    prompt_lines.append(f"- {role}: {content}")
+
+                recent_transcript_for_prompt = (
+                    "Recent Transcript (last 20 messages):\n" + "\n".join(prompt_lines)
+                    if prompt_lines
+                    else "Recent Transcript: (none)"
+                )
+            else:
+                recent_transcript_for_prompt = (
+                    "Recent Transcript: (no active conversation)"
+                )
+        except Exception as e:
+            logger.error(f"Could not fetch transcript context: {e}")
+            recent_transcript_for_prompt = "Recent Transcript: (error)"
 
         # Build the schema requirement section only if response_format is provided
         schema_requirement = ""
         if response_format:
             schema_requirement = f"""
-        Once you have the answer, you MUST respond with a JSON object matching the following Pydantic schema:
+        The Pydantic schema for the final answer is:
         {response_format.model_json_schema()}
         """
 
         final_requirement = (
-            "- Once you have the user's answer, your final response MUST be a JSON object that strictly conforms to the provided Pydantic model schema. Do not add any extra keys or commentary."
+            f"""
+        - **If you used PATH 1 (INFER)**: Your final response MUST be a single JSON object with TWO keys: `acknowledgment` (your 2-3 sentence message) and `final_answer` (the JSON payload conforming to the Pydantic schema).
+        - **If you used PATH 2 (ASK)**: Your final response MUST be ONLY the JSON payload that strictly conforms to the Pydantic model schema.
+        """
             if response_format
             else "- Once you have the user's answer, respond with a clear and concise summary of what they said."
         )
 
-        system_prompt = f"""
-        You are an intelligent sub-agent embedded within a larger conversational system. Your **sole mission** is to determine the user's answer to a *single, specific question* based primarily on the existing conversation history. You must be efficient, accurate, and avoid asking the user if the answer can be reasonably inferred.
+        # Build static prompt (cacheable) and dynamic prompt (question-specific)
+        task_specific_section = ""
+        if task_instructions:
+            task_specific_section = f"""
+        ---
+        ### **📝 TASK SPECIFIC INSTRUCTIONS**
+        {task_instructions}
+        """
 
+        static_prompt = f"""
+        You are the "Brain" of a conversation agent. Your goal is to determine the user's answer to a specific question by listening to a transcript.
+
+        **LANGUAGE:** Infer from the transcript the language the user is speaking in. ALL your acknowledgments and questions MUST be in the same language.
+        When you call `ask_question`, the text you provide MUST be in the same language.
+
+        ---
+        ### **🛠️ YOUR TOOLS**
+        1. RECENT_TRANSCRIPT (seeded below) → Prefer using this directly to infer the answer without calling any tools.
+        2. `ask_question(text: str)` → Sends exactly your wording to the user and **BLOCKS** until the user replies.
+           - This tool is **ONLY FOR PATH 2 (ASK & WAIT)**.
+           - It sends the question to the live conversation and waits for the user's next utterance.
+        3. `ask_historic_transcript(text: str)` → Ask questions about the **historic** transcript (content BEFORE the current conversation session).
+           - **WARNING**: Do NOT use this for the active conversation. The active conversation is already in RECENT_TRANSCRIPT.
+           - Use this ONLY if you need to look up older context (e.g., "What did we discuss last week?").
+
+        {task_specific_section}
+
+        ---
+        ### **✅ ANSWER VERIFICATION (PATH 2 CRITICAL RULE)**
+
+        When using PATH 2 (`wait_for_reply=True`), after the user responds:
+
+        **STEP 1: VERIFY the response answers your question**
+        - Ask yourself: "Does this response actually answer what I asked?"
+
+        **STEP 2: Handle based on verification result**
+        - **If VALID ANSWER**: Return it immediately
+        - **If NON-ANSWER/TANGENTIAL**: Ask ONE simplified follow-up to get clarity
+        - **If STILL NO ANSWER after follow-up**: Use safe default (e.g., "No additional details provided")
+        - **If CORRECTION SIGNAL**: Handle as `go_back`
+
+        **Why this matters**: Blindly accepting non-answers leads to poor data quality and confused users.
+
+        ---
+        ### **📜 DECISION FLOW**
+
+        **Choose exactly ONE path per tool loop for efficiency.**
+
+        **CHOOSING YOUR PATH:**
+        - **Use PATH 1 (INFER)** when the transcript provides 90%+ certainty about the answer
+        - **Use PATH 2 (ASK)** when the user's words don't clearly distinguish between 2+ options (genuinely ambiguous)
+
+        **PATH 1 — INFER & ACKNOWLEDGE (When 90%+ Confident)**
+        1. Read RECENT_TRANSCRIPT and apply **strong common-sense reasoning** to infer the answer.
+        2. **CRITICAL - Check for Correction signal**: Is the user correcting a previous choice?
+           - "Actually it's X not Y" → Infer `go_back` (if applicable)
+        3. If you can infer with 90%+ confidence:
+           - **FIRST**: Check recent transcript (last 3-5 messages). If you see an acknowledgment that already mentions this issue, DO NOT create a new acknowledgment. Return a navigation message only.
+           - **ONLY IF no acknowledgment exists**: Formulate a contextually-aware acknowledgment (following all rules on linguistic variety, 2-3 sentences, etc.).
+           - **Use declarative sentences in PATH 1 acknowledgments.** If you need to ask anything—even a soft confirmation—switch to PATH 2.
+        4. **CRITICAL - RETURN IN ONE STEP**: Your final response MUST be a **single JSON object** that contains *both* the acknowledgment and the final answer.
+
+            **This is the ONLY way to complete PATH 1. Do NOT call any tools.**
+
+            **SCHEMA FOR PATH 1:**
+            ```json
+            {{
+              "acknowledgment": "Your 2-3 sentence acknowledgment text here (in the user's language).",
+              "final_answer": "the Pydantic/Enum JSON you inferred"
+            }}
+            ```
+            **Example:**
+            ```json
+            {{
+              "acknowledgment": "Thanks for that. Since you mentioned [X], I've noted that and we're proceeding.",
+              "final_answer": {{
+                "value": "some_value"
+              }}
+            }}
+            ```
+            This single response will simultaneously send the acknowledgment and complete the step.
+
+        **PATH 2 — ASK & WAIT (When Genuinely Ambiguous)**
+        1. Use this when you CANNOT infer with 90%+ confidence.
+        2. **Review last 2 turns** before formulating your question to ensure natural flow.
+        3. Call `ask_question("...")` with a conversational, focused clarifying question.
+        4. **CRITICAL - After user replies, VERIFY the answer (DO NOT blindly accept)**:
+           - **STEP A**: Read their response and explicitly ask yourself: "Does this directly answer my question?"
+           - **STEP B - If YES (valid answer)**: Return it immediately
+           - **STEP C - If NO (non-answer/tangential/vague)**:
+             - Call `ask_question` AGAIN with a simplified follow-up question.
+             - **This is ALLOWED and ENCOURAGED!** Multiple questions in PATH 2 are expected when verifying answers.
+           - **STEP D - If CORRECTION SIGNAL**: Recognize it and handle as `go_back`
+
+        **⚠️  PATH CONSISTENCY GUIDANCE**
+        - **PATH 1 (INFER)**: You make **ZERO** tool calls. Your final answer is the special `{{"acknowledgment": ..., "final_answer": ...}}` JSON object.
+        - **PATH 2 (ASK)**: You **MUST** call `ask_question(...)`.
+          - Multiple calls in PATH 2 are ENCOURAGED (e.g., Ask question → verify response → ask follow-up question).
+          - **Choose ONE path** per tool loop - either infer (PATH 1) or ask (PATH 2).
+
+        ---
+        ### **💎 CRAFTING HIGH-QUALITY MESSAGES**
+
+        **Before formulating ANY message (acknowledgment or question), you MUST:**
+        1. **Review the last 2 conversation turns** to understand the current context
+        2. **Be EXPLICIT about your decision**: Always name the specific category/option you've selected and confirm we're moving forward
+        3. **Flow naturally**: Make your message feel like a seamless continuation, not a robotic repetition
+        4. **VARY YOUR LANGUAGE**: Do NOT repeat the same sentence structures, openers, or action verbs across sequential messages
+
+        ---
+        ### **🎨 LINGUISTIC VARIETY (CRITICAL)**
+
+        **THE PROBLEM**: When multiple guidance messages (Path 1 inferences) are sent in a row, you sound robotic.
+
+        **THE SOLUTION: Mix Full Acknowledgments with "Thinking Aloud" Messages**
+
+        - **When acknowledging new information**: Give a full, natural, 2-3 sentence message. But ONLY if you haven't already acknowledged it in recent transcript!
+
+        - **For subsequent steps**: Use shorter "Thinking Aloud" messages that describe what you're doing in a natural, matter-of-fact way.
+
+        - **Move forward with each message**: Each message should progress the conversation. Acknowledge once, then move to categorization, then to specifics.
+
+        **3. VARY YOUR ACTION VERBS AND USE COMPLETED ACTIONS (when you do use full sentences):**
+        - "I've selected... and we're proceeding"
+        - "Since [reason], I've categorized this under... We're moving to the next step"
+        - "I've marked this as... moving forward now"
+        - "That's definitely a... issue—I've logged that and proceeding"
+        - "Within that, I've chosen... and we're continuing"
+        - "And I've specifically recorded this as... Bear with me as we proceed"
+
+        **4. VARY YOUR OPENERS (when you do use full sentences):**
+        - No opener - just dive into the statement
+        - "Since..." (causal)
+        - "You mentioned..." (reference)
+        - "For [X] specifically..." (specificity)
+        - Occasionally: "Perfect," "Right," (but NOT consecutively)
+
+        ---
+        ### **🗣️ MESSAGE QUALITY CHECKLIST**
+
+        **Every message you send (acknowledgment or question) MUST:**
+        ✓ **CHECK TRANSCRIPT FIRST** - Before creating ANY acknowledgment, check recent transcript (last 3-5 messages). If acknowledgment exists, create navigation message only.
+        ✓ **CONFIRM ACTION COMPLETE** - Use past tense and explicitly state we're moving forward.
+        ✓ Explicitly name the category/option you've chosen (use **bold** for emphasis)
+        ✓ Acknowledge what the user just said ONCE (show you're listening) - only if you haven't already
+        ✓ **MOVE FORWARD WITH EACH MESSAGE** - Each message should progress the conversation from general to specific
+        ✓ **BE 2-3 SENTENCES LONG** - When acknowledging NEW information that hasn't been acknowledged yet
+        ✓ **VARY YOUR SENTENCE STRUCTURE** - Rotate between different openers and structures
+        ✓ Flow naturally from the last 2 conversation turns (seamless continuation)
+        ✓ **VARY YOUR COMPLETION PHRASES** - Rotate between "and we're proceeding," "moving forward," "We're proceeding now to," "Bear with me as we proceed"
+        ✓ **VARY YOUR OPENERS** - Use different opening phrases for consecutive messages
+        """
+
+        # Dynamic prompt parts (question-specific, not cacheable)
+        dynamic_prompt = f"""
         ---
         ### **🎯 YOUR CURRENT MISSION**
         Determine the user's answer to the question: **'{question}'**
 
         {schema_requirement}
         ---
-        ### **🛠️ YOUR TOOLS**
-        1.  `_tool_get_latest_user_messages(delay: float, since_ts: float)` -> Waits `delay` seconds, then fetches recent user messages from the transcript occurring *after* the `since_ts` timestamp. **Always use this first.**
-        2.  `_tool_interject_conversation(text: str)` -> Sends a message *to* the user. Use this **only as a last resort** if the answer cannot be inferred. Returns the timestamp of when the message was sent.
-
-        ---
-        ### **📜 CORE PRINCIPLES & DECISION PROCESS**
-
-        **1. 🏛️ The Golden Rule: Analyze History First, Infer Actively.**
-            * **Mandatory First Step:** ALWAYS start by calling `_tool_get_latest_user_messages` to retrieve the relevant conversation history. Analyze the *entire* retrieved transcript carefully.
-            * **Prioritize Recency:** Pay close attention to message timestamps. **More recent user statements generally reflect their current state or intention** and should be weighted more heavily than older, potentially outdated information.
-            * **Identify Corrections:** Actively look for user corrections (phrases like "Actually, I meant...", "Sorry, ignore that...", "No, it should be...", "My mistake, it's..."). **Explicit corrections *override* previous conflicting statements** from the user. They are your strongest signal for the current truth.
-            * **Infer from Implication:** Use common sense and contextual reasoning. If the user's recent statements *clearly imply* the answer to your mission question (even if not stated verbatim), you **MUST** infer the answer. Don't just match keywords; understand the *meaning* in the context of the ongoing conversation.
-
-        **2. ✅ Provide the Answer Immediately if Found/Inferred.**
-            * If your analysis of the transcript (considering recency and corrections) provides a confident answer to your mission question, your task is **complete**.
-            * Immediately call `final_answer` with the appropriate structured response. **DO NOT use any more tools.**
-
-        **3. ❓ Ask Only When Genuinely Necessary.**
-            * Only if, after thorough analysis of the *latest* relevant messages, the answer is **truly missing** OR there's an **unresolvable ambiguity** (e.g., conflicting statements *of similar recency* with no explicit correction making one clearly dominant), should you proceed to ask the user.
-            * **Formulate a Clear Question:** If you must ask, use `_tool_interject_conversation` to send a concise question that directly addresses the missing information needed for *your specific mission*.
-            * **Wait for Reply:** After asking, use `_tool_get_latest_user_messages` in a loop (with appropriate delays) to wait for the user's response. Analyze their reply using the same principles (recency, corrections).
-            * **Avoid Leading Questions:** Don't ask questions that suggest an answer (e.g., "So you want option B, right?"). Just ask for the specific information needed based on the options available or the nature of the question.
-            * **Do Not Invent Intentions:** Do not infer complex actions or choices (like assuming the user wants to backtrack or cancel) *unless the user explicitly states it* or the context *strongly and unambiguously* implies it. Your primary job is information gathering for *your* question.
-
-        **4. 🛑 Stop When Answer is Acquired.**
-            * As soon as you obtain a confident answer (either through initial inference or after asking and receiving a reply), **immediately stop using tools** and call `final_answer`.
-
-        ---
-        ### **✨ GUIDING EXAMPLES**
-
-        #### **Example 1: Proactive Inference**
-
-        **Scenario:** Your mission is to determine "What is the user's desired product category?" (Options: Electronics, Clothing, Groceries).
-        Expected response format: `{{"category": "Electronics" | "Clothing" | "Groceries"}}`
-
-        **Recent Transcript:**
-        - Agent: "What kind of item are you looking for today?"
-        - User: "I need a new pair of running shoes."
-        - User: "And maybe some athletic socks if you have them."
-
-        **❌ INCORRECT Behavior (Missing Obvious Context):**
-        1.  Call `_tool_interject_conversation("Is that Clothing or something else?")`
-        2.  Wait for response
-            *Problem:* Running shoes and socks clearly fall under "Clothing". Asking explicitly shows a lack of basic reasoning.
-
-        **✅ CORRECT Behavior (Common-Sense Inference):**
-        1.  Call `_tool_get_latest_user_messages` to review transcript.
-        2.  Analyze: "Running shoes" and "athletic socks" are both types of apparel.
-        3.  Apply reasoning: Apparel belongs to the "Clothing" category.
-        4.  Immediately call `final_answer` with `{{"category": "Clothing"}}`.
-            *Result:* Natural conversation flow, demonstrates understanding.
-
-        #### **Example 2: Handling Corrections**
-
-        **Scenario:** Your mission is "What is the user's account type?" (Options: Personal, Business).
-        Expected response format: `{{"account_type": "Personal" | "Business"}}`
-
-        **Recent Transcript:**
-        - User (earlier): "I need help with my business account."
-        - Agent: "Okay, looking at your business account..."
-        - User (latest): "**Actually, wait, no, sorry**, this is for my **personal** account. My mistake."
-
-        **❌ INCORRECT Behavior:**
-        1.  Analyze transcript. See "business account". See "personal account".
-        2.  LLM gets confused by conflicting info.
-        3.  Calls `_tool_interject_conversation("Sorry, is this for your Personal or Business account?")`
-            *Problem:* Fails to recognize the explicit correction ("Actually, wait, no, sorry...") and prioritize the latest statement defining the correct context.
-
-        **✅ CORRECT Behavior:**
-        1.  Analyze transcript using `_tool_get_latest_user_messages`.
-        2.  Identify "Actually, wait, no, sorry..." as an explicit correction signal.
-        3.  Identify "...this is for my **personal** account" as the latest, superseding information.
-        4.  Immediately call `final_answer` with `{{"account_type": "Personal"}}`.
-            *Result:* Correctly handles the user's change of mind without unnecessary questions.
-
-        ---
         ### **🚨 CRITICAL FINAL STEP**
         {final_requirement}
-
-        ---
-        ### **⚙️ Operational Notes:**
-        * Use the `since_ts` parameter in `_tool_get_latest_user_messages` effectively, especially after you've sent a message, to only poll for *new* replies. The timestamp is returned by `_tool_interject_conversation`.
-        * Be patient when polling for user replies. Use reasonable delays (e.g., 3-7 seconds).
-        * Adhere strictly to the required `response_format` if one is specified. No extra text or explanations in the final JSON.
         """
-        llm.set_system_message(system_prompt)
 
-        async def _tool_interject_conversation(text: str) -> dict:
-            """
-            Tool to inject a notification into the live conversation. Returns immediately.
-            """
-            interject_ts = time.time()
-            await self.interject(text)
-            logger.info(f"TOOL: Interjected '{text}' at {interject_ts}.")
-            return {
-                "status": "ok",
-                "message": f"Successfully sent '{text}'. Use _tool_get_latest_user_messages to check for a reply.",
-                "timestamp": interject_ts,
-            }
+        # Build content array with optional handler context
+        content_parts = [
+            {
+                "type": "text",
+                "text": static_prompt,
+                # "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "type": "text",
+                "text": dynamic_prompt,
+            },
+        ]
 
-        tools = {
-            "_tool_interject_conversation": ToolSpec(
-                fn=_tool_interject_conversation,
-            ),
-            "_tool_get_latest_user_messages": ToolSpec(
-                fn=self._tool_get_latest_user_messages,
-            ),
-        }
-
-        handle = start_async_tool_loop(
-            client=llm,
-            message=f"Start the process to get an answer for: '{question}'. The operation started at timestamp {ask_start_ts}.",
-            tools=tools,
-            response_format=response_format,
+        content_parts.append(
+            {
+                "type": "text",
+                "text": f"""
+        ---
+        ### **📋 RECENT TRANSCRIPT CONTEXT**
+        {recent_transcript_for_prompt}
+        """,
+            },
         )
 
-        original_result = handle.result
+        system_header_msg = {
+            "role": "system",
+            "content": content_parts,
+        }
+        kickoff_user_msg = {
+            "role": "user",
+            "content": f"Start by attempting to infer the answer from the RECENT TRANSCRIPT using strong common-sense reasoning. If you can infer with 90%+ confidence, use PATH 1 (return the single `{{\"acknowledgment\": ..., \"final_answer\": ...}}` JSON). Only use PATH 2 (call `ask_question`) if inference is genuinely impossible. CRITICAL: Your acknowledgments MUST use PAST TENSE to confirm actions are complete (e.g., \"I've selected **X** and we're proceeding\"). For corrections, use explicit completion language (e.g., \"I've updated the room to **Y** as per your correction. Thanks for clarifying, and we're continuing\"). Before generating ANY acknowledgment, check the recent transcript (last 3-5 messages) to see if you've ALREADY acknowledged this issue—if so, use a shorter navigation message instead. If you use PATH 2 and the user replies, VERIFY their response actually answers your question before returning it—if it doesn't, ask a focused follow-up question (you can call the tool multiple times in the same path). Question: '{question}'. Started at {ask_start_ts}.",
+        }
+        seeded_messages: list[dict] = [system_header_msg, kickoff_user_msg]
 
-        async def _wrapped_result() -> T | str:
+        user_reply_future = asyncio.Future()
+
+        # This handles PATH 2 (Ask & Wait).
+        async def ask_question(text: str):
+            """
+            Asks the user a question and WAITS for a reply.
+            This tool BLOCKS until the user speaks.
+            Use this when you need to ask a clarifying question (PATH 2).
+            """
+            nonlocal user_reply_future
+            # Speak to user via direct speech (bypasses Main CM Brain)
+            await self.event_broker.publish(
+                "app:comms:direct_speech",
+                DirectSpeechEvent(content=text).to_json(),
+            )
+
             try:
-                async with asyncio.timeout(overall_timeout):
-                    final_result_str = await original_result()
-                    logger.info(
-                        f"INFO: Tool loop finished, parsing final result. Final result: {final_result_str}",
-                    )
+                if user_reply_future.done():
+                    user_reply_future = asyncio.Future()
 
-                    if response_format:
-                        cleaned_str = final_result_str.strip()
-                        if cleaned_str.startswith("```json"):
-                            cleaned_str = cleaned_str[7:].strip()
-                        if cleaned_str.startswith("```"):
-                            cleaned_str = cleaned_str[3:].strip()
-                        if cleaned_str.endswith("```"):
-                            cleaned_str = cleaned_str[:-3].strip()
-
-                        try:
-                            final_payload = json.loads(cleaned_str)
-
-                            # Handle Pydantic Models
-                            if issubclass(response_format, BaseModel):
-                                validated_model = response_format.model_validate(
-                                    final_payload,
-                                )
-                                logger.info(
-                                    f"INFO: Successfully validated response as {response_format.__name__}",
-                                )
-                                return validated_model
-
-                            # Handle Enums
-                            elif issubclass(response_format, Enum):
-                                if (
-                                    isinstance(final_payload, dict)
-                                    and "value" in final_payload
-                                ):
-                                    enum_member = response_format(
-                                        final_payload["value"],
-                                    )
-                                else:
-                                    enum_member = response_format(final_payload)
-
-                                logger.info(
-                                    f"INFO: Successfully validated response as {response_format.__name__}",
-                                )
-                                return enum_member
-
-                        except (
-                            json.JSONDecodeError,
-                            TypeError,
-                            KeyError,
-                            ValueError,
-                        ) as e:
-                            logger.warning(
-                                f"WARN: Could not parse final result into model after cleaning: {e}",
-                            )
-                            raise e
-                    else:
-                        return final_result_str
-
+                user_msg = await asyncio.wait_for(user_reply_future, timeout=120)
+                return f"User replied: {user_msg}"
             except asyncio.TimeoutError:
-                raise TimeoutError(
-                    f"The 'ask' method timed out after {overall_timeout}s.",
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"An unexpected error occurred in the 'ask' tool loop: {e}",
-                )
+                return "Timed out waiting for user reply."
 
-        handle.result = _wrapped_result
-        return handle
+        tools = {
+            "ask_question": ask_question,
+            "ask_historic_transcript": self._tm.ask,
+        }
+
+        # ──────────────────────────────────────────────────────────────────
+        # Dynamic Response Format Wrapper for PATH 1 Acknowledgments
+        # ──────────────────────────────────────────────────────────────────
+        wrapped_response_format = None
+        if response_format:
+            from typing import Optional
+            from pydantic import Field, create_model
+
+            # Create a wrapper model dynamically
+            # The model will have: acknowledgment (optional) + final_answer (the original type)
+            wrapped_response_format = create_model(
+                f"{response_format.__name__}WithAcknowledgment",
+                acknowledgment=(
+                    Optional[str],
+                    Field(
+                        default=None,
+                        description="Optional 2-3 sentence acknowledgment message in the user's language (only for PATH 1 inference)",
+                    ),
+                ),
+                final_answer=(
+                    response_format,
+                    Field(
+                        description="The actual answer conforming to the required schema",
+                    ),
+                ),
+                __base__=None,
+            )
+
+        # ──────────────────────────────────────────────────────────────────
+        # 3. START THE LOOP
+        # ──────────────────────────────────────────────────────────────────
+        llm = unify.AsyncUnify(
+            "gemini-2.5-flash@vertex-ai",
+            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
+            return_full_completion=False,
+        )
+        inner_handle = start_async_tool_loop(
+            client=llm,
+            message=seeded_messages,
+            tools=tools,
+            response_format=wrapped_response_format,
+            interrupt_llm_with_interjections=True,
+        )
+
+        # ──────────────────────────────────────────────────────────────────
+        # 4. THE WRAPPER (The Bridge)
+        # ──────────────────────────────────────────────────────────────────
+        class InterceptingHandle(SteerableToolHandle):
+            def __init__(self):
+                pass
+
+            # Delegate standard lifecycle methods
+            def stop(self, reason: Optional[str] = None, **kwargs):
+                return inner_handle.stop(reason, **kwargs)
+
+            async def pause(self):
+                return await inner_handle.pause()
+
+            async def resume(self):
+                return await inner_handle.resume()
+
+            def done(self):
+                return inner_handle.done()
+
+            # Delegate event APIs
+            async def next_clarification(self) -> dict:
+                return await inner_handle.next_clarification()
+
+            async def next_notification(self) -> dict:
+                return await inner_handle.next_notification()
+
+            async def answer_clarification(self, call_id: str, answer: str) -> None:
+                return await inner_handle.answer_clarification(call_id, answer)
+
+            async def ask(self, question: str, **kwargs) -> SteerableToolHandle:
+                return await inner_handle.ask(question, **kwargs)
+
+            # INTERJECT HANDLER (Triggered by ConversationManager)
+            async def interject(self, message: str, **kwargs):
+                await inner_handle.interject(
+                    message,
+                    trigger_immediate_llm_turn=False,
+                    **kwargs,
+                )
+                if not user_reply_future.done():
+                    user_reply_future.set_result(message)
+
+                return "Interjection processed"
+
+            async def result(self):
+                try:
+                    raw_result = await inner_handle.result()
+
+                    # Convert result to dict for processing
+                    if hasattr(raw_result, "model_dump"):
+                        final_payload = raw_result.model_dump()
+                    elif isinstance(raw_result, dict):
+                        final_payload = raw_result
+                    elif isinstance(raw_result, str):
+                        try:
+                            final_payload = json.loads(raw_result)
+                        except json.JSONDecodeError:
+                            raise ValueError(f"Invalid JSON result: {raw_result}")
+                    else:
+                        raise ValueError(f"Unexpected result type: {type(raw_result)}")
+
+                    # Send PATH 1 acknowledgment if present
+                    if (
+                        "acknowledgment" in final_payload
+                        and final_payload["acknowledgment"]
+                    ):
+                        await cm_handle.event_broker.publish(
+                            "app:comms:direct_speech",
+                            DirectSpeechEvent(
+                                content=final_payload["acknowledgment"],
+                            ).to_json(),
+                        )
+
+                    # Unwrap final_answer if wrapped
+                    answer_payload = final_payload.get("final_answer", final_payload)
+
+                    # Validate and return
+                    if response_format:
+                        if inspect.isclass(response_format) and issubclass(
+                            response_format,
+                            BaseModel,
+                        ):
+                            return response_format.model_validate(answer_payload)
+                        elif inspect.isclass(response_format) and issubclass(
+                            response_format,
+                            Enum,
+                        ):
+                            if (
+                                isinstance(answer_payload, dict)
+                                and "value" in answer_payload
+                            ):
+                                return response_format(answer_payload["value"])
+                            return response_format(answer_payload)
+
+                    return answer_payload
+
+                finally:
+                    if cm_handle.conversation_manager.active_ask_handle == self:
+                        cm_handle.conversation_manager.active_ask_handle = None
+
+        # Register with CM
+        wrapped_handle = InterceptingHandle()
+        self.conversation_manager.active_ask_handle = wrapped_handle
+
+        return wrapped_handle
 
     async def interject(
         self,
