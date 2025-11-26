@@ -178,7 +178,7 @@ class ContextHandler:
     @classmethod
     def _get_contexts_for_manager(
         cls,
-        manager,
+        manager: Union[BaseStateManager, Type[BaseStateManager]],
         current_context: str,
     ) -> Dict[str, Dict]:
         """Extract the contexts for a manager, resolving context names to fully qualified names."""
