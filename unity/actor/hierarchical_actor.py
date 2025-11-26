@@ -773,7 +773,8 @@ class PlanSanitizer(ast.NodeTransformer):
         has_verify_decorator = any(
             isinstance(d, ast.Name) and d.id == "verify" for d in node.decorator_list
         )
-        if not has_verify_decorator:
+        should_skip_verify = node.name in self._plan.functions_skip_verify
+        if not has_verify_decorator and not should_skip_verify:
             node.decorator_list.insert(0, ast.Name(id="verify", ctx=ast.Load()))
 
         entry_probes = [
@@ -1821,6 +1822,7 @@ class HierarchicalPlan(BaseActiveTask, BaseActorHandle):
         self.function_source_map: Dict[str, str] = {}
         self.clean_function_source_map: Dict[str, str] = {}
         self.top_level_function_names: set[str] = set()
+        self.functions_skip_verify: set[str] = set()
         self.interaction_stack: List[List[Tuple[str, str, Optional[str]]]] = []
         self.escalation_count = 0
         self._is_complete = False
@@ -2012,7 +2014,10 @@ async def main_plan():
                     self.action_log.append(
                         f"Injecting entrypoint '{entrypoint_name}' and its dependencies.",
                     )
-                    full_code = await self.actor._inject_library_functions(base_code)
+                    full_code, skip_verify = await self.actor._inject_library_functions(
+                        base_code,
+                    )
+                    self.functions_skip_verify.update(skip_verify)
 
                     self.plan_source_code = self.actor._sanitize_code(full_code, self)
                     self.action_log.append("Entrypoint plan sanitized and ready.")
@@ -5138,6 +5143,7 @@ class HierarchicalActor(BaseActor):
                             return_value_repr=repr(result),
                             cache_miss_counter=step_cache_miss_counter,
                             exit_seq=exit_seq,
+                            start_seq=start_seq,
                             full_call_stack_tuple=captured_full_stack_tuple,
                             scoped_context_snapshot=captured_scoped_context_snapshot,
                         )
@@ -5171,17 +5177,48 @@ class HierarchicalActor(BaseActor):
 
         return verify
 
-    async def _inject_library_functions(self, base_code: str) -> str:
+    async def _inject_library_functions(self, base_code: str) -> tuple[str, set[str]]:
         """
         Injects necessary library function implementations using the
         dependency list stored by FunctionManager.
+
+        Returns:
+            A tuple of (injected_code, functions_to_skip_verify) where:
+            - injected_code: The code with library functions injected
+            - functions_to_skip_verify: Set of function names that should not have @verify decorator
         """
         if not self.function_manager:
             logger.debug("No FunctionManager available, skipping library injection.")
-            return base_code
+            return base_code, set()
+
+        # Pre-fetch all functions in a single batch to avoid recursive backend calls.
+        # TODO: Use semantic similarity based on base_code docstrings to fetch only
+        # relevant functions instead of fetching all functions. This would be more
+        # efficient for large function libraries and would automatically scope the
+        # injection to semantically related skills.
+        all_functions_map: Optional[Dict[str, Dict[str, Any]]] = None
+        try:
+            logger.info(
+                "Pre-fetching all functions from FunctionManager for fast injection...",
+            )
+            all_functions_data = self.function_manager.search_functions(
+                limit=1000,
+            )  # TODO: use `search_functions_by_similarity`
+            all_functions_map = {
+                func_data["name"]: func_data for func_data in all_functions_data
+            }
+            logger.info(
+                f"✅ Pre-fetched {len(all_functions_map)} functions in a single call.",
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to pre-fetch all functions, falling back to individual queries: {e}",
+            )
+            all_functions_map = None
 
         final_code_parts: List[str] = []
         injected_functions: Set[str] = set()
+        functions_to_skip_verify: Set[str] = set()
         functions_to_inject_queue: List[str] = []
         queued_functions: Set[str] = set()
 
@@ -5251,13 +5288,13 @@ class HierarchicalActor(BaseActor):
 
         except SyntaxError as e:
             logger.warning(f"Could not parse base plan for function injection: {e}")
-            return base_code
+            return base_code, set()
         except Exception as e:
             logger.error(
                 f"Unexpected error during initial scan for injection: {e}",
                 exc_info=True,
             )
-            return base_code
+            return base_code, set()
 
         processed_count = 0
         MAX_INJECTIONS = 200
@@ -5269,22 +5306,28 @@ class HierarchicalActor(BaseActor):
             if function_name in injected_functions:
                 continue
 
-            try:
-                search_results = self.function_manager.search_functions(
-                    filter=f"name == '{function_name}'",
-                    limit=1,
-                )
-            except Exception as e:
-                logger.error(
-                    f"Error searching FunctionManager for '{function_name}': {e}",
-                    exc_info=True,
-                )
-                continue
+            # Use pre-fetched map for O(1) lookup instead of individual backend call
+            library_func_data = None
+            if all_functions_map is not None:
+                library_func_data = all_functions_map.get(function_name)
+            else:
+                # Fallback to individual query if pre-fetch failed
+                try:
+                    search_results = self.function_manager.search_functions(
+                        filter=f"name == '{function_name}'",
+                        limit=1,
+                    )
+                    if search_results:
+                        library_func_data = search_results[0]
+                except Exception as e:
+                    logger.error(
+                        f"Error searching FunctionManager for '{function_name}': {e}",
+                        exc_info=True,
+                    )
+                    continue
 
-            if not search_results:
+            if not library_func_data:
                 continue
-
-            library_func_data = search_results[0]
             func_code = library_func_data.get("implementation")
             dependencies = library_func_data.get("calls", [])
 
@@ -5296,6 +5339,14 @@ class HierarchicalActor(BaseActor):
 
             final_code_parts.insert(0, f"\n{func_code}\n")
             injected_functions.add(function_name)
+
+            # Track functions that should skip verification
+            verify_flag = library_func_data.get("verify", True)
+            if not verify_flag:
+                functions_to_skip_verify.add(function_name)
+                logger.debug(
+                    f"Function '{function_name}' has verify=False, will skip @verify decorator",
+                )
 
             if isinstance(dependencies, list):
                 for dep_name in dependencies:
@@ -5317,7 +5368,7 @@ class HierarchicalActor(BaseActor):
             )
 
         final_code_parts.append(base_code)
-        return "".join(final_code_parts)
+        return "".join(final_code_parts), functions_to_skip_verify
 
     async def _generate_initial_plan(
         self,
@@ -5378,7 +5429,8 @@ class HierarchicalActor(BaseActor):
                     f"LLM response for initial plan (attempt {attempt+1}):\n\n--- LLM RAW RESPONSE START ---\n{response}\n--- LLM RAW RESPONSE END ---\n\n",
                 )
 
-                full_code = await self._inject_library_functions(base_code)
+                full_code, skip_verify = await self._inject_library_functions(base_code)
+                plan.functions_skip_verify.update(skip_verify)
 
                 return self._sanitize_code(full_code, plan)
 
@@ -5519,7 +5571,10 @@ class HierarchicalActor(BaseActor):
                             .replace("```", "")
                             .strip()
                         )
-                        full_code = await self._inject_library_functions(clean_code)
+                        full_code, skip_verify = await self._inject_library_functions(
+                            clean_code,
+                        )
+                        plan.functions_skip_verify.update(skip_verify)
                         ast.parse(
                             textwrap.dedent(full_code),
                         )
