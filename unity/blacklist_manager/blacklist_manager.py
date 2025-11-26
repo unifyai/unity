@@ -5,7 +5,6 @@ import functools
 
 import unify
 
-from ..common.context_store import TableStore
 from ..common.data_store import DataStore
 from ..common.model_to_fields import model_to_fields
 from ..common.filter_utils import normalize_filter_expr
@@ -65,22 +64,6 @@ class BlackListManager(BaseBlackListManager):
         # Immutable built-in columns derived directly from the model
         self._BUILTIN_FIELDS: Tuple[str, ...] = tuple(BlackList.model_fields.keys())
 
-        # Ensure context/schema (idempotent)
-        self._provision_storage()
-
-    # ------------------------------------------------------------------ #
-    # Storage provisioning                                                #
-    # ------------------------------------------------------------------ #
-    def _provision_storage(self) -> None:
-        """Ensure BlackList context and schema exist deterministically."""
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"blacklist_id": "int"},
-            auto_counting={"blacklist_id": None},
-            description="List of blacklisted contact details (per medium).",
-            fields=model_to_fields(BlackList),
-        )
-
     # ------------------------------------------------------------------ #
     # Public API                                                         #
     # ------------------------------------------------------------------ #
@@ -101,9 +84,6 @@ class BlackListManager(BaseBlackListManager):
                 pass
         except Exception:
             pass
-
-        # Recreate schema
-        self._provision_storage()
 
         # Verify visibility before proceeding
         try:
