@@ -12,7 +12,6 @@ from ..common.sandbox_utils import create_sandbox_globals
 from .types.function import Function
 from .base import BaseFunctionManager
 from ..common.model_to_fields import model_to_fields
-from ..common.context_store import TableStore
 from ..file_manager.managers.local import LocalFileManager as FileManager
 from ..image_manager.image_manager import ImageManager, ImageHandle
 from ..common.filter_utils import normalize_filter_expr
@@ -156,8 +155,6 @@ class FunctionManager(BaseFunctionManager):
         ), "read and write contexts must be the same when instantiating a FunctionManager."
         self._ctx = ContextHandler.get_context(self, "Functions")
 
-        # Ensure functions context and fields exist deterministically
-        self._provision_storage()
         # Add tracing
         if traced:
             self = unify.traced(self)
@@ -343,24 +340,6 @@ class FunctionManager(BaseFunctionManager):
     #  Private helpers for persistence                                    #
     # ------------------------------------------------------------------ #
 
-    def _provision_storage(self) -> None:
-        """Ensure Functions context and schema exist deterministically."""
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"function_id": "int"},
-            auto_counting={"function_id": None},
-            description="List of functions, with all function details stored.",
-            fields=model_to_fields(Function),
-            foreign_keys=[
-                {
-                    "name": "guidance_ids[*]",
-                    "references": f"{self._ctx.replace('Functions', 'Guidance')}.guidance_id",
-                    "on_delete": "CASCADE",  # pop on guidance deletion
-                    "on_update": "CASCADE",
-                },
-            ],
-        )
-
     def _get_log_by_function_id(
         self,
         *,
@@ -478,9 +457,6 @@ class FunctionManager(BaseFunctionManager):
                 pass
         except Exception:
             pass
-
-        # Recreate schema
-        self._provision_storage()
 
         # Verify visibility before proceeding
         try:
