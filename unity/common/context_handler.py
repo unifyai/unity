@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 
 class TableContext(BaseModel):
+    # TODO: Ideally should exist in Unify itself
     name: str
     description: str
     fields: Optional[Any] = None
@@ -17,7 +18,7 @@ class TableContext(BaseModel):
 
 class ContextHandler:
     _setup_complete = False
-    _available_contexts = {}
+    _registry = {}
 
     @staticmethod
     def _get_active_context() -> str:
@@ -46,6 +47,7 @@ class ContextHandler:
         manager: Union[BaseStateManager, Type[BaseStateManager]],
         ctx_name: str,
     ):
+        """Refresh the context by forgetting it and then getting it again."""
         cls.forget(manager, ctx_name)
         return cls.get_context(manager, ctx_name)
 
@@ -55,14 +57,15 @@ class ContextHandler:
         manager: Union[BaseStateManager, Type[BaseStateManager]],
         ctx_name: str,
     ):
+        """Remove the context from the registry."""
         manager_name = cls._get_manager_name(manager)
         key = (manager_name, ctx_name)
-        cls._available_contexts.pop(key, None)
+        cls._registry.pop(key, None)
 
     @classmethod
     def clear(cls) -> None:
-        """Remove **all** cached contexts – primarily for test isolation."""
-        cls._available_contexts.clear()
+        """Remove all cached contexts from the registry, primarily for test isolation."""
+        cls._registry.clear()
 
     @classmethod
     def get_context(
@@ -70,14 +73,15 @@ class ContextHandler:
         manager: Union[BaseStateManager, Type[BaseStateManager]],
         ctx_name: str,
     ) -> Optional[str]:
+        """Get the context from the registry, creating it if it doesn't exist."""
         manager_name = cls._get_manager_name(manager)
         key = (manager_name, ctx_name)
-        ret = cls._available_contexts.get(key)
+        ret = cls._registry.get(key)
         if ret is None:
             active_context = cls._get_active_context()
-            contexts = cls.get_contexts_for_manager(manager, active_context)
+            contexts = cls._get_contexts_for_manager(manager, active_context)
             available_contexts = cls._get_available_contexts()
-            ret = cls.create_context_wrapper(
+            ret = cls._create_context_wrapper(
                 manager_name,
                 contexts[ctx_name],
                 available_contexts,
@@ -86,8 +90,10 @@ class ContextHandler:
         return ret
 
     @classmethod
-    def get_managers(cls):
-        # TODO: tbh not the best approach to get the managers, but it works for now
+    def _get_managers(cls) -> List[Union[BaseStateManager, Type[BaseStateManager]]]:
+        """Get the list of managers that have required contexts."""
+        # TODO: Use dynamic discovery of managers, dynamic discover is slower atm
+        # which defeats the purpose of having a context handler
 
         from unity.contact_manager.contact_manager import ContactManager
         from unity.knowledge_manager.knowledge_manager import KnowledgeManager
@@ -108,17 +114,17 @@ class ContextHandler:
             GuidanceManager,
             SecretManager,
             WebSearcher,
-            # FileManager,
             FunctionManager,
         ]
 
     @classmethod
-    def create_context_wrapper(
+    def _create_context_wrapper(
         cls,
         manager_name: str,
         entry: Dict,
         remote_contexts: List[str],
     ):
+        """Create unify context and ensure fields are created, store in registry."""
         table = entry["table_context"]
         target_name = entry["resolved_name"]
         if target_name not in remote_contexts:
@@ -134,12 +140,13 @@ class ContextHandler:
         if table.fields:
             create_fields(table.fields, context=target_name)
 
-        cls._available_contexts[(manager_name, table.name)] = target_name
+        cls._registry[(manager_name, table.name)] = target_name
 
         return target_name
 
     @classmethod
     def setup(cls):
+        """Setup the context handler by creating the contexts for all managers."""
         if cls._setup_complete:
             return
 
@@ -148,15 +155,15 @@ class ContextHandler:
 
         with ThreadPoolExecutor() as executor:
             futures = []
-            for manager in cls.get_managers():
+            for manager in cls._get_managers():
                 manager_name = cls._get_manager_name(manager)
-                for _, entry in cls.get_contexts_for_manager(
+                for _, entry in cls._get_contexts_for_manager(
                     manager,
                     current_context,
                 ).items():
                     futures.append(
                         executor.submit(
-                            cls.create_context_wrapper,
+                            cls._create_context_wrapper,
                             manager_name,
                             entry,
                             available_contexts,
@@ -169,11 +176,12 @@ class ContextHandler:
         cls._setup_complete = True
 
     @classmethod
-    def get_contexts_for_manager(
+    def _get_contexts_for_manager(
         cls,
         manager,
         current_context: str,
     ) -> Dict[str, Dict]:
+        """Extract the contexts for a manager, resolving context names to fully qualified names."""
         assert hasattr(
             manager,
             "Config",
