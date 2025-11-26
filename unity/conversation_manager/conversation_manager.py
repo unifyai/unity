@@ -283,6 +283,191 @@ class ConversationManager(metaclass=SingletonABCMeta):
         # Schedule proactive speech check after assistant turn
         await self.schedule_proactive_speech()
 
+    async def wait_for_events(self):
+        async with self.event_broker.pubsub() as pubsub:
+            await pubsub.psubscribe(
+                "app:comms:*",
+                "app:conductor:*",
+                "app:logging:message_logged",
+                "app:managers:output",
+            )
+
+            if self.assistant_id:
+                self.build_response_model()
+                # asyncio.create_task(self.publish_startup())
+
+                # this feels like it should be its own method really buts its really big
+                # so will keep that way for now
+                # also this is now fully blocking, will discuss it again with everyone what is the best
+                # way to deal with this
+                await managers_utils.init_conv_manager(self)
+                print("Default startup")
+
+            while True:
+                msg = await pubsub.get_message(
+                    timeout=2,
+                    ignore_subscribe_messages=True,
+                )
+
+                if not msg:
+                    continue
+                self.last_activity_time = self.loop.time()
+                # process events
+                event = Event.from_json(msg["data"])
+                await EventHandler.handle_event(
+                    event,
+                    self,
+                    realtime=self.call_manager.realtime,
+                )
+
+    async def check_inactivity(self):
+        """Monitor for inactivity and shut down gracefully after timeout"""
+        while True:
+            await asyncio.sleep(self.inactivity_check_interval)
+            current_time = self.loop.time()
+            if current_time - self.last_activity_time > self.inactivity_timeout:
+                print(
+                    f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown...",
+                )
+                self.stop.set()
+                await self.event_broker.aclose()
+
+    # Convenience setter to allow late binding of the callback
+    def set_user_turn_end_callback(self, callback: Callable[[list[dict]], str]) -> None:
+        """Set or replace the callback invoked at user turn end (phone).
+
+        The callback receives the current chat_history (list of messages) and
+        should return a short filler string to be injected just before the
+        assistant's next streamed response begins.
+        """
+        self.user_turn_end_callback = callback
+
+    # This can be moved to event handlers actually
+    # and sets the Assistant dataclass instead of calling the conversation manager's
+    def set_details(self, payload: dict):
+        """Populate assistant/user/voice details and update environment variables."""
+        self.user_id = payload["user_id"]
+        self.assistant_id = payload["assistant_id"]
+        self.assistant_name = payload["assistant_name"]
+        self.assistant_age = payload["assistant_age"]
+        self.assistant_nationality = payload["assistant_nationality"]
+        self.assistant_about = payload["assistant_about"]
+        self.assistant_number = payload["assistant_number"]
+        self.assistant_email = payload["assistant_email"]
+        self.user_name = payload["user_name"]
+        self.user_number = payload["user_number"]
+        self.user_whatsapp_number = payload["user_whatsapp_number"]
+        self.user_email = payload["user_email"]
+        self.voice_provider = payload["voice_provider"]
+        self.voice_id = payload["voice_id"]
+        self.voice_mode = payload["voice_mode"]
+        self.build_response_model()
+        if payload.get("api_key"):
+            os.environ["UNIFY_KEY"] = payload["api_key"]
+        os.environ["USER_ID"] = self.user_id
+        os.environ["USER_NAME"] = self.user_name
+        os.environ["USER_NUMBER"] = self.user_number
+        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
+        os.environ["USER_EMAIL"] = self.user_email
+        os.environ["ASSISTANT_NAME"] = self.assistant_name
+        os.environ["ASSISTANT_NUMBER"] = self.assistant_number
+        os.environ["ASSISTANT_EMAIL"] = self.assistant_email
+        os.environ["VOICE_PROVIDER"] = self.voice_provider
+        os.environ["VOICE_ID"] = self.voice_id
+        os.environ["VOICE_MODE"] = self.voice_mode
+
+    def get_details(self) -> dict:
+        return {
+            "job_name": self.job_name,
+            "user_id": self.user_id,
+            "assistant_id": self.assistant_id,
+            "user_name": self.user_name,
+            "assistant_name": self.assistant_name,
+            "user_number": self.user_number,
+            "user_whatsapp_number": self.user_whatsapp_number,
+            "assistant_number": self.assistant_number,
+            "user_email": self.user_email,
+            "assistant_email": self.assistant_email,
+        }
+
+    def get_call_config(self) -> CallConfig:
+        return CallConfig(
+            assistant_id=self.assistant_id,
+            assistant_bio=self.assistant_about,
+            assistant_number=self.assistant_number,
+            voice_provider=self.voice_provider,
+            voice_id=self.voice_id,
+            voice_mode=self.voice_mode,
+        )
+
+    def build_response_model(self):
+        self.dynamic_response_models = build_dynamic_response_models(
+            realtime=self.call_manager.realtime,
+        )
+
+    def cleanup(self):
+        """Clean up any running call processes"""
+        print(f"Marking job {self.job_name} done")
+        self.call_manager.cleanup_call_proc()
+        if self.job_name and self.assistant_id:
+            debug_logger.mark_job_done(self.job_name)
+        self.stop.set()
+
+    # ToDo: Refactor this to use the debouncer like the LLM run
+
+    # Filler related methods
+
+    async def run_filler_once(self):
+        if self.call_manager.realtime or self.mode not in [
+            "call",
+            "unify_call",
+            "gmeet",
+        ]:
+            return
+
+        # record the running task so before_stream_start can coordinate
+        self._filler_task = asyncio.current_task()
+        self._filler_started = asyncio.Event()
+        self._filler_done = asyncio.Event()
+        if not self.user_turn_end_callback:
+            self._filler_task = None
+            return
+
+        # pre-compute filler so streaming isn't blocked after start
+        try:
+            filler_text = self.user_turn_end_callback(self.chat_history) or ""
+        except Exception:
+            filler_text = ""
+        self._filler_started.set()
+        channel = f"app:{self.mode}:response_gen"
+        await self.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
+        if filler_text:
+            await self.event_broker.publish(
+                channel,
+                json.dumps({"type": "gen_chunk", "chunk": filler_text}),
+            )
+        await self.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
+        self._filler_done.set()
+        self._filler_task = None
+
+    async def cancel_filler(self):
+        # cancel the running filler task
+        if self._filler_task and not self._filler_task.done():
+            self._filler_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._filler_task
+            self._filler_task = None
+
+    async def before_stream_start(self):
+        # called just before the LLM streaming emits first start_gen
+        if self._filler_task and not self._filler_task.done():
+            if not self._filler_started.is_set():
+                await self.cancel_filler()
+            else:
+                await self._filler_done.wait()
+
+    # Proactive speech related methods
+
     async def schedule_proactive_speech(self):
         """Decides if and when to speak proactively, and schedules it."""
         print(f"[Proactive Speech] schedule_proactive_speech called, mode={self.mode}")
@@ -422,182 +607,3 @@ class ConversationManager(metaclass=SingletonABCMeta):
             raise
         except Exception as e:
             print(f"Error in proactive speech loop: {e}")
-
-    async def wait_for_events(self):
-        async with self.event_broker.pubsub() as pubsub:
-            await pubsub.psubscribe(
-                "app:comms:*",
-                "app:conductor:*",
-                "app:logging:message_logged",
-                "app:managers:output",
-            )
-
-            if self.assistant_id:
-                self.build_response_model()
-                # asyncio.create_task(self.publish_startup())
-
-                # this feels like it should be its own method really buts its really big
-                # so will keep that way for now
-                # also this is now fully blocking, will discuss it again with everyone what is the best
-                # way to deal with this
-                await managers_utils.init_conv_manager(self)
-                print("Default startup")
-
-            while True:
-                msg = await pubsub.get_message(
-                    timeout=2,
-                    ignore_subscribe_messages=True,
-                )
-
-                if not msg:
-                    continue
-                self.last_activity_time = self.loop.time()
-                # process events
-                event = Event.from_json(msg["data"])
-                await EventHandler.handle_event(
-                    event,
-                    self,
-                    realtime=self.call_manager.realtime,
-                )
-
-    async def check_inactivity(self):
-        """Monitor for inactivity and shut down gracefully after timeout"""
-        while True:
-            await asyncio.sleep(self.inactivity_check_interval)
-            current_time = self.loop.time()
-            if current_time - self.last_activity_time > self.inactivity_timeout:
-                print(
-                    f"Inactivity timeout reached ({self.inactivity_timeout}s), requesting shutdown...",
-                )
-                self.stop.set()
-                await self.event_broker.aclose()
-
-    # Convenience setter to allow late binding of the callback
-    def set_user_turn_end_callback(self, callback: Callable[[list[dict]], str]) -> None:
-        """Set or replace the callback invoked at user turn end (phone).
-
-        The callback receives the current chat_history (list of messages) and
-        should return a short filler string to be injected just before the
-        assistant's next streamed response begins.
-        """
-        self.user_turn_end_callback = callback
-
-    # This can be moved to event handlers actually
-    # and sets the Assistant dataclass instead of calling the conversation manager's
-    def set_details(self, payload: dict):
-        """Populate assistant/user/voice details and update environment variables."""
-        self.user_id = payload["user_id"]
-        self.assistant_id = payload["assistant_id"]
-        self.assistant_name = payload["assistant_name"]
-        self.assistant_age = payload["assistant_age"]
-        self.assistant_nationality = payload["assistant_nationality"]
-        self.assistant_about = payload["assistant_about"]
-        self.assistant_number = payload["assistant_number"]
-        self.assistant_email = payload["assistant_email"]
-        self.user_name = payload["user_name"]
-        self.user_number = payload["user_number"]
-        self.user_whatsapp_number = payload["user_whatsapp_number"]
-        self.user_email = payload["user_email"]
-        self.voice_provider = payload["voice_provider"]
-        self.voice_id = payload["voice_id"]
-        self.voice_mode = payload["voice_mode"]
-        self.build_response_model()
-        if payload.get("api_key"):
-            os.environ["UNIFY_KEY"] = payload["api_key"]
-        os.environ["USER_ID"] = self.user_id
-        os.environ["USER_NAME"] = self.user_name
-        os.environ["USER_NUMBER"] = self.user_number
-        os.environ["USER_WHATSAPP_NUMBER"] = self.user_whatsapp_number
-        os.environ["USER_EMAIL"] = self.user_email
-        os.environ["ASSISTANT_NAME"] = self.assistant_name
-        os.environ["ASSISTANT_NUMBER"] = self.assistant_number
-        os.environ["ASSISTANT_EMAIL"] = self.assistant_email
-        os.environ["VOICE_PROVIDER"] = self.voice_provider
-        os.environ["VOICE_ID"] = self.voice_id
-        os.environ["VOICE_MODE"] = self.voice_mode
-
-    def get_details(self) -> dict:
-        return {
-            "job_name": self.job_name,
-            "user_id": self.user_id,
-            "assistant_id": self.assistant_id,
-            "user_name": self.user_name,
-            "assistant_name": self.assistant_name,
-            "user_number": self.user_number,
-            "user_whatsapp_number": self.user_whatsapp_number,
-            "assistant_number": self.assistant_number,
-            "user_email": self.user_email,
-            "assistant_email": self.assistant_email,
-        }
-
-    def get_call_config(self) -> CallConfig:
-        return CallConfig(
-            assistant_id=self.assistant_id,
-            assistant_bio=self.assistant_about,
-            assistant_number=self.assistant_number,
-            voice_provider=self.voice_provider,
-            voice_id=self.voice_id,
-            voice_mode=self.voice_mode,
-        )
-
-    def build_response_model(self):
-        self.dynamic_response_models = build_dynamic_response_models(
-            realtime=self.call_manager.realtime,
-        )
-
-    def cleanup(self):
-        """Clean up any running call processes"""
-        print(f"Marking job {self.job_name} done")
-        self.call_manager.cleanup_call_proc()
-        if self.job_name and self.assistant_id:
-            debug_logger.mark_job_done(self.job_name)
-        self.stop.set()
-
-    async def run_filler_once(self):
-        if self.call_manager.realtime or self.mode not in [
-            "call",
-            "unify_call",
-            "gmeet",
-        ]:
-            return
-
-        # record the running task so before_stream_start can coordinate
-        self._filler_task = asyncio.current_task()
-        self._filler_started = asyncio.Event()
-        self._filler_done = asyncio.Event()
-        if not self.user_turn_end_callback:
-            self._filler_task = None
-            return
-
-        # pre-compute filler so streaming isn't blocked after start
-        try:
-            filler_text = self.user_turn_end_callback(self.chat_history) or ""
-        except Exception:
-            filler_text = ""
-        self._filler_started.set()
-        channel = f"app:{self.mode}:response_gen"
-        await self.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
-        if filler_text:
-            await self.event_broker.publish(
-                channel,
-                json.dumps({"type": "gen_chunk", "chunk": filler_text}),
-            )
-        await self.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
-        self._filler_done.set()
-        self._filler_task = None
-
-    async def cancel_filler(self):
-        # cancel the running filler task
-        if self._filler_task and not self._filler_task.done():
-            self._filler_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._filler_task
-            self._filler_task = None
-
-    async def before_stream_start(self):
-        # called just before the LLM streaming emits first start_gen
-        if self._filler_task and not self._filler_task.done():
-            if not self._filler_started.is_set():
-                await self.cancel_filler()
-            else:
-                await self._filler_done.wait()
