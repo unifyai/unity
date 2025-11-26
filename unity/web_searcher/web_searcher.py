@@ -91,7 +91,6 @@ class WebSearcher(BaseWebSearcher):
             from ..actor.hierarchical_actor import HierarchicalActor
 
             self._hierarchical_actor = HierarchicalActor()
-            # self._ensure_default_function_exists()
         return self._hierarchical_actor
 
     def _ensure_default_function_exists(self) -> None:
@@ -633,10 +632,10 @@ class WebSearcher(BaseWebSearcher):
         self._ensure_default_function_exists()
         function_id = (
             actor_fn_id
-            if isinstance(actor_fn_id, int) and actor_fn_id >= 0
+            if actor_fn_id is not None and actor_fn_id >= 0
             else self._default_function_id
         )
-        if not function_id:
+        if function_id is None:
             return "Failed gated website search: Both actor entrypoint and default function are unavailable. Unable to resolve."
 
         # Start the actor plan with explicit entrypoint args
