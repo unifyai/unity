@@ -80,7 +80,7 @@ from .activation_ops import detach_from_queue_for_activation
 from .reintegration import ReintegrationManager
 from ..common.filter_utils import normalize_filter_expr
 from .queue_engine import plan_reorder_queue, derive_status_after_queue_edit
-from .llm import new_llm_client
+from ..common.llm_client import new_llm_client
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
 from ..image_manager.types import ImageRefs, RawImageRef, AnnotatedImageRef
@@ -3631,8 +3631,6 @@ class TaskScheduler(BaseTaskScheduler):
     # ────────────────────────────────────────────────────────────────────
     # Small internal helpers
     # ────────────────────────────────────────────────────────────────────
-
-    # moved to unity/task_scheduler/llm.py as new_llm_client
 
     # ------------------------------------------------------------------ #
     #  Queue plan + checkpoints (shared helpers exposed as tools)        #
