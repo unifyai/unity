@@ -317,6 +317,41 @@ class SimulatedKnowledgeManager(BaseKnowledgeManager):
             f"Back-story: {self._description}",
         )
 
+    def reduce(
+        self,
+        *,
+        table: str,
+        metric: str,
+        keys: str | list[str],
+        filter: Optional[str | dict[str, str]] = None,
+        group_by: Optional[str | list[str]] = None,
+    ) -> Any:
+        """
+        Simulated counterpart of the KnowledgeManager.reduce tool.
+
+        There is no real backing store; this method returns deterministic,
+        shape-correct placeholder values so that tests and demos can rely on
+        the same return structure as the concrete implementation.
+        """
+
+        def _scalar(k: str) -> float:
+            # Use both table and key name so different tables get different values
+            return float(len(str(table)) + len(str(k)) or 1)
+
+        key_list: list[str] = [keys] if isinstance(keys, str) else list(keys)
+
+        if group_by is None:
+            if isinstance(keys, str):
+                return _scalar(keys)
+            return {k: _scalar(k) for k in key_list}
+
+        groups: list[str] = (
+            [group_by] if isinstance(group_by, str) else [str(g) for g in group_by]
+        )
+        if isinstance(keys, str):
+            return {g: _scalar(keys) for g in groups}
+        return {g: {k: _scalar(k) for k in key_list} for g in groups}
+
     # ------------------------------------------------------------------ #
     #  refactor                                                          #
     # ------------------------------------------------------------------ #

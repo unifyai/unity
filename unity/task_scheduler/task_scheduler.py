@@ -20,6 +20,8 @@ from typing import Literal, overload
 from dataclasses import dataclass
 from functools import cached_property
 
+
+from ..common.tool_spec import read_only
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     short_id,
@@ -38,6 +40,7 @@ from .types.repetition import RepeatPattern, Frequency, Weekday
 from .types.task import TaskBase, Task
 from .types.activated_by import ActivatedBy
 from .types.queue_plan import QueuePlan
+from ..common.metrics_utils import reduce_logs
 
 # ------------------------------------------------------------------ #
 #  Local type aliases                                                 #
@@ -198,6 +201,7 @@ class TaskScheduler(BaseTaskScheduler):
                 self._search_tasks,
                 self._get_queue,
                 self._get_queue_for_task,
+                self._reduce,
                 include_class_name=False,  # redundant, all same class (this one)
             ),
             **methods_to_tool_dict(
@@ -4174,6 +4178,59 @@ class TaskScheduler(BaseTaskScheduler):
                 # Defensive fallback; a failed metric read should not crash tools
                 self._num_tasks_cached = 0
         return int(self._num_tasks_cached)
+
+    @read_only
+    def _reduce(
+        self,
+        *,
+        metric: str,
+        keys: str | list[str],
+        filter: Optional[str | dict[str, str]] = None,
+        group_by: Optional[str | list[str]] = None,
+    ) -> Any:
+        """
+        Compute reduction metrics over the Tasks table in the current context.
+
+        Parameters
+        ----------
+        metric : str
+            Reduction metric to compute. Supported values (case-insensitive) are
+            ``\"sum\"``, ``\"mean\"``, ``\"var\"``, ``\"std\"``, ``\"min\"``,
+            ``\"max\"``, ``\"median\"``, and ``\"mode\"``.
+        keys : str | list[str]
+            One or more numeric task fields to aggregate (for example
+            ``\"task_id\"``, ``\"queue_id\"``, or numeric custom columns). A
+            single column name returns a scalar; a list of column names
+            computes the metric independently per key and returns a
+            ``{key -> value}`` mapping.
+        filter : str | dict[str, str] | None, default None
+            Optional row-level filter expression(s) in the same Python syntax as
+            the ``_filter_tasks`` tool. When a string, the expression is applied
+            uniformly; when a dict, each key maps to its own filter expression.
+        group_by : str | list[str] | None, default None
+            Optional task field(s) to group by (for example ``\"status\"`` or
+            ``\"queue_id\"``). Use a single column name for one grouping level,
+            or a list such as ``[\"status\", \"queue_id\"]`` to group
+            hierarchically in that order. When provided, the result becomes a
+            nested mapping keyed by group values, mirroring
+            :func:`unify.get_logs_metric` behaviour.
+
+        Returns
+        -------
+        Any
+            Metric value(s) computed over the Tasks context:
+
+            * Single key, no grouping  → scalar (float/int/str/bool).
+            * Multiple keys, no grouping → ``dict[key -> scalar]``.
+            * With grouping             → nested ``dict`` keyed by group values.
+        """
+        return reduce_logs(
+            context=self._ctx,
+            metric=metric,
+            keys=keys,
+            filter=filter,
+            group_by=group_by,
+        )
 
     # ----------------------------- Read helpers ----------------------------- #
     def _read_rows_by_ids(
