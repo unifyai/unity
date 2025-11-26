@@ -1,6 +1,0 @@
----
-description: Concise Commit Messages After Every Turn
-globs: ["**/*"]
-alwaysApply: true
----
-At the end of EVERY turn where you've made file edits in Agent mode, you should end your turn with a proposed concise one-sentence commit message for the changes made in this turn. These may not always be committed as-is, but having these messages to hand is *very* useful in cases where the changes do indeed represent a commit-ready chunk of work.
