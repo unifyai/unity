@@ -10,8 +10,10 @@ from unity.conversation_manager import debug_logger
 from unity.conversation_manager.comms_manager import CommsManager
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.domains import comms_utils, managers_utils
+from unity.conversation_manager.domains.event_handlers import EventHandler
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.conversation_manager import ConversationManager
+from unity.conversation_manager.new_events import SummarizeContext
 from unity.helpers import cleanup_dangling_call_processes
 
 
@@ -80,7 +82,7 @@ async def main(project_name: str = "Assistants"):
         user_turn_end_callback=None,
     )
 
-    # Monkeypatch functions for testing
+    # Monkeypatch functions/methods for testing
     if os.getenv("TEST"):
 
         def _sync_mock_success(*args, **kwargs):
@@ -101,6 +103,7 @@ async def main(project_name: str = "Assistants"):
         managers_utils.log_message = _async_mock_success
         managers_utils.publish_bus_events = _async_mock_success
         managers_utils.init_conv_manager = _async_mock_success
+        EventHandler._registry[SummarizeContext] = _async_mock_success
 
     # listens for events coming from whatsapp, calls, and other media and passes it to the event_broker
     comms_manager = CommsManager(event_broker=event_broker)
