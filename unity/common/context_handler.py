@@ -75,7 +75,7 @@ class ContextHandler:
     @classmethod
     def _get_managers(cls) -> List[Union[BaseStateManager, Type[BaseStateManager]]]:
         """Get the list of managers that have required contexts."""
-        # TODO: Use dynamic discovery of managers, dynamic discover is slower atm
+        # TODO: Use dynamic discovery of managers, dynamic discover is slow atm
         # which defeats the purpose of having a context handler
 
         from unity.contact_manager.contact_manager import ContactManager
@@ -87,6 +87,7 @@ class ContextHandler:
         from unity.web_searcher.web_searcher import WebSearcher
         from unity.image_manager.image_manager import ImageManager
         from unity.function_manager.function_manager import FunctionManager
+        from unity.blacklist_manager.blacklist_manager import BlackListManager
 
         return [
             ContactManager,
@@ -98,6 +99,7 @@ class ContextHandler:
             SecretManager,
             WebSearcher,
             FunctionManager,
+            BlackListManager,
         ]
 
     @classmethod
