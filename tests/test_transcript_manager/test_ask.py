@@ -525,3 +525,35 @@ async def test_clarification_request(
         steps,
         "Clarification flow failed",
     )
+
+
+@_handle_project
+@pytest.mark.eval
+@pytest.mark.asyncio
+async def test_ask_uses_reduce_for_numeric_aggregation(
+    tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
+):
+    """Verify LLM uses reduce tool for numeric aggregation questions."""
+    tm, _ = tm_manager_scenario
+
+    handle = await tm.ask(
+        "What is the minimum message_id stored?",
+        _return_reasoning_steps=True,
+    )
+    answer, steps = await handle.result()
+
+    # Assert reduce tool was called
+    reduce_called = any(
+        any(
+            "reduce" in (tc.get("function", {}).get("name", "") or "").lower()
+            for tc in (step.get("tool_calls") or [])
+        )
+        for step in steps
+        if step.get("role") == "assistant"
+    )
+    assert reduce_called, assertion_failed(
+        "reduce tool to be called",
+        f"steps without reduce: {[s for s in steps if s.get('role') == 'assistant']}",
+        steps,
+        "LLM should use reduce tool for numeric aggregation",
+    )

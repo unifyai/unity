@@ -365,3 +365,18 @@ def test_clear_sync():
     # Post-clear, synchronous helper still works
     post = cm.filter_contacts(limit=1)
     assert isinstance(post, list)
+
+
+@_handle_project
+def test_simulated_contact_manager_reduce_shapes():
+    cm = SimulatedContactManager()
+
+    scalar = cm.reduce(metric="sum", keys="contact_id")
+    assert isinstance(scalar, (int, float))
+
+    multi = cm.reduce(metric="max", keys=["contact_id"])
+    assert isinstance(multi, dict)
+    assert set(multi.keys()) == {"contact_id"}
+
+    grouped = cm.reduce(metric="sum", keys="contact_id", group_by="segment")
+    assert isinstance(grouped, dict)
