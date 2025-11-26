@@ -141,15 +141,7 @@ class SecretManager(BaseSecretManager):
             pass
 
         # Force re-provisioning even if previously ensured
-        try:
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
+        ContextHandler.refresh(self, "Secrets")
 
         # Re-create schema and vectors
         self._provision_storage()

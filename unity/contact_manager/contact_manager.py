@@ -341,16 +341,7 @@ class ContactManager(BaseContactManager):
         # No per-instance custom field state to reset
 
         # Ensure the schema exists again via shared provisioning helper
-        try:
-            # Remove any previous ensure memo and force re-provisioning
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
+        ContextHandler.refresh(self, "Contacts")
 
         self._provision_storage()
 

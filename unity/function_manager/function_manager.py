@@ -447,16 +447,8 @@ class FunctionManager(BaseFunctionManager):
         except Exception:
             pass
 
-        # Force re-provisioning by clearing TableStore ensure memo for this context
-        try:
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
+        # Force re-provisioning
+        ContextHandler.refresh(self, "Functions")
 
         # Verify visibility before proceeding
         try:

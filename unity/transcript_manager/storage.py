@@ -4,6 +4,7 @@ from typing import Dict, Optional, Set
 
 import unify
 
+from ..common.context_handler import ContextHandler
 from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from .types.message import Message
@@ -70,19 +71,8 @@ def clear(self) -> None:
     # No local cache to reset
 
     # Drop ensure memo then re-provision via shared helper
-    try:
-        from ..common.context_store import TableStore as _TS  # local import
-
-        try:
-            _TS._ENSURED.discard((unify.active_project(), self._transcripts_ctx))
-        except Exception:
-            pass
-        try:
-            _TS._ENSURED.discard((unify.active_project(), self._exchanges_ctx))
-        except Exception:
-            pass
-    except Exception:
-        pass
+    ContextHandler.refresh(self, "Transcripts")
+    ContextHandler.refresh(self, "Exchanges")
 
     # Recreate contexts and required columns via shared helper
     provision_storage(self)

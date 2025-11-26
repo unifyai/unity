@@ -75,15 +75,7 @@ class BlackListManager(BaseBlackListManager):
             pass
 
         # Force re-provisioning by clearing TableStore ensure memo for this context
-        try:
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
+        ContextHandler.refresh(self, "BlackList")
 
         # Verify visibility before proceeding
         try:

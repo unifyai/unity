@@ -338,17 +338,7 @@ class GuidanceManager(BaseGuidanceManager):
             pass
 
         # Ensure the schema exists again via shared provisioning helper
-        try:
-            # Remove any previous ensure memo and force re-provisioning
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
-
+        ContextHandler.refresh(self, "Guidance")
         self._provision_storage()
 
         # Verify the context is visible before attempting reads

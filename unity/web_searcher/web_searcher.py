@@ -287,7 +287,7 @@ class WebSearcher(BaseWebSearcher):
         except Exception:
             pass
 
-        self._provision_storage()
+        ContextHandler.refresh(self, "Websites")
 
         # Attempt to ensure context visibility before reads
         try:
