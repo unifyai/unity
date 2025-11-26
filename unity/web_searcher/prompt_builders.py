@@ -79,6 +79,8 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         lines += [
             "- _search_gated_website: search a specific website via the Actor (handles login if gated).",
             "  • Parameters: query, website",
+            "  • **IMPORTANT**: This tool spawns an expensive browser session. Call it exactly ONCE per query.",
+            "  • Do NOT retry or re-call if results seem incomplete — summarize what was found and stop.",
             "  • Examples:",
             '    - _search_gated_website(query="latest AI trends", website={"host": "medium.com"})',
         ]
@@ -141,6 +143,7 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
         "3. Otherwise, extract at most one highly relevant URL.",
         "4. If still insufficient, do one more targeted step (search OR extract), then STOP and answer.",
         "5. Do not loop through many tools or repeat equivalent steps.",
+        "6. **Gated websites**: Call `_search_gated_website` at most ONCE. Never retry — summarize whatever was found.",
     ]
 
     lines += [
