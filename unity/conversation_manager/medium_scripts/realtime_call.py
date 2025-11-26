@@ -104,7 +104,7 @@ async def entrypoint(ctx: JobContext) -> None:
     # configure the OpenAI Realtime model.
     llm_model = openai_realtime.RealtimeModel(
         model="gpt-realtime",
-        voice="alloy",
+        voice=voice_id,
         modalities=["audio"],
     )
 
