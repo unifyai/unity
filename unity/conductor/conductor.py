@@ -233,6 +233,7 @@ class Conductor(BaseConductor):
                 self._guidance_manager.update,
                 self._secret_manager.update,
                 self._task_scheduler.update,
+                self._web_searcher.update,
                 self._file_manager.organize,
                 self._actor.act,
                 ToolSpec(self._task_scheduler.execute, max_concurrent=1),
