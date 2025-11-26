@@ -1,7 +1,7 @@
 from collections import deque
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import Field
 

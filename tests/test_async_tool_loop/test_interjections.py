@@ -19,7 +19,8 @@ from typing import Any, List
 import pytest
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
@@ -30,7 +31,7 @@ from tests.test_async_tool_loop.async_helpers import (
 #  GLOBALS                                                                    #
 # --------------------------------------------------------------------------- #
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
 # --------------------------------------------------------------------------- #
@@ -63,13 +64,7 @@ def new_client() -> unify.AsyncUnify:
     Return a fresh client with its own conversation state so tests do not
     interfere with one another.
     """
-    return unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    return new_llm_client()
 
 
 @unify.traced
@@ -110,7 +105,7 @@ def _assistant_tool_turns(msgs: List[dict[str, Any]]):
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_leads_to_second_tool_and_final_result():
+async def test_interject_triggers_tool_and_result():
     """
     Start with echo("A"), then interject to also echo("B"). Expect two tool
     calls and a final plain-text result.
@@ -188,7 +183,7 @@ async def test_stop_stops_gracefully():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_backfills_missing_tool_reply_for_helper_call() -> None:
+async def test_backfills_helper_call_reply() -> None:
     """
     Pre-seed transcript with an assistant helper tool_call (e.g. wait).
     New behaviour: helper `wait` is pruned (no backfilled tool reply, no chat clutter).
@@ -251,7 +246,7 @@ async def test_backfills_missing_tool_reply_for_helper_call() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_patient_interjection_during_llm_triggers_deferred_turn(
+async def test_patient_interjection_defers_turn(
     monkeypatch,
 ) -> None:
     """
@@ -338,7 +333,7 @@ async def test_patient_interjection_during_llm_triggers_deferred_turn(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_patient_does_not_cancel_inflight_llm(monkeypatch) -> None:
+async def test_patient_interjection_preserves_llm(monkeypatch) -> None:
     """
     When the LLM is currently thinking, a patient interjection
     (trigger_immediate_llm_turn=False) must NOT cancel the in-flight LLM call.
@@ -398,7 +393,7 @@ async def test_interjection_patient_does_not_cancel_inflight_llm(monkeypatch) ->
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_immediate_cancels_inflight_llm(monkeypatch) -> None:
+async def test_immediate_interjection_cancels_llm(monkeypatch) -> None:
     """
     When the LLM is currently thinking, an immediate interjection
     (default behaviour) MUST cancel the in-flight LLM call.
@@ -457,7 +452,7 @@ async def test_interjection_immediate_cancels_inflight_llm(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjections_are_processed_and_loop_completes():
+async def test_interjections_processed_successfully():
     """
     Fire two interjections (B, then C) and validate FIFO order and sufficient tool work.
     """
@@ -506,7 +501,7 @@ async def test_interjections_are_processed_and_loop_completes():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_single_tool_result_is_inserted_before_interjection():
+async def test_tool_result_precedes_interjection():
     """
     Run `slow` once then reply "ACK". Interject while running.
     Expect: assistant → tool result → interjection.
@@ -538,7 +533,7 @@ async def test_single_tool_result_is_inserted_before_interjection():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_parallel_tool_results_shift_interjection_down():
+async def test_parallel_results_shift_interjection():
     """
     Run both `fast` and `slow`, interject while they are running.
     Expect both tool results right after the assistant turn, interjection follows.
@@ -674,7 +669,7 @@ async def test_interjectable_tool_roundtrip() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
+async def test_immediate_interjection_has_reply() -> None:
     """
     When an interjection arrives immediately after an assistant tool_calls turn,
     a tool placeholder must already be present to maintain API ordering.
@@ -737,7 +732,7 @@ async def test_immediate_interjection_after_toolcall_has_tool_reply() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_backfills_missing_tool_reply_for_prior_assistant_turn() -> None:
+async def test_backfills_prior_assistant_reply() -> None:
     """
     Pre-seed transcript with assistant tool_call but no tool reply.
     The loop must backfill a tool message directly after that assistant turn.

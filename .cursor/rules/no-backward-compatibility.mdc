@@ -1,6 +1,0 @@
----
-description: No Backward Compatibility
-globs: ["**/*"]
-alwaysApply: true
----
-This project is an early prototype and undergoes very rapid development, it is not in production. Please **always** assume that backward compatibility is not needed, and if a change is requested then please assume that the old API is not needed, and all remnant of it should be purged from the repo. **Never** keep old design patterns in the code, and **never** implement in a backward compatible way unless **explicitly requested** to do so.

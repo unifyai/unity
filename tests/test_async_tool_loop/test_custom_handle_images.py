@@ -10,7 +10,8 @@ from unity.common.async_tool_loop import (
     SteerableToolHandle,
     start_async_tool_loop,
 )
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
 # Global registry to capture instances for assertion
@@ -91,13 +92,7 @@ async def test_interject_with_images_on_custom_handle():
     """
     _HANDLES.clear()
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
 
     # Instruct the LLM to call spawn_images_handle first
     client.set_system_message(

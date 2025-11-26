@@ -9,7 +9,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_parse_async_single_file(file_manager, supported_file_examples: dict):
+async def test_parse_async_single(file_manager, supported_file_examples: dict):
     """Test async parsing of a single file."""
     # Get the first available test file
     filename, example_data = next(iter(supported_file_examples.items()))
@@ -27,7 +27,7 @@ async def test_parse_async_single_file(file_manager, supported_file_examples: di
 
 
 @pytest.mark.asyncio
-async def test_parse_async_multiple_files(file_manager, supported_file_examples: dict):
+async def test_parse_async_multiple(file_manager, supported_file_examples: dict):
     """Test async parsing of multiple files."""
     # Use absolute paths for all example files
     imported = [str(ex["path"]) for _, ex in supported_file_examples.items()]
@@ -68,7 +68,7 @@ async def test_parse_async_with_batch_size(file_manager, supported_file_examples
 
 
 @pytest.mark.asyncio
-async def test_parse_async_mixed_files(file_manager, supported_file_examples: dict):
+async def test_parse_async_mixed(file_manager, supported_file_examples: dict):
     """Test async parsing with mix of existing and non-existing files."""
     # One existing file by absolute path
     filename, example_data = next(iter(supported_file_examples.items()))

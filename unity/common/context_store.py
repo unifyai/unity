@@ -25,6 +25,7 @@ class TableStore:
         auto_counting: Optional[Dict[str, Optional[str]]] = None,
         description: Optional[str] = None,
         fields: Optional[Dict[str, Any]] = None,
+        foreign_keys: Optional[list[Dict[str, Any]]] = None,
     ) -> None:
         self._ctx = context
         self._project = unify.active_project()
@@ -32,6 +33,7 @@ class TableStore:
         self._auto_counting = dict(auto_counting or {})
         self._description = description or ""
         self._fields = dict(fields or {})
+        self._foreign_keys = list(foreign_keys or [])
 
     # ──────────────────────────────────────────────────────────────────────
     # Provisioning
@@ -53,6 +55,7 @@ class TableStore:
             unique_keys=self._unique_keys or None,
             auto_counting=self._auto_counting or None,
             description=self._description,
+            # foreign_keys=self._foreign_keys or None,
         )
 
         # Ensure required fields exist (idempotent per-field)

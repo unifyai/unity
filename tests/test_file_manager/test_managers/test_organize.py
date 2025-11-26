@@ -13,7 +13,7 @@ from tests.test_file_manager.helpers import ask_judge
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_organize_rename_file(file_manager, tmp_path: Path):
+async def test_rename(file_manager, tmp_path: Path):
     """Test renaming a file using the organize method."""
     fm = file_manager
     fm.clear()
@@ -49,7 +49,7 @@ async def test_organize_rename_file(file_manager, tmp_path: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_organize_move_file(file_manager, fm_root: Path, tmp_path: Path):
+async def test_move(file_manager, fm_root: Path, tmp_path: Path):
     """Test moving a file using the organize method."""
     fm = file_manager
     fm.clear()
@@ -88,7 +88,7 @@ async def test_organize_move_file(file_manager, fm_root: Path, tmp_path: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_organize_delete_file(file_manager, tmp_path: Path):
+async def test_delete(file_manager, tmp_path: Path):
     """Test deleting a file using the organize method."""
     fm = file_manager
     fm.clear()

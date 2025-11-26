@@ -1,4 +1,3 @@
-from enum import StrEnum
 from pydantic import (
     BaseModel,
     Field,
@@ -9,21 +8,10 @@ from pydantic import (
 )
 from datetime import datetime
 from ...image_manager.types import AnnotatedImageRefs
-from typing import ClassVar
+from typing import ClassVar, Optional
+from .medium import Medium
 
 UNASSIGNED = -1
-
-
-class Medium(StrEnum):
-    UNIFY_MESSAGE = "unify_message"
-    UNIFY_CALL = "unify_call"
-    UNIFY_MEET = "unify_meet"
-    EMAIL = "email"
-    SMS_MESSAGE = "sms_message"
-    PHONE_CALL = "phone_call"
-    WHATSAPP_MSG = "whatsapp_message"
-    WHATSAPP_CALL = "whatsapp_call"
-    GOOGLE_MEET = "google_meet"
 
 
 class Message(BaseModel):
@@ -31,9 +19,12 @@ class Message(BaseModel):
     medium: Medium = Field(
         description="The communication channel used for this message",
     )
-    sender_id: int = Field(description="ID of the contact who sent the message")
-    receiver_ids: list[int] = Field(
-        description="IDs of the contact(s) who received the message.",
+    sender_id: Optional[int] = Field(
+        default=None,
+        description="ID of the contact who sent the message (None if contact deleted)",
+    )
+    receiver_ids: list[Optional[int]] = Field(
+        description="IDs of the contact(s) who received the message (None entries if contacts deleted)",
         min_length=1,
     )
     timestamp: datetime = Field(
@@ -170,6 +161,3 @@ class Message(BaseModel):
                 out = out
 
         return out
-
-
-VALID_MEDIA: tuple[str, ...] = tuple(m.value for m in Medium)

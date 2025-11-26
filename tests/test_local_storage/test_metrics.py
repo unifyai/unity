@@ -6,7 +6,7 @@ import unify
 
 
 @pytest.mark.unit
-def test_metrics_count_matches_rows_and_resets_on_context_delete():
+def test_count_matches_rows_and_resets():
     """
     Fundamental reproduction for metric count inconsistency on auto-increment fields.
 
@@ -88,7 +88,7 @@ def test_metrics_count_matches_rows_and_resets_on_context_delete():
 
 
 @pytest.mark.unit
-def test_metrics_max_matches_row_ids_and_resets_on_context_delete():
+def test_max_matches_row_ids_and_resets():
     """
     Fundamental check for the "max" metric on an auto-increment field.
 

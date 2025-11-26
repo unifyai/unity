@@ -3,27 +3,32 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 import unify
 
 
+DEFAULT_MODEL = "gpt-5@openai"
+
+
 def new_llm_client(
-    model: str = "gpt-5@openai",
+    model: str = DEFAULT_MODEL,
     *,
     stateful: bool = False,
+    **kwargs: Any,
 ) -> "unify.AsyncUnify":
     """
-    Create a configured AsyncUnify client for gpt-5@openai with sane defaults.
+    Create a configured AsyncUnify client.
 
-    The model is intentionally hard-coded to "gpt-5@openai" to align with
-    manager expectations around reasoning_effort and service_tier semantics.
+    Defaults to "gpt-5@openai" with sane defaults for reasoning effort and service tier.
     """
-    selected_model = "gpt-5@openai"
-    return unify.AsyncUnify(
-        selected_model,
-        cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-        traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-        reasoning_effort="high",
-        service_tier="priority",
-        stateful=stateful,
-    )
+    config = {
+        "cache": json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        "traced": json.loads(os.environ.get("UNIFY_TRACED", "false")),
+        "reasoning_effort": "high",
+        "service_tier": "priority",
+        "stateful": stateful,
+    }
+    config.update(kwargs)
+
+    return unify.AsyncUnify(model, **config)

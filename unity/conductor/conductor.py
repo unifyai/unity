@@ -7,7 +7,6 @@ import asyncio
 import json
 import os
 
-import unify
 import functools
 import inspect
 import weakref
@@ -17,6 +16,7 @@ import contextlib
 from ..conversation_manager.base import BaseConversationManagerHandle
 from ..conversation_manager.handle import ConversationManagerHandle
 from ..conversation_manager.event_broker import get_event_broker
+from ..common.llm_client import new_llm_client
 from ..common.llm_helpers import (
     methods_to_tool_dict,
     ToolSpec,
@@ -233,6 +233,7 @@ class Conductor(BaseConductor):
                 self._guidance_manager.update,
                 self._secret_manager.update,
                 self._task_scheduler.update,
+                self._web_searcher.update,
                 self._file_manager.organize,
                 self._actor.act,
                 ToolSpec(self._task_scheduler.execute, max_concurrent=1),
@@ -391,13 +392,7 @@ class Conductor(BaseConductor):
 
             tools["request_clarification"] = request_clarification
 
-        client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        client = new_llm_client()
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None
@@ -606,13 +601,7 @@ class Conductor(BaseConductor):
 
             tools["request_clarification"] = request_clarification
 
-        client = unify.AsyncUnify(
-            "gpt-5@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
-            reasoning_effort="high",
-            service_tier="priority",
-        )
+        client = new_llm_client()
         include_activity = (
             self._rolling_summary_in_prompts
             if rolling_summary_in_prompts is None

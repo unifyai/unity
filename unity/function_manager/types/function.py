@@ -38,3 +38,12 @@ class Function(BaseModel):
             "represents the inverse many-to-many relationship."
         ),
     )
+
+    verify: bool = Field(
+        True,
+        description=(
+            "Whether the function should be verified by the Actor upon completion. "
+            "If True, the Actor may check initial/final states or logs to ensure success. "
+            "If verification fails, the Actor may reimplement and overwrite the function in the 'Functions' store."
+        ),
+    )

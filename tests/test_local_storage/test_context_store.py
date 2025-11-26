@@ -15,11 +15,13 @@ def _reset_ensured_cache():
 
 
 @pytest.mark.unit
-def test_ensure_context_creates_and_idempotent(monkeypatch):
+def test_ensure_creates_and_idempotent(monkeypatch):
     # Arrange: stable project and call counters
     monkeypatch.setattr(unify, "active_project", lambda: "proj-ctx")
-    # Provide a no-op get_context attribute so the try-block doesn't short-circuit
-    monkeypatch.setattr(unify, "get_context", lambda *a, **k: None, raising=False)
+    # Simulate 404 so ensure_context proceeds to creation
+    def _fail_get(*args, **kwargs):
+        raise Exception("Context not found")
+    monkeypatch.setattr(unify, "get_context", _fail_get)
 
     calls = {"create_context": 0, "create_fields": 0}
 
@@ -59,9 +61,11 @@ def test_ensure_context_creates_and_idempotent(monkeypatch):
 
 
 @pytest.mark.unit
-def test_ensure_context_tolerates_create_exception(monkeypatch):
+def test_ensure_tolerates_create_exception(monkeypatch):
     monkeypatch.setattr(unify, "active_project", lambda: "proj-A")
-    monkeypatch.setattr(unify, "get_context", lambda *a, **k: None, raising=False)
+    def _fail_get(*args, **kwargs):
+        raise Exception("Context not found")
+    monkeypatch.setattr(unify, "get_context", _fail_get)
 
     calls = {"create_context": 0, "create_fields": 0}
 
@@ -97,7 +101,7 @@ def test_ensure_context_tolerates_create_exception(monkeypatch):
 
 
 @pytest.mark.unit
-def test_get_columns_transforms_and_uses_project(monkeypatch):
+def test_get_columns_transforms(monkeypatch):
     # Arrange stable project and capture parameters
     monkeypatch.setattr(unify, "active_project", lambda: "proj-Z")
     seen = {"project": None, "context": None}

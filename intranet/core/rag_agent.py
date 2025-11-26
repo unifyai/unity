@@ -32,6 +32,7 @@ from .prompt_builder import (
     build_intranet_ask_llm_prompt,
 )
 from unity.file_manager.managers.local import LocalFileManager as FileManager
+from unity.common.llm_client import new_llm_client
 
 # Import Pydantic models
 try:
@@ -475,12 +476,9 @@ class IntranetRAGAgent:
             # 3) Create client and set prompt
             import unify
 
-            client = unify.AsyncUnify(
-                "gpt-5@openai",
+            client = new_llm_client(
                 cache=True,
                 traced=True,
-                reasoning_effort="high",
-                service_tier="priority",
                 response_format=RAGLLMResponseRaw,
             )
             client.set_system_message(system_msg)

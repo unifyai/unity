@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import pytest
-import unify
 from pydantic import BaseModel, Field
 
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 
 
 class SimpleGreeting(BaseModel):
@@ -29,13 +29,7 @@ async def test_structured_output_response_format() -> None:
          ``SimpleGreeting.model_validate_json``.
     """
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
 
     client.set_system_message(
         "When asked, respond with a JSON object that contains exactly two keys: "
@@ -86,13 +80,7 @@ async def test_no_additional_formatting_roundtrip() -> None:  # noqa: D401
     is **absent** from the final chat transcript.
     """
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
 
     # Prompt the model so that it can satisfy the schema in one go.
     client.set_system_message(

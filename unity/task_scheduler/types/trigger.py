@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...transcript_manager.types.message import Medium
+from ...transcript_manager.types.medium import Medium
 from typing import List, Optional
 
 from pydantic import BaseModel, Field

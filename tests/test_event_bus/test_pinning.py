@@ -26,7 +26,7 @@ def _mk_evt(call_id: str, seq: int, etype: str = "Msg") -> Event:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_pin_preserves_events() -> None:
+async def test_preserves_events() -> None:
     bus = EventBus()
     bus.set_window("Msg", 2)  # keep only 2 unpinned events
 
@@ -65,7 +65,7 @@ async def test_pin_preserves_events() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_auto_pin_rule() -> None:
+async def test_auto_rule() -> None:
     bus = EventBus()
     bus.set_window("Task", 1)  # tiny window so eviction is obvious
 

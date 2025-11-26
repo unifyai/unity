@@ -7,6 +7,7 @@ import json
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common._async_tool import semantic_cache as sc
 from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client
 from unity.common._async_tool.semantic_cache import _Config, SemanticCacheResult
 from unity.common.tool_spec import read_only, normalise_tools, manager_tool
 from unity.common.state_managers import BaseStateManager
@@ -26,12 +27,7 @@ def _patch_semantic_cache_config(monkeypatch):
 
 
 def create_client():
-    return unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=False,
-    )
+    return new_llm_client(cache=False)
 
 
 @pytest.mark.asyncio

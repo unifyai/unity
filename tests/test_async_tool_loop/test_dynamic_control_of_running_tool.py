@@ -28,7 +28,8 @@ import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 
 # Shared helpers
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_assistant_call_prefix,
@@ -40,7 +41,7 @@ from tests.test_async_tool_loop.async_helpers import (
 # --------------------------------------------------------------------------- #
 #  GLOBALS                                                                    #
 # --------------------------------------------------------------------------- #
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 # (prefix-based wait helpers and their counters are now shared in
 #  tests/test_async_tool_loop/async_helpers.py)
 
@@ -155,13 +156,7 @@ def _assistant_is_check_status_only(msg: dict) -> bool:
 # --------------------------------------------------------------------------- #
 @pytest.fixture(scope="function")
 def client():
-    return unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    return new_llm_client()
 
 
 # --------------------------------------------------------------------------- #
@@ -331,7 +326,7 @@ async def test_functional_tool_pause_extends_wall_clock(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_functional_tool_pause_resume_helpers_called_once(client):
+async def test_pause_resume_helpers_called_once(client):
     """
     Same scenario as above but we *count* helper invocations in the chat log.
 
@@ -647,7 +642,7 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_resume_when_no_pending_tools_allows_llm_turn(client):
+async def test_resume_allows_llm_turn(client):
     """
     If the loop is paused while no tools are pending, resuming should immediately
     allow the next LLM turn to proceed and finish.
@@ -819,7 +814,7 @@ async def test_only_one_of_pause_or_resume_is_exposed(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_hide_next_notification_and_clarification(client):
+async def test_helpers_hide_notification_clarification(client):
     """
     Verify dynamic tools do NOT expose `next_notification_…` or `next_clarification_…`
     for an in‑flight inner handle (would fail before the management-set change).
@@ -927,7 +922,7 @@ async def test_dynamic_helpers_hide_next_notification_and_clarification(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_hide_get_history_for_async_handle(client):
+async def test_helpers_hide_get_history(client):
     """
     Verify dynamic tools do NOT expose `get_history_…` for an in‑flight nested
     AsyncToolLoopHandle (this would have been exposed before dynamic base-method
@@ -937,13 +932,7 @@ async def test_dynamic_helpers_hide_get_history_for_async_handle(client):
     @unify.traced
     async def spawn_inner_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         # Start an inner async tool loop and return its handle immediately
-        inner_client = unify.AsyncUnify(
-            MODEL_NAME,
-            reasoning_effort="high",
-            service_tier="priority",
-            cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
-        )
+        inner_client = new_llm_client()
         return start_async_tool_loop(
             inner_client,
             message="Inner loop: reply OK.",
@@ -1088,7 +1077,7 @@ async def test_new_tool_scheduled_while_paused_starts_paused(client, monkeypatch
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_resume_unblocks_paused_base_tool_without_helper(client, monkeypatch):
+async def test_resume_unblocks_base_tool(client, monkeypatch):
     """
     A base tool scheduled while the outer loop is paused should resume
     running immediately when `handle.resume()` is called, even if the LLM

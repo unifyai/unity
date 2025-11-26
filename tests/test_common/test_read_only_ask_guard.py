@@ -6,15 +6,16 @@ import json
 import pytest
 import unify
 
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
 
+from unity.common.llm_client import new_llm_client
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.read_only_ask_guard import ReadOnlyAskGuardHandle
 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_guard_triggers_early_stop_and_returns_early_response(monkeypatch):
+async def test_guard_blocks_mutation(monkeypatch):
     """
     When the classifier flags mutation intent, the guard should stop the outer
     loop and `result()` should return the early response. The assistant message
@@ -61,13 +62,7 @@ async def test_guard_triggers_early_stop_and_returns_early_response(monkeypatch)
         await asyncio.sleep(float(seconds))
         return "done"
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message("You may call tools.")
 
     handle = start_async_tool_loop(
@@ -93,7 +88,7 @@ async def test_guard_triggers_early_stop_and_returns_early_response(monkeypatch)
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_guard_allows_normal_completion_when_no_mutation(monkeypatch):
+async def test_guard_allows_readonly(monkeypatch):
     """
     When classifier returns mutation_intent=False, the guard should not stop the
     loop and the normal assistant answer should be returned.
@@ -118,13 +113,7 @@ async def test_guard_allows_normal_completion_when_no_mutation(monkeypatch):
 
     monkeypatch.setattr(unify.AsyncUnify, "generate", _stub_generate, raising=True)
 
-    client = unify.AsyncUnify(
-        "gpt-5@openai",
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    client = new_llm_client()
     client.set_system_message("Answer normally without tools.")
 
     handle = start_async_tool_loop(

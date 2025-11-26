@@ -14,14 +14,15 @@ from unity.common.async_tool_loop import (
     AsyncToolLoopHandle,
     start_async_tool_loop,
 )
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
 )
 
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-5@openai")
+MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
 class CustomArgsHandle(SteerableToolHandle):
@@ -116,13 +117,7 @@ async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-def
 
 @pytest.fixture(scope="function")
 def client():
-    return unify.AsyncUnify(
-        MODEL_NAME,
-        reasoning_effort="high",
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
-    )
+    return new_llm_client()
 
 
 @pytest.mark.asyncio
@@ -212,7 +207,7 @@ async def test_dynamic_helper_args_are_exposed_and_forwarded(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_write_only_custom_abort_method_finishes_nested_handle(client):
+async def test_custom_abort_finishes_nested(client):
     """
     End-to-end: expose a write-only custom helper `abort` on the spawned handle.
     The model should call the helper, we acknowledge immediately, and the nested
@@ -261,7 +256,7 @@ async def test_write_only_custom_abort_method_finishes_nested_handle(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_handle_cls_custom_outer_handle_is_instantiated(client):
+async def test_custom_outer_handle_instantiated(client):
     """
     Simple sanity check: the start helper should instantiate the provided
     custom outer handle class, and its extended stop signature should be
@@ -302,7 +297,7 @@ async def test_handle_cls_custom_outer_handle_is_instantiated(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_use_base_docstrings_when_not_overridden(client):
+async def test_dynamic_helpers_use_base_docstrings(client):
     """
     Verify that when a custom handle does not provide docstrings for standard
     steering methods (pause/resume/interject/ask/stop), the dynamic helpers
@@ -408,7 +403,7 @@ async def test_dynamic_helpers_use_base_docstrings_when_not_overridden(client):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helpers_use_overridden_docstrings_when_provided(client):
+async def test_dynamic_helpers_use_overridden_docstrings(client):
     """
     Verify that when a custom handle overrides docstrings (or adds extra kwargs),
     the dynamic helpers expose those overridden docstrings in their schema.

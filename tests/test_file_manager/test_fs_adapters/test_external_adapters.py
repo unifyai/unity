@@ -9,7 +9,7 @@ from unity.file_manager.fs_adapters.interact_adapter import InteractFileSystemAd
 
 
 @pytest.mark.asyncio
-async def test_codesandbox_adapter_http_calls(csb_http):
+async def test_codesandbox_http_calls(csb_http):
     # Configure mocked HTTP responses
     csb_http.set_post_status(200)
     csb_http.set_get_json({"items": ["a.txt", "b.txt"]}, status=200)
@@ -42,7 +42,7 @@ async def test_codesandbox_adapter_http_calls(csb_http):
 
 
 @pytest.mark.asyncio
-async def test_interact_adapter_token_and_search(interact_urlopen, monkeypatch):
+async def test_interact_token_and_search(interact_urlopen, monkeypatch):
     # Set environment variables for test (adapter requires some env vars like person_id)
     monkeypatch.setenv("INTERACT_API_BASE", "https://api.example")
     monkeypatch.setenv("INTERACT_KEY", "test_key")

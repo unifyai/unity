@@ -99,15 +99,7 @@ class FileManager(BaseFileManager):
         """
         super().__init__()
         self._adapter = adapter
-        self._parser: BaseParser = (
-            parser
-            if parser is not None
-            else DoclingParser(
-                use_llm_enrichment=True,
-                extract_images=True,
-                extract_tables=True,
-            )
-        )
+        self.__parser: Optional[BaseParser] = parser
         # Optional rich progress manager (initialized during parse/parse_async when enabled)
         self._progress_manager = None
         self._rolling_summary_in_prompts = rolling_summary_in_prompts
@@ -225,6 +217,16 @@ class FileManager(BaseFileManager):
             include_class_name=False,
         )
         self.add_tools("organize", organize_tools)
+
+    @functools.cached_property
+    def _parser(self):
+        if self.__parser is None:
+            self.__parser = DoclingParser(
+                use_llm_enrichment=True,
+                extract_images=True,
+                extract_tables=True,
+            )
+        return self.__parser
 
     def _provision_storage(self) -> None:
         """
