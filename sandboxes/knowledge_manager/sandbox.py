@@ -37,6 +37,7 @@ if str(ROOT) not in sys.path:
 # ────────────────────────────────  unity imports  ───────────────────────────
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.common.async_tool_loop import SteerableToolHandle
+from unity.common.llm_client import new_llm_client
 from sandboxes.utils import (  # shared helpers reused in other sandboxes
     record_until_enter as _record_until_enter,
     transcribe_deepgram as _transcribe_deepgram,
@@ -188,7 +189,7 @@ async def _dispatch_with_context(
         return "refactor", handle, clar_up_q, clar_down_q
 
     # ───── everything else – ask an LLM judge ────────────────────────
-    judge = unify.Unify("gpt-5@openai", response_format=_Intent)
+    judge = new_llm_client(async_client=False, response_format=_Intent)
     intent = _Intent.model_validate_json(
         judge.set_system_message(_INTENT_SYS_MSG).generate(raw),
     )
