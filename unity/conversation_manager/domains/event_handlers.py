@@ -160,7 +160,17 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         if not cm.call_manager.realtime:
             await cm.cancel_filler()
             asyncio.create_task(cm.run_filler_once())
-        await cm.run_llm(delay=0, cancel_running=True)
+        
+        # Cancel proactive speech on user utterance
+        await cm.cancel_proactive_speech()
+        
+        # Route to active ask handle or Main CM Brain
+        if cm.active_ask_handle and not cm.active_ask_handle.done():
+            print(f"🔀 ROUTING: Forwarding to ConversationManagerHandle.ask")
+            await cm.active_ask_handle.interject(event.content)
+        else:
+            print(f"🧠 ROUTING: Triggering Main CM Brain")
+            await cm.run_llm(delay=0, cancel_running=True)
 
 
 @EventHandler.register((PhoneCallEnded, UnifyCallEnded))
@@ -179,6 +189,7 @@ async def _(
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
     cm.call_manager.cleanup_call_proc()
     await cm.cancel_filler()
+    await cm.cancel_proactive_speech()
     await cm.run_llm(delay=0, cancel_running=True)
 
 
@@ -266,6 +277,10 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
 
+    # Cancel proactive speech on message received
+    if role == "user":
+        await cm.cancel_proactive_speech()
+
     await cm.run_llm(delay=2)
 
 
@@ -319,6 +334,33 @@ async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
     )
     await cm.run_llm()
 
+
+@EventHandler.register(NotificationInjectedEvent)
+async def _(event: NotificationInjectedEvent, cm: "ConversationManager", *args, **kwargs):
+    print(f"Received NotificationInjectedEvent: {event.content}")
+    
+    # Push to notification bar
+    cm.notifications_bar.push_notif(
+        event.source,
+        event.content,
+        event.timestamp,
+        pinned=event.pinned,
+        id=event.interjection_id
+    )
+    
+    # Cancel proactive speech because we are injecting something
+    await cm.cancel_proactive_speech()
+    
+    # Trigger LLM to react to the notification
+    await cm.run_llm(delay=0, cancel_running=True)
+
+
+@EventHandler.register(NotificationUnpinnedEvent)
+async def _(event: NotificationUnpinnedEvent, cm: "ConversationManager", *args, **kwargs):
+    print(f"Received NotificationUnpinnedEvent: {event.interjection_id}")
+    
+    # Remove from notification bar
+    cm.notifications_bar.remove_notif(event.interjection_id)
 
 @EventHandler.register(ConductorResult)
 async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
