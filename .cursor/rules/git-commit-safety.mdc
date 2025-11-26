@@ -1,0 +1,34 @@
+---
+description: Rules for performing git commits safely in multi-agent environments to avoid race conditions
+globs: **/*
+---
+
+# Git Commit Safety
+
+## Context
+When multiple agents run in parallel in `local` mode, there is a race condition risk if they use the shared git index (staging area).
+- Agent A: `git add fileA`
+- Agent B: `git add fileB`
+- Agent A: `git commit -m "msg"` -> Commits BOTH fileA and fileB!
+
+## Rule: Explicit Path Commits
+To eliminate this risk, **NEVER** run `git commit` without explicit file arguments.
+
+### Incorrect
+```bash
+git add file1.py
+git commit -m "Update file1"
+```
+
+### Correct
+```bash
+# For modified files:
+git commit file1.py -m "Update file1"
+
+# For new (untracked) files:
+git add file1.py
+git commit file1.py -m "Add file1"
+```
+
+### Reasoning
+Passing filenames to `git commit` bypasses the shared index for that specific commit operation, ensuring that Agent A only commits what it intends to, regardless of what Agent B has staged.
