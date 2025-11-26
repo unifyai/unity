@@ -75,7 +75,7 @@ class TranscriptManager(BaseTranscriptManager):
                 description="List of all timestamped messages sent between all contacts across all mediums.",
                 fields=model_to_fields(Message),
                 unique_keys={"message_id": "int"},
-                auto_counting={"message_id": None, "exchange_id": None},
+                auto_counting={"message_id": None},
                 foreign_keys=[
                     {
                         "name": "sender_id",
@@ -108,6 +108,7 @@ class TranscriptManager(BaseTranscriptManager):
                 description="One row per conversation exchange/thread with optional metadata.",
                 fields=model_to_fields(Exchange),
                 unique_keys={"exchange_id": "int"},
+                auto_counting={"exchange_id": None},
             ),
         ]
 
