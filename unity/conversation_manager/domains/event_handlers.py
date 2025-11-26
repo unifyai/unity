@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager import debug_logger
-from unity.conversation_manager.domains.call_manager import LivekitCallManager
 from unity.conversation_manager.domains.contact_index import Contact
 from unity.conversation_manager.new_events import *
 from unity.conversation_manager.domains import managers_utils
@@ -74,6 +73,7 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         )
         match event:
             case PhoneCallReceived() as e:
+                cm.call_manager.conference_name = e.conference_name
                 cm.call_manager.start_call(contact, boss)
                 message_content = "<Recvieving Call...>"
                 notif_content = f"Call received from {contact['first_name']}"
@@ -115,7 +115,7 @@ async def _(
         cm.mode = "unify_call"
         contact = cm.contact_index.get_contact(contact_id=1)
 
-    cm.call_contact = contact
+    cm.call_manager.call_contact = contact
     cm.notifications_bar.push_notif(
         "Comms",
         f"Phone Call started with {contact['first_name']}",
@@ -181,10 +181,9 @@ async def _(
     **kwargs,
 ):
     cm.mode = "text"
+    cm.call_manager.call_contact = None
     if isinstance(event, PhoneCallEnded):
-        cm.call_contact = None
-    elif isinstance(event, UnifyCallEnded):
-        cm.unify_call_contact = None
+        cm.call_manager.conference_name = None
     contact = cm.contact_index.get_contact(phone_number=event.contact["phone_number"])
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
     cm.call_manager.cleanup_call_proc()
@@ -292,14 +291,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     print("recieved start up event")
     payload = event.to_dict()["payload"]
     cm.set_details(payload)
-    cm.call_manager = LivekitCallManager(
-        cm.assistant_id,
-        cm.assistant_about,
-        cm.assistant_number,
-        cm.voice_provider,
-        cm.voice_id,
-        cm.voice_mode,
-    )
+    cm.call_manager.set_config(cm.get_call_config())
     kwargs = {
         "timestamp": payload["timestamp"],
         "medium": payload["medium"],
@@ -429,10 +421,13 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
     # ToDo: Get this working for email and whatsapp as well
     # Email: Replying to the same thread
     # Whatsapp: Managing different kinds of chat such as groups, etc.
-    if event.medium == "phone_call" and cm.call_exchange_id == UNASSIGNED:
-        cm.call_exchange_id = event.exchange_id
-    if event.medium == "unify_call" and cm.unify_call_exchange_id == UNASSIGNED:
-        cm.unify_call_exchange_id = event.exchange_id
+    if event.medium == "phone_call" and cm.call_manager.call_exchange_id == UNASSIGNED:
+        cm.call_manager.call_exchange_id = event.exchange_id
+    if (
+        event.medium == "unify_call"
+        and cm.call_manager.unify_call_exchange_id == UNASSIGNED
+    ):
+        cm.call_manager.unify_call_exchange_id = event.exchange_id
 
 
 @EventHandler.register(PreHireMessage)
@@ -503,7 +498,7 @@ async def _(event: DirectSpeechEvent, cm: "ConversationManager", *args, **kwargs
             await cm.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
 
     # Record in contact_index for transcript access
-    contact = cm.call_contact or cm.contact_index.get_contact(contact_id=1)
+    contact = cm.call_manager.call_contact or cm.contact_index.get_contact(contact_id=1)
     cm.contact_index.push_message(
         contact,
         "phone" if cm.mode == "call" else "unify_call",

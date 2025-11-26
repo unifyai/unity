@@ -162,17 +162,21 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
 
     exchange_id = getattr(event, "exchange_id", UNASSIGNED)
     if medium == "phone_call":
-        exchange_id = cm.call_exchange_id
+        exchange_id = cm.call_manager.call_exchange_id
     if medium == "unify_call":
-        exchange_id = cm.unify_call_exchange_id
+        exchange_id = cm.call_manager.unify_call_exchange_id
 
     call_utterance_timestamp = ""
     call_url = ""
     # compute utterance timestamp based on active call type
     timestamp = (
-        cm.call_start_timestamp
+        cm.call_manager.call_start_timestamp
         if medium == "phone_call"
-        else (cm.unify_call_start_timestamp if medium == "unify_call" else None)
+        else (
+            cm.call_manager.unify_call_start_timestamp
+            if medium == "unify_call"
+            else None
+        )
     )
     if timestamp:
         delta = datetime.now() - timestamp
@@ -184,7 +188,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
     if "default-assistant" not in cm.assistant_id:
         call_url = (
             "https://storage.cloud.google.com/assistant-call-recordings/staging/"
-            f"{cm.assistant_id}/{cm.conference_name}.mp3"
+            f"{cm.assistant_id}/{cm.call_manager.conference_name}.mp3"
         )
     try:
         print(f"[ManagersWorker] Logging message: {event.to_dict()}")
