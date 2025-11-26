@@ -1,6 +1,8 @@
 import os
 from typing import Optional
 
+from unity.common.context_registry import ContextRegistry
+
 # Attempt to import the external 'unify' SDK. If unavailable, provide a minimal
 # no-op shim so importing the 'unity' package does not require extra installs.
 try:  # pragma: no cover - simple import guard
@@ -185,6 +187,7 @@ def init(
     # 2. Set the assistant context *after* validation
     ASSISTANT_CONTEXT = ctx
     unify.set_context(ctx)
+    ContextRegistry.setup()
 
     # 3. Bring up the global EventBus
     from .events import event_bus as _event_bus_mod
