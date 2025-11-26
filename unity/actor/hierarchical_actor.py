@@ -77,6 +77,7 @@ class VerificationWorkItem:
     return_value_repr: str
     cache_miss_counter: int
     exit_seq: int
+    start_seq: int = -1
     full_call_stack_tuple: tuple = field(default_factory=tuple)
     scoped_context_snapshot: dict = field(default_factory=dict)
 
@@ -2455,6 +2456,53 @@ async def main_plan():
             and routes the result to the appropriate handler.
             """
             try:
+                if (
+                    item.start_seq >= 0
+                    and item.exit_seq > item.start_seq
+                    and isinstance(
+                        self.actor.action_provider.browser.backend,
+                        MagnitudeBrowserBackend,
+                    )
+                ):
+                    backend = self.actor.action_provider.browser.backend
+                    current_seq_cursor = item.start_seq + 1
+
+                    for idx, interaction in enumerate(item.interactions):
+                        if interaction[0] == "tool_call":
+                            call_repr = interaction[1]
+                            if (
+                                "action_provider.act" in call_repr
+                                or "action_provider.navigate" in call_repr
+                            ):
+                                target_seq = current_seq_cursor
+                                current_seq_cursor += 1
+
+                                try:
+                                    logs = await backend.await_sequence_logs(target_seq)
+                                    if logs:
+                                        new_interaction = (
+                                            interaction[0],
+                                            interaction[1],
+                                            interaction[2],
+                                            logs,
+                                        )
+                                        item.interactions[idx] = new_interaction
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Failed to sync logs for seq {target_seq}: {e}",
+                                    )
+
+                    try:
+                        await backend.barrier(up_to_seq=item.exit_seq)
+
+                        new_screenshot = await backend.get_screenshot()
+                        new_url = await backend.get_current_url()
+
+                        item.post_state["screenshot"] = new_screenshot
+                        item.post_state["url"] = new_url
+                    except Exception as e:
+                        logger.warning(f"Failed to refresh post-state after sync: {e}")
+
                 assessment = None
                 if item.cache_miss_counter == 0:
                     assessment = VerificationAssessment(
@@ -4825,6 +4873,13 @@ class HierarchicalActor(BaseActor):
                         "url": await action_provider.browser.get_current_url(),
                         "screenshot": await action_provider.browser.get_screenshot(),
                     }
+
+                    start_seq = -1
+                    if isinstance(
+                        action_provider.browser.backend,
+                        MagnitudeBrowserBackend,
+                    ):
+                        start_seq = action_provider.browser.backend.current_seq
 
                     last_error_reason = ""
                     result = None
