@@ -3,9 +3,8 @@ from typing import TYPE_CHECKING, Union
 
 from unity.contact_manager.types.contact import UNASSIGNED
 from unity.conversation_manager import debug_logger
-from unity.conversation_manager.domains.call_manager import LivekitCallManager
 from unity.conversation_manager.domains.contact_index import Contact
-from unity.conversation_manager.new_events import *
+from unity.conversation_manager.events import *
 from unity.conversation_manager.domains import managers_utils
 
 if TYPE_CHECKING:
@@ -74,6 +73,7 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         )
         match event:
             case PhoneCallReceived() as e:
+                cm.call_manager.conference_name = e.conference_name
                 cm.call_manager.start_call(contact, boss)
                 message_content = "<Recvieving Call...>"
                 notif_content = f"Call received from {contact['first_name']}"
@@ -115,7 +115,7 @@ async def _(
         cm.mode = "unify_call"
         contact = cm.contact_index.get_contact(contact_id=1)
 
-    cm.call_contact = contact
+    cm.call_manager.call_contact = contact
     cm.notifications_bar.push_notif(
         "Comms",
         f"Phone Call started with {contact['first_name']}",
@@ -160,7 +160,17 @@ async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
         if not cm.call_manager.realtime:
             await cm.cancel_filler()
             asyncio.create_task(cm.run_filler_once())
-        await cm.run_llm(delay=0, cancel_running=True)
+
+        # Cancel proactive speech on user utterance
+        await cm.cancel_proactive_speech()
+
+        # Route to active ask handle or Main CM Brain
+        if cm.active_ask_handle and not cm.active_ask_handle.done():
+            print(f"🔀 ROUTING: Forwarding to ConversationManagerHandle.ask")
+            await cm.active_ask_handle.interject(event.content)
+        else:
+            print(f"🧠 ROUTING: Triggering Main CM Brain")
+            await cm.run_llm(delay=0, cancel_running=True)
 
 
 @EventHandler.register((PhoneCallEnded, UnifyCallEnded))
@@ -171,14 +181,14 @@ async def _(
     **kwargs,
 ):
     cm.mode = "text"
+    cm.call_manager.call_contact = None
     if isinstance(event, PhoneCallEnded):
-        cm.call_contact = None
-    elif isinstance(event, UnifyCallEnded):
-        cm.unify_call_contact = None
+        cm.call_manager.conference_name = None
     contact = cm.contact_index.get_contact(phone_number=event.contact["phone_number"])
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
     cm.call_manager.cleanup_call_proc()
     await cm.cancel_filler()
+    await cm.cancel_proactive_speech()
     await cm.run_llm(delay=0, cancel_running=True)
 
 
@@ -266,6 +276,10 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     )
     cm.notifications_bar.push_notif("comms", notif_content, event.timestamp)
 
+    # Cancel proactive speech on message received
+    if role == "user":
+        await cm.cancel_proactive_speech()
+
     await cm.run_llm(delay=2)
 
 
@@ -277,14 +291,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
     print("recieved start up event")
     payload = event.to_dict()["payload"]
     cm.set_details(payload)
-    cm.call_manager = LivekitCallManager(
-        cm.assistant_id,
-        cm.assistant_about,
-        cm.assistant_number,
-        cm.voice_provider,
-        cm.voice_id,
-        cm.voice_mode,
-    )
+    cm.call_manager.set_config(cm.get_call_config())
     kwargs = {
         "timestamp": payload["timestamp"],
         "medium": payload["medium"],
@@ -318,6 +325,38 @@ async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
         event.timestamp,
     )
     await cm.run_llm()
+
+
+@EventHandler.register(NotificationInjectedEvent)
+async def _(
+    event: NotificationInjectedEvent, cm: "ConversationManager", *args, **kwargs
+):
+    print(f"Received NotificationInjectedEvent: {event.content}")
+
+    # Push to notification bar
+    cm.notifications_bar.push_notif(
+        event.source,
+        event.content,
+        event.timestamp,
+        pinned=event.pinned,
+        id=event.interjection_id,
+    )
+
+    # Cancel proactive speech because we are injecting something
+    await cm.cancel_proactive_speech()
+
+    # Trigger LLM to react to the notification
+    await cm.run_llm(delay=0, cancel_running=True)
+
+
+@EventHandler.register(NotificationUnpinnedEvent)
+async def _(
+    event: NotificationUnpinnedEvent, cm: "ConversationManager", *args, **kwargs
+):
+    print(f"Received NotificationUnpinnedEvent: {event.interjection_id}")
+
+    # Remove from notification bar
+    cm.notifications_bar.remove_notif(event.interjection_id)
 
 
 @EventHandler.register(ConductorResult)
@@ -382,10 +421,13 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
     # ToDo: Get this working for email and whatsapp as well
     # Email: Replying to the same thread
     # Whatsapp: Managing different kinds of chat such as groups, etc.
-    if event.medium == "phone_call" and cm.call_exchange_id == UNASSIGNED:
-        cm.call_exchange_id = event.exchange_id
-    if event.medium == "unify_call" and cm.unify_call_exchange_id == UNASSIGNED:
-        cm.unify_call_exchange_id = event.exchange_id
+    if event.medium == "phone_call" and cm.call_manager.call_exchange_id == UNASSIGNED:
+        cm.call_manager.call_exchange_id = event.exchange_id
+    if (
+        event.medium == "unify_call"
+        and cm.call_manager.unify_call_exchange_id == UNASSIGNED
+    ):
+        cm.call_manager.unify_call_exchange_id = event.exchange_id
 
 
 @EventHandler.register(PreHireMessage)
@@ -432,3 +474,35 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
             print(f"[ManagersWorker] Error updating contact rolling summary: {e}")
 
     asyncio.create_task(summarize_task())
+
+
+@EventHandler.register(DirectSpeechEvent)
+async def _(event: DirectSpeechEvent, cm: "ConversationManager", *args, **kwargs):
+    print(f"Received DirectSpeechEvent: {event.content}")
+
+    # Speak to voice layer using appropriate channel
+    if cm.mode in ["call", "unify_call", "gmeet"]:
+        if cm.call_manager.realtime:
+            # Realtime API: Send as notification
+            await cm.event_broker.publish(
+                "app:call:call_notifs",
+                json.dumps({"content": event.content}),
+            )
+        else:
+            # STT-TTS pipeline: Send to response_gen channel
+            channel = f"app:{cm.mode}:response_gen"
+            await cm.event_broker.publish(channel, json.dumps({"type": "start_gen"}))
+            await cm.event_broker.publish(
+                channel, json.dumps({"type": "gen_chunk", "chunk": event.content})
+            )
+            await cm.event_broker.publish(channel, json.dumps({"type": "end_gen"}))
+
+    # Record in contact_index for transcript access
+    contact = cm.call_manager.call_contact or cm.contact_index.get_contact(contact_id=1)
+    cm.contact_index.push_message(
+        contact,
+        "phone" if cm.mode == "call" else "unify_call",
+        message_content=event.content,
+        role="assistant",
+        timestamp=event.timestamp,
+    )

@@ -72,6 +72,7 @@ def build_ask_prompt(
     filter_contacts_fname = _tool_name(tools, "filter_contacts")
     search_contacts_fname = _tool_name(tools, "search_contacts")
     list_columns_fname = _tool_name(tools, "list_columns")
+    reduce_fname = _tool_name(tools, "reduce")
 
     # Clarification helper (only present when the caller provided queues)
     request_clar_fname = _tool_name(tools, "request_clarification")
@@ -136,6 +137,10 @@ Examples
   `{filter_contacts_fname}(filter="phone_number is None")`
 • Case‑insensitive first‑name contains (acceptable because the field is short and constrained)
   `{filter_contacts_fname}(filter="first_name is not None and 'dan' in first_name.lower()")`
+
+─ Numeric aggregations ─
+• For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.
+  `{reduce_fname}(metric='mean', keys='age', group_by='city')`
 
 Anti‑patterns to avoid
 ---------------------

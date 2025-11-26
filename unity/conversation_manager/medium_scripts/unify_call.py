@@ -31,7 +31,7 @@ from unity.conversation_manager.event_broker import get_event_broker
 
 load_dotenv()
 
-from unity.conversation_manager.new_events import *
+from unity.conversation_manager.events import *
 from unity.conversation_manager.utils import dispatch_agent
 
 event_broker = get_event_broker()

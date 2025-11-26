@@ -378,7 +378,7 @@ async def test_pause_and_resume(monkeypatch, simulated_file_manager):
     handle = await fm.ask("Perform a comprehensive analysis of complex.txt.")
 
     # Pause the handle
-    pause_msg = handle.pause()
+    pause_msg = await handle.pause()
     assert "pause" in pause_msg.lower() or "paused" in pause_msg.lower()
 
     # Start result() while still paused – it should await
@@ -386,7 +386,7 @@ async def test_pause_and_resume(monkeypatch, simulated_file_manager):
     await _assert_blocks_while_paused(res_task)
 
     # Resume execution
-    resume_msg = handle.resume()
+    resume_msg = await handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
     # Now result() should finish
@@ -506,6 +506,28 @@ async def test_reasoning_steps_toggle(simulated_file_manager):
     assert isinstance(result2, str) and result2.strip()
 
 
+@_handle_project
+def test_simulated_file_manager_reduce_shapes(simulated_file_manager):
+    fm = simulated_file_manager
+
+    scalar = fm.reduce(metric="sum", keys="file_id")
+    assert isinstance(scalar, (int, float))
+
+    multi = fm.reduce(metric="max", keys=["file_id"])
+    assert isinstance(multi, dict)
+    assert set(multi.keys()) == {"file_id"}
+
+    grouped_str = fm.reduce(metric="sum", keys="file_id", group_by="status")
+    assert isinstance(grouped_str, dict)
+
+    grouped_list = fm.reduce(
+        metric="sum",
+        keys=["file_id"],
+        group_by=["status", "file_id"],
+    )
+    assert isinstance(grouped_list, dict)
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # 11. Simulated GlobalFileManager                                            #
 # ────────────────────────────────────────────────────────────────────────────
@@ -585,13 +607,13 @@ async def test_global_pause_and_resume(simulated_global_file_manager):
     gfm = simulated_global_file_manager
     handle = await gfm.ask("Provide an overview across all managers.")
 
-    pause_msg = handle.pause()
+    pause_msg = await handle.pause()
     assert "pause" in pause_msg.lower() or "paused" in pause_msg.lower()
 
     res_task = asyncio.create_task(handle.result())
     await _assert_blocks_while_paused(res_task)
 
-    resume_msg = handle.resume()
+    resume_msg = await handle.resume()
     assert "resume" in resume_msg.lower() or "running" in resume_msg.lower()
 
     answer = await asyncio.wait_for(res_task, timeout=60)

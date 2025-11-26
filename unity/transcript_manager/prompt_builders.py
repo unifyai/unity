@@ -85,6 +85,7 @@ def build_ask_prompt(
     # Resolve canonical tool names dynamically
     filter_messages_fname = _tool_name(tools, "filter_messages")
     search_messages_fname = _tool_name(tools, "search_messages")
+    reduce_fname = _tool_name(tools, "reduce")
     request_clar_fname = _tool_name(tools, "request_clarification")
     # Image-aware helpers (may be absent; document if present)
     get_imgs_msg_fname = _tool_name(tools, "get_images_for_message")
@@ -138,8 +139,12 @@ def build_ask_prompt(
  ─ Filtering (exact/boolean; not semantic) ─
  • Most recent WhatsApp from contact 7
    `{filter_messages_fname}(filter="sender_id == 7 and medium == 'whatsapp_message'", limit=1, offset=0)`
- • Last month’s emails (if datetime comparisons are supported by your backend)
+ • Last month's emails (if datetime comparisons are supported by your backend)
    `{filter_messages_fname}(filter="medium == 'email' and timestamp >= '2024-01-01T00:00:00' and timestamp < '2024-02-01T00:00:00'", limit=100)`
+
+ ─ Numeric aggregations ─
+ • For numeric reduction metrics (sum, mean, min, max, median, mode, var, std) over numeric columns, use `{reduce_fname}` instead of filtering and computing in-memory.
+   `{reduce_fname}(metric='sum', keys='message_id', group_by='medium')`
 
  ─ Images (vision) ─
  • List images referenced by a specific message (metadata only; no base64). Each item includes any provided freeform annotation explaining how the image relates to the text.

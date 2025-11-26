@@ -3,8 +3,9 @@ import os
 import subprocess
 import time
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from typing import Any
-from typing import Optional
+from typing import Optional, List, Dict
 import logging
 import aiohttp
 from unify.utils import http
@@ -185,12 +186,14 @@ class MagnitudeBrowserBackend(BrowserBackend):
         # Command queue infrastructure
         self._command_queue = asyncio.Queue()
         self._command_processor_task = None
-        self._active_commands = {}  # Tracks commands for cancellation
-        self._seq: int = 0  # Add sequence number counter
-        self._processed_seq: int = -1  # Track the last completed sequence number
+        self._active_commands = {}  # id -> (instruction, context)
+        self._seq: int = 0
+        self._processed_seq: int = -1
         self._barrier_events: dict[int, asyncio.Event] = (
             {}
         )  # For barrier synchronization
+        self._log_buffer: Dict[int, List[str]] = defaultdict(list)
+        self._current_processing_seq: Optional[int] = None
 
         # Keep the simpler initialization from HEAD but add logging support
         MagnitudeBrowserBackend._agent_base_url = agent_server_url
@@ -352,7 +355,12 @@ class MagnitudeBrowserBackend(BrowserBackend):
                 if self._current_capture_queue is not None:
                     logger.debug(f"📥 Capturing magnitude log: {log_line[:100]}...")
                     self._current_capture_queue.put_nowait(log_line)
-                else:
+
+                # Buffer logs if we are processing a command
+                if self._current_processing_seq is not None:
+                    self._log_buffer[self._current_processing_seq].append(log_line)
+
+                if self._current_capture_queue is None:
                     # Otherwise, log to console (this will show up as regular logs)
                     logger.info(f"🔍 Magnitude: {log_line}")
 
@@ -391,6 +399,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     continue
                 try:
                     logger.info(f"▶️ Executing command seq={seq}, id={command_id}")
+                    self._current_processing_seq = seq
                     result = await func(*args, **kwargs)
                     if future:
                         future.set_result(result)
@@ -398,6 +407,7 @@ class MagnitudeBrowserBackend(BrowserBackend):
                     if future:
                         future.set_exception(e)
                 finally:
+                    self._current_processing_seq = None
                     logger.info(f"✅ Completed command seq={seq}, id={command_id}")
                     self._processed_seq = seq
                     # Notify any waiting barriers after a normal command completes
@@ -424,6 +434,10 @@ class MagnitudeBrowserBackend(BrowserBackend):
         Waits until all commands up to a specific sequence number have been processed.
         """
         target_seq = up_to_seq if up_to_seq is not None else self._seq
+
+        # If no commands have been issued yet, there's nothing to wait for
+        if target_seq == 0 and self._processed_seq == -1:
+            return
 
         if self._processed_seq >= target_seq:
             return  # All relevant commands are already done
@@ -1107,3 +1121,17 @@ class MagnitudeBrowserBackend(BrowserBackend):
             except subprocess.TimeoutExpired:
                 MagnitudeBrowserBackend._process.kill()
             MagnitudeBrowserBackend._process = None
+
+    async def await_sequence_logs(self, seq: int) -> list[str]:
+        """
+        Waits until the command with the given sequence number has been processed,
+        and returns the logs generated during its execution.
+        """
+        # Wait until the command is processed
+        while self._processed_seq < seq:
+            # If the command is not even in the queue or active map, and we are past it, it might be lost/skipped
+            # But here we just wait for processed_seq to advance.
+            # We can add a timeout or check if the command exists if needed.
+            await asyncio.sleep(0.1)
+
+        return self._log_buffer.get(seq, [])

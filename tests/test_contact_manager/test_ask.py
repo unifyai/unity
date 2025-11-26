@@ -374,3 +374,35 @@ async def test_ask_stop(
     handle.stop()
     await handle.result()
     assert handle.done()
+
+
+@_handle_project
+@pytest.mark.eval
+@pytest.mark.asyncio
+async def test_ask_uses_reduce_for_numeric_aggregation(
+    contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
+):
+    """Verify LLM uses reduce tool for numeric aggregation questions."""
+    cm, _ = contact_manager_scenario
+
+    handle = await cm.ask(
+        "What is the maximum contact_id stored?",
+        _return_reasoning_steps=True,
+    )
+    answer, steps = await handle.result()
+
+    # Assert reduce tool was called
+    reduce_called = any(
+        any(
+            "reduce" in (tc.get("function", {}).get("name", "") or "").lower()
+            for tc in (step.get("tool_calls") or [])
+        )
+        for step in steps
+        if step.get("role") == "assistant"
+    )
+    assert reduce_called, assertion_failed(
+        "reduce tool to be called",
+        f"steps without reduce: {[s for s in steps if s.get('role') == 'assistant']}",
+        steps,
+        "LLM should use reduce tool for numeric aggregation",
+    )

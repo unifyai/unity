@@ -1,33 +1,38 @@
 from pathlib import Path
 import sys
 
-from unity.transcript_manager.types.message import UNASSIGNED
 from unity.helpers import cleanup_dangling_call_processes, run_script, terminate_process
-from unity.conversation_manager.new_events import *
+from unity.conversation_manager.events import *
+
+
+@dataclass
+class CallConfig:
+    assistant_id: str
+    assistant_bio: str
+    assistant_number: str
+    voice_provider: str
+    voice_id: str
+    voice_mode: str
 
 
 class LivekitCallManager:
-    def __init__(
-        self,
-        assistant_id=None,
-        assistant_bio=None,
-        assistant_number=None,
-        voice_provider=None,
-        voice_id=None,
-        voice_mode=None,
-        realtime: bool = False,
-    ):
-        self.assistant_id = assistant_id
-        self.assistant_bio = assistant_bio
-        self.assistant_number = assistant_number
-        self.voice_provider = voice_provider
-        self.voice_id = voice_id
-        self.realtime = voice_mode == "sts"
-        self.call_proc = None
-
-        self.call_exchange_id = UNASSIGNED
+    def __init__(self, config: CallConfig):
+        self.set_config(config=config)
+        self.call_exchange_id = None
+        self.unify_call_exchange_id = None
         self.call_start_timestamp = None
+        self.unify_call_start_timestamp = None
+        self.call_contact = None
+        self.call_proc = None
         self.conference_name = ""
+
+    def set_config(self, config: CallConfig):
+        self.assistant_id = config.assistant_id
+        self.assistant_bio = config.assistant_bio
+        self.assistant_number = config.assistant_number
+        self.voice_provider = config.voice_provider
+        self.voice_id = config.voice_id
+        self.realtime = config.voice_mode == "sts"
 
     # TODO: support unify calls and clean up boss data passage
     def start_call(self, contact: dict, boss: dict, outbound: bool = False):

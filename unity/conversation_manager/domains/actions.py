@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, create_model
 from unity.conversation_manager.domains import comms_utils
 from unity.conversation_manager.domains import managers_utils
 from unity.conversation_manager.event_broker import get_event_broker
-from unity.conversation_manager.new_events import *
+from unity.conversation_manager.events import *
 from unity.conversation_manager.domains.utils import log_task_exc
 from unity.conversation_manager.domains.contact_index import Contact
 
@@ -383,7 +383,7 @@ async def send_email(cm: "ConversationManager", action_name: str, *args, **kwarg
         contact_id,
         contact_details,
     )
-    to_email = contact.get("email")
+    to_email = contact.get("email_address")
     subject = kwargs.get("subject")
     body = kwargs.get("body")
     message_id = kwargs.get("message_id")
