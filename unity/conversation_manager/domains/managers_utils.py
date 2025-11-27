@@ -190,56 +190,71 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
             "https://storage.cloud.google.com/assistant-call-recordings/staging/"
             f"{cm.assistant_id}/{cm.call_manager.conference_name}.mp3"
         )
-    try:
-        print(f"[ManagersWorker] Logging message: {event.to_dict()}")
-        # call_utterance_timestamp = event.call_utterance_timestamp
-        # call_url = event.call_url
 
-        if exchange_id == UNASSIGNED:
-            exchange_id = cm.transcript_manager.log_first_message_in_new_exchange(
-                {
-                    "medium": medium,
-                    "sender_id": sender_id,
-                    "receiver_ids": receiver_ids,
-                    "timestamp": event.timestamp,
-                    "content": content,
-                },
+    # publish transcript on a separate thread
+    def _publish_transcript() -> int:
+        try:
+            nonlocal exchange_id
+            print(f"[ManagersWorker] Logging message: {event.to_dict()}")
+            # call_utterance_timestamp = event.call_utterance_timestamp
+            # call_url = event.call_url
+
+            if exchange_id == UNASSIGNED:
+                exchange_id = cm.transcript_manager.log_first_message_in_new_exchange(
+                    {
+                        "medium": medium,
+                        "sender_id": sender_id,
+                        "receiver_ids": receiver_ids,
+                        "timestamp": event.timestamp,
+                        "content": content,
+                    },
+                )
+            else:
+                metadata = getattr(event, "metadata", None)
+                cm.transcript_manager.log_messages(
+                    {
+                        "medium": medium,
+                        "sender_id": sender_id,
+                        "receiver_ids": receiver_ids,
+                        # not sure if this is right but that's how it is in the code in main
+                        "timestamp": event.timestamp,
+                        "content": content,
+                        "exchange_id": exchange_id,
+                        # "call_utterance_timestamp": call_utterance_timestamp,
+                        # "call_url": call_url,
+                        "_metadata": metadata,
+                    },
+                    synchronous=True,
+                )
+
+            print(
+                f"[ManagersWorker] Logged message: {medium}"
+                f" from {sender_id} to {receiver_ids}",
             )
-        else:
-            metadata = getattr(event, "metadata", None)
-            cm.transcript_manager.log_messages(
-                {
-                    "medium": medium,
-                    "sender_id": sender_id,
-                    "receiver_ids": receiver_ids,
-                    # not sure if this is right but that's how it is in the code in main
-                    "timestamp": event.timestamp,
-                    "content": content,
-                    "exchange_id": exchange_id,
-                    # "call_utterance_timestamp": call_utterance_timestamp,
-                    # "call_url": call_url,
-                    "_metadata": metadata,
-                },
-                synchronous=True,
-            )
+            return exchange_id
+        except Exception as e:
+            print(f"[ManagersWorker] Error logging message: {e}")
 
-        print(
-            f"[ManagersWorker] Logged message: {medium}"
-            f" from {sender_id} to {receiver_ids}",
-        )
+    exchange_id = await asyncio.to_thread(
+        _publish_transcript,
+        transcript_manager=cm.transcript_manager,
+        event=event,
+        medium=medium,
+        sender_id=sender_id,
+        receiver_ids=receiver_ids,
+        content=content,
+        exchange_id=exchange_id,
+    )
 
-        # Publish reply as Event envelope
-        await event_broker.publish(
-            "app:logging:message_logged",
-            LogMessageResponse(
-                medium=medium,
-                exchange_id=exchange_id,
-            ).to_json(),
-        )
-        print(f"[ManagersWorker] Published exchange_id {exchange_id}")
-
-    except Exception as e:
-        print(f"[ManagersWorker] Error logging message: {e}")
+    # publish reply as event envelope
+    await event_broker.publish(
+        "app:logging:message_logged",
+        LogMessageResponse(
+            medium=medium,
+            exchange_id=exchange_id,
+        ).to_json(),
+    )
+    print(f"[ManagersWorker] Published exchange_id {exchange_id}")
 
 
 _init_lock = asyncio.Lock()
