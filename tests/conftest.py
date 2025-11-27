@@ -321,6 +321,15 @@ def pytest_sessionstart(session):
     try:
         if "Durations" not in unify.get_contexts(prefix="Durations"):
             unify.create_context("Durations")
+            # Define explicit field types for duration logging
+            unify.create_fields(
+                context="Durations",
+                fields={
+                    "test_fpath": {"type": "str", "mutable": True},
+                    "tags": {"type": "list", "mutable": True},
+                    "duration": {"type": "float", "mutable": True},
+                },
+            )
     except Exception:
         pass
 
