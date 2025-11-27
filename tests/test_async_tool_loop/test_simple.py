@@ -356,6 +356,12 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
             m.get("role") == "tool"
             and str(m.get("name", "")).startswith("check_status_")
         )
+        # Filter out chronology marker system messages added when tool
+        # placeholders are updated in-place but not at transcript tail
+        and not (
+            m.get("role") == "system"
+            and str(m.get("content", "")).startswith("[Tool '")
+        )
     ]
     assert roles == [
         "system",
@@ -397,6 +403,12 @@ async def test_duplicate_tool_calls_are_optionally_pruned() -> None:  # noqa: D4
         and not (
             m.get("role") == "tool"
             and str(m.get("name", "")).startswith("check_status_")
+        )
+        # Filter out chronology marker system messages added when tool
+        # placeholders are updated in-place but not at transcript tail
+        and not (
+            m.get("role") == "system"
+            and str(m.get("content", "")).startswith("[Tool '")
         )
     ]
     assert roles == [
