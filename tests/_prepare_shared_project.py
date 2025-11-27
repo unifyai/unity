@@ -18,7 +18,7 @@ PROJECT = "UnityTests"
 
 
 def prepare_shared_project() -> None:
-    """Prepare the shared UnityTests project and Durations context."""
+    """Prepare the shared UnityTests project and Combined context."""
     try:
         import unify
     except ImportError:
@@ -37,31 +37,32 @@ def prepare_shared_project() -> None:
 
     unify.set_user_logging(False)
 
-    # 2. Ensure Durations context with fields (idempotent)
+    # 2. Ensure Combined context with fields (idempotent)
     try:
-        existing_contexts = unify.get_contexts(prefix="Durations")
+        existing_contexts = unify.get_contexts(prefix="Combined")
     except Exception:
         existing_contexts = []
 
-    if "Durations" not in existing_contexts:
+    if "Combined" not in existing_contexts:
         try:
-            unify.create_context("Durations")
+            unify.create_context("Combined")
         except Exception as e:
             # Tolerate if already exists (race with another process)
             if "already exists" not in str(e).lower():
                 print(
-                    f"Note: Durations context creation returned: {e}",
+                    f"Note: Combined context creation returned: {e}",
                     file=sys.stderr,
                 )
 
     # Ensure fields exist (idempotent - create_fields tolerates existing fields)
     try:
         unify.create_fields(
-            context="Durations",
+            context="Combined",
             fields={
                 "test_fpath": {"type": "str", "mutable": True},
                 "tags": {"type": "list", "mutable": True},
                 "duration": {"type": "float", "mutable": True},
+                "llm_io": {"type": "list", "mutable": True},
             },
         )
     except Exception:
