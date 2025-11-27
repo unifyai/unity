@@ -141,7 +141,7 @@ async def _(
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     # publish transcript
-    # asyncio.create_task(managers_utils.log_message(cm, event))
+    asyncio.create_task(managers_utils.log_message(cm, event))
     print("publishing utterance", event)
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
