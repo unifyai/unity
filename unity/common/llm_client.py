@@ -8,7 +8,7 @@ from typing import Any
 import unify
 
 
-DEFAULT_MODEL = "gemini-3-pro@vertex-ai"
+DEFAULT_MODEL = "gpt-5.1@openai"
 
 
 def new_llm_client(
