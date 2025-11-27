@@ -30,6 +30,7 @@ from .messages import (
     chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
+    transform_non_thinking_turns_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -438,6 +439,32 @@ async def async_tool_loop_inner(
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
     # Independent, centrally-configured LLM I/O logging flag
     llm_io_debug = bool(LLM_IO_DEBUG)
+
+    # ── Claude thinking/tool_choice compatibility ────────────────────────────────
+    # Claude extended thinking is incompatible with tool_choice="required". We handle
+    # this by disabling thinking on forced-tool turns, then transforming those messages
+    # into system context on subsequent turns when thinking is re-enabled.
+    _model_name = str(getattr(client, "model", "") or "")
+    _is_claude = _model_name.split("@")[0].startswith("claude")
+    _claude_thinking_disabled = False
+
+    def _apply_claude_thinking_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
+        """Handle Claude thinking/tool_choice incompatibility. Returns effective preprocess."""
+        nonlocal _claude_thinking_disabled
+        if not _is_claude:
+            return preprocess_msgs
+        if tool_choice == "required":
+            gen_kwargs["thinking"] = {"type": "disabled"}
+            _claude_thinking_disabled = True
+            return preprocess_msgs
+        if _claude_thinking_disabled:
+            # Transform non-thinking turns to context so thinking can be re-enabled
+            def wrapper(msgs):
+                msgs = transform_non_thinking_turns_to_context(msgs)
+                return preprocess_msgs(msgs) if preprocess_msgs else msgs
+
+            return wrapper
+        return preprocess_msgs
 
     # File sink for LLM I/O: per-run directory under hidden folder, named by SESSION_ID
     _llm_io_dir: str | None = None
@@ -2442,7 +2469,7 @@ async def async_tool_loop_inner(
                 llm_task = asyncio.create_task(
                     generate_with_preprocess(
                         client,
-                        preprocess_msgs,
+                        _apply_claude_thinking_compat(_gen_kwargs, tool_choice_mode),
                         debug_log=_log_llm_request,
                         **_gen_kwargs,
                     ),
@@ -2647,7 +2674,7 @@ async def async_tool_loop_inner(
 
                     _result = await generate_with_preprocess(
                         client,
-                        preprocess_msgs,
+                        _apply_claude_thinking_compat(_gen_kwargs, tool_choice_mode),
                         debug_log=_log_llm_request,
                         **_gen_kwargs,
                     )
