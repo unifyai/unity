@@ -17,8 +17,8 @@ from unity.common.llm_client import new_llm_client
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_chat_context_propagation() -> None:
-    client = new_llm_client()
+async def test_chat_context_propagation(model) -> None:
+    client = new_llm_client(model=model)
 
     root_ctx = [{"role": "user", "content": "root-level message"}]
     captured_ctx: List[list[dict]] = []
@@ -56,14 +56,14 @@ async def test_chat_context_propagation() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_uses_continued_parent_context() -> None:
+async def test_ask_uses_continued_parent_context(model) -> None:
     """Verify that ask() packages continued parent context and influences the answer.
 
     The inner inspection loop should choose "apple" only because that signal
     exists in the provided continued context, not in the current prompt.
     """
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
 
     # Start a trivial outer loop (no tools needed for this test).
     handle = start_async_tool_loop(
@@ -95,14 +95,16 @@ async def test_ask_uses_continued_parent_context() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_with_continued_parent_context_influences_decision() -> None:
+async def test_interject_with_continued_parent_context_influences_decision(
+    model,
+) -> None:
     """Verify that an interjection with continued parent context steers the LLM decision.
 
     The outer loop should incorporate the interjection (and its continued context)
     such that the next assistant reply reflects that broader context.
     """
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
 
     handle = start_async_tool_loop(
         client=client,
