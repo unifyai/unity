@@ -2,13 +2,13 @@
 """
 Internal module to prepare the shared UnityTests project for parallel runs.
 
-This script is designed to be called by ._prepare_shared_project.sh before
-spawning tmux sessions. It ensures the shared project and contexts exist,
-making subsequent parallel pytest sessions race-free.
+This script is called by .parallel_run.sh before spawning tmux sessions.
+It ensures the shared project and contexts exist, making subsequent
+parallel pytest sessions race-free.
 
 The script is idempotent: calling it multiple times has no adverse effects.
 
-Usage (internal - typically invoked via ._prepare_shared_project.sh):
+Usage (internal - typically invoked via .parallel_run.sh):
     python tests/_prepare_shared_project.py
 """
 

@@ -74,10 +74,15 @@ cd "$REPO_ROOT"
 # ---------------------------------------------------------------------------
 if (( ! RANDOM_PROJECTS )); then
   echo "Preparing shared UnityTests project..."
-  if [[ -x "$SCRIPT_DIR/._prepare_shared_project.sh" ]]; then
-    "$SCRIPT_DIR/._prepare_shared_project.sh"
+  # Activate virtualenv if available, then run the prepare script
+  if [[ -f "$REPO_ROOT/.venv/bin/activate" ]]; then
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/.venv/bin/activate"
+  fi
+  if [[ -f "$SCRIPT_DIR/_prepare_shared_project.py" ]]; then
+    python "$SCRIPT_DIR/_prepare_shared_project.py"
   else
-    echo "Warning: ._prepare_shared_project.sh not found or not executable." >&2
+    echo "Warning: _prepare_shared_project.py not found." >&2
     echo "Falling back to random projects mode." >&2
     RANDOM_PROJECTS=1
   fi
