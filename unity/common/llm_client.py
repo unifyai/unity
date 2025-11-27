@@ -8,7 +8,7 @@ from typing import Any
 import unify
 
 
-DEFAULT_MODEL = "gpt-5@openai"
+DEFAULT_MODEL = "gemini-3-pro@vertex-ai"
 
 
 def new_llm_client(
@@ -21,7 +21,7 @@ def new_llm_client(
     """
     Create a configured Unify client.
 
-    Defaults to "gpt-5@openai" with sane defaults for reasoning effort and service tier.
+    Defaults to high reasoning_effort and priority service_tier where applicable (otherwise dropped).
     Returns an AsyncUnify client by default, or a synchronous Unify client when
     async_client=False.
     """
