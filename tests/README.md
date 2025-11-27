@@ -2,7 +2,31 @@
 
 This helper script launches one tmux session per Python file it finds (or per targeted test when a node id is provided, or when per-test mode is enabled) and runs `pytest` in its own window. It searches recursively and can also be restricted to specific folders, files, or specific tests.
 
-When a session starts, it executes roughly:
+### Shared Project Mode (Default)
+
+By default, `.parallel_run.sh` uses a **shared project mode** where all parallel test sessions log to the same `UnityTests` project. This enables:
+
+- **Unified duration logging**: All test durations are recorded in a single `Durations` context, making it easy to compare runtimes across different test files.
+- **Race-free parallel execution**: The script automatically calls an internal prepare script (`._prepare_shared_project.sh`) before spawning sessions. This script idempotently creates the shared project and contexts once, eliminating race conditions.
+- **Faster startup**: Sessions skip redundant project/context creation since it's already done.
+
+When a session starts in shared mode, it executes roughly:
+
+```bash
+export UNIFY_SKIP_SESSION_SETUP=True
+source ~/unity/.venv/bin/activate
+pytest <target>
+```
+
+### Random Projects Mode (Legacy)
+
+For backward compatibility or isolation purposes, you can use the `--random-projects` flag to give each tmux session its own isolated project:
+
+```bash
+./.parallel_run.sh --random-projects tests
+```
+
+In this mode, each session gets a unique project like `UnityTests_aB3xY9zQ` which is deleted on exit:
 
 ```bash
 export UNIFY_TESTS_RAND_PROJ=True
@@ -42,10 +66,11 @@ From the repository root, run:
 
 What happens:
 
-- **Discovery**: Recursively finds all `*.py` files (excluding caches/venvs; see excludes below).
-- **Sessions**: Creates one tmux session per file.
-- **Window name**: The file’s basename without `.py`.
-- **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `? ⏳ tests-unit-test_math` (then `o ✅ tests-unit-test_math` or `x ❌ tests-unit-test_math`).
+1. **Prepare**: The shared `UnityTests` project and `Durations` context are created (if not already present).
+2. **Discovery**: Recursively finds all `test_*.py` files (excluding caches/venvs; see excludes below).
+3. **Sessions**: Creates one tmux session per file.
+4. **Window name**: The file's basename without `.py`.
+5. **Session name**: Status-prefixed and derived from the file path, e.g., `tests/unit/test_math.py` → `? ⏳ unit-test_math` (then `o ✅ unit-test_math` or `x ❌ unit-test_math`).
 
 Common tmux actions:
 
@@ -83,6 +108,9 @@ Limit the search by passing directories and/or `.py` files. Examples:
 
 # Wait for completion and log to files (CI / Agent mode)
 ./.parallel_run.sh --wait tests/unit
+
+# Use isolated random projects (legacy mode)
+./.parallel_run.sh --random-projects tests
 ```
 
 How it interprets arguments:
@@ -106,7 +134,7 @@ Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipeli
 - Blocks until all tmux sessions complete.
 - If all pass, exits with code `0`.
 - If any fail, exits with code `1` and lists the failed sessions.
-- **Logs**: Each session writes its full pytest output to a file in `.pytest_logs/` named after the session (e.g., `.pytest_logs/tests-unit-test_math.txt`).
+- **Logs**: Each session writes its full pytest output to a file in `.pytest_logs/` named after the session (e.g., `.pytest_logs/unit-test_math.txt`).
 - **Debugging**: When running with `--wait`, inspect these log files to diagnose failures instead of attaching to tmux sessions (though sessions remain open for inspection if they fail).
 
 ## Match tests by filename (glob-style)
@@ -135,19 +163,29 @@ This one-liner matches files such as:
 
 Notes:
 
-- `*` means “anything before/after” in the filename. You can combine it with other characters (e.g., `test_*_tool_docstring*.py`).
+- `*` means "anything before/after" in the filename. You can combine it with other characters (e.g., `test_*_tool_docstring*.py`).
 - When using `-m/--match`, the default behavior still applies: one tmux session per matching test file.
+
+## Command-line Options
+
+| Option | Description |
+|--------|-------------|
+| `-w`, `--wait` | Block until all tests complete; exit 0 on success, 1 on any failure |
+| `-t`, `--per-test` | Create one session per test function instead of per file |
+| `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
+| `--random-projects` | Use isolated random project names (legacy mode) |
 
 ## Defaults & conventions
 
 - **Environment**:
   - If `../.env` exists relative to the `tests` directory (i.e., `~/unity/.env`), it will be sourced automatically so you can define `UNIFY_KEY`, `UNIFY_BASE_URL`, or other variables once.
-  - Exports `UNIFY_TESTS_RAND_PROJ=True` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True` inside each session so it works whether or not a tmux server is already running.
+  - By default, exports `UNIFY_SKIP_SESSION_SETUP=True` for shared project mode.
+  - With `--random-projects`, exports `UNIFY_TESTS_RAND_PROJ=True` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True`.
 - **Virtualenv**: Assumes `~/unity/.venv/bin/activate`.
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
 - **Names**:
-  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `? ⏳ tests-unit-test_math` → `o ✅ tests-unit-test_math` or `x ❌ tests-unit-test_math`.
+  - Session: `<status-prefix> <relative-path-with-slashes-replaced-by-dashes>` (without `.py`). Example: `? ⏳ unit-test_math` → `o ✅ unit-test_math` or `x ❌ unit-test_math`.
   - Window: `<filename-without-.py>`.
   - If a session name already exists, the script appends `-2`, `-3`, … to avoid collisions.
 
@@ -179,7 +217,7 @@ Notes:
 
 ## Troubleshooting
 
-- **“tmux: command not found”**
+- **"tmux: command not found"**
   - Install tmux (e.g., `brew install tmux`, `apt-get install tmux`).
 
 - **Virtualenv not found / wrong Python**
@@ -190,7 +228,7 @@ Notes:
     ```
 
 - **No sessions created**
-  - Ensure there are `.py` files under the provided paths and that excludes aren’t hiding your files.
+  - Ensure there are `.py` files under the provided paths and that excludes aren't hiding your files.
 
 - **Permission denied**
   - Make the script executable:
@@ -217,11 +255,11 @@ Open `.parallel_run.sh` and tweak as needed:
 - Switch (inside tmux): `tmux switch-client -t <name>`
 - Kill: `tmux kill-session -t <name>`
 
-That’s it! Run it, list sessions, and jump into whichever test you want to watch.
+That's it! Run it, list sessions, and jump into whichever test you want to watch.
 
 ## Cleanup stray Unify test projects
 
-If tests are aborted (e.g., `tmux kill-server`), temporary Unify projects prefixed with `UnityTests_` may remain on the backend. Use the cleanup helper to remove them:
+If tests are aborted (e.g., `tmux kill-server`) while using `--random-projects` mode, temporary Unify projects prefixed with `UnityTests_` may remain on the backend. Use the cleanup helper to remove them:
 
 ```bash
 # first time only, ensure it's executable

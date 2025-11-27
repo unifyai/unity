@@ -40,6 +40,7 @@ class TestingSettings(BaseSettings):
     UNIFY_CACHE_BENCHMARK: bool = False
     UNIFY_PRETEST_CONTEXT_CREATE: bool = False
     UNIFY_TEST_TAGS: str = ""  # Comma-separated list of tags for duration logging
+    UNIFY_SKIP_SESSION_SETUP: bool = False  # Skip project/context creation (pre-done)
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -290,11 +290,17 @@ def pytest_sessionstart(session):
     if os.environ.get("CI"):
         unify.set_cache_backend("local_separate")
 
-    unify.activate(
-        project_name,
-        overwrite=SETTINGS.UNIFY_OVERWRITE_PROJECT,
-    )
-    unify.set_user_logging(False)
+    if SETTINGS.UNIFY_SKIP_SESSION_SETUP:
+        # Project and shared contexts already prepared externally (e.g., by
+        # ._prepare_shared_project.sh). Just activate without overwrite.
+        unify.activate(project_name, overwrite=False)
+        unify.set_user_logging(False)
+    else:
+        unify.activate(
+            project_name,
+            overwrite=SETTINGS.UNIFY_OVERWRITE_PROJECT,
+        )
+        unify.set_user_logging(False)
 
     # ------------------------------------------------------------------
     #  Ensure the unity runtime is fully initialised for the test suite
@@ -323,21 +329,25 @@ def pytest_sessionstart(session):
     #  (idempotent: tolerates pre-existing context/fields and concurrent
     #  creation attempts from parallel pytest sessions)
     # ------------------------------------------------------------------
-    try:
-        unify.create_context("Durations")
-    except Exception:
-        pass  # Already exists or transient failure
-    try:
-        unify.create_fields(
-            context="Durations",
-            fields={
-                "test_fpath": {"type": "str", "mutable": True},
-                "tags": {"type": "list", "mutable": True},
-                "duration": {"type": "float", "mutable": True},
-            },
-        )
-    except Exception:
-        pass  # Fields already exist or transient failure
+    if SETTINGS.UNIFY_SKIP_SESSION_SETUP:
+        # Durations context already prepared externally; skip creation
+        pass
+    else:
+        try:
+            unify.create_context("Durations")
+        except Exception:
+            pass  # Already exists or transient failure
+        try:
+            unify.create_fields(
+                context="Durations",
+                fields={
+                    "test_fpath": {"type": "str", "mutable": True},
+                    "tags": {"type": "list", "mutable": True},
+                    "duration": {"type": "float", "mutable": True},
+                },
+            )
+        except Exception:
+            pass  # Fields already exist or transient failure
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -521,7 +531,8 @@ def _get_context_name_for_item(item):
 
 def pytest_collection_finish(session):
     # Compute all contexts and fire off background creation tasks
-    if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
+    # Skip when UNIFY_SKIP_SESSION_SETUP is set (shared project mode)
+    if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE and not SETTINGS.UNIFY_SKIP_SESSION_SETUP:
         contexts: set[str] = set()
         for item in session.items:
             ctx = _get_context_name_for_item(item)

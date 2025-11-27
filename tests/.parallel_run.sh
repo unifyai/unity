@@ -24,6 +24,10 @@ WAIT_FOR_COMPLETION=0
 # Optional filename match (glob-like, e.g., "*_tool_docstring*")
 NAME_PATTERN=""
 
+# Project mode: default is shared project (RANDOM_PROJECTS=0)
+# With --random-projects: each tmux session gets its own isolated project
+RANDOM_PROJECTS=0
+
 # Resolve repo root (parent of this script's directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -49,6 +53,10 @@ while (( "$#" )); do
         exit 2
       fi
       ;;
+    --random-projects)
+      RANDOM_PROJECTS=1
+      shift
+      ;;
     *)
       POSITIONAL_ARGS+=( "$1" )
       shift
@@ -61,13 +69,35 @@ set -- ${POSITIONAL_ARGS[@]+"${POSITIONAL_ARGS[@]}"}
 # Always operate from the repo root for discovery, regardless of where the script was invoked
 cd "$REPO_ROOT"
 
+# ---------------------------------------------------------------------------
+# Prepare the shared project (unless using random projects mode)
+# ---------------------------------------------------------------------------
+if (( ! RANDOM_PROJECTS )); then
+  echo "Preparing shared UnityTests project..."
+  if [[ -x "$SCRIPT_DIR/._prepare_shared_project.sh" ]]; then
+    "$SCRIPT_DIR/._prepare_shared_project.sh"
+  else
+    echo "Warning: ._prepare_shared_project.sh not found or not executable." >&2
+    echo "Falling back to random projects mode." >&2
+    RANDOM_PROJECTS=1
+  fi
+fi
+
 # Build the command to run in each tmux session
 run_cmd() {
   local target="$1"   # pytest target (file path or node id)
   local log_file="$2" # pytest log file path
   # Build the inner script first with safe %q for path/target, then quote the whole script with %q
   local inner
-  inner=$(printf 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && pytest %q; status=$?; sname=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; "✅ "*) base="${sname#✅ }" ;; "❌ "*) base="${sname#❌ }" ;; "⏳ "*) base="${sname#⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; tmux rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(tmux display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; tmux kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$log_file" "$REPO_ROOT" "$target")
+  local env_exports
+  if (( RANDOM_PROJECTS )); then
+    # Legacy mode: each session gets its own random project
+    env_exports='export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True'
+  else
+    # Shared project mode: skip session setup (already done by prepare script)
+    env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
+  fi
+  inner=$(printf '%s PYTEST_LOG_PATH=%q; source ~/unity/.venv/bin/activate && cd %q && pytest %q; status=$?; sname=$(tmux display-message -p -t "$TMUX_PANE" "#{session_name}"); base="$sname"; case "$sname" in "o ✅ "*) base="${sname#o ✅ }" ;; "x ❌ "*) base="${sname#x ❌ }" ;; "? ⏳ "*) base="${sname#? ⏳ }" ;; "✅ "*) base="${sname#✅ }" ;; "❌ "*) base="${sname#❌ }" ;; "⏳ "*) base="${sname#⏳ }" ;; esac; if [ $status -eq 0 ]; then pfx="o ✅"; else pfx="x ❌"; fi; tmux rename-session -t "$sname" "$pfx $base"; if [ $status -eq 0 ]; then sid=$(tmux display-message -p -t "$TMUX_PANE" "#{session_id}"); (sleep 10; tmux kill-session -t "$sid") >/dev/null 2>&1 & disown; echo "All tests passed. This tmux session will close in 10s..."; fi; echo; echo "pytest exited with code: $status"; echo "(You are now in a shell. Press Ctrl-D to close this window.)"; exec bash -l' "$env_exports" "$log_file" "$REPO_ROOT" "$target")
   printf 'bash -lc %q' "$inner"
 }
 
@@ -219,7 +249,13 @@ build_find_cmd() {
 collect_nodes_for_target() {
   local target="$1"
   local cmd
-  cmd=$(printf 'export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True; source ~/unity/.venv/bin/activate && pytest --collect-only -q %q' "$target")
+  local env_exports
+  if (( RANDOM_PROJECTS )); then
+    env_exports='export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True'
+  else
+    env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
+  fi
+  cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %q' "$env_exports" "$target")
   # Remove color codes, keep only node ids (contain ::), ignore noise; never fail the script
   bash -lc "$cmd" 2>/dev/null | sed -E 's/\x1B\[[0-9;]*[mK]//g' | grep -E '::' || true
 }
@@ -337,13 +373,14 @@ done
 
 echo
 echo "Trigger:"
-echo "  • Run everything under current dir:     ./\\.parallel_run.sh"
-echo "  • Only a folder:                         ./\\.parallel_run.sh test_cats"
-echo "  • Multiple roots:                        ./\\.parallel_run.sh tests/unit tests/integration"
-echo "  • Specific files:                        ./\\.parallel_run.sh tests/test_foo.py tests/test_bar.py"
-echo "  • Specific tests:                        ./\\.parallel_run.sh tests/test_foo.py::TestA::test_x tests/test_bar.py::test_y"
-echo "  • Per-test (dirs/files):                 ./\\.parallel_run.sh -t tests tests/test_foo.py"
-echo "  • Per-test (everything here):            ./\\.parallel_run.sh -t"
+echo "  • Run everything under current dir:     ./.parallel_run.sh"
+echo "  • Only a folder:                         ./.parallel_run.sh test_cats"
+echo "  • Multiple roots:                        ./.parallel_run.sh tests/unit tests/integration"
+echo "  • Specific files:                        ./.parallel_run.sh tests/test_foo.py tests/test_bar.py"
+echo "  • Specific tests:                        ./.parallel_run.sh tests/test_foo.py::TestA::test_x tests/test_bar.py::test_y"
+echo "  • Per-test (dirs/files):                 ./.parallel_run.sh -t tests tests/test_foo.py"
+echo "  • Per-test (everything here):            ./.parallel_run.sh -t"
+echo "  • Use isolated random projects:          ./.parallel_run.sh --random-projects tests"
 echo
 echo "Observe:"
 echo "  • Watch sessions: watch -n 0.5 'tmux ls'"
