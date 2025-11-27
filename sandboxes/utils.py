@@ -53,6 +53,7 @@ from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.async_tool_loop import SteerableToolHandle
 from pydantic import BaseModel, Field
 
 # Added for direct logging of generated messages
