@@ -190,7 +190,7 @@ def pytest_addoption(parser):
         action="store",
         default="",
         help="Comma-separated list of tags to associate with this test run "
-        "(logged to the Durations context).",
+        "(logged to the Durations context). Falls back to UNIFY_TEST_TAGS env var.",
     )
 
     group = parser.getgroup("custom-logging")
@@ -310,8 +310,11 @@ def pytest_sessionstart(session):
 
     # ------------------------------------------------------------------
     #  Parse and store session-level test tags for duration logging
+    #  Priority: CLI --test-tags > env var UNIFY_TEST_TAGS
     # ------------------------------------------------------------------
     tags_raw = session.config.getoption("--test-tags", default="")
+    if not tags_raw:
+        tags_raw = SETTINGS.UNIFY_TEST_TAGS
     tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
     set_session_tags(tags)
 
