@@ -615,6 +615,26 @@ async def test_seeded_messages_then_final_tool_call(model):
     # The model should have used the add tool to compute 2 + 3
     assert answer.strip().startswith("5")
 
-    # Verify that both tool calls (seeded fast_tool and real add) are present
+    # Verify that the real add tool was called
     tool_names = [m.get("name") for m in client.messages if m.get("role") == "tool"]
-    assert "fast_tool" in tool_names and "add" in tool_names
+    assert "add" in tool_names
+
+    # Verify the seeded fast_tool context is present:
+    # - For most models: appears as a formal tool message
+    # - For Gemini: transformed into a system context message (to avoid thought_signature requirement)
+    is_gemini = model.split("@")[0].startswith("gemini")
+    if is_gemini:
+        # Check for the context system message describing the seeded tool call
+        has_seeded_context = any(
+            m.get("role") == "system"
+            and m.get("_gemini_seeded_context")
+            and "fast_tool" in str(m.get("content", ""))
+            for m in client.messages
+        )
+        assert (
+            has_seeded_context
+        ), "Gemini should have a seeded context system message for fast_tool"
+    else:
+        assert (
+            "fast_tool" in tool_names
+        ), "Non-Gemini models should have fast_tool as a formal tool message"
