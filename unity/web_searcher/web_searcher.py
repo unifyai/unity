@@ -24,18 +24,29 @@ from unity.events.event_bus import EVENT_BUS, Event
 from unity.web_searcher import prompt_builders
 from .base import BaseWebSearcher
 from ..common.tool_outcome import ToolOutcome
-from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from ..common.embed_utils import ensure_vector_column
 from ..common.filter_utils import normalize_filter_expr
 from ..common.search_utils import table_search_top_k
 from .types.website import Website
+from ..common.context_registry import ContextRegistry, TableContext
 
 
 class WebSearcher(BaseWebSearcher):
     """
     Manages web search and extraction.
     """
+
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Websites",
+                description="Catalog of websites of interest for WebSearcher routing/policies.",
+                fields=model_to_fields(Website),
+                unique_keys={"website_id": "int", "host": "str", "name": "str"},
+                auto_counting={"website_id": None},
+            ),
+        ]
 
     def __init__(self):
         super().__init__()
@@ -58,7 +69,7 @@ class WebSearcher(BaseWebSearcher):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must match for WebSearcher."
-        self._websites_ctx = f"{read_ctx}/Websites"
+        self._websites_ctx = ContextRegistry.get_context(self, "Websites")
         # Build the tools mapping once; copy when used
         ask_tools: Dict[str, Any] = methods_to_tool_dict(
             self._search,
@@ -232,17 +243,6 @@ class WebSearcher(BaseWebSearcher):
                 self._last_crawls: Dict[str, Any] = {}
             if not hasattr(self, "_last_maps"):
                 self._last_maps: Dict[str, Any] = {}
-            # Provision Websites store
-            self._websites_store = TableStore(
-                self._websites_ctx,
-                unique_keys={"website_id": "int", "host": "str", "name": "str"},
-                auto_counting={"website_id": None},
-                description=(
-                    "Catalog of websites of interest for WebSearcher routing/policies."
-                ),
-                fields=model_to_fields(Website),
-            )
-            self._websites_store.ensure_context()
         except Exception:
             # Best-effort only; callers operate without caches if needed
             pass
@@ -286,7 +286,7 @@ class WebSearcher(BaseWebSearcher):
         except Exception:
             pass
 
-        self._provision_storage()
+        ContextRegistry.refresh(self, "Websites")
 
         # Attempt to ensure context visibility before reads
         try:

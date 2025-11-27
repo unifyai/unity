@@ -25,18 +25,17 @@ from .prompt_builders import (
     build_ask_prompt,
     build_refactor_prompt,
 )
-from ..common.context_store import TableStore
 from ..common.tool_spec import read_only, manager_tool
 from ..constants import is_semantic_cache_enabled
 from ..constants import is_readonly_ask_guard_enabled
 from ..common.read_only_ask_guard import ReadOnlyAskGuardHandle
+from ..common.context_registry import ContextRegistry, TableContext
 from ..common.llm_client import new_llm_client
 from ..common.clarification_tools import add_clarification_tool_with_events
 from ..common.metrics_utils import reduce_logs
 
 # Module delegations (split helpers for parity with ContactManager)
 from .storage import (
-    provision_storage as _storage_provision,
     get_columns as _storage_get_columns,
     tables_overview as _storage_tables_overview,
     ctx_for_table as _storage_ctx_for_table,
@@ -68,6 +67,14 @@ from .ops import (
 
 
 class KnowledgeManager(BaseKnowledgeManager):
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Knowledge",
+                description="Knowledge base for the assistant.",
+            ),
+        ]
+
     def __init__(
         self,
         *,
@@ -195,32 +202,16 @@ class KnowledgeManager(BaseKnowledgeManager):
         assert (
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a KnowledgeManager."
-        self._ctx = f"{read_ctx}/Knowledge" if read_ctx else "Knowledge"
+        self._ctx = ContextRegistry.get_context(self, "Knowledge")
 
         # Only compute the Contacts context if the caller requested integration.
-        self._contacts_ctx = (
-            (f"{read_ctx}/Contacts" if read_ctx else "Contacts")
-            if include_contacts
-            else None
-        )
+        self._contacts_ctx: Optional[str]
+        if include_contacts:
+            from unity.contact_manager.contact_manager import ContactManager
 
-        # Optional: idempotently ensure Contacts exists when linkage enabled
-        if self._contacts_ctx is not None:
-            try:
-                TableStore(
-                    self._contacts_ctx,
-                    unique_keys={"contact_id": "int"},
-                    auto_counting={"contact_id": None},
-                ).ensure_context()
-            except Exception:
-                # Best-effort; KnowledgeManager can still function without immediate Contacts access
-                pass
-
-        # Ensure any additional storage requirements are provisioned
-        try:
-            self._provision_storage()
-        except Exception:
-            pass
+            self._contacts_ctx = ContextRegistry.get_context(ContactManager, "Contacts")
+        else:
+            self._contacts_ctx = None
 
     async def _maybe_build_show_all_seed(
         self,
@@ -767,17 +758,6 @@ class KnowledgeManager(BaseKnowledgeManager):
             pass
 
         # Re-provision any required/linked storage
-        try:
-            self._provision_storage()
-        except Exception:
-            pass
-
-    # Private #
-    # --------#
-
-    def _provision_storage(self) -> None:
-        """Ensure optional linked storage exists (e.g. root-level Contacts)."""
-        _storage_provision(self)
 
     # Tables
 

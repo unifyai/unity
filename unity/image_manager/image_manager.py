@@ -18,7 +18,6 @@ from google.oauth2 import service_account
 from google.cloud.exceptions import NotFound
 
 
-from ..common.context_store import TableStore
 from ..common.model_to_fields import model_to_fields
 from ..common.semantic_search import backfill_rows, fetch_top_k_by_references
 from .base import BaseImageManager
@@ -26,6 +25,7 @@ from .prompt_builders import build_image_ask_prompt
 from .types.image import Image
 from ..common.filter_utils import normalize_filter_expr
 from ..common.data_store import DataStore
+from ..common.context_registry import ContextRegistry, TableContext
 import itertools
 
 
@@ -591,6 +591,17 @@ class ImageHandle:
 class ImageManager(BaseImageManager):
     """Concrete implementation backed by Unify contexts and fields."""
 
+    class Config:
+        required_contexts = [
+            TableContext(
+                name="Images",
+                description="Collection of images with timestamps, captions, and raw base64 data.",
+                fields=model_to_fields(Image),
+                unique_keys={"image_id": "int"},
+                auto_counting={"image_id": None},
+            ),
+        ]
+
     def __init__(self) -> None:
         ctxs = unify.get_active_context()
         read_ctx, write_ctx = ctxs.get("read"), ctxs.get("write")
@@ -608,7 +619,7 @@ class ImageManager(BaseImageManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating an ImageManager."
 
-        self._ctx = f"{read_ctx}/Images" if read_ctx else "Images"
+        self._ctx = ContextRegistry.get_context(self, "Images")
 
         # Local DataStore mirror for Images (write-through on reads/writes)
         self._data_store = DataStore.for_context(self._ctx, key_fields=("image_id",))
@@ -631,8 +642,8 @@ class ImageManager(BaseImageManager):
                 f"Failed to initialize Google Cloud Storage client: {e}",
             ) from e
 
-        # Ensure context/fields exist deterministically
-        self._provision_storage()
+        # Cache built-in fields for fast whitelisting
+        self._BUILTIN_FIELDS: tuple[str, ...] = tuple(Image.model_fields.keys())
 
         # Pending id generation (process-local)
         self._PENDING_BASE: int = 10**12
@@ -1286,18 +1297,7 @@ class ImageManager(BaseImageManager):
             pass
 
         # Ensure the schema exists again via shared provisioning helper
-        try:
-            # Remove any previous ensure memo and force re-provisioning
-            from ..common.context_store import TableStore as _TS  # local import
-
-            try:
-                _TS._ENSURED.discard((unify.active_project(), self._ctx))
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        self._provision_storage()
+        ContextRegistry.refresh(self, "Images")
 
         # Clear local DataStore cache for this context
         try:
@@ -1317,18 +1317,3 @@ class ImageManager(BaseImageManager):
                     _time.sleep(0.05)
         except Exception:
             pass
-
-    # ------------------------------ Internals -----------------------------
-    def _provision_storage(self) -> None:
-        """Ensure Images context and schema exist deterministically."""
-        self._store = TableStore(
-            self._ctx,
-            unique_keys={"image_id": "int"},
-            auto_counting={"image_id": None},
-            description="Collection of images with timestamps, captions, and raw base64 data.",
-            fields=model_to_fields(Image),
-        )
-        self._store.ensure_context()
-
-        # Cache built-in fields for fast whitelisting
-        self._BUILTIN_FIELDS: tuple[str, ...] = tuple(Image.model_fields.keys())

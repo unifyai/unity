@@ -2,14 +2,29 @@ import unify
 import functools
 import inspect
 import sys
+import time
 import traceback
 from os import sep
-from typing import Any, Callable
+from typing import Any, Callable, List
 from unity.events.event_bus import EVENT_BUS
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Contexts that were pre-created during collection;
 PRECREATED_CONTEXTS: set[str] = set()
+
+# Session-level tags for duration logging (set via --test-tags CLI option)
+_SESSION_TAGS: List[str] = []
+
+
+def set_session_tags(tags: List[str]) -> None:
+    """Set the session-level tags for duration logging."""
+    global _SESSION_TAGS
+    _SESSION_TAGS = list(tags)
+
+
+def get_session_tags() -> List[str]:
+    """Get the session-level tags for duration logging."""
+    return list(_SESSION_TAGS)
 
 
 # Settings for the testing environment
@@ -24,6 +39,8 @@ class TestingSettings(BaseSettings):
     UNIFY_TESTS_DELETE_PROJ_ON_EXIT: bool = False
     UNIFY_CACHE_BENCHMARK: bool = False
     UNIFY_PRETEST_CONTEXT_CREATE: bool = False
+    UNIFY_TEST_TAGS: str = ""  # Comma-separated list of tags for duration logging
+    UNIFY_SKIP_SESSION_SETUP: bool = False  # Skip project/context creation (pre-done)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -46,6 +63,34 @@ def _ctx_name(fn: Callable, fn_name: str) -> str:
     file_path = fn.__code__.co_filename
     test_path = "/".join(file_path.split(f"{sep}tests{sep}")[1].split(sep))[:-3]
     return f"tests/{test_path}/{fn_name}" if test_path else fn_name
+
+
+def _test_fpath(fn: Callable, fn_name: str) -> str:
+    """Return the test path in format 'folder_a/folder_b/fname.py::test_name'."""
+    file_path = fn.__code__.co_filename
+    # Extract path relative to 'tests/' directory
+    parts = file_path.split(f"{sep}tests{sep}")
+    if len(parts) > 1:
+        rel_path = parts[1].replace(sep, "/")
+    else:
+        # Fallback: just use the filename
+        rel_path = file_path.split(sep)[-1]
+    return f"{rel_path}::{fn_name}"
+
+
+def _log_test_duration(test_fpath: str, duration: float) -> None:
+    """Log test duration to the Durations context."""
+    try:
+        unify.log(
+            context="Durations",
+            test_fpath=test_fpath,
+            tags=get_session_tags(),
+            duration=duration,
+            new=True,
+        )
+    except Exception:
+        # Duration logging is best-effort; don't fail tests if it errors
+        pass
 
 
 def _handle_project(
@@ -84,6 +129,7 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
+            fpath = _test_fpath(test_fn, test_fn_name)
             skip_ctx_create = False
             if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
                 skip_ctx_create = ctx in PRECREATED_CONTEXTS
@@ -92,6 +138,7 @@ def _handle_project(
                     unify.delete_context(ctx)
                     skip_ctx_create = False
 
+            start_time = time.perf_counter()
             try:
                 unify.set_context(
                     ctx,
@@ -116,6 +163,8 @@ def _handle_project(
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
                 raise Exception(tb)
             finally:
+                duration = time.perf_counter() - start_time
+                _log_test_duration(fpath, duration)
                 if delete_ctx_on_exit:
                     unify.delete_context(ctx)
                 unify.unset_context()
@@ -130,6 +179,7 @@ def _handle_project(
                 test_fn_name = test_fn.__name__
 
             ctx = _ctx_name(test_fn, test_fn_name)
+            fpath = _test_fpath(test_fn, test_fn_name)
             skip_ctx_create = False
             if SETTINGS.UNIFY_PRETEST_CONTEXT_CREATE:
                 skip_ctx_create = ctx in PRECREATED_CONTEXTS
@@ -138,6 +188,7 @@ def _handle_project(
                     unify.delete_context(ctx)
                     skip_ctx_create = False
 
+            start_time = time.perf_counter()
             try:
                 unify.set_context(
                     ctx,
@@ -164,6 +215,8 @@ def _handle_project(
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
                 raise Exception(tb)
             finally:
+                duration = time.perf_counter() - start_time
+                _log_test_duration(fpath, duration)
                 if delete_ctx_on_exit:
                     unify.delete_context(ctx)
                 unify.unset_context()
