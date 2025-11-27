@@ -190,7 +190,7 @@ def pytest_addoption(parser):
         action="store",
         default="",
         help="Comma-separated list of tags to associate with this test run "
-        "(logged to the Durations context). Falls back to UNIFY_TEST_TAGS env var.",
+        "(logged to the Combined context). Falls back to UNIFY_TEST_TAGS env var.",
     )
 
     group = parser.getgroup("custom-logging")
@@ -325,25 +325,26 @@ def pytest_sessionstart(session):
     set_session_tags(tags)
 
     # ------------------------------------------------------------------
-    #  Ensure the Durations context exists for duration logging
+    #  Ensure the Combined context exists for duration and LLM I/O logging
     #  (idempotent: tolerates pre-existing context/fields and concurrent
     #  creation attempts from parallel pytest sessions)
     # ------------------------------------------------------------------
     if SETTINGS.UNIFY_SKIP_SESSION_SETUP:
-        # Durations context already prepared externally; skip creation
+        # Combined context already prepared externally; skip creation
         pass
     else:
         try:
-            unify.create_context("Durations")
+            unify.create_context("Combined")
         except Exception:
             pass  # Already exists or transient failure
         try:
             unify.create_fields(
-                context="Durations",
+                context="Combined",
                 fields={
                     "test_fpath": {"type": "str", "mutable": True},
                     "tags": {"type": "list", "mutable": True},
                     "duration": {"type": "float", "mutable": True},
+                    "llm_io": {"type": "list", "mutable": True},
                 },
             )
         except Exception:
