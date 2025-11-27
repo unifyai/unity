@@ -37,6 +37,7 @@ if not _root_logger_early.handlers:
 from tests.helpers import (
     SETTINGS,
     PRECREATED_CONTEXTS,
+    set_session_tags,
 )
 
 
@@ -184,6 +185,13 @@ def pytest_addoption(parser):
         default=False,
         help="Force fresh scenario creation.",
     )
+    parser.addoption(
+        "--test-tags",
+        action="store",
+        default="",
+        help="Comma-separated list of tags to associate with this test run "
+        "(logged to the Durations context).",
+    )
 
     group = parser.getgroup("custom-logging")
     group.addoption(
@@ -299,6 +307,22 @@ def pytest_sessionstart(session):
     except Exception:
         # Fallback to default project if UnityTests not available yet
         unity.init()
+
+    # ------------------------------------------------------------------
+    #  Parse and store session-level test tags for duration logging
+    # ------------------------------------------------------------------
+    tags_raw = session.config.getoption("--test-tags", default="")
+    tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    set_session_tags(tags)
+
+    # ------------------------------------------------------------------
+    #  Ensure the Durations context exists for duration logging
+    # ------------------------------------------------------------------
+    try:
+        if "Durations" not in unify.get_contexts(prefix="Durations"):
+            unify.create_context("Durations")
+    except Exception:
+        pass
 
 
 def pytest_sessionfinish(session, exitstatus):
