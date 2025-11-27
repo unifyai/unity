@@ -7,7 +7,7 @@ This helper script launches one tmux session per Python file it finds (or per ta
 By default, `.parallel_run.sh` uses a **shared project mode** where all parallel test sessions log to the same `UnityTests` project. This enables:
 
 - **Unified duration logging**: All test durations are recorded in a single `Durations` context, making it easy to compare runtimes across different test files.
-- **Race-free parallel execution**: The script automatically calls an internal prepare script (`._prepare_shared_project.sh`) before spawning sessions. This script idempotently creates the shared project and contexts once, eliminating race conditions.
+- **Race-free parallel execution**: The script automatically runs an internal prepare module (`_prepare_shared_project.py`) before spawning sessions. This module idempotently creates the shared project and contexts once, eliminating race conditions.
 - **Faster startup**: Sessions skip redundant project/context creation since it's already done.
 
 When a session starts in shared mode, it executes roughly:
