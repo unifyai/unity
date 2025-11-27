@@ -21,7 +21,6 @@ from .messages import (
     _normalise_kwargs_for_bound_method,
     forward_handle_call,
 )
-from .message_dispatcher import LoopMessageDispatcher
 from ..tool_spec import normalise_tools
 from ..llm_helpers import method_to_schema
 from .formatting import serialize_tool_content, sanitize_tool_msg_for_logging
@@ -62,43 +61,6 @@ class ToolsData:
     def _can_offer_tool(self, task_name: str) -> bool:
         limit = self.normalized[task_name].max_concurrent
         return limit is None or self.active_count(task_name) < limit
-
-    # ── small helper: add completion tool message pair ──────────────
-    @staticmethod
-    async def _emit_completion_pair(
-        result: str,
-        call_id: str,
-        msg_dispatcher: LoopMessageDispatcher,
-    ) -> dict:
-        """
-        Append a synthetic assistant→tool pair that carries the *final*
-        outcome for `call_id`.  Returns the tool-message so callers can
-        reuse it for logging / event-bus.
-        """
-        dummy_id = f"{call_id}_status"
-
-        assistant_stub = {
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": dummy_id,
-                    "type": "function",
-                    "function": {
-                        "name": f"check_status_{call_id}",
-                        "arguments": "{}",
-                    },
-                },
-            ],
-            "content": "",
-        }
-        tool_msg = create_tool_call_message(
-            name=f"check_status_{call_id}",
-            call_id=dummy_id,
-            content=result,
-        )
-
-        await msg_dispatcher.append_msgs([assistant_stub, tool_msg])
-        return tool_msg
 
     def has_exceeded_quota_for_tool(self, task_name: str) -> bool:
         if task_name not in self.normalized:
@@ -486,50 +448,28 @@ class ToolsData:
         clarify_ph = info.clarify_placeholder
         tool_reply_msg = info.tool_reply_msg
 
-        if clarify_ph is not None:
-            if _at_tail(clarify_ph):
-                clarify_ph["content"] = result
-                tool_msg = clarify_ph
-            else:
-                tool_msg = await self._emit_completion_pair(
-                    result,
-                    call_id,
-                    msg_dispatcher,
-                )
+        # When a placeholder already exists for this call_id, update it in place.
+        # This satisfies both providers:
+        #   - OpenAI requires exactly ONE tool response per tool_call_id
+        #   - Gemini requires tool responses to use original call_ids
+        #
+        # To preserve chronological accuracy, when the placeholder is NOT at the
+        # tail (i.e., other messages were appended after it), we append a system
+        # message noting when the tool actually completed.
+        placeholder = clarify_ph or tool_reply_msg
 
-        elif tool_reply_msg is not None:
-            if _at_tail(tool_reply_msg):
-                # If the current tail tool message is a placeholder, choose the strategy:
-                # - For streaming progress placeholders, append a synthetic assistant→tool pair
-                #   (preserves progress history as append-only).
-                # - For simple 'pending' or 'nested_start' placeholders, update in-place so the
-                #   final result lives under the original tool message (restores pre-change UX).
-                placeholder_kind: Optional[str] = None
-                with suppress(Exception):
-                    _content_str = tool_reply_msg.get("content") or ""
-                    if isinstance(_content_str, str):
-                        parsed = json.loads(_content_str)
-                        if isinstance(parsed, dict):
-                            pk = parsed.get("_placeholder")
-                            if isinstance(pk, str) and pk:
-                                placeholder_kind = pk
-                if placeholder_kind == "progress":
-                    tool_msg = await self._emit_completion_pair(
-                        result,
-                        call_id,
-                        msg_dispatcher,
-                    )
-                else:
-                    tool_reply_msg["content"] = result
-                    tool_msg = tool_reply_msg
-            else:
-                # Not at tail: emit a synthetic assistant→tool pair to carry the result
-                tool_msg = await self._emit_completion_pair(
-                    result,
-                    call_id,
-                    msg_dispatcher,
+        if placeholder is not None:
+            placeholder["content"] = result
+            tool_msg = placeholder
+            if not _at_tail(placeholder):
+                await msg_dispatcher.append_msgs(
+                    [
+                        {
+                            "role": "system",
+                            "content": f"[Tool '{name}' completed at this point]",
+                        },
+                    ],
                 )
-
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
             await insert_tool_message_after_assistant(
