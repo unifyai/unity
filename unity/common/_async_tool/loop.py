@@ -154,19 +154,35 @@ def _check_valid_response_format(response_format: Any):
     return response_format.model_json_schema()
 
 
-def _transform_seeded_tool_calls_for_gemini(seeded_batch: list[dict]) -> list[dict]:
-    """Transform seeded tool_calls into a context system message for Gemini.
+def _transform_seeded_tool_calls_to_context(
+    seeded_batch: list[dict],
+    *,
+    marker_key: str = "_seeded_context",
+) -> list[dict]:
+    """Transform seeded tool_calls into a context system message.
 
-    Gemini models with reasoning enabled require a "thought_signature" on
-    assistant messages containing tool_calls. When replaying/seeding transcripts
-    with manually constructed tool calls, we lack these signatures.
+    Models with reasoning/thinking enabled (Gemini, Claude with extended thinking)
+    require special metadata on assistant messages containing tool_calls:
+    - Gemini requires a "thought_signature"
+    - Claude requires a "thinking" block preceding tool_use
 
-    This function extracts:
-    - Assistant messages with tool_calls
-    - Corresponding tool role messages (matched by tool_call_id)
+    When replaying/seeding transcripts with manually constructed tool calls,
+    we lack these signatures. This function converts seeded tool_calls and their
+    results into a descriptive system message, preserving semantics without
+    using the formal schema that requires provider-specific metadata.
 
-    And converts them into a single system message describing what happened,
-    while preserving user messages and any assistant messages without tool_calls.
+    Parameters
+    ----------
+    seeded_batch : list[dict]
+        The list of seeded messages to transform.
+    marker_key : str
+        The key to set on the context system message for identification
+        (e.g., "_gemini_seeded_context", "_claude_seeded_context").
+
+    Returns
+    -------
+    list[dict]
+        Transformed message list with tool_calls converted to context.
     """
     if not seeded_batch:
         return seeded_batch
@@ -245,7 +261,7 @@ def _transform_seeded_tool_calls_for_gemini(seeded_batch: list[dict]) -> list[di
                         + "\n".join(tool_call_descriptions)
                         + "\n[Continue with the original request]"
                     ),
-                    "_gemini_seeded_context": True,
+                    marker_key: True,
                 }
                 transformed.append(context_msg)
                 context_inserted = True
@@ -665,20 +681,33 @@ async def async_tool_loop_inner(
                 for m in message
             ]
 
-        # ── Gemini thought-signature workaround ──────────────────────────────
-        # Gemini models with reasoning enabled require a "thought_signature" on
-        # assistant tool_calls. When seeding/replaying transcripts with manually
-        # constructed tool calls, we lack these signatures. To work around this,
-        # we convert seeded tool_calls and their results into a descriptive
-        # system message, preserving semantics without using the formal schema.
+        # ── Reasoning model workaround (Gemini / Claude) ──────────────────────
+        # Models with reasoning/thinking enabled require special metadata on
+        # assistant messages containing tool_calls:
+        #   - Gemini requires a "thought_signature"
+        #   - Claude with extended thinking requires a "thinking" block
+        # When seeding/replaying transcripts with manually constructed tool calls,
+        # we lack these signatures. To work around this, we convert seeded
+        # tool_calls and their results into a descriptive system message,
+        # preserving semantics without using the formal schema.
         # ─────────────────────────────────────────────────────────────────────
         _model_name = ""
         with suppress(Exception):
             _model_name = str(getattr(client, "model", "") or "")
-        _is_gemini = _model_name.split("@")[0].startswith("gemini")
+        _model_base = _model_name.split("@")[0]
+        _is_gemini = _model_base.startswith("gemini")
+        _is_claude = _model_base.startswith("claude")
 
         if _is_gemini:
-            seeded_batch = _transform_seeded_tool_calls_for_gemini(seeded_batch)
+            seeded_batch = _transform_seeded_tool_calls_to_context(
+                seeded_batch,
+                marker_key="_gemini_seeded_context",
+            )
+        elif _is_claude:
+            seeded_batch = _transform_seeded_tool_calls_to_context(
+                seeded_batch,
+                marker_key="_claude_seeded_context",
+            )
 
         await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
         # Emit concise one-time banner and replay logs for seeded history (if requested)
