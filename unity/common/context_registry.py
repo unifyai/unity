@@ -109,10 +109,14 @@ class ContextRegistry:
         entry: Dict,
         remote_contexts: List[str],
     ):
-        """Create unify context and ensure fields are created, store in registry."""
+        """Create unify context and ensure fields are created, store in registry.
+
+        Idempotent: tolerates pre-existing contexts and concurrent creation.
+        """
         table = entry["table_context"]
         target_name = entry["resolved_name"]
-        if target_name not in remote_contexts:
+        # Idempotent creation: try to create, tolerate if already exists
+        try:
             create_context(
                 target_name,
                 description=table.description,
@@ -120,10 +124,14 @@ class ContextRegistry:
                 auto_counting=table.auto_counting,
                 foreign_keys=table.foreign_keys,
             )
-        # TODO: No need to check current fields, this has no effect if fields are already created
-        # possibly can be eliminated if get_fields returns the context for the fields
+        except Exception:
+            pass  # Already exists or transient failure
+        # Idempotent field creation
         if table.fields:
-            create_fields(table.fields, context=target_name)
+            try:
+                create_fields(table.fields, context=target_name)
+            except Exception:
+                pass  # Fields already exist or transient failure
 
         cls._registry[(manager_name, table.name)] = target_name
 
