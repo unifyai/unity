@@ -154,6 +154,121 @@ def _check_valid_response_format(response_format: Any):
     return response_format.model_json_schema()
 
 
+def _transform_seeded_tool_calls_for_gemini(seeded_batch: list[dict]) -> list[dict]:
+    """Transform seeded tool_calls into a context system message for Gemini.
+
+    Gemini models with reasoning enabled require a "thought_signature" on
+    assistant messages containing tool_calls. When replaying/seeding transcripts
+    with manually constructed tool calls, we lack these signatures.
+
+    This function extracts:
+    - Assistant messages with tool_calls
+    - Corresponding tool role messages (matched by tool_call_id)
+
+    And converts them into a single system message describing what happened,
+    while preserving user messages and any assistant messages without tool_calls.
+    """
+    if not seeded_batch:
+        return seeded_batch
+
+    # Check if there are any tool_calls to transform
+    has_tool_calls = any(
+        isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls")
+        for m in seeded_batch
+    )
+    if not has_tool_calls:
+        return seeded_batch
+
+    # Build a mapping of tool_call_id -> tool result content
+    tool_results: dict[str, dict] = {}
+    for m in seeded_batch:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "tool":
+            tcid = m.get("tool_call_id")
+            if isinstance(tcid, str) and tcid:
+                tool_results[tcid] = {
+                    "name": m.get("name", "unknown"),
+                    "content": m.get("content", ""),
+                }
+
+    # Extract tool call descriptions from assistant messages
+    tool_call_descriptions: list[str] = []
+    for m in seeded_batch:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            for tc in m.get("tool_calls") or []:
+                if not isinstance(tc, dict):
+                    continue
+                tc_id = tc.get("id", "")
+                func = tc.get("function") or {}
+                name = func.get("name", "unknown")
+                args = func.get("arguments", "{}")
+
+                # Find the corresponding result
+                result_info = tool_results.get(tc_id)
+                if result_info:
+                    result_content = result_info.get("content", "(no result)")
+                    tool_call_descriptions.append(
+                        f"• Called `{name}({args})` → {result_content}",
+                    )
+                else:
+                    tool_call_descriptions.append(
+                        f"• Called `{name}({args})` → (pending/no result)",
+                    )
+
+    # Build the transformed batch:
+    # - Keep user messages
+    # - Keep assistant messages that have content but no tool_calls
+    # - Skip assistant messages with tool_calls (replaced by context)
+    # - Skip tool role messages (replaced by context)
+    # - Insert a system context message after the first user message
+    transformed: list[dict] = []
+    context_inserted = False
+
+    for m in seeded_batch:
+        if not isinstance(m, dict):
+            transformed.append(m)
+            continue
+
+        role = m.get("role")
+
+        if role == "user":
+            transformed.append(m)
+            # Insert context system message after the first user message
+            if not context_inserted and tool_call_descriptions:
+                context_msg = {
+                    "role": "system",
+                    "content": (
+                        "[Prior tool execution context]\n"
+                        + "\n".join(tool_call_descriptions)
+                        + "\n[Continue with the original request]"
+                    ),
+                    "_gemini_seeded_context": True,
+                }
+                transformed.append(context_msg)
+                context_inserted = True
+
+        elif role == "assistant":
+            # Keep assistant messages that have content but no tool_calls
+            if m.get("tool_calls"):
+                # Skip - this is replaced by the context message
+                continue
+            elif m.get("content"):
+                transformed.append(m)
+
+        elif role == "tool":
+            # Skip - tool results are included in the context message
+            continue
+
+        else:
+            # Keep other messages (system, etc.)
+            transformed.append(m)
+
+    return transformed
+
+
 async def async_tool_loop_inner(
     client: unify.AsyncUnify,
     message: str | dict | list[str | dict],
@@ -549,6 +664,22 @@ async def async_tool_loop_inner(
                 (m if isinstance(m, dict) else {"role": "user", "content": m})
                 for m in message
             ]
+
+        # ── Gemini thought-signature workaround ──────────────────────────────
+        # Gemini models with reasoning enabled require a "thought_signature" on
+        # assistant tool_calls. When seeding/replaying transcripts with manually
+        # constructed tool calls, we lack these signatures. To work around this,
+        # we convert seeded tool_calls and their results into a descriptive
+        # system message, preserving semantics without using the formal schema.
+        # ─────────────────────────────────────────────────────────────────────
+        _model_name = ""
+        with suppress(Exception):
+            _model_name = str(getattr(client, "model", "") or "")
+        _is_gemini = _model_name.split("@")[0].startswith("gemini")
+
+        if _is_gemini:
+            seeded_batch = _transform_seeded_tool_calls_for_gemini(seeded_batch)
+
         await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
         # Emit concise one-time banner and replay logs for seeded history (if requested)
         if replay_origin:
