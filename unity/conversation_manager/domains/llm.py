@@ -5,8 +5,6 @@ from openai import AsyncOpenAI
 from pydantic_core import from_json
 from typing import Awaitable, Callable, Optional
 
-is_reasoning = lambda name: "gpt-5" in name
-
 
 class LLM:
     def __init__(self, model: str, event_broker=None):

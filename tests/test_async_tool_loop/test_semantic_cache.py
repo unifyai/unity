@@ -235,6 +235,7 @@ async def test_construct_new_user_message():
         client,
         initial_user_message,
         tools={"say_hello": say_hello, "say_goodbye": say_goodbye},
+        semantic_cache="write",
     )
 
     await handle.interject("Actually, I meant to call the say_goodbye tool")

@@ -53,6 +53,7 @@ from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 from livekit.plugins import cartesia
 import argparse
 from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.async_tool_loop import SteerableToolHandle
 from pydantic import BaseModel, Field
 
 # Added for direct logging of generated messages
@@ -2892,7 +2893,7 @@ def parse_per_task_guidance(text: str) -> dict[int, str]:
     - Extract concise guidance strings (no rephrasing of unrelated text).
     - Ignore non-guidance content.
     """
-    import unify as _unify
+    from unity.common.llm_client import new_llm_client
 
     if not text:
         return {}
@@ -2908,11 +2909,9 @@ def parse_per_task_guidance(text: str) -> dict[int, str]:
     )
 
     try:
-        judge = _unify.Unify(
-            "gpt-5@openai",
+        judge = new_llm_client(
+            async_client=False,
             response_format=_PerTaskGuidancePayload,
-            reasoning_effort="high",
-            service_tier="priority",
         )
         payload = _PerTaskGuidancePayload.model_validate_json(
             judge.set_system_message(sys_msg).generate(text),

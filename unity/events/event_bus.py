@@ -285,18 +285,23 @@ class EventBus:
                 # If ensure fails (e.g. offline tests), proceed; downstream will fall back safely
                 pass
         self._global_ctx = f"{base_ctx}/Events" if base_ctx else "Events"
-        upstream_ctxs = unify.get_contexts()
-        if self._global_ctx not in upstream_ctxs:
+        # Idempotent context creation: tolerates pre-existing contexts and
+        # concurrent creation attempts from parallel processes.
+        try:
             unify.create_context(self._global_ctx)
+        except Exception:
+            pass  # Already exists or transient failure
 
         # Persisted subscription metadata lives here
         self._callbacks_ctx = f"{self._global_ctx}/_callbacks"
-        if self._callbacks_ctx not in upstream_ctxs:
+        try:
             unify.create_context(
                 self._callbacks_ctx,
                 unique_keys={"row_id": "int"},
                 auto_counting={"row_id": None},
             )
+        except Exception:
+            pass  # Already exists or transient failure
         ctxs = unify.get_contexts(prefix=f"{self._global_ctx}/")
         self._window_sizes: Dict[str, int] = {
             ctx.split("/")[-1]: self._default_window for ctx in ctxs
