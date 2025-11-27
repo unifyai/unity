@@ -235,16 +235,7 @@ async def log_message(cm: "ConversationManager", event: Event) -> None:
         except Exception as e:
             print(f"[ManagersWorker] Error logging message: {e}")
 
-    exchange_id = await asyncio.to_thread(
-        _publish_transcript,
-        transcript_manager=cm.transcript_manager,
-        event=event,
-        medium=medium,
-        sender_id=sender_id,
-        receiver_ids=receiver_ids,
-        content=content,
-        exchange_id=exchange_id,
-    )
+    exchange_id = await asyncio.to_thread(_publish_transcript)
 
     # publish reply as event envelope
     await event_broker.publish(
