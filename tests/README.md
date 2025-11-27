@@ -257,9 +257,9 @@ Open `.parallel_run.sh` and tweak as needed:
 
 That's it! Run it, list sessions, and jump into whichever test you want to watch.
 
-## Cleanup stray Unify test projects
+## Cleanup Unify test projects
 
-If tests are aborted (e.g., `tmux kill-server`) while using `--random-projects` mode, temporary Unify projects prefixed with `UnityTests_` may remain on the backend. Use the cleanup helper to remove them:
+Use the cleanup helper to delete test projects from the Unify backend. By default, it deletes **both** the shared `UnityTests` project and any random `UnityTests_*` projects:
 
 ```bash
 # first time only, ensure it's executable
@@ -268,25 +268,32 @@ chmod +x tests/.project_cleanup.sh
 # show what would be deleted (no changes), prompt env if needed
 tests/.project_cleanup.sh --dry-run
 
-# delete interactively (prompts for environment and confirmation)
+# delete all test projects (shared + random) interactively
 tests/.project_cleanup.sh
 
 # delete without prompts
 tests/.project_cleanup.sh -y
 
-# use a custom prefix
-tests/.project_cleanup.sh --prefix UnityTests_
+# only delete random projects (UnityTests_*), keep the shared one
+tests/.project_cleanup.sh --random-only
 
-# also include the base UnityTests project in deletion
-tests/.project_cleanup.sh --include_main
-
-# combine with other flags (e.g., skip confirmations)
-tests/.project_cleanup.sh --include_main -y
+# only delete the shared project (UnityTests), keep random ones
+tests/.project_cleanup.sh --shared-only
 
 # force environment without prompt
 tests/.project_cleanup.sh -s   # staging
 tests/.project_cleanup.sh -p   # production
 ```
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Show matching projects without deleting |
+| `-y`, `--yes` | Do not prompt for confirmation |
+| `--shared-only` | Only delete the shared `UnityTests` project |
+| `--random-only` | Only delete random `UnityTests_*` projects |
+| `--prefix PREFIX` | Override prefix for random projects (default: `UnityTests_`) |
+| `-s`, `--staging` | Use staging environment |
+| `-p`, `--production` | Use production environment |
 
 Requirements:
 
@@ -295,7 +302,3 @@ Requirements:
 - To skip the environment prompt, either pass `-s/--staging` or `-p/--production`,
   or set `UNIFY_BASE_URL` (e.g., `https://api.unify.ai/v0` for production or
   `https://orchestra-staging-lz5fmz6i7q-ew.a.run.app/v0` for staging).
-
-Notes:
-
-- `--include_main` is optional and will additionally delete the plain `UnityTests` project (useful when a non-suffixed main project exists alongside temporary `UnityTests_...` ones).

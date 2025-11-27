@@ -10,28 +10,36 @@ if [ -f "../.env" ]; then
   set +a
 fi
 
-# Delete Unify projects whose names start with a given prefix (default: "UnityTests_").
-# Useful after abrupt test termination (e.g., `tmux kill-server`) leaving temp projects behind.
+# Delete Unify test projects. By default, deletes both:
+#   - The shared "UnityTests" project
+#   - Random projects matching "UnityTests_*"
+# Use --shared-only or --random-only to limit to one category.
 
 API_BASE=""
 PREFIX="UnityTests_"
 ASSUME_YES=0
 DRY_RUN=0
 EXPLICIT_ENV=""
-INCLUDE_MAIN=0
+# Mode flags: by default, delete both shared and random projects
+DELETE_SHARED=1
+DELETE_RANDOM=1
 
 usage() {
   cat <<'USAGE'
-Usage: .project_cleanup.sh [--dry-run] [-y|--yes] [--prefix PREFIX] [--include_main] [--staging|-s|--production|-p]
+Usage: .project_cleanup.sh [--dry-run] [-y|--yes] [--shared-only|--random-only] [--staging|-s|--production|-p]
 
 Options:
   --dry-run           Show matching projects without deleting
   -y, --yes           Do not prompt for confirmation
-  --prefix PREFIX     Name prefix to match (default: UnityTests_)
-  --include_main      Also delete the base UnityTests project
+  --shared-only       Only delete the shared "UnityTests" project (not random ones)
+  --random-only       Only delete random "UnityTests_*" projects (not the shared one)
+  --prefix PREFIX     Override prefix for random projects (default: UnityTests_)
   -s, --staging       Use staging environment (skips prompt)
   -p, --production    Use production environment (skips prompt)
   -h, --help          Show this help
+
+By default, both the shared "UnityTests" project and all "UnityTests_*" random
+projects are deleted. Use --shared-only or --random-only to limit scope.
 
 Environment:
   UNIFY_KEY           Required. API key for https://api.unify.ai
@@ -55,8 +63,17 @@ while (( "$#" )); do
       fi
       PREFIX="$1"
       ;;
+    --shared-only)
+      DELETE_SHARED=1
+      DELETE_RANDOM=0
+      ;;
+    --random-only)
+      DELETE_SHARED=0
+      DELETE_RANDOM=1
+      ;;
+    # Legacy flag for backward compatibility
     --include_main)
-      INCLUDE_MAIN=1
+      DELETE_SHARED=1
       ;;
     -s|--staging)
       EXPLICIT_ENV="staging"
@@ -126,21 +143,25 @@ resp="$(
 matches=()
 tmp_matches="$(mktemp)"
 trap 'rm -f "$tmp_matches"' EXIT
-jq -r --arg pfx "$PREFIX" '
-  (if type=="array" then . else (.projects // []) end)
-  | map(
-      if type=="string" then {id: ., name: .}
-      else {id: (.id // .project_id // .projectId // .projectID // .uuid // .name // empty), name: (.name // .id // empty)}
-      end
-    )
-  | .[]
-  | select(.name? and (.name | type=="string") and (.name | startswith($pfx)))
-  | select(.id != null and (.id | tostring) != "")
-  | [.id, .name] | @tsv
-' <<<"$resp" > "$tmp_matches" || true
 
-# Optionally include the main UnityTests project (exact name match)
-if (( INCLUDE_MAIN )); then
+# Include random projects (UnityTests_*) if requested
+if (( DELETE_RANDOM )); then
+  jq -r --arg pfx "$PREFIX" '
+    (if type=="array" then . else (.projects // []) end)
+    | map(
+        if type=="string" then {id: ., name: .}
+        else {id: (.id // .project_id // .projectId // .projectID // .uuid // .name // empty), name: (.name // .id // empty)}
+        end
+      )
+    | .[]
+    | select(.name? and (.name | type=="string") and (.name | startswith($pfx)))
+    | select(.id != null and (.id | tostring) != "")
+    | [.id, .name] | @tsv
+  ' <<<"$resp" >> "$tmp_matches" || true
+fi
+
+# Include the shared UnityTests project (exact name match) if requested
+if (( DELETE_SHARED )); then
   jq -r '
     (if type=="array" then . else (.projects // []) end)
     | map(
@@ -160,12 +181,22 @@ while IFS= read -r line; do
   matches+=( "$line" )
 done < "$tmp_matches"
 
+# Build description of what we're targeting
+target_desc=""
+if (( DELETE_SHARED && DELETE_RANDOM )); then
+  target_desc="UnityTests and UnityTests_*"
+elif (( DELETE_SHARED )); then
+  target_desc="UnityTests (shared only)"
+elif (( DELETE_RANDOM )); then
+  target_desc="UnityTests_* (random only)"
+fi
+
 if (( ${#matches[@]} == 0 )); then
-  echo "No projects found with prefix '$PREFIX'. Nothing to do." >&2
+  echo "No projects found matching '$target_desc'. Nothing to do." >&2
   exit 0
 fi
 
-echo "Found ${#matches[@]} project(s) to delete (prefix='$PREFIX'):" >&2
+echo "Found ${#matches[@]} project(s) to delete ($target_desc):" >&2
 for m in "${matches[@]}"; do printf '  - %s\n' "$m"; done >&2
 
 if (( DRY_RUN )); then
