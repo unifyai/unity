@@ -320,21 +320,24 @@ def pytest_sessionstart(session):
 
     # ------------------------------------------------------------------
     #  Ensure the Durations context exists for duration logging
+    #  (idempotent: tolerates pre-existing context/fields and concurrent
+    #  creation attempts from parallel pytest sessions)
     # ------------------------------------------------------------------
     try:
-        if "Durations" not in unify.get_contexts(prefix="Durations"):
-            unify.create_context("Durations")
-            # Define explicit field types for duration logging
-            unify.create_fields(
-                context="Durations",
-                fields={
-                    "test_fpath": {"type": "str", "mutable": True},
-                    "tags": {"type": "list", "mutable": True},
-                    "duration": {"type": "float", "mutable": True},
-                },
-            )
+        unify.create_context("Durations")
     except Exception:
-        pass
+        pass  # Already exists or transient failure
+    try:
+        unify.create_fields(
+            context="Durations",
+            fields={
+                "test_fpath": {"type": "str", "mutable": True},
+                "tags": {"type": "list", "mutable": True},
+                "duration": {"type": "float", "mutable": True},
+            },
+        )
+    except Exception:
+        pass  # Fields already exist or transient failure
 
 
 def pytest_sessionfinish(session, exitstatus):
