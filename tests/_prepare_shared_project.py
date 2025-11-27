@@ -68,6 +68,17 @@ def prepare_shared_project() -> None:
         # Tolerate field creation errors (may already exist)
         pass
 
+    # Pre-create assistant-derived contexts via unity.init() to avoid races
+    # when parallel pytest sessions (xdist, tmux, CI) all call unity.init()
+    try:
+        import unity
+
+        unity.init(PROJECT)
+    except Exception as e:
+        # Tolerate if contexts already exist (another process created them)
+        if "already exists" not in str(e).lower():
+            print(f"Note: unity.init() returned: {e}", file=sys.stderr)
+
     print(f"Shared project '{PROJECT}' is ready.")
 
 
