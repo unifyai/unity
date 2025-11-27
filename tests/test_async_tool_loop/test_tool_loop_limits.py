@@ -36,8 +36,8 @@ def _preseed_tool_call(
 
 # ── 1. max_steps safeguard ────────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_max_steps_exceeded():
-    client = new_llm_client()
+async def test_max_steps_exceeded(model):
+    client = new_llm_client(model=model)
     # The conversation will contain at least USER + ASSISTANT = 2 messages,
     # so max_steps=1 must raise.
     handle = start_async_tool_loop(
@@ -54,8 +54,8 @@ async def test_max_steps_exceeded():
 
 # ── 2. timeout safeguard ──────────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_timeout_exceeded(monkeypatch):
-    client = new_llm_client()
+async def test_timeout_exceeded(model, monkeypatch):
+    client = new_llm_client(model=model)
     # Force generate to be slower than timeout using monkeypatch while still calling the real LLM.
     orig_generate = client.generate
 
@@ -99,7 +99,7 @@ class _MultiCallDriver:
 
 
 @pytest.mark.asyncio
-async def test_prunes_over_quota_tool_calls(monkeypatch):
+async def test_prunes_over_quota_tool_calls(model, monkeypatch):
     """When `max_total_calls` is 2, only two calls are scheduled; extras are pruned."""
 
     counter = {"n": 0}
@@ -108,7 +108,7 @@ async def test_prunes_over_quota_tool_calls(monkeypatch):
         counter["n"] += 1
         return "ok"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     # Instruct the real LLM to attempt three calls; the loop will prune to 2
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, request the tool `short_tool` "
@@ -157,7 +157,7 @@ class _SerialCallsDriver:
 
 
 @pytest.mark.asyncio
-async def test_prunes_over_quota_serial_calls(monkeypatch):
+async def test_prunes_over_quota_serial_calls(model, monkeypatch):
     """When three serial turns each request a call, quota=2 prunes the third."""
 
     counter = {"n": 0}
@@ -166,7 +166,7 @@ async def test_prunes_over_quota_serial_calls(monkeypatch):
         counter["n"] += 1
         return "ok"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     # Instruct the model how to conclude after the allowed calls
     client.set_system_message(
         "You are part of an automated test. If tools are available, request the tool `short_tool` exactly once per turn. "
@@ -214,10 +214,10 @@ def _make_long_tool(cancel_flag: dict):
 
 
 @pytest.mark.asyncio
-async def test_timeout_graceful_termination():
+async def test_timeout_graceful_termination(model):
     """No exception; pending tool is cancelled when timeout hits."""
     cancel_flag = {}
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     # Instruct real LLM to call the tool once and keep running; timeout will stop it
     client.set_system_message(
         'You are running inside an automated test. In your FIRST assistant turn, call `long_tool` with {"seconds": 5}. '
@@ -244,10 +244,10 @@ async def test_timeout_graceful_termination():
 
 
 @pytest.mark.asyncio
-async def test_max_steps_graceful_termination():
+async def test_max_steps_graceful_termination(model):
     """No exception; pending tool is cancelled when max_steps is exceeded."""
     cancel_flag = {}
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     # Instruct real LLM to call the tool once and keep running; max_steps will stop it
     client.set_system_message(
         'You are running inside an automated test. In your FIRST assistant turn, call `long_tool` with {"seconds": 5}. '
@@ -316,23 +316,23 @@ async def test_max_steps_graceful_termination():
 MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
-def new_client() -> unify.AsyncUnify:
+def new_client(model: str = DEFAULT_MODEL) -> unify.AsyncUnify:
     """
     Return a fresh client *with its own conversation state* so that tests do
     not interfere with one another.
     """
-    return new_llm_client()
+    return new_llm_client(model=model)
 
 
 @pytest.mark.asyncio
-async def test_default_policy_returns_immediately():
+async def test_default_policy_returns_immediately(model):
     """With ``tool_policy=None`` the loop should accept the LLM's first
     answer (no tools) and finish without touching *any* tools."""
 
     async def noop_tool():  # pragma: no cover – should never be called
         raise RuntimeError("tool should not have been invoked")
 
-    client = new_client()
+    client = new_client(model=model)
     handle = start_async_tool_loop(
         client,
         message="You are part of a test. Do *not* call any tools, just return to the user immediately",
@@ -343,7 +343,7 @@ async def test_default_policy_returns_immediately():
 
 
 @pytest.mark.asyncio
-async def test_policy_forces_single_tool_invocation():
+async def test_policy_forces_single_tool_invocation(model):
     """A custom ``tool_policy`` can replicate the old
     ``minimum_tool_turns=1`` semantics by forcing a *required* tool call on the
     first turn only."""
@@ -354,7 +354,7 @@ async def test_policy_forces_single_tool_invocation():
         flag["called"] = True
         return "ok"
 
-    client = new_client()
+    client = new_client(model=model)
     handle = start_async_tool_loop(
         client,
         message="You are part of a test. Do *not* call any tools, just return to the user immediately",
@@ -374,7 +374,7 @@ async def test_policy_forces_single_tool_invocation():
 
 
 @pytest.mark.asyncio
-async def test_policy_shows_then_hides_tool():
+async def test_policy_shows_then_hides_tool(model):
     """
     On step 0 the policy hides *all* tools so the assistant must think without
     calling them.  On step 1 the tool becomes available and the assistant
@@ -394,7 +394,7 @@ async def test_policy_shows_then_hides_tool():
         # Reveal all tools afterwards (no *required* flag).
         return "auto", {}
 
-    client = new_client()
+    client = new_client(model=model)
     handle = start_async_tool_loop(
         client,
         "You are part of a test. Continue calling `observed_tool` until the tool option disappears, up to a *maximum* of two *consecutive* tool calls.",
@@ -407,7 +407,7 @@ async def test_policy_shows_then_hides_tool():
 
 
 @pytest.mark.asyncio
-async def test_policy_two_required_then_auto():
+async def test_policy_two_required_then_auto(model):
     """
     Require *two* consecutive tool turns, then switch to ``auto``.  The tool
     counts its invocations so we can assert it was called twice and not more.
@@ -422,7 +422,7 @@ async def test_policy_two_required_then_auto():
     def first_two_required(step: int, tools: Dict[str, Callable]):
         return ("required" if step < 2 else "auto", tools)
 
-    client = new_client()
+    client = new_client(model=model)
     handle = start_async_tool_loop(
         client,
         "You are part of a test. You will have no other option but to call the 'counting_tool' a certain number of times. "
@@ -437,7 +437,7 @@ async def test_policy_two_required_then_auto():
 
 @pytest.mark.skip(reason="Will only pass once we support the responses API")
 @pytest.mark.asyncio
-async def test_max_parallel_tool_calls():
+async def test_max_parallel_tool_calls(model):
     X = 2  # allowed concurrent tool calls per LLM turn
     Y = 5  # requested by the model
 
@@ -452,7 +452,7 @@ async def test_max_parallel_tool_calls():
     short.__name__ = "short"
     short.__qualname__ = "short"
 
-    client = new_client()
+    client = new_client(model=model)
 
     prompt = (
         "You are part of a test. In a single assistant turn, call the tool `short(i: int)` "

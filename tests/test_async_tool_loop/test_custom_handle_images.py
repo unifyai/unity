@@ -85,14 +85,14 @@ async def spawn_images_handle() -> SteerableToolHandle:  # type: ignore[name-def
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interject_with_images_on_custom_handle():
+async def test_interject_with_images_on_custom_handle(model):
     """
     Verify that the `interject` method on a custom SteerableToolHandle receives
     the `images` argument when called via the dynamic `interject_...` helper.
     """
     _HANDLES.clear()
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
 
     # Instruct the LLM to call spawn_images_handle first
     client.set_system_message(

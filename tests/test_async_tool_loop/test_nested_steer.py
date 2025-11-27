@@ -65,7 +65,7 @@ class ToyHandle(SteerableToolHandle):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_steer_targets_child_and_applies_method():
+async def test_nested_steer_targets_child_and_applies_method(model):
     """nested_steer should target a live child by tool-name selector and apply the method."""
 
     inner = ToyHandle()
@@ -74,7 +74,7 @@ async def test_nested_steer_targets_child_and_applies_method():
         return inner
 
     # Real LLM client; direct it to call our tool in the first turn
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",
@@ -191,7 +191,7 @@ async def test_nested_steer_targets_child_and_applies_method():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_steer_noop_when_child_selector_does_not_match():
+async def test_nested_steer_noop_when_child_selector_does_not_match(model):
     """When a child selector does not match any in-flight child, nested_steer should do nothing (no fallback)."""
 
     inner = ToyHandle()
@@ -237,7 +237,7 @@ async def test_nested_steer_noop_when_child_selector_does_not_match():
     async def Wrapper_run():  # type: ignore[valid-type]
         return wrapper
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Wrapper_run` with no arguments. "
         "Then wait for it to complete before replying.",
@@ -321,7 +321,7 @@ async def test_nested_steer_noop_when_child_selector_does_not_match():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_nested_steer_applies_serial_steps_on_child():
+async def test_nested_steer_applies_serial_steps_on_child(model):
     """Verify that multiple serial steps (pause → resume → interject) apply on the same child loop."""
 
     inner = ToyHandle()
@@ -329,7 +329,7 @@ async def test_nested_steer_applies_serial_steps_on_child():
     async def Outer_spawn():  # type: ignore[valid-type]
         return inner
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call `Outer_spawn` with no arguments. "
         "Then wait for it to complete before replying.",
