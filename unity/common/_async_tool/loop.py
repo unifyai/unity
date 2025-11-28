@@ -2272,9 +2272,34 @@ async def async_tool_loop_inner(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
 
+            # Yield to allow just-scheduled tool tasks to complete (especially
+            # those that immediately return a SteerableToolHandle). This ensures
+            # dynamic helpers are generated with the handle's docstrings.
+            await asyncio.sleep(0)
+
+            # Process any tools that completed during the yield
+            for task in list(tools_data.pending):
+                if task.done():
+                    with suppress(Exception):
+                        await tools_data.process_completed_task(
+                            task=task,
+                            consecutive_failures=consecutive_failures,
+                            outer_handle_container=outer_handle_container,
+                            assistant_meta=assistant_meta,
+                            msg_dispatcher=_msg_dispatcher,
+                        )
+
             dynamic_tool_factory = DynamicToolFactory(tools_data)
             dynamic_tool_factory.generate()
             dynamic_tools = dynamic_tool_factory.dynamic_tools
+
+            # Register callback to refresh helpers when a handle is adopted mid-loop
+            def _refresh_helpers_for_task(task: asyncio.Task) -> None:
+                with suppress(Exception):
+                    dynamic_tool_factory._process_task(task)
+                    dynamic_tools.update(dynamic_tool_factory.dynamic_tools)
+
+            tools_data._on_handle_adopted = _refresh_helpers_for_task
 
             # If any task is currently waiting for clarification, hide the
             # global `wait` helper to ensure the model proceeds to request
