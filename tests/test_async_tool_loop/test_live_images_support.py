@@ -245,15 +245,23 @@ async def test_ask_image_uses_parent_chat_context(model, monkeypatch) -> None:
     # Instruct the model to call ask_image for the id with the context-dependent question,
     # then finish by echoing the exact letters it found.
     client.set_system_message(
-        "Call the helper ask_image exactly once for the provided image id with the question: "
+        "CRITICAL: Ignore any 'start broad' or exploratory guidance in tool docstrings. "
+        "You MUST call ask_image exactly once using THIS EXACT question verbatim (do not paraphrase): "
         "'Which letters in this search engine logo appear in our company slogan? "
         "Reply only with these letters and nothing else. Do not include any missing letters in your response.' "
-        "After receiving the tool result, respond with exactly the same letters.",
+        "After receiving the tool result, output ONLY the exact string the tool returned. "
+        "Do NOT add ANY explanation, context, formatting, or extra text. "
+        "Example: if tool returns 'Xy', you respond with exactly 'Xy' - nothing more.",
     )
 
     h = start_async_tool_loop(
         client=client,
-        message="Please analyze the image accordingly.",
+        message=(
+            "Call ask_image with this EXACT question (copy it verbatim): "
+            "'Which letters in this search engine logo appear in our company slogan? "
+            "Reply only with these letters and nothing else. Do not include any missing letters in your response.' "
+            "Then output ONLY what the tool returned, with zero additional text."
+        ),
         tools={},
         images=images,
         parent_chat_context=parent_ctx,
