@@ -483,13 +483,16 @@ async def test_images_and_ask_image(model, monkeypatch) -> None:
 
     # Instruct model to call ask_image for Emily's id and then answer 'blue'.
     client.set_system_message(
-        "First, call the dynamic helper `ask_image` on image_id=202. Then reply with 'blue'.",
+        "CRITICAL: You MUST call the `ask_image` tool for image_id=202 with question "
+        "'What color is shown?' before answering. Do NOT skip this step even if the "
+        "answer seems obvious from captions. After receiving the tool result, respond "
+        "with ONLY the word 'blue' - no other text, explanation, or formatting.",
     )
 
     handle = start_async_tool_loop(
         client=client,
         message=(
-            "Susan likes this colour but Emily likes this colour, which colour does Emily like?"
+            "Call ask_image on image_id=202, then output ONLY the color name returned."
         ),
         tools={},
         images=images,
