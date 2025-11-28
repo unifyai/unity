@@ -164,8 +164,10 @@ async def test_ask_image_dynamic_helper_executes_and_returns(
 
     client = new_llm_client(model=model)
     client.set_system_message(
-        "Call the dynamic helper `ask_image` once for image_id=42 with the question 'What is the dominant color?'. "
-        "Then provide a short final answer.",
+        "CRITICAL: You MUST call the `ask_image` tool exactly once for image_id=42 "
+        "with the question 'What is the dominant color?'. "
+        "After receiving the tool result, output ONLY the color name returned. "
+        "Do NOT add any greeting, explanation, or extra text.",
     )
     LIVE_IMAGES_REGISTRY.set(
         {
@@ -180,7 +182,10 @@ async def test_ask_image_dynamic_helper_executes_and_returns(
 
     h = start_async_tool_loop(
         client=client,
-        message="Hello world",
+        message=(
+            "Call ask_image for image_id=42 with the question 'What is the dominant color?' "
+            "and return only the result."
+        ),
         tools={},
         images=images,
     )
