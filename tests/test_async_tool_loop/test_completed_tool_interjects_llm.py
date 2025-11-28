@@ -7,6 +7,11 @@ import pytest
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
+from tests.test_async_tool_loop.async_helpers import (
+    make_gated_async_tool,
+    _wait_for_tool_result,
+    _wait_for_next_assistant_response_event,
+)
 
 # ────────────────────────────────────────────────────────────────────────────
 # Dummy tools – one finishes almost instantly, the other a little later
@@ -53,9 +58,11 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
     - `wait` was indeed called (via log capture), and
     - `wait` does not appear in the final transcript (pruned from messages).
 
-    We still expect at least the initial assistant turn and final answer, and at
-    least two tool messages (placeholder + fast result), but do not require an
-    intermediate assistant message as it may be pruned when using `wait`.
+    This test uses a gated tool for very_slow_task to ensure deterministic timing:
+    1. fast_task completes
+    2. LLM gets a chance to respond (should call `wait`)
+    3. Only then is very_slow_task's gate released
+    4. LLM produces final answer
     """
 
     system_prompt = (
@@ -71,7 +78,12 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
         system_message=system_prompt,
     )
 
-    tools = {"fast_task": fast_task, "very_slow_task": very_slow_task}
+    # Create a gated tool for very_slow_task to control timing deterministically
+    very_slow_gate, gated_very_slow_task = make_gated_async_tool(
+        return_value="VERY_SLOW_RESULT",
+    )
+
+    tools = {"fast_task": fast_task, "very_slow_task": gated_very_slow_task}
 
     handle = start_async_tool_loop(
         client,
@@ -82,6 +94,21 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
 
     caplog.set_level(logging.INFO)
     caplog.clear()
+
+    # Wait for fast_task result to be processed
+    await _wait_for_tool_result(client, "fast_task", min_results=1)
+
+    # Wait for the LLM to actually respond after seeing the partial result.
+    # This uses EventBus events to detect when the next assistant message
+    # is published (which should be the `wait` call after fast_task completed).
+    # This avoids race conditions with fixed delays that might not be long
+    # enough for uncached LLM responses.
+    await _wait_for_next_assistant_response_event(timeout=120.0)
+
+    # Now release the gate so very_slow_task can complete
+    very_slow_gate.set()
+
+    # Wait for the loop to complete
     await handle.result()
 
     # ── Assertions ───────────────────────────────────────────────────────
@@ -109,18 +136,17 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
         m for m in client.messages if m.get("role") == "tool" and not is_status_tool(m)
     ]
 
-    # 1) Assert that `wait` was called (via loop logger), OR accept preemption
-    #    when the slow tool finishes before the LLM responds (detected via the
-    #    synthetic check_status_* assistant→tool pair).
+    # 1) Assert that `wait` was called (via loop logger)
     wait_logged = any(
         "Assistant chose `wait` – no-op; not persisting to transcript."
         in r.getMessage()
         for r in caplog.records
     )
-    has_status_pair = any(is_status_assistant(m) for m in client.messages) and any(
-        is_status_tool(m) for m in client.messages
+    assert wait_logged, (
+        "Expected LLM to call `wait` while very_slow_task was pending, but no "
+        "`wait` log was found. This may indicate the LLM did not follow the prompt "
+        "instructions to call `wait` when partial results are available."
     )
-    assert wait_logged or has_status_pair
 
     # 2) Assert that `wait` is not persisted in the transcript
     #    - no assistant tool_call with function name 'wait'
