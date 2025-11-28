@@ -20,7 +20,7 @@ from unity.contact_manager.contact_manager import ContactManager
 
 
 @pytest.mark.asyncio
-async def test_nested_logging_hierarchy_labels():
+async def test_nested_logging_hierarchy_labels(model):
     """
     Verify that nested async tool loops emit ToolLoop events with hierarchical
     lineage in payload: `hierarchy` (list[str]) and `hierarchy_label` (str).
@@ -38,7 +38,7 @@ async def test_nested_logging_hierarchy_labels():
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -59,7 +59,7 @@ async def test_nested_logging_hierarchy_labels():
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop: uses the outer tool ────────────────────────────────
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -109,7 +109,7 @@ async def test_nested_logging_hierarchy_labels():
 
 
 @pytest.mark.asyncio
-async def test_single_loop_logging_hierarchy_label():
+async def test_single_loop_logging_hierarchy_label(model):
     """
     Verify that a single (non-nested) async tool loop emits ToolLoop events
     with a flat hierarchy and label equal to its loop_id.
@@ -125,7 +125,7 @@ async def test_single_loop_logging_hierarchy_label():
     def noop_tool() -> str:  # noqa: D401
         return "ok"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "1️⃣  Call `noop_tool`. 2️⃣ Then reply exactly 'done'.",
     )
@@ -166,7 +166,10 @@ async def test_single_loop_logging_hierarchy_label():
 
 
 @pytest.mark.asyncio
-async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(caplog):
+async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
+    model,
+    caplog,
+):
     """
     Verify that nested_steer emits a pre-call interject log using the child's loop label,
     and marks the entry as coming via nested_steer.
@@ -180,7 +183,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -201,7 +204,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
     outer_tool.__qualname__ = "outer_tool"
 
     # ── top-level loop: uses the outer tool ────────────────────────────────
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"
@@ -274,6 +277,7 @@ async def test_nested_steer_interject_logging_has_child_label_and_origin_marker(
 
 @pytest.mark.asyncio
 async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_marker(
+    model,
     caplog,
 ):
     """
@@ -288,7 +292,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
 
     # ── outer tool: launches a nested loop and returns its handle ──────────
     async def outer_tool() -> AsyncToolLoopHandle:
-        inner_client = new_llm_client()
+        inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
             "You are running inside an automated test.\n"
             "1️⃣  Call `inner_tool` (no arguments).\n"
@@ -308,7 +312,7 @@ async def test_nested_steer_pause_resume_logging_have_child_label_and_origin_mar
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You are running inside an automated test. Perform the steps exactly:\n"
         "1️⃣  Call `outer_tool` with no arguments.\n"

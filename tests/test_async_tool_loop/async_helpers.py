@@ -314,6 +314,23 @@ def make_gated_sync_tool(return_value: str = "ok", timeout: float = 300):
     return gate, _tool
 
 
+def make_gated_async_tool(return_value: str = "ok", timeout: float = 300):
+    """
+    Return (gate, tool_fn) where tool_fn is an async function that blocks
+    until gate.set() is called, then returns `return_value`.
+
+    Useful for async tool loops to keep a tool running until a deterministic
+    trigger is observed in the outer test.
+    """
+    gate = asyncio.Event()
+
+    async def _tool():
+        await asyncio.wait_for(gate.wait(), timeout=timeout)
+        return return_value
+
+    return gate, _tool
+
+
 # --------------------------------------------------------------------------- #
 #  TRANSCRIPT SCANNING HELPERS (INDEX-AGNOSTIC)                                #
 # --------------------------------------------------------------------------- #
@@ -562,6 +579,44 @@ async def _wait_for_assistant_tool_calls(
                                     return
                     except Exception:
                         continue
+        except Exception:
+            pass
+
+    await EVENT_BUS.register_callback(
+        event_type="ToolLoop",
+        callback=_cb,
+        every_n=1,
+    )
+    await asyncio.wait_for(done.wait(), timeout=timeout)
+
+
+@unify.traced
+async def _wait_for_next_assistant_response_event(
+    *,
+    timeout: float = 300.0,
+):
+    """Wait until the async tool loop publishes an assistant message to the EventBus.
+
+    This helper registers a callback and waits for the NEXT assistant message
+    event to be published. It's designed to be called after a tool result is
+    available, to detect when the LLM has responded to that result.
+
+    This uses the EventBus to detect when the LLM has actually responded,
+    avoiding race conditions with fixed delays.
+    """
+    from unity.events.event_bus import EVENT_BUS
+
+    done: asyncio.Event = asyncio.Event()
+
+    async def _cb(events):
+        try:
+            for evt in events or []:
+                payload = getattr(evt, "payload", {})
+                msg = payload.get("message") if isinstance(payload, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                done.set()
+                return
         except Exception:
             pass
 

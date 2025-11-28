@@ -5,6 +5,7 @@ import sys
 import time
 import traceback
 from os import sep
+from pathlib import Path
 from typing import Any, Callable, List
 from unity.events.event_bus import EVENT_BUS
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -78,18 +79,63 @@ def _test_fpath(fn: Callable, fn_name: str) -> str:
     return f"{rel_path}::{fn_name}"
 
 
-def _log_test_duration(test_fpath: str, duration: float) -> None:
-    """Log test duration to the Durations context."""
+def _get_llm_io_dir() -> Path | None:
+    """Get the LLM I/O debug directory for the current session."""
+    try:
+        from unity.constants import SESSION_ID
+    except ImportError:
+        return None
+
+    root = Path(".llm_io_debug")
+    if not root.exists():
+        return None
+
+    # Match the sanitization used in the async_tool loop
+    import re
+
+    session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", SESSION_ID)
+    session_dir = root / session_safe
+    if session_dir.exists():
+        return session_dir
+    return None
+
+
+def _list_llm_io_files() -> set[Path]:
+    """List all LLM I/O files in the current session directory."""
+    llm_io_dir = _get_llm_io_dir()
+    if llm_io_dir is None:
+        return set()
+    return set(llm_io_dir.glob("*.txt"))
+
+
+def _collect_llm_io_contents(files: set[Path]) -> List[str]:
+    """Read contents of LLM I/O files."""
+    contents = []
+    for f in sorted(files):
+        try:
+            contents.append(f.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return contents
+
+
+def _log_test_combined(
+    test_fpath: str,
+    duration: float,
+    llm_io: List[str],
+) -> None:
+    """Log test duration and LLM I/O to the Combined context."""
     try:
         unify.log(
-            context="Durations",
+            context="Combined",
             test_fpath=test_fpath,
             tags=get_session_tags(),
             duration=duration,
+            llm_io=llm_io,
             new=True,
         )
     except Exception:
-        # Duration logging is best-effort; don't fail tests if it errors
+        # Logging is best-effort; don't fail tests if it errors
         pass
 
 
@@ -138,6 +184,9 @@ def _handle_project(
                     unify.delete_context(ctx)
                     skip_ctx_create = False
 
+            # Track LLM I/O files before test starts
+            llm_io_before = _list_llm_io_files()
+
             start_time = time.perf_counter()
             try:
                 unify.set_context(
@@ -164,7 +213,11 @@ def _handle_project(
                 raise Exception(tb)
             finally:
                 duration = time.perf_counter() - start_time
-                _log_test_duration(fpath, duration)
+                # Collect new LLM I/O files created during test
+                llm_io_after = _list_llm_io_files()
+                new_llm_io_files = llm_io_after - llm_io_before
+                llm_io_contents = _collect_llm_io_contents(new_llm_io_files)
+                _log_test_combined(fpath, duration, llm_io_contents)
                 if delete_ctx_on_exit:
                     unify.delete_context(ctx)
                 unify.unset_context()
@@ -187,6 +240,9 @@ def _handle_project(
                 if not try_reuse_prev_ctx and ctx in unify.get_contexts(prefix=ctx):
                     unify.delete_context(ctx)
                     skip_ctx_create = False
+
+            # Track LLM I/O files before test starts
+            llm_io_before = _list_llm_io_files()
 
             start_time = time.perf_counter()
             try:
@@ -216,7 +272,11 @@ def _handle_project(
                 raise Exception(tb)
             finally:
                 duration = time.perf_counter() - start_time
-                _log_test_duration(fpath, duration)
+                # Collect new LLM I/O files created during test
+                llm_io_after = _list_llm_io_files()
+                new_llm_io_files = llm_io_after - llm_io_before
+                llm_io_contents = _collect_llm_io_contents(new_llm_io_files)
+                _log_test_combined(fpath, duration, llm_io_contents)
                 if delete_ctx_on_exit:
                     unify.delete_context(ctx)
                 unify.unset_context()

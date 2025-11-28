@@ -33,14 +33,14 @@ async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
 @_handle_project
-async def test_basic_event_flow() -> None:
+async def test_basic_event_flow(model) -> None:
     """
     End-to-end check:
 
         user/msg → assistant/tool-call → tool/result → assistant/final-text
     """
 
-    client = new_llm_client().set_system_message(
+    client = new_llm_client(model=model).set_system_message(
         "You are an automated test agent.\n"
         "You MUST call the tool named `echo` exactly once, passing the user's message as the `text` argument.\n"
         "Do NOT reply directly without first calling the `echo` tool (even if you think you know the answer).\n"
@@ -85,13 +85,13 @@ async def test_basic_event_flow() -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_interjection_publishes_user_event() -> None:
+async def test_interjection_publishes_user_event(model) -> None:
     """
     Run the *wrapper* helper so that we can inject an extra user turn while the
     loop is still thinking, then confirm that the event bus recorded it.
     """
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "Please always respond with 'You said: {my_latest_message}', with the placeholder containing whatever I said most recently, and do not include the quoation marks in your response.",
     )

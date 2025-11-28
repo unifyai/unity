@@ -573,15 +573,23 @@ class EventBus:
         if isinstance(event_types, str):
             event_types = [event_types]
         for event_type in event_types:
+            # Populate _window_sizes first so concurrent publish() calls that
+            # skip register_event_types (because _specific_ctxs already has the
+            # key) can still access the window size without a KeyError.
+            if event_type not in self._window_sizes:
+                self._window_sizes[event_type] = self._default_window
+
             if event_type not in self._specific_ctxs:
                 full_ctx = f"{self._global_ctx}/{event_type}"
                 self._specific_ctxs[event_type] = full_ctx
                 # Create the context without any server-side auto-increment so
                 # we can fully control the sequence from the client.
-                if full_ctx not in unify.get_contexts():
+                # Idempotent: tolerates pre-existing contexts and concurrent
+                # creation attempts from parallel processes.
+                try:
                     unify.create_context(full_ctx)
-            if event_type not in self._window_sizes:
-                self._window_sizes[event_type] = self._default_window
+                except Exception:
+                    pass  # Already exists or transient failure
 
             # Ensure a local counter exists for this event-type
             self._next_row_ids.setdefault(event_type, 0)

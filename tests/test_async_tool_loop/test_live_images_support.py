@@ -60,6 +60,7 @@ class DummyImageHandle:
 @pytest.mark.asyncio
 @_handle_project
 async def test_live_images_helpers_exposed_and_overview_injected(
+    model,
     monkeypatch,
 ) -> None:
     """
@@ -82,7 +83,7 @@ async def test_live_images_helpers_exposed_and_overview_injected(
     # Spy at the callsite used by the loop
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message("Reply exactly with the word 'done'.")
 
     # Seed registry with a handle for id=42 so helpers can resolve it
@@ -152,13 +153,16 @@ async def test_live_images_helpers_exposed_and_overview_injected(
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> None:
+async def test_ask_image_dynamic_helper_executes_and_returns(
+    model,
+    monkeypatch,
+) -> None:
     """
     Drive the loop to call `ask_image` and verify a tool result is inserted with
     the (dummy) image answer returned by the handle.
     """
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "Call the dynamic helper `ask_image` once for image_id=42 with the question 'What is the dominant color?'. "
         "Then provide a short final answer.",
@@ -197,7 +201,7 @@ async def test_ask_image_dynamic_helper_executes_and_returns(monkeypatch) -> Non
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_image_uses_parent_chat_context(monkeypatch) -> None:
+async def test_ask_image_uses_parent_chat_context(model, monkeypatch) -> None:
     """
     Analogue to the ImageHandle.ask parent-context test: verify that the dynamically
     generated `ask_image` helper automatically threads the parent chat context and
@@ -205,7 +209,7 @@ async def test_ask_image_uses_parent_chat_context(monkeypatch) -> None:
     image content (Google logo) with the slogan provided in the parent context.
     """
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
 
     # Seed a real Google logo image via ImageManager so ask_image will resolve it by id
     from pathlib import Path as _Path
@@ -265,13 +269,13 @@ async def test_ask_image_uses_parent_chat_context(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
+async def test_attach_image_raw_appends_image_block(model, monkeypatch) -> None:
     """
     Drive the loop to call `attach_image_raw` and verify a user message with an
     image_url content block (data URL) was appended to the transcript.
     """
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "Call the dynamic helper `attach_image_raw` for image_id=99 with note 'please inspect'. "
         "Then reply with exactly 'red'.",
@@ -323,7 +327,10 @@ async def test_attach_image_raw_appends_image_block(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_live_images_accepts_annotated_and_raw_refs_variants(monkeypatch) -> None:
+async def test_live_images_accepts_annotated_and_raw_refs_variants(
+    model,
+    monkeypatch,
+) -> None:
     """
     Regression test: The loop should accept AnnotatedImageRefs and RawImageRefs containers.
 
@@ -331,7 +338,7 @@ async def test_live_images_accepts_annotated_and_raw_refs_variants(monkeypatch) 
     live images. Now, the synthetic overview should be injected and include the image id.
     """
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message("Reply exactly with the word 'done'.")
 
     # Seed a real image so ImageManager can resolve ids if needed
@@ -375,7 +382,7 @@ async def test_live_images_accepts_annotated_and_raw_refs_variants(monkeypatch) 
     assert f'"image_id": {int(img_id)}' in (ov_msgs_a[-1].get("content") or "")
 
     # Reset client for second case to avoid cross-talk
-    client_b = new_llm_client()
+    client_b = new_llm_client(model=model)
     client_b.set_system_message("Reply exactly with the word 'done'.")
 
     # Case B: RawImageRefs
@@ -400,7 +407,7 @@ async def test_live_images_accepts_annotated_and_raw_refs_variants(monkeypatch) 
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_images_and_ask_image(monkeypatch) -> None:
+async def test_images_and_ask_image(model, monkeypatch) -> None:
     """
     Motivating example: Given a message that refers to two colours – one for Susan and one
     for Emily – seed two live images. Verify that:
@@ -421,7 +428,7 @@ async def test_images_and_ask_image(monkeypatch) -> None:
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp2, raising=True)
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
 
     # Two dummy image handles – first for Susan, second for Emily
     susan_id = 201
@@ -498,7 +505,7 @@ async def test_images_and_ask_image(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_overview_injected_before_first_llm_step(monkeypatch) -> None:
+async def test_overview_injected_before_first_llm_step(model, monkeypatch) -> None:
     """
     Verify the synthetic `live_images_overview` assistant tool-call/result are injected
     before the first LLM thinking step (no model choice is used to call it).
@@ -527,7 +534,7 @@ async def test_overview_injected_before_first_llm_step(monkeypatch) -> None:
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message("Say 'done'.")
 
     # Seed a single image in the live registry and align a typed ref
@@ -617,7 +624,10 @@ async def test_overview_injected_before_first_llm_step(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_ask_loop_injects_overview_and_exposes_helpers(monkeypatch) -> None:
+async def test_ask_loop_injects_overview_and_exposes_helpers(
+    model,
+    monkeypatch,
+) -> None:
     """
     Calling handle.ask(..., images=...) should start an inspection loop that:
       - injects a synthetic live_images_overview tool result containing the image id and caption
@@ -638,7 +648,7 @@ async def test_ask_loop_injects_overview_and_exposes_helpers(monkeypatch) -> Non
 
     monkeypatch.setattr(_loop, "generate_with_preprocess", _spy_gwp, raising=True)
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "In your FIRST assistant turn, call `wait_forever` and wait.",
     )

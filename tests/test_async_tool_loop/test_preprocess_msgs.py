@@ -17,11 +17,11 @@ from unity.common.llm_client import new_llm_client
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_preprocess_msgs_dynamic_placeholder(monkeypatch):
+async def test_preprocess_msgs_dynamic_placeholder(model, monkeypatch):
     """Verify that the preprocess hook patches placeholders *per-LLM-call* and
     that the modifications never leak into the persistent chat history."""
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
 
     # Counter so each invocation produces a fresh replacement value.
     counter = {"n": 0}

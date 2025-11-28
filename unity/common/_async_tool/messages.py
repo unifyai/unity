@@ -49,6 +49,207 @@ def is_non_final_tool_reply(msg: dict) -> bool:
     return False
 
 
+def transform_tool_calls_to_context(
+    msgs: list[dict],
+    *,
+    marker_key: str = "_transformed_context",
+    context_header: str = "[Prior tool execution context]",
+    context_footer: str = "[Continue with the original request]",
+    predicate: Callable[[dict], bool] | None = None,
+) -> list[dict]:
+    """Transform assistant tool_calls into a system context message.
+
+    This unified function handles two scenarios:
+    1. Seeded transcripts for reasoning models (Gemini/Claude) that require
+       provider-specific metadata (thought_signature/thinking blocks) which
+       we lack when replaying manually constructed tool calls.
+    2. Claude extended thinking re-enablement after forced-tool turns where
+       thinking was disabled (incompatible with tool_choice="required").
+
+    Parameters
+    ----------
+    msgs : list[dict]
+        The list of messages to transform.
+    marker_key : str
+        Key to set on the context system message for identification.
+    context_header : str
+        Header text for the context message.
+    context_footer : str
+        Footer text for the context message.
+    predicate : callable | None
+        Optional function(msg) -> bool to determine which assistant messages
+        need transformation. If None, transforms ALL assistant messages with
+        tool_calls.
+
+    Returns
+    -------
+    list[dict]
+        Transformed message list with matching tool_calls converted to context.
+    """
+    if not msgs:
+        return msgs
+
+    # Default predicate: transform all assistant messages with tool_calls
+    if predicate is None:
+
+        def predicate(m: dict) -> bool:
+            return (
+                isinstance(m, dict)
+                and m.get("role") == "assistant"
+                and bool(m.get("tool_calls"))
+            )
+
+    # Check if any messages need transformation
+    if not any(predicate(m) for m in msgs):
+        return msgs
+
+    # Build a mapping of tool_call_id -> tool result content
+    tool_results: dict[str, dict] = {}
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "tool":
+            tcid = m.get("tool_call_id")
+            if isinstance(tcid, str) and tcid:
+                tool_results[tcid] = {
+                    "name": m.get("name", "unknown"),
+                    "content": m.get("content", ""),
+                }
+
+    # Collect IDs of tool_calls from messages that need transformation
+    transformed_call_ids: set[str] = set()
+    tool_call_descriptions: list[str] = []
+
+    for m in msgs:
+        if not predicate(m):
+            continue
+        for tc in m.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            tc_id = tc.get("id", "")
+            transformed_call_ids.add(tc_id)
+            func = tc.get("function") or {}
+            name = func.get("name", "unknown")
+            args = func.get("arguments", "{}")
+            result_info = tool_results.get(tc_id)
+            if result_info:
+                result_content = result_info.get("content", "(no result)")
+                tool_call_descriptions.append(
+                    f"• Called `{name}({args})` → {result_content}",
+                )
+            else:
+                tool_call_descriptions.append(
+                    f"• Called `{name}({args})` → (pending/no result)",
+                )
+
+    # Build transformed message list
+    transformed: list[dict] = []
+    context_inserted = False
+
+    for m in msgs:
+        if not isinstance(m, dict):
+            transformed.append(m)
+            continue
+
+        role = m.get("role")
+
+        if role == "user":
+            transformed.append(m)
+            # Insert context after the first user message
+            if not context_inserted and tool_call_descriptions:
+                context_msg = {
+                    "role": "system",
+                    "content": (
+                        context_header
+                        + "\n"
+                        + "\n".join(tool_call_descriptions)
+                        + "\n"
+                        + context_footer
+                    ),
+                    marker_key: True,
+                }
+                transformed.append(context_msg)
+                context_inserted = True
+
+        elif role == "assistant":
+            if predicate(m):
+                # Skip - replaced by context message
+                continue
+            else:
+                transformed.append(m)
+
+        elif role == "tool":
+            # Skip tool messages for transformed calls
+            tcid = m.get("tool_call_id")
+            if tcid in transformed_call_ids:
+                continue
+            else:
+                transformed.append(m)
+
+        else:
+            transformed.append(m)
+
+    return transformed
+
+
+def transform_non_thinking_turns_to_context(msgs: list[dict]) -> list[dict]:
+    """Transform assistant tool_calls without thinking blocks into system context.
+
+    Convenience wrapper for Claude extended thinking compatibility.
+    """
+
+    def needs_transformation(m: dict) -> bool:
+        if not isinstance(m, dict):
+            return False
+        if m.get("role") != "assistant":
+            return False
+        if not m.get("tool_calls"):
+            return False
+        # Check if thinking_blocks is missing or null
+        provider_fields = m.get("provider_specific_fields") or {}
+        thinking_blocks = provider_fields.get("thinking_blocks")
+        return thinking_blocks is None
+
+    return transform_tool_calls_to_context(
+        msgs,
+        marker_key="_claude_thinking_context",
+        context_header="[Prior tool execution context - extended thinking was disabled]",
+        context_footer="[Continue with extended thinking enabled]",
+        predicate=needs_transformation,
+    )
+
+
+def transform_synthetic_tool_calls_for_gemini(msgs: list[dict]) -> list[dict]:
+    """Transform synthetic assistant tool_calls into system context for Gemini.
+
+    Gemini reasoning models require `thought_signature` metadata on assistant
+    messages with tool_calls. Synthetic/programmatic tool calls (like
+    live_images_overview, steering helpers) lack this metadata and must be
+    transformed into system context to avoid validation errors.
+
+    Identifies synthetic messages by checking for the absence of thinking_blocks,
+    which real Gemini reasoning responses always include.
+    """
+
+    def needs_transformation(m: dict) -> bool:
+        if not isinstance(m, dict):
+            return False
+        if m.get("role") != "assistant":
+            return False
+        if not m.get("tool_calls"):
+            return False
+        # Real Gemini reasoning responses include thinking_blocks; synthetic messages don't
+        return m.get("thinking_blocks") is None
+
+    return transform_tool_calls_to_context(
+        msgs,
+        marker_key="_gemini_synthetic_context",
+        context_header="[Image/system context]",
+        context_footer="[Continue with the request]",
+        predicate=needs_transformation,
+    )
+
+
 def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
     findings: list[dict] = []
     try:

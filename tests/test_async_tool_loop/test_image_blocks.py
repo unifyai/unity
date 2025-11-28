@@ -30,20 +30,20 @@ with open(Path(__file__).parent / "cat.jpg", "rb") as f:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_initial_user_image_is_promoted() -> None:
+async def test_initial_user_image_is_promoted(model) -> None:
     """
     The first user turn contains an inline PNG.  We expect:
       • `image_url` block present in the chat payload sent to the model;
-      • the assistant correctly answers “cat”.
+      • the assistant correctly answers "cat".
     """
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "You will receive an image. Answer with ONE three-letter word naming the animal.",
     )
 
     img_block = {
         "type": "image_url",
-        "image_url": {"url": f"data:image/png;base64,{CAT_IMG}"},
+        "image_url": {"url": f"data:image/jpeg;base64,{CAT_IMG}"},
     }
     txt_block = {
         "type": "text",
@@ -63,7 +63,7 @@ async def test_initial_user_image_is_promoted() -> None:
     assert isinstance(user_msg["content"], list), "User content must be block array"
     assert any(
         blk.get("type") == "image_url"
-        and blk["image_url"]["url"].startswith("data:image/png;base64,")
+        and blk["image_url"]["url"].startswith("data:image/jpeg;base64,")
         for blk in user_msg["content"]
     ), "No promoted image_url block found in user message"
 
@@ -87,17 +87,17 @@ async def image_tool() -> dict:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_tool_result_image_is_promoted_and_reasoned_over() -> None:
+async def test_tool_result_image_is_promoted_and_reasoned_over(model) -> None:
     """
     Flow:
       1. Assistant calls `image_tool`.
       2. Tool returns a dict containing `"image": <b64>`.
       3. Loop promotes the image to `image_url` in the tool message.
       4. We then ask the assistant (in a *second* loop) what animal it sees;
-         it must answer “cat”.
+         it must answer "cat".
     """
     # ---- phase 1: run the tool and verify promotion ----------------------
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     client.set_system_message(
         "Call image_tool exactly once. The tool will return a base64-encoded image of a domestic cat. After the tool finishes, respond with exactly 'cat' (lowercase, no punctuation). Do not output anything else.",
     )
@@ -125,7 +125,7 @@ async def test_tool_result_image_is_promoted_and_reasoned_over() -> None:
     assert isinstance(content_blocks, list), "Tool content must be block array"
     assert any(
         blk.get("type") == "image_url"
-        and blk["image_url"]["url"].startswith("data:image/png;base64,")
+        and blk["image_url"]["url"].startswith("data:image/jpeg;base64,")
         for blk in content_blocks
     ), "Promoted image_url block not found in tool result"
 

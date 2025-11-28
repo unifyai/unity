@@ -8,7 +8,7 @@ import pytest
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
-from unity.common.llm_client import new_llm_client
+from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_assistant_call_prefix,
@@ -23,8 +23,11 @@ from tests.test_async_tool_loop.async_helpers import (
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def make_llm(system_message: Optional[str] = None) -> unify.AsyncUnify:
-    return new_llm_client(system_message=system_message)
+def make_llm(
+    system_message: Optional[str] = None,
+    model: str = DEFAULT_MODEL,
+) -> unify.AsyncUnify:
+    return new_llm_client(model=model, system_message=system_message)
 
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ from unity.common.llm_client import new_llm_client
 
 
 @pytest.mark.asyncio
-async def test_all_llm_kwargs_are_forwarded_verbatim(monkeypatch):
+async def test_all_llm_kwargs_are_forwarded_verbatim(model, monkeypatch):
     """Regression test: ensure all LLM-provided kwargs reach the tool.
 
     Prior behaviour filtered kwargs against the tool signature, which
@@ -27,7 +27,7 @@ async def test_all_llm_kwargs_are_forwarded_verbatim(monkeypatch):
     accept_any.__name__ = "accept_any"
     accept_any.__qualname__ = "accept_any"
 
-    client = new_llm_client()
+    client = new_llm_client(model=model)
     # Instruct the real model to call `accept_any` once with the provided fields
     client.set_system_message(
         "You are running inside an automated test. In your FIRST assistant turn, call the tool `accept_any` "
