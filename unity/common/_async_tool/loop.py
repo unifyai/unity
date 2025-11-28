@@ -32,6 +32,7 @@ from .messages import (
     acknowledge_helper_call,
     transform_non_thinking_turns_to_context,
     transform_tool_calls_to_context,
+    transform_synthetic_tool_calls_for_gemini,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -316,29 +317,45 @@ async def async_tool_loop_inner(
     _is_claude = _model_base.startswith("claude")
     _is_gemini = _model_base.startswith("gemini")
 
-    # ── Claude thinking/tool_choice compatibility ────────────────────────────────
-    # Claude extended thinking is incompatible with tool_choice="required". We handle
-    # this by disabling thinking on forced-tool turns, then transforming those messages
-    # into system context on subsequent turns when thinking is re-enabled.
+    # ── Reasoning model compatibility ────────────────────────────────────────────
+    # Handle reasoning model constraints:
+    # - Gemini: requires thought_signature on assistant messages with tool_calls;
+    #   synthetic messages lack this and must be transformed to system context.
+    # - Claude: extended thinking incompatible with tool_choice="required"; we
+    #   disable thinking on forced-tool turns and transform those messages later.
     _claude_thinking_disabled = False
 
-    def _apply_claude_thinking_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
-        """Handle Claude thinking/tool_choice incompatibility. Returns effective preprocess."""
+    def _apply_reasoning_model_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
+        """Handle reasoning model compatibility. Returns effective preprocess."""
         nonlocal _claude_thinking_disabled
-        if not _is_claude:
-            return preprocess_msgs
-        if tool_choice == "required":
-            gen_kwargs["thinking"] = {"type": "disabled"}
-            _claude_thinking_disabled = True
-            return preprocess_msgs
-        if _claude_thinking_disabled:
-            # Transform non-thinking turns to context so thinking can be re-enabled
-            def wrapper(msgs):
-                msgs = transform_non_thinking_turns_to_context(msgs)
-                return preprocess_msgs(msgs) if preprocess_msgs else msgs
 
-            return wrapper
-        return preprocess_msgs
+        effective_preprocess = preprocess_msgs
+
+        # Gemini: Always transform synthetic tool_calls (those without thinking_blocks)
+        if _is_gemini:
+            outer_preprocess = effective_preprocess
+
+            def gemini_wrapper(msgs):
+                msgs = transform_synthetic_tool_calls_for_gemini(msgs)
+                return outer_preprocess(msgs) if outer_preprocess else msgs
+
+            effective_preprocess = gemini_wrapper
+
+        # Claude: Handle thinking/tool_choice incompatibility
+        if _is_claude:
+            if tool_choice == "required":
+                gen_kwargs["thinking"] = {"type": "disabled"}
+                _claude_thinking_disabled = True
+            elif _claude_thinking_disabled:
+                outer_preprocess = effective_preprocess
+
+                def claude_wrapper(msgs):
+                    msgs = transform_non_thinking_turns_to_context(msgs)
+                    return outer_preprocess(msgs) if outer_preprocess else msgs
+
+                effective_preprocess = claude_wrapper
+
+        return effective_preprocess
 
     # File sink for LLM I/O: per-run directory under hidden folder, named by SESSION_ID
     _llm_io_dir: str | None = None
@@ -2352,7 +2369,7 @@ async def async_tool_loop_inner(
                 llm_task = asyncio.create_task(
                     generate_with_preprocess(
                         client,
-                        _apply_claude_thinking_compat(_gen_kwargs, tool_choice_mode),
+                        _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         debug_log=_log_llm_request,
                         **_gen_kwargs,
                     ),
@@ -2557,7 +2574,7 @@ async def async_tool_loop_inner(
 
                     _result = await generate_with_preprocess(
                         client,
-                        _apply_claude_thinking_compat(_gen_kwargs, tool_choice_mode),
+                        _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         debug_log=_log_llm_request,
                         **_gen_kwargs,
                     )
