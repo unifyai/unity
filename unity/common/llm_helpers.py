@@ -493,6 +493,10 @@ def annotation_to_schema(ann: Any) -> Dict[str, Any]:
             return next(s for s in sub_schemas if s != {"type": "null"})
         return {"anyOf": sub_schemas}
 
+    # Python's base `object` class: allow any JSON value (empty schema = no constraints)
+    if ann is object:
+        return {}
+
     # Fallback
     return {"type": "string"}
 
