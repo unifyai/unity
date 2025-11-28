@@ -31,7 +31,6 @@ class Renderer:
         max_messages=5,
         last_snapshot=None,
     ):
-        print(f"Active conversations: {active_conversations}")
         contacts = "\n\n".join(
             self.render_contact(
                 c,
