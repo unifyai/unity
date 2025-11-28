@@ -49,39 +49,58 @@ def is_non_final_tool_reply(msg: dict) -> bool:
     return False
 
 
-def transform_non_thinking_turns_to_context(msgs: list[dict]) -> list[dict]:
-    """Transform assistant tool_calls without thinking blocks into system context.
+def transform_tool_calls_to_context(
+    msgs: list[dict],
+    *,
+    marker_key: str = "_transformed_context",
+    context_header: str = "[Prior tool execution context]",
+    context_footer: str = "[Continue with the original request]",
+    predicate: Callable[[dict], bool] | None = None,
+) -> list[dict]:
+    """Transform assistant tool_calls into a system context message.
 
-    When Claude's extended thinking is enabled on a turn, Anthropic requires that
-    ALL previous assistant messages with tool_use have thinking blocks (with valid
-    signatures). If we previously disabled thinking for a turn (e.g., because
-    tool_choice was "required"), those messages won't have valid thinking blocks.
+    This unified function handles two scenarios:
+    1. Seeded transcripts for reasoning models (Gemini/Claude) that require
+       provider-specific metadata (thought_signature/thinking blocks) which
+       we lack when replaying manually constructed tool calls.
+    2. Claude extended thinking re-enablement after forced-tool turns where
+       thinking was disabled (incompatible with tool_choice="required").
 
-    This function converts such messages into descriptive system context, removing
-    the problematic assistant/tool message pairs and replacing them with a summary.
-    This allows subsequent turns to use thinking without API errors.
+    Parameters
+    ----------
+    msgs : list[dict]
+        The list of messages to transform.
+    marker_key : str
+        Key to set on the context system message for identification.
+    context_header : str
+        Header text for the context message.
+    context_footer : str
+        Footer text for the context message.
+    predicate : callable | None
+        Optional function(msg) -> bool to determine which assistant messages
+        need transformation. If None, transforms ALL assistant messages with
+        tool_calls.
 
-    This is the same approach used for seeding transcripts with reasoning models
-    (see _transform_seeded_tool_calls_to_context in loop.py).
+    Returns
+    -------
+    list[dict]
+        Transformed message list with matching tool_calls converted to context.
     """
     if not msgs:
         return msgs
 
-    # Identify assistant messages with tool_calls but missing thinking blocks
-    def needs_transformation(m: dict) -> bool:
-        if not isinstance(m, dict):
-            return False
-        if m.get("role") != "assistant":
-            return False
-        if not m.get("tool_calls"):
-            return False
-        # Check if thinking_blocks is missing or null
-        provider_fields = m.get("provider_specific_fields") or {}
-        thinking_blocks = provider_fields.get("thinking_blocks")
-        return thinking_blocks is None
+    # Default predicate: transform all assistant messages with tool_calls
+    if predicate is None:
+
+        def predicate(m: dict) -> bool:
+            return (
+                isinstance(m, dict)
+                and m.get("role") == "assistant"
+                and bool(m.get("tool_calls"))
+            )
 
     # Check if any messages need transformation
-    if not any(needs_transformation(m) for m in msgs):
+    if not any(predicate(m) for m in msgs):
         return msgs
 
     # Build a mapping of tool_call_id -> tool result content
@@ -102,7 +121,7 @@ def transform_non_thinking_turns_to_context(msgs: list[dict]) -> list[dict]:
     tool_call_descriptions: list[str] = []
 
     for m in msgs:
-        if not needs_transformation(m):
+        if not predicate(m):
             continue
         for tc in m.get("tool_calls") or []:
             if not isinstance(tc, dict):
@@ -141,17 +160,19 @@ def transform_non_thinking_turns_to_context(msgs: list[dict]) -> list[dict]:
                 context_msg = {
                     "role": "system",
                     "content": (
-                        "[Prior tool execution context - extended thinking was disabled]\n"
+                        context_header
+                        + "\n"
                         + "\n".join(tool_call_descriptions)
-                        + "\n[Continue with extended thinking enabled]"
+                        + "\n"
+                        + context_footer
                     ),
-                    "_claude_thinking_context": True,
+                    marker_key: True,
                 }
                 transformed.append(context_msg)
                 context_inserted = True
 
         elif role == "assistant":
-            if needs_transformation(m):
+            if predicate(m):
                 # Skip - replaced by context message
                 continue
             else:
@@ -169,6 +190,33 @@ def transform_non_thinking_turns_to_context(msgs: list[dict]) -> list[dict]:
             transformed.append(m)
 
     return transformed
+
+
+def transform_non_thinking_turns_to_context(msgs: list[dict]) -> list[dict]:
+    """Transform assistant tool_calls without thinking blocks into system context.
+
+    Convenience wrapper for Claude extended thinking compatibility.
+    """
+
+    def needs_transformation(m: dict) -> bool:
+        if not isinstance(m, dict):
+            return False
+        if m.get("role") != "assistant":
+            return False
+        if not m.get("tool_calls"):
+            return False
+        # Check if thinking_blocks is missing or null
+        provider_fields = m.get("provider_specific_fields") or {}
+        thinking_blocks = provider_fields.get("thinking_blocks")
+        return thinking_blocks is None
+
+    return transform_tool_calls_to_context(
+        msgs,
+        marker_key="_claude_thinking_context",
+        context_header="[Prior tool execution context - extended thinking was disabled]",
+        context_footer="[Continue with extended thinking enabled]",
+        predicate=needs_transformation,
+    )
 
 
 def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:

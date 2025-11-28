@@ -31,6 +31,7 @@ from .messages import (
     generate_with_preprocess,
     acknowledge_helper_call,
     transform_non_thinking_turns_to_context,
+    transform_tool_calls_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -153,137 +154,6 @@ def _check_valid_response_format(response_format: Any):
         )
 
     return response_format.model_json_schema()
-
-
-def _transform_seeded_tool_calls_to_context(
-    seeded_batch: list[dict],
-    *,
-    marker_key: str = "_seeded_context",
-) -> list[dict]:
-    """Transform seeded tool_calls into a context system message.
-
-    Models with reasoning/thinking enabled (Gemini, Claude with extended thinking)
-    require special metadata on assistant messages containing tool_calls:
-    - Gemini requires a "thought_signature"
-    - Claude requires a "thinking" block preceding tool_use
-
-    When replaying/seeding transcripts with manually constructed tool calls,
-    we lack these signatures. This function converts seeded tool_calls and their
-    results into a descriptive system message, preserving semantics without
-    using the formal schema that requires provider-specific metadata.
-
-    Parameters
-    ----------
-    seeded_batch : list[dict]
-        The list of seeded messages to transform.
-    marker_key : str
-        The key to set on the context system message for identification
-        (e.g., "_gemini_seeded_context", "_claude_seeded_context").
-
-    Returns
-    -------
-    list[dict]
-        Transformed message list with tool_calls converted to context.
-    """
-    if not seeded_batch:
-        return seeded_batch
-
-    # Check if there are any tool_calls to transform
-    has_tool_calls = any(
-        isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls")
-        for m in seeded_batch
-    )
-    if not has_tool_calls:
-        return seeded_batch
-
-    # Build a mapping of tool_call_id -> tool result content
-    tool_results: dict[str, dict] = {}
-    for m in seeded_batch:
-        if not isinstance(m, dict):
-            continue
-        if m.get("role") == "tool":
-            tcid = m.get("tool_call_id")
-            if isinstance(tcid, str) and tcid:
-                tool_results[tcid] = {
-                    "name": m.get("name", "unknown"),
-                    "content": m.get("content", ""),
-                }
-
-    # Extract tool call descriptions from assistant messages
-    tool_call_descriptions: list[str] = []
-    for m in seeded_batch:
-        if not isinstance(m, dict):
-            continue
-        if m.get("role") == "assistant" and m.get("tool_calls"):
-            for tc in m.get("tool_calls") or []:
-                if not isinstance(tc, dict):
-                    continue
-                tc_id = tc.get("id", "")
-                func = tc.get("function") or {}
-                name = func.get("name", "unknown")
-                args = func.get("arguments", "{}")
-
-                # Find the corresponding result
-                result_info = tool_results.get(tc_id)
-                if result_info:
-                    result_content = result_info.get("content", "(no result)")
-                    tool_call_descriptions.append(
-                        f"• Called `{name}({args})` → {result_content}",
-                    )
-                else:
-                    tool_call_descriptions.append(
-                        f"• Called `{name}({args})` → (pending/no result)",
-                    )
-
-    # Build the transformed batch:
-    # - Keep user messages
-    # - Keep assistant messages that have content but no tool_calls
-    # - Skip assistant messages with tool_calls (replaced by context)
-    # - Skip tool role messages (replaced by context)
-    # - Insert a system context message after the first user message
-    transformed: list[dict] = []
-    context_inserted = False
-
-    for m in seeded_batch:
-        if not isinstance(m, dict):
-            transformed.append(m)
-            continue
-
-        role = m.get("role")
-
-        if role == "user":
-            transformed.append(m)
-            # Insert context system message after the first user message
-            if not context_inserted and tool_call_descriptions:
-                context_msg = {
-                    "role": "system",
-                    "content": (
-                        "[Prior tool execution context]\n"
-                        + "\n".join(tool_call_descriptions)
-                        + "\n[Continue with the original request]"
-                    ),
-                    marker_key: True,
-                }
-                transformed.append(context_msg)
-                context_inserted = True
-
-        elif role == "assistant":
-            # Keep assistant messages that have content but no tool_calls
-            if m.get("tool_calls"):
-                # Skip - this is replaced by the context message
-                continue
-            elif m.get("content"):
-                transformed.append(m)
-
-        elif role == "tool":
-            # Skip - tool results are included in the context message
-            continue
-
-        else:
-            # Keep other messages (system, etc.)
-            transformed.append(m)
-
-    return transformed
 
 
 async def async_tool_loop_inner(
@@ -440,12 +310,16 @@ async def async_tool_loop_inner(
     # Independent, centrally-configured LLM I/O logging flag
     llm_io_debug = bool(LLM_IO_DEBUG)
 
+    # ── Model family detection (centralized) ──────────────────────────────────────
+    _model_name = str(getattr(client, "model", "") or "")
+    _model_base = _model_name.split("@")[0]
+    _is_claude = _model_base.startswith("claude")
+    _is_gemini = _model_base.startswith("gemini")
+
     # ── Claude thinking/tool_choice compatibility ────────────────────────────────
     # Claude extended thinking is incompatible with tool_choice="required". We handle
     # this by disabling thinking on forced-tool turns, then transforming those messages
     # into system context on subsequent turns when thinking is re-enabled.
-    _model_name = str(getattr(client, "model", "") or "")
-    _is_claude = _model_name.split("@")[0].startswith("claude")
     _claude_thinking_disabled = False
 
     def _apply_claude_thinking_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
@@ -710,30 +584,14 @@ async def async_tool_loop_inner(
 
         # ── Reasoning model workaround (Gemini / Claude) ──────────────────────
         # Models with reasoning/thinking enabled require special metadata on
-        # assistant messages containing tool_calls:
-        #   - Gemini requires a "thought_signature"
-        #   - Claude with extended thinking requires a "thinking" block
-        # When seeding/replaying transcripts with manually constructed tool calls,
-        # we lack these signatures. To work around this, we convert seeded
-        # tool_calls and their results into a descriptive system message,
-        # preserving semantics without using the formal schema.
-        # ─────────────────────────────────────────────────────────────────────
-        _model_name = ""
-        with suppress(Exception):
-            _model_name = str(getattr(client, "model", "") or "")
-        _model_base = _model_name.split("@")[0]
-        _is_gemini = _model_base.startswith("gemini")
-        _is_claude = _model_base.startswith("claude")
-
-        if _is_gemini:
-            seeded_batch = _transform_seeded_tool_calls_to_context(
+        # assistant messages containing tool_calls. Transform seeded tool_calls
+        # into a descriptive system message to avoid missing signature errors.
+        if _is_gemini or _is_claude:
+            seeded_batch = transform_tool_calls_to_context(
                 seeded_batch,
-                marker_key="_gemini_seeded_context",
-            )
-        elif _is_claude:
-            seeded_batch = _transform_seeded_tool_calls_to_context(
-                seeded_batch,
-                marker_key="_claude_seeded_context",
+                marker_key=(
+                    "_gemini_seeded_context" if _is_gemini else "_claude_seeded_context"
+                ),
             )
 
         await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
@@ -2760,34 +2618,7 @@ async def async_tool_loop_inner(
                 # deduplication settings, before any scheduling occurs.
                 tools_data.prune_over_quota_tool_calls(msg)
 
-                # Ensure mutation is reflected in the client's history (handling potential copy-on-read)
-                try:
-                    # Strategy 1: Direct private attribute update (fastest)
-                    if hasattr(client, "_messages") and isinstance(
-                        client._messages,
-                        list,
-                    ):
-                        client._messages[-1] = msg
-
-                    # Strategy 2: Public list update (if mutable property/attribute)
-                    if hasattr(client, "messages") and isinstance(
-                        client.messages,
-                        list,
-                    ):
-                        client.messages[-1] = msg
-
-                    # Strategy 3: Explicit setter (most robust for copy-on-read properties)
-                    if hasattr(client, "set_messages"):
-                        # Fetch current, patch tail, set back
-                        _current = client.messages
-                        if _current and isinstance(_current, list):
-                            _current[-1] = msg
-                            client.set_messages(_current)
-                except Exception as e:
-                    # Silent fallback for mutation failures during high concurrency
-                    pass
-
-                # If pruning removed all calls and left a placeholder notice, inject a System turn
+                # If pruning removed all calls and left a placeholder notice, inject a user turn
                 # so the model is prompted to continue. This prevents Assistant->Assistant history
                 # violations on strict models (like Gemini/Vertex AI).
                 if not msg.get(
@@ -3355,43 +3186,6 @@ async def async_tool_loop_inner(
                                 content=(
                                     f"⚠️ Error: Tool '{name}' is not available. "
                                     "The tool may have been removed or does not exist. "
-                                    "Please proceed without using this tool."
-                                ),
-                            )
-                            await insert_tool_message_after_assistant(
-                                assistant_meta,
-                                msg,
-                                tool_msg,
-                                client,
-                                _msg_dispatcher,
-                            )
-                            continue
-
-                        # ── Over-quota tool fallback ──────────────────────────────
-                        # If the tool has exceeded its max_total_calls quota, insert
-                        # an error tool response instead of scheduling. This keeps
-                        # the transcript valid (no dangling tool_calls).
-                        # Note: call_counts is updated synchronously inside
-                        # schedule_base_tool_call, so we just check it directly.
-                        _is_over_quota = False
-                        try:
-                            spec = tools_data.normalized.get(name)
-                            if spec is not None:
-                                lim = spec.max_total_calls
-                                if lim is not None:
-                                    _is_over_quota = (
-                                        tools_data.call_counts.get(name, 0) >= lim
-                                    )
-                        except Exception:
-                            pass
-
-                        if _is_over_quota:
-                            tool_msg = create_tool_call_message(
-                                name=original_name,
-                                call_id=call["id"],
-                                content=(
-                                    f"⚠️ Error: Tool '{name}' has reached its maximum "
-                                    "allowed calls for this session. "
                                     "Please proceed without using this tool."
                                 ),
                             )
