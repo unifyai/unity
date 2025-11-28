@@ -43,7 +43,7 @@ async def test_initial_user_image_is_promoted(model) -> None:
 
     img_block = {
         "type": "image_url",
-        "image_url": {"url": f"data:image/png;base64,{CAT_IMG}"},
+        "image_url": {"url": f"data:image/jpeg;base64,{CAT_IMG}"},
     }
     txt_block = {
         "type": "text",
@@ -63,7 +63,7 @@ async def test_initial_user_image_is_promoted(model) -> None:
     assert isinstance(user_msg["content"], list), "User content must be block array"
     assert any(
         blk.get("type") == "image_url"
-        and blk["image_url"]["url"].startswith("data:image/png;base64,")
+        and blk["image_url"]["url"].startswith("data:image/jpeg;base64,")
         for blk in user_msg["content"]
     ), "No promoted image_url block found in user message"
 
@@ -125,7 +125,7 @@ async def test_tool_result_image_is_promoted_and_reasoned_over(model) -> None:
     assert isinstance(content_blocks, list), "Tool content must be block array"
     assert any(
         blk.get("type") == "image_url"
-        and blk["image_url"]["url"].startswith("data:image/png;base64,")
+        and blk["image_url"]["url"].startswith("data:image/jpeg;base64,")
         for blk in content_blocks
     ), "Promoted image_url block not found in tool result"
 
