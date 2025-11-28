@@ -332,7 +332,11 @@ async def async_tool_loop_inner(
             if tool_choice == "required":
                 gen_kwargs["thinking"] = {"type": "disabled"}
                 _claude_thinking_disabled = True
-            elif _claude_thinking_disabled:
+            else:
+                # Always transform non-thinking assistant turns when Claude's
+                # extended thinking is active. This handles synthetic tool_calls
+                # (e.g., live_images_overview) and seeded transcripts that lack
+                # the required thinking blocks. The transformation is idempotent.
                 outer_preprocess = effective_preprocess
 
                 def claude_wrapper(msgs):
