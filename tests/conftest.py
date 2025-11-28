@@ -434,13 +434,9 @@ def _normalize_pytest_nodeid(nodeid):
     return normalized[:24]
 
 
-def _is_test_parametrized(item):
-    return any(i.name == "parametrize" for i in item.iter_markers())
-
-
 def pytest_runtest_call(item):
     func_name = item.originalname
-    if _is_test_parametrized(item):
+    if "[" in item.nodeid:  # Any parametrization (markers, fixtures, etc.)
         # Need to keep track of invocation count for parametrized tests
         # In case of a later failure.
         current_count = getattr(item.obj, "_unity_pytest_invocation_count", 0)
