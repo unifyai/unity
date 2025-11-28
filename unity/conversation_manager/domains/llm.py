@@ -40,8 +40,9 @@ class LLM:
             instructions=system_prompt,
             input=messages,
             text_format=response_model,
+            # reasoning={"effort": "minimal"}
         )
-        out = out.output[0].content[0].text
+        out = out.output[1].content[0].text
         return out
 
     async def _run_stream(
@@ -60,6 +61,7 @@ class LLM:
             # input=self.chat_history + input_message,
             input=messages,
             text_format=response_model,
+            # reasoning={"effort": "minimal"}
         ) as stream:
             done = False
             first_chunk = False

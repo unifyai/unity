@@ -28,9 +28,7 @@ class ConductorAction(BaseModel):
             "'conductor_request': read-write request\n"
         ),
     )
-    query: str = Field(
-        ...,
-    )
+    query: str = Field(...)
 
 
 class ConductorHandleAction(BaseModel):
@@ -55,17 +53,14 @@ class ConductorHandleAction(BaseModel):
             "'conductor_handle_pause': pause the handle\n"
             "'conductor_handle_resume': resume the handle\n"
             "'conductor_handle_done': check if the handle is done\n"
-            "'conductor_handle_answer_clarification': answer a clarification question\n"
+            "'conductor_handle_answer_clarification': answer a clarification question from the conductor\n"
         ),
     )
-
-
-class ConductorAnswerClarificationAction(BaseModel):
-    """Answer a clarification question."""
-
-    action_name: Literal["conductor_answer_clarification"]
-    handle_id: int
-    call_id: str
+    query: str = Field(...)
+    call_id: Optional[str] = Field(
+        ...,
+        description="the call id of the call that the intervention is for (only used for clarifications)",
+    )
 
 
 # wait
@@ -486,7 +481,17 @@ async def conductor_ask_request(
     )
 
 
-@Action.register([...])
+@Action.register(
+    [
+        "conductor_handle_ask",
+        "conductor_handle_interject",
+        "conductor_handle_stop",
+        "conductor_handle_pause",
+        "conductor_handle_resume",
+        "conductor_handle_done",
+        "conductor_handle_answer_clarification",
+    ]
+)
 async def conductor_handle_actions(
     cm: "ConversationManager",
     action_name: str,
@@ -495,7 +500,8 @@ async def conductor_handle_actions(
 ):
     handle_id = kwargs["handle_id"]
     query = kwargs["query"]
-    handle_data = cm.handle_registry.get(handle_id)
+    call_id = kwargs["call_id"]
+    handle_data = cm.conductor_handles.get(handle_id)
     if not handle_data:
         print(f"[ManagersWorker] Unknown handle_id={handle_id} for action")
         return
@@ -510,30 +516,34 @@ async def conductor_handle_actions(
     result = ""
     try:
         match action_name:
-            case "ask":
+            case "conductor_handle_ask":
                 ask_handle = await handle.ask(
                     query,
                     parent_chat_context_cont=cm.chat_history,
                 )
                 result = await ask_handle.result()
-            case "interject":
+            case "conductor_handle_interject":
                 await handle.interject(
                     query,
                     parent_chat_context_cont=cm.chat_history,
                 )
                 result = "Handle Interjected"
-            case "stop":
+            case "conductor_handle_stop":
                 handle.stop(reason=query)
                 result = "Handle Stopped"
-            case "pause":
+                cm.conductor_handles.pop(handle_id, None)
+            case "conductor_handle_pause":
                 handle.pause()
                 result = "Handle Paused"
-            case "resume":
+            case "conductor_handle_resume":
                 handle.resume()
                 result = "Handle Resumed"
-            case "done":
+            case "conductor_handle_done":
                 done_result = handle.done()
                 result = "Handle Done" if done_result else "Handle Not Done"
+            case "conductor_handle_answer_clarification":
+                await handle.answer_clarification(call_id, query)
+                result = "Handle Answer Clarification"
             case _:
                 print(
                     f"[ManagersWorker] Unknown action_name={action_name} for intervention",
@@ -551,5 +561,6 @@ async def conductor_handle_actions(
             action_name=action_name,
             query=query,
             response=f"Intervened: {action_name} {result}",
+            call_id=call_id,
         ).to_json(),
     )
