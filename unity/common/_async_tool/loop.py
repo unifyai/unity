@@ -2742,7 +2742,13 @@ async def async_tool_loop_inner(
                     seen: Set[tuple[str, str]] = set()
                     unique_calls: list = []
                     for call in msg["tool_calls"]:
-                        sig = (call["function"]["name"], call["function"]["arguments"])
+                        _fn = call["function"]
+                        # Ensure arguments is a string for hashable signature
+                        _args = _fn["arguments"]
+                        _args_str = (
+                            _args if isinstance(_args, str) else json.dumps(_args)
+                        )
+                        sig = (_fn["name"], _args_str)
                         if sig not in seen:
                             seen.add(sig)
                             unique_calls.append(call)
@@ -2753,6 +2759,49 @@ async def async_tool_loop_inner(
                 # Always ensure over-quota tool calls are removed regardless of
                 # deduplication settings, before any scheduling occurs.
                 tools_data.prune_over_quota_tool_calls(msg)
+
+                # Ensure mutation is reflected in the client's history (handling potential copy-on-read)
+                try:
+                    # Strategy 1: Direct private attribute update (fastest)
+                    if hasattr(client, "_messages") and isinstance(
+                        client._messages,
+                        list,
+                    ):
+                        client._messages[-1] = msg
+
+                    # Strategy 2: Public list update (if mutable property/attribute)
+                    if hasattr(client, "messages") and isinstance(
+                        client.messages,
+                        list,
+                    ):
+                        client.messages[-1] = msg
+
+                    # Strategy 3: Explicit setter (most robust for copy-on-read properties)
+                    if hasattr(client, "set_messages"):
+                        # Fetch current, patch tail, set back
+                        _current = client.messages
+                        if _current and isinstance(_current, list):
+                            _current[-1] = msg
+                            client.set_messages(_current)
+                except Exception as e:
+                    # Silent fallback for mutation failures during high concurrency
+                    pass
+
+                # If pruning removed all calls and left a placeholder notice, inject a System turn
+                # so the model is prompted to continue. This prevents Assistant->Assistant history
+                # violations on strict models (like Gemini/Vertex AI).
+                if not msg.get(
+                    "tool_calls",
+                ) and "(Tool calls were removed due to quota limits)" in str(
+                    msg.get("content") or "",
+                ):
+                    # Use 'user' role to ensure robust alternation for all providers
+                    sys_notice = {
+                        "role": "user",
+                        "content": "System notification: The tool calls in your last response were blocked due to quota limits. Please modify your plan or conclude.",
+                    }
+                    await _msg_dispatcher.append_msgs([sys_notice])
+
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
 
@@ -2764,7 +2813,12 @@ async def async_tool_loop_inner(
                     original_name = name
                     name = name.removeprefix("default_api:")
 
-                    args = json.loads(call["function"]["arguments"])
+                    # Parse arguments - handle both string (OpenAI) and dict (Vertex AI)
+                    _raw_args = call["function"]["arguments"]
+                    if isinstance(_raw_args, str):
+                        args = json.loads(_raw_args)
+                    else:
+                        args = _raw_args if isinstance(_raw_args, dict) else {}
 
                     # Special-case: handle synthetic `final_answer` tool
                     if name == "final_answer" and response_format is not None:
@@ -3301,6 +3355,43 @@ async def async_tool_loop_inner(
                                 content=(
                                     f"⚠️ Error: Tool '{name}' is not available. "
                                     "The tool may have been removed or does not exist. "
+                                    "Please proceed without using this tool."
+                                ),
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue
+
+                        # ── Over-quota tool fallback ──────────────────────────────
+                        # If the tool has exceeded its max_total_calls quota, insert
+                        # an error tool response instead of scheduling. This keeps
+                        # the transcript valid (no dangling tool_calls).
+                        # Note: call_counts is updated synchronously inside
+                        # schedule_base_tool_call, so we just check it directly.
+                        _is_over_quota = False
+                        try:
+                            spec = tools_data.normalized.get(name)
+                            if spec is not None:
+                                lim = spec.max_total_calls
+                                if lim is not None:
+                                    _is_over_quota = (
+                                        tools_data.call_counts.get(name, 0) >= lim
+                                    )
+                        except Exception:
+                            pass
+
+                        if _is_over_quota:
+                            tool_msg = create_tool_call_message(
+                                name=original_name,
+                                call_id=call["id"],
+                                content=(
+                                    f"⚠️ Error: Tool '{name}' has reached its maximum "
+                                    "allowed calls for this session. "
                                     "Please proceed without using this tool."
                                 ),
                             )
