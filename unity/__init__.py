@@ -186,7 +186,17 @@ def init(
 
     # 2. Set the assistant context *after* validation
     ASSISTANT_CONTEXT = ctx
-    unify.set_context(ctx)
+
+    # Idempotent context setup: tolerate concurrent creation from parallel processes
+    # (e.g., pytest-xdist workers, CI parallelism, multi-instance deployments)
+    try:
+        unify.set_context(ctx)
+    except Exception as e:
+        if "already exists" in str(e).lower():
+            unify.set_context(ctx, skip_create=True)
+        else:
+            raise
+
     ContextRegistry.setup()
 
     # 3. Bring up the global EventBus

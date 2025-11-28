@@ -256,6 +256,8 @@ class DynamicToolFactory:
                 **{k: v for k, v in _kw.items() if k != "images"},
             }
 
+        # Set fallback docstring first; _adopt_signature_and_annotations may override
+        _stop.__doc__ = doc
         # Expose full argspec and docstring of handle.stop in the helper schema
         with suppress(Exception):
             if handle is not None and hasattr(handle, "stop"):
@@ -313,6 +315,8 @@ class DynamicToolFactory:
                     **{k: v for k, v in _kw.items() if k != "images"},
                 }
 
+            # Set fallback docstring first; _adopt_signature_and_annotations may override
+            _interject.__doc__ = doc
             # Expose the downstream handle's signature to the LLM and ensure common params
             with suppress(Exception):
                 if hasattr(handle, "interject"):
@@ -355,6 +359,9 @@ class DynamicToolFactory:
                     "call_id": tool_context.call_id,
                     **({"content": actual} if actual else {}),
                 }
+
+            # Set fallback docstring (no handle to adopt from in this branch)
+            _interject.__doc__ = doc
 
         self._register_tool(
             func_name=f"interject_{tool_context.fn_name}_{tool_context.safe_call_id}",
@@ -421,16 +428,18 @@ class DynamicToolFactory:
                 fallback_positional_keys=["question"],
             )
 
+        # Set fallback docstring first; _adopt_signature_and_annotations may override
+        _ask.__doc__ = (
+            f"Ask a read-only question about the running call {tool_context.fn_name}({tool_context.arg_repr}).\n\n"
+            "Returns either a nested handle (adopted by the loop) or a direct answer."
+        )
         # Reflect downstream signature/annotations for clean tool schema
         with suppress(Exception):
             self._adopt_signature_and_annotations(getattr(handle, "ask"), _ask)
 
         self._register_tool(
             func_name=f"ask_{tool_context.fn_name}_{tool_context.safe_call_id}",
-            fallback_doc=(
-                f"Ask a read-only question about the running call {tool_context.fn_name}({tool_context.arg_repr}).\n\n"
-                "Returns either a nested handle (adopted by the loop) or a direct answer."
-            ),
+            fallback_doc=_ask.__doc__,
             fn=_ask,
         )
 
@@ -465,6 +474,8 @@ class DynamicToolFactory:
                 "answer": answer,
             }
 
+        # Set fallback docstring first; handle docstring may override below
+        _clarify.__doc__ = doc
         # Prefer to propagate a class method docstring when available (e.g., handle.answer_clarification)
         with suppress(Exception):
             if handle is not None and hasattr(handle, "answer_clarification"):
@@ -486,6 +497,7 @@ class DynamicToolFactory:
         pause_event: Optional[asyncio.Event],
     ) -> None:
         handle_available = handle is not None
+        doc = f"Pause the pending call {tool_context.fn_name}({tool_context.arg_repr})."
 
         if handle_available and hasattr(handle, "pause"):
 
@@ -494,6 +506,8 @@ class DynamicToolFactory:
                     await forward_handle_call(handle, "pause", _kw)
                 return {"status": "paused", "call_id": tool_context.call_id, **_kw}
 
+            # Set fallback docstring first; _adopt_signature_and_annotations may override
+            _pause.__doc__ = doc
             # Reflect downstream signature/annotations
             with suppress(Exception):
                 self._adopt_signature_and_annotations(
@@ -510,9 +524,12 @@ class DynamicToolFactory:
                     pause_event.clear()
                 return {"status": "paused", "call_id": tool_context.call_id}
 
+            # Set fallback docstring (no handle to adopt from in this branch)
+            _pause.__doc__ = doc
+
         self._register_tool(
             func_name=f"pause_{tool_context.fn_name}_{tool_context.safe_call_id}",
-            fallback_doc=f"Pause the pending call {tool_context.fn_name}({tool_context.arg_repr}).",
+            fallback_doc=doc,
             fn=_pause,
         )
 
@@ -533,6 +550,8 @@ class DynamicToolFactory:
                     await forward_handle_call(handle, "resume", _kw)
                 return {"status": "resumed", "call_id": tool_context.call_id, **_kw}
 
+            # Set fallback docstring first; _adopt_signature_and_annotations may override
+            _resume.__doc__ = doc
             with suppress(Exception):
                 self._adopt_signature_and_annotations(
                     getattr(handle, "resume"),
@@ -547,6 +566,9 @@ class DynamicToolFactory:
                 elif pause_event is not None:
                     pause_event.set()
                 return {"status": "resumed", "call_id": tool_context.call_id}
+
+            # Set fallback docstring (no handle to adopt from in this branch)
+            _resume.__doc__ = doc
 
         self._register_tool(
             func_name=f"resume_{tool_context.fn_name}_{tool_context.safe_call_id}",

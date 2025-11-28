@@ -30,6 +30,9 @@ from .messages import (
     chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
+    transform_non_thinking_turns_to_context,
+    transform_tool_calls_to_context,
+    transform_synthetic_tool_calls_for_gemini,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -308,6 +311,52 @@ async def async_tool_loop_inner(
     # Independent, centrally-configured LLM I/O logging flag
     llm_io_debug = bool(LLM_IO_DEBUG)
 
+    # ── Model family detection (centralized) ──────────────────────────────────────
+    _model_name = str(getattr(client, "model", "") or "")
+    _model_base = _model_name.split("@")[0]
+    _is_claude = _model_base.startswith("claude")
+    _is_gemini = _model_base.startswith("gemini")
+
+    # ── Reasoning model compatibility ────────────────────────────────────────────
+    # Handle reasoning model constraints:
+    # - Gemini: requires thought_signature on assistant messages with tool_calls;
+    #   synthetic messages lack this and must be transformed to system context.
+    # - Claude: extended thinking incompatible with tool_choice="required"; we
+    #   disable thinking on forced-tool turns and transform those messages later.
+    _claude_thinking_disabled = False
+
+    def _apply_reasoning_model_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
+        """Handle reasoning model compatibility. Returns effective preprocess."""
+        nonlocal _claude_thinking_disabled
+
+        effective_preprocess = preprocess_msgs
+
+        # Gemini: Always transform synthetic tool_calls (those without thinking_blocks)
+        if _is_gemini:
+            outer_preprocess = effective_preprocess
+
+            def gemini_wrapper(msgs):
+                msgs = transform_synthetic_tool_calls_for_gemini(msgs)
+                return outer_preprocess(msgs) if outer_preprocess else msgs
+
+            effective_preprocess = gemini_wrapper
+
+        # Claude: Handle thinking/tool_choice incompatibility
+        if _is_claude:
+            if tool_choice == "required":
+                gen_kwargs["thinking"] = {"type": "disabled"}
+                _claude_thinking_disabled = True
+            elif _claude_thinking_disabled:
+                outer_preprocess = effective_preprocess
+
+                def claude_wrapper(msgs):
+                    msgs = transform_non_thinking_turns_to_context(msgs)
+                    return outer_preprocess(msgs) if outer_preprocess else msgs
+
+                effective_preprocess = claude_wrapper
+
+        return effective_preprocess
+
     # File sink for LLM I/O: per-run directory under hidden folder, named by SESSION_ID
     _llm_io_dir: str | None = None
     if llm_io_debug:
@@ -549,6 +598,19 @@ async def async_tool_loop_inner(
                 (m if isinstance(m, dict) else {"role": "user", "content": m})
                 for m in message
             ]
+
+        # ── Reasoning model workaround (Gemini / Claude) ──────────────────────
+        # Models with reasoning/thinking enabled require special metadata on
+        # assistant messages containing tool_calls. Transform seeded tool_calls
+        # into a descriptive system message to avoid missing signature errors.
+        if _is_gemini or _is_claude:
+            seeded_batch = transform_tool_calls_to_context(
+                seeded_batch,
+                marker_key=(
+                    "_gemini_seeded_context" if _is_gemini else "_claude_seeded_context"
+                ),
+            )
+
         await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
         # Emit concise one-time banner and replay logs for seeded history (if requested)
         if replay_origin:
@@ -2227,9 +2289,34 @@ async def async_tool_loop_inner(
                         f"Failed to inject final_answer tool: {_injection_exc!r}",
                     )
 
+            # Yield to allow just-scheduled tool tasks to complete (especially
+            # those that immediately return a SteerableToolHandle). This ensures
+            # dynamic helpers are generated with the handle's docstrings.
+            await asyncio.sleep(0)
+
+            # Process any tools that completed during the yield
+            for task in list(tools_data.pending):
+                if task.done():
+                    with suppress(Exception):
+                        await tools_data.process_completed_task(
+                            task=task,
+                            consecutive_failures=consecutive_failures,
+                            outer_handle_container=outer_handle_container,
+                            assistant_meta=assistant_meta,
+                            msg_dispatcher=_msg_dispatcher,
+                        )
+
             dynamic_tool_factory = DynamicToolFactory(tools_data)
             dynamic_tool_factory.generate()
             dynamic_tools = dynamic_tool_factory.dynamic_tools
+
+            # Register callback to refresh helpers when a handle is adopted mid-loop
+            def _refresh_helpers_for_task(task: asyncio.Task) -> None:
+                with suppress(Exception):
+                    dynamic_tool_factory._process_task(task)
+                    dynamic_tools.update(dynamic_tool_factory.dynamic_tools)
+
+            tools_data._on_handle_adopted = _refresh_helpers_for_task
 
             # If any task is currently waiting for clarification, hide the
             # global `wait` helper to ensure the model proceeds to request
@@ -2282,7 +2369,7 @@ async def async_tool_loop_inner(
                 llm_task = asyncio.create_task(
                     generate_with_preprocess(
                         client,
-                        preprocess_msgs,
+                        _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         debug_log=_log_llm_request,
                         **_gen_kwargs,
                     ),
@@ -2487,7 +2574,7 @@ async def async_tool_loop_inner(
 
                     _result = await generate_with_preprocess(
                         client,
-                        preprocess_msgs,
+                        _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
                         debug_log=_log_llm_request,
                         **_gen_kwargs,
                     )
@@ -2555,7 +2642,13 @@ async def async_tool_loop_inner(
                     seen: Set[tuple[str, str]] = set()
                     unique_calls: list = []
                     for call in msg["tool_calls"]:
-                        sig = (call["function"]["name"], call["function"]["arguments"])
+                        _fn = call["function"]
+                        # Ensure arguments is a string for hashable signature
+                        _args = _fn["arguments"]
+                        _args_str = (
+                            _args if isinstance(_args, str) else json.dumps(_args)
+                        )
+                        sig = (_fn["name"], _args_str)
                         if sig not in seen:
                             seen.add(sig)
                             unique_calls.append(call)
@@ -2566,9 +2659,39 @@ async def async_tool_loop_inner(
                 # Always ensure over-quota tool calls are removed regardless of
                 # deduplication settings, before any scheduling occurs.
                 tools_data.prune_over_quota_tool_calls(msg)
+
+                # If pruning removed all calls and left a placeholder notice, inject a user turn
+                # so the model is prompted to continue. This prevents Assistant->Assistant history
+                # violations on strict models (like Gemini/Vertex AI).
+                if not msg.get(
+                    "tool_calls",
+                ) and "(Tool calls were removed due to quota limits)" in str(
+                    msg.get("content") or "",
+                ):
+                    # Use 'user' role to ensure robust alternation for all providers
+                    sys_notice = {
+                        "role": "user",
+                        "content": "System notification: The tool calls in your last response were blocked due to quota limits. Please modify your plan or conclude.",
+                    }
+                    await _msg_dispatcher.append_msgs([sys_notice])
+
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
-                    args = json.loads(call["function"]["arguments"])
+
+                    # ── Normalize Gemini tool name prefix ─────────────────────────
+                    # Gemini models sometimes prefix tool names with "default_api:"
+                    # when recalling tools from earlier in the conversation. Strip
+                    # this prefix for matching, but keep the original for tool
+                    # responses (Gemini validates against thinking_blocks).
+                    original_name = name
+                    name = name.removeprefix("default_api:")
+
+                    # Parse arguments - handle both string (OpenAI) and dict (Vertex AI)
+                    _raw_args = call["function"]["arguments"]
+                    if isinstance(_raw_args, str):
+                        args = json.loads(_raw_args)
+                    else:
+                        args = _raw_args if isinstance(_raw_args, dict) else {}
 
                     # Special-case: handle synthetic `final_answer` tool
                     if name == "final_answer" and response_format is not None:
@@ -3088,7 +3211,53 @@ async def async_tool_loop_inner(
                                 coro=t,
                                 metadata=metadata,
                             )
+                        else:
+                            # Target task was already removed (e.g., by a prior
+                            # stop_ helper in the same assistant message). Insert
+                            # a no-op acknowledgement so the transcript stays valid.
+                            tool_msg = create_tool_call_message(
+                                name=name,
+                                call_id=call["id"],
+                                content=(
+                                    f"No-op: target task for '{name}' is no longer active."
+                                ),
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
                     else:
+                        # ── Unknown/unavailable tool fallback ─────────────────────
+                        # If the tool doesn't exist OR wasn't visible on this turn
+                        # (e.g., the model hallucinated a tool name, or the tool was
+                        # hidden by tool_policy), insert an error tool response to
+                        # keep the transcript valid. Without this, the assistant
+                        # message would have an unresolved tool_call, causing
+                        # subsequent LLM calls to fail.
+                        if name not in policy_tools_norm:
+                            # Use original_name for the tool response so it matches
+                            # Gemini's thinking_blocks validation
+                            tool_msg = create_tool_call_message(
+                                name=original_name,
+                                call_id=call["id"],
+                                content=(
+                                    f"⚠️ Error: Tool '{name}' is not available. "
+                                    "The tool may have been removed or does not exist. "
+                                    "Please proceed without using this tool."
+                                ),
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue
+
                         # Use shared helper for base tools
                         await tools_data.schedule_base_tool_call(
                             msg,

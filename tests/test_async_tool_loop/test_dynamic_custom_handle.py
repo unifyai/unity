@@ -116,8 +116,8 @@ async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-def
 
 
 @pytest.fixture(scope="function")
-def client():
-    return new_llm_client()
+def client(model):
+    return new_llm_client(model=model)
 
 
 @pytest.mark.asyncio
@@ -599,7 +599,7 @@ async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-def
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_helper_preserves_annotations_for_public_methods():
+async def test_dynamic_helper_preserves_annotations_for_public_methods(model):
     """
     Lower-level factory test: ensure public-method helpers preserve annotations
     so their generated tool schema exposes correct JSON types (e.g., integer).
@@ -735,7 +735,7 @@ async def test_dynamic_helper_preserves_annotations_for_public_methods():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_dynamic_factory_ignores_internal_introspection_methods():
+async def test_dynamic_factory_ignores_internal_introspection_methods(model):
     """
     Regression test: Ensure `DynamicToolFactory` does NOT generate tools for
     internal introspection methods (e.g. `get_wrapped_handles`, `_get_wrapped_handles`,

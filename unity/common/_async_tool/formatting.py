@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+import base64
 from contextlib import suppress
 from typing import Any, Union
 import json
 
 from ..llm_helpers import _dumps, _strip_image_keys, _collect_images
+
+
+def _detect_mime_from_b64(b64_str: str) -> str:
+    """Detect MIME type from base64-encoded image data by inspecting the header bytes.
+
+    Returns "image/jpeg" for JPEG, "image/png" for PNG, or "image/png" as fallback.
+    """
+    try:
+        raw = base64.b64decode(b64_str[:32])
+        if raw[:2] == b"\xff\xd8":
+            return "image/jpeg"
+        if raw[:8] == b"\x89PNG\r\n\x1a\n":
+            return "image/png"
+    except Exception:
+        pass
+    return "image/png"
 
 
 def serialize_tool_content(
@@ -69,11 +86,11 @@ def serialize_tool_content(
         if text_repr and text_repr != "{}":
             content_blocks.append({"type": "text", "text": text_repr})
         for b64 in images:
-            # Default to PNG when unknown – mirrors existing behaviour
+            mime = _detect_mime_from_b64(b64)
             content_blocks.append(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                    "image_url": {"url": f"data:{mime};base64,{b64}"},
                 },
             )
         return content_blocks

@@ -7,6 +7,7 @@ import dataclasses
 
 
 from typing import (
+    Callable,
     Dict,
     Set,
     Tuple,
@@ -44,6 +45,8 @@ class ToolsData:
             Tuple[asyncio.Queue[str], asyncio.Queue[str]],
         ] = {}
         self.completed_results: Dict[str, str] = {}
+        # Callback for refreshing dynamic helpers when a handle is adopted
+        self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
 
     # Local helper: pretty-print tool payloads consistently
     @staticmethod
@@ -110,43 +113,55 @@ class ToolsData:
         await asyncio.gather(*self.pending, return_exceptions=True)
         self.pending.clear()
 
-    # Remove any tool_calls in an assistant message that would exceed the
-    # hidden per-tool total-call quota. Operates in-place on asst_msg.
     def prune_over_quota_tool_calls(self, asst_msg: dict) -> None:
-        with suppress(Exception):
-            tool_calls = asst_msg.get("tool_calls") or []
-            if not isinstance(tool_calls, list) or not tool_calls:
-                return
+        """
+        In-place remove tool_calls from asst_msg if they would exceed the per-tool quota.
+        This ensures strict provider compliance: calls that are not executed
+        must not remain in the history without a response.
+        """
+        tcs = asst_msg.get("tool_calls")
+        if not tcs:
+            return
 
-            # Compute remaining budget per base tool (in this loop instance)
-            remaining: Dict[str, int] = {}
-            for name, spec in self.normalized.items():
-                lim = spec.max_total_calls
-                if lim is None:
+        # Track counts locally to handle multiple calls in this single batch
+        # without permanently modifying self.call_counts yet (that happens on schedule).
+        temp_counts = self.call_counts.copy()
+
+        valid_tcs = []
+        for tc in tcs:
+            try:
+                name = tc.get("function", {}).get("name")
+                # Normalize prefix for checking (matches loop logic)
+                name_check = str(name).removeprefix("default_api:")
+
+                if name_check not in self.normalized:
+                    # Unknown tools are kept (handled by execution/error logic)
+                    valid_tcs.append(tc)
                     continue
-                remaining[name] = max(0, lim - self._quota_count(name))
 
-            kept: list = []
-            for call in tool_calls:
-                with suppress(Exception):
-                    fn_name = call.get("function", {}).get("name")
-                if "fn_name" not in locals():
-                    fn_name = None
+                spec = self.normalized[name_check]
+                limit = spec.max_total_calls
+                current = temp_counts.get(name_check, 0)
 
-                # Only enforce quota on base tools that define a limit
-                if fn_name in remaining:
-                    if remaining[fn_name] > 0:
-                        kept.append(call)
-                        remaining[fn_name] -= 1
-                    else:
-                        # drop this over-quota call silently
-                        continue
-                else:
-                    kept.append(call)
+                if limit is not None and current >= limit:
+                    # Prune this call - do not add to valid_tcs
+                    continue
 
-            # In-place update only if changed
-            if len(kept) != len(tool_calls):
-                asst_msg["tool_calls"] = kept
+                # Keep it, and increment temp counter
+                temp_counts[name_check] = current + 1
+                valid_tcs.append(tc)
+            except Exception:
+                # Malformed tool call, keep it
+                valid_tcs.append(tc)
+
+        # In-place mutation of the assistant message
+        asst_msg["tool_calls"] = valid_tcs
+
+        # If the message becomes empty (no content, no tools), inject a placeholder content
+        # to satisfy API constraints and inform the model.
+        has_content = bool(asst_msg.get("content"))
+        if not valid_tcs and not has_content:
+            asst_msg["content"] = "(Tool calls were removed due to quota limits)"
 
     # Helper: schedule a base tool call (shared by main path and backfill)
     async def schedule_base_tool_call(
@@ -737,3 +752,7 @@ class ToolsData:
         self.save_task(nested_task, metadata)
         if h_up_q is not None:
             self.clarification_channels[info.call_id] = (h_up_q, h_down_q)
+        # Refresh dynamic helpers immediately now that handle is available
+        if self._on_handle_adopted is not None:
+            with suppress(Exception):
+                self._on_handle_adopted(nested_task)
