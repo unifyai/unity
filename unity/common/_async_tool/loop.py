@@ -3169,6 +3169,24 @@ async def async_tool_loop_inner(
                                 coro=t,
                                 metadata=metadata,
                             )
+                        else:
+                            # Target task was already removed (e.g., by a prior
+                            # stop_ helper in the same assistant message). Insert
+                            # a no-op acknowledgement so the transcript stays valid.
+                            tool_msg = create_tool_call_message(
+                                name=name,
+                                call_id=call["id"],
+                                content=(
+                                    f"No-op: target task for '{name}' is no longer active."
+                                ),
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
                     else:
                         # ── Unknown/unavailable tool fallback ─────────────────────
                         # If the tool doesn't exist OR wasn't visible on this turn
