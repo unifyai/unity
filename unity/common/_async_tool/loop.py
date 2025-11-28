@@ -2755,6 +2755,15 @@ async def async_tool_loop_inner(
                 tools_data.prune_over_quota_tool_calls(msg)
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
+
+                    # ── Normalize Gemini tool name prefix ─────────────────────────
+                    # Gemini models sometimes prefix tool names with "default_api:"
+                    # when recalling tools from earlier in the conversation. Strip
+                    # this prefix for matching, but keep the original for tool
+                    # responses (Gemini validates against thinking_blocks).
+                    original_name = name
+                    name = name.removeprefix("default_api:")
+
                     args = json.loads(call["function"]["arguments"])
 
                     # Special-case: handle synthetic `final_answer` tool
@@ -3276,6 +3285,34 @@ async def async_tool_loop_inner(
                                 metadata=metadata,
                             )
                     else:
+                        # ── Unknown/unavailable tool fallback ─────────────────────
+                        # If the tool doesn't exist OR wasn't visible on this turn
+                        # (e.g., the model hallucinated a tool name, or the tool was
+                        # hidden by tool_policy), insert an error tool response to
+                        # keep the transcript valid. Without this, the assistant
+                        # message would have an unresolved tool_call, causing
+                        # subsequent LLM calls to fail.
+                        if name not in policy_tools_norm:
+                            # Use original_name for the tool response so it matches
+                            # Gemini's thinking_blocks validation
+                            tool_msg = create_tool_call_message(
+                                name=original_name,
+                                call_id=call["id"],
+                                content=(
+                                    f"⚠️ Error: Tool '{name}' is not available. "
+                                    "The tool may have been removed or does not exist. "
+                                    "Please proceed without using this tool."
+                                ),
+                            )
+                            await insert_tool_message_after_assistant(
+                                assistant_meta,
+                                msg,
+                                tool_msg,
+                                client,
+                                _msg_dispatcher,
+                            )
+                            continue
+
                         # Use shared helper for base tools
                         await tools_data.schedule_base_tool_call(
                             msg,
