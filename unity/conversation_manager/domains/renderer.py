@@ -31,6 +31,7 @@ class Renderer:
         max_messages=5,
         last_snapshot=None,
     ):
+        print(f"Active conversations: {active_conversations}")
         contacts = "\n\n".join(
             self.render_contact(
                 c,
@@ -128,6 +129,8 @@ class Renderer:
                     out += f"<query>{a['query']}</query>\n"
                     if a_res := a.get("response"):
                         out += f"<response>{a_res}</response>\n"
+                    if a_call_id := a.get("call_id"):
+                        out += f"<call_id>{a_call_id}</call_id>\n"
                     # the original code has a 'call_id'here, which i dont fully understand
                     out += "</handle_actions>\n"
                 out += "</conductor_handle>\n"

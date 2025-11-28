@@ -202,7 +202,16 @@ async def _(
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
     # just run llm here
-    ...
+    if isinstance(event, ConductorClarificationRequest):
+        cm.conductor_handles[event.handle_id]["handle_actions"].append(
+            {
+                "action_name": "conductor_handle_clarification_request",
+                "query": event.query,
+                "call_id": event.call_id,
+            }
+        )
+    else:
+        ...
 
 
 @EventHandler.register(
@@ -366,7 +375,7 @@ async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
         f"Recieved result for handle_id: {event.handle_id}\nResult: {event.result}",
         event.timestamp,
     )
-    cm.conductor_handles.pop(event.handle_id)
+    cm.conductor_handles.pop(event.handle_id, None)
     await cm.run_llm()
 
 

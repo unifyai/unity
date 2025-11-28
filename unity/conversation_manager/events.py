@@ -407,6 +407,7 @@ class ConductorHandleResponse(Event):
     action_name: str
     query: str
     response: str
+    call_id: str
 
 
 @dataclass
