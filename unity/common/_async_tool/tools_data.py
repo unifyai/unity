@@ -7,6 +7,7 @@ import dataclasses
 
 
 from typing import (
+    Callable,
     Dict,
     Set,
     Tuple,
@@ -44,6 +45,8 @@ class ToolsData:
             Tuple[asyncio.Queue[str], asyncio.Queue[str]],
         ] = {}
         self.completed_results: Dict[str, str] = {}
+        # Callback for refreshing dynamic helpers when a handle is adopted
+        self._on_handle_adopted: Optional[Callable[[asyncio.Task], None]] = None
 
     # Local helper: pretty-print tool payloads consistently
     @staticmethod
@@ -749,3 +752,7 @@ class ToolsData:
         self.save_task(nested_task, metadata)
         if h_up_q is not None:
             self.clarification_channels[info.call_id] = (h_up_q, h_down_q)
+        # Refresh dynamic helpers immediately now that handle is available
+        if self._on_handle_adopted is not None:
+            with suppress(Exception):
+                self._on_handle_adopted(nested_task)
