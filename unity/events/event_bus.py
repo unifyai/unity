@@ -584,8 +584,12 @@ class EventBus:
                 self._specific_ctxs[event_type] = full_ctx
                 # Create the context without any server-side auto-increment so
                 # we can fully control the sequence from the client.
-                if full_ctx not in unify.get_contexts():
+                # Idempotent: tolerates pre-existing contexts and concurrent
+                # creation attempts from parallel processes.
+                try:
                     unify.create_context(full_ctx)
+                except Exception:
+                    pass  # Already exists or transient failure
 
             # Ensure a local counter exists for this event-type
             self._next_row_ids.setdefault(event_type, 0)
