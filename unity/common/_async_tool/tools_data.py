@@ -131,24 +131,22 @@ class ToolsData:
         for tc in tcs:
             try:
                 name = tc.get("function", {}).get("name")
-                # Normalize prefix for checking (matches loop logic)
-                name_check = str(name).removeprefix("default_api:")
 
-                if name_check not in self.normalized:
+                if name not in self.normalized:
                     # Unknown tools are kept (handled by execution/error logic)
                     valid_tcs.append(tc)
                     continue
 
-                spec = self.normalized[name_check]
+                spec = self.normalized[name]
                 limit = spec.max_total_calls
-                current = temp_counts.get(name_check, 0)
+                current = temp_counts.get(name, 0)
 
                 if limit is not None and current >= limit:
                     # Prune this call - do not add to valid_tcs
                     continue
 
                 # Keep it, and increment temp counter
-                temp_counts[name_check] = current + 1
+                temp_counts[name] = current + 1
                 valid_tcs.append(tc)
             except Exception:
                 # Malformed tool call, keep it
@@ -464,9 +462,7 @@ class ToolsData:
         tool_reply_msg = info.tool_reply_msg
 
         # When a placeholder already exists for this call_id, update it in place.
-        # This satisfies both providers:
-        #   - OpenAI requires exactly ONE tool response per tool_call_id
-        #   - Gemini requires tool responses to use original call_ids
+        # OpenAI requires exactly ONE tool response per tool_call_id.
         #
         # To preserve chronological accuracy, when the placeholder is NOT at the
         # tail (i.e., other messages were appended after it), we append a system

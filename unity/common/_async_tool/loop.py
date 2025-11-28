@@ -32,7 +32,6 @@ from .messages import (
     acknowledge_helper_call,
     transform_non_thinking_turns_to_context,
     transform_tool_calls_to_context,
-    transform_synthetic_tool_calls_for_gemini,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -315,12 +314,9 @@ async def async_tool_loop_inner(
     _model_name = str(getattr(client, "model", "") or "")
     _model_base = _model_name.split("@")[0]
     _is_claude = _model_base.startswith("claude")
-    _is_gemini = _model_base.startswith("gemini")
 
     # ── Reasoning model compatibility ────────────────────────────────────────────
     # Handle reasoning model constraints:
-    # - Gemini: requires thought_signature on assistant messages with tool_calls;
-    #   synthetic messages lack this and must be transformed to system context.
     # - Claude: extended thinking incompatible with tool_choice="required"; we
     #   disable thinking on forced-tool turns and transform those messages later.
     _claude_thinking_disabled = False
@@ -330,16 +326,6 @@ async def async_tool_loop_inner(
         nonlocal _claude_thinking_disabled
 
         effective_preprocess = preprocess_msgs
-
-        # Gemini: Always transform synthetic tool_calls (those without thinking_blocks)
-        if _is_gemini:
-            outer_preprocess = effective_preprocess
-
-            def gemini_wrapper(msgs):
-                msgs = transform_synthetic_tool_calls_for_gemini(msgs)
-                return outer_preprocess(msgs) if outer_preprocess else msgs
-
-            effective_preprocess = gemini_wrapper
 
         # Claude: Handle thinking/tool_choice incompatibility
         if _is_claude:
@@ -599,16 +585,14 @@ async def async_tool_loop_inner(
                 for m in message
             ]
 
-        # ── Reasoning model workaround (Gemini / Claude) ──────────────────────
-        # Models with reasoning/thinking enabled require special metadata on
+        # ── Reasoning model workaround (Claude) ──────────────────────────────────
+        # Claude models with extended thinking require special metadata on
         # assistant messages containing tool_calls. Transform seeded tool_calls
         # into a descriptive system message to avoid missing signature errors.
-        if _is_gemini or _is_claude:
+        if _is_claude:
             seeded_batch = transform_tool_calls_to_context(
                 seeded_batch,
-                marker_key=(
-                    "_gemini_seeded_context" if _is_gemini else "_claude_seeded_context"
-                ),
+                marker_key="_claude_seeded_context",
             )
 
         await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
@@ -2662,7 +2646,7 @@ async def async_tool_loop_inner(
 
                 # If pruning removed all calls and left a placeholder notice, inject a user turn
                 # so the model is prompted to continue. This prevents Assistant->Assistant history
-                # violations on strict models (like Gemini/Vertex AI).
+                # violations on strict models.
                 if not msg.get(
                     "tool_calls",
                 ) and "(Tool calls were removed due to quota limits)" in str(
@@ -2678,15 +2662,7 @@ async def async_tool_loop_inner(
                 for idx, call in enumerate(msg["tool_calls"]):  # capture index
                     name = call["function"]["name"]
 
-                    # ── Normalize Gemini tool name prefix ─────────────────────────
-                    # Gemini models sometimes prefix tool names with "default_api:"
-                    # when recalling tools from earlier in the conversation. Strip
-                    # this prefix for matching, but keep the original for tool
-                    # responses (Gemini validates against thinking_blocks).
-                    original_name = name
-                    name = name.removeprefix("default_api:")
-
-                    # Parse arguments - handle both string (OpenAI) and dict (Vertex AI)
+                    # Parse arguments - handle both string (OpenAI) and dict formats
                     _raw_args = call["function"]["arguments"]
                     if isinstance(_raw_args, str):
                         args = json.loads(_raw_args)
@@ -3238,10 +3214,8 @@ async def async_tool_loop_inner(
                         # message would have an unresolved tool_call, causing
                         # subsequent LLM calls to fail.
                         if name not in policy_tools_norm:
-                            # Use original_name for the tool response so it matches
-                            # Gemini's thinking_blocks validation
                             tool_msg = create_tool_call_message(
-                                name=original_name,
+                                name=name,
                                 call_id=call["id"],
                                 content=(
                                     f"⚠️ Error: Tool '{name}' is not available. "

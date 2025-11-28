@@ -60,9 +60,9 @@ def transform_tool_calls_to_context(
     """Transform assistant tool_calls into a system context message.
 
     This unified function handles two scenarios:
-    1. Seeded transcripts for reasoning models (Gemini/Claude) that require
-       provider-specific metadata (thought_signature/thinking blocks) which
-       we lack when replaying manually constructed tool calls.
+    1. Seeded transcripts for Claude reasoning models that require
+       provider-specific metadata (thinking blocks) which we lack when
+       replaying manually constructed tool calls.
     2. Claude extended thinking re-enablement after forced-tool turns where
        thinking was disabled (incompatible with tool_choice="required").
 
@@ -215,37 +215,6 @@ def transform_non_thinking_turns_to_context(msgs: list[dict]) -> list[dict]:
         marker_key="_claude_thinking_context",
         context_header="[Prior tool execution context - extended thinking was disabled]",
         context_footer="[Continue with extended thinking enabled]",
-        predicate=needs_transformation,
-    )
-
-
-def transform_synthetic_tool_calls_for_gemini(msgs: list[dict]) -> list[dict]:
-    """Transform synthetic assistant tool_calls into system context for Gemini.
-
-    Gemini reasoning models require `thought_signature` metadata on assistant
-    messages with tool_calls. Synthetic/programmatic tool calls (like
-    live_images_overview, steering helpers) lack this metadata and must be
-    transformed into system context to avoid validation errors.
-
-    Identifies synthetic messages by checking for the absence of thinking_blocks,
-    which real Gemini reasoning responses always include.
-    """
-
-    def needs_transformation(m: dict) -> bool:
-        if not isinstance(m, dict):
-            return False
-        if m.get("role") != "assistant":
-            return False
-        if not m.get("tool_calls"):
-            return False
-        # Real Gemini reasoning responses include thinking_blocks; synthetic messages don't
-        return m.get("thinking_blocks") is None
-
-    return transform_tool_calls_to_context(
-        msgs,
-        marker_key="_gemini_synthetic_context",
-        context_header="[Image/system context]",
-        context_footer="[Continue with the request]",
         predicate=needs_transformation,
     )
 

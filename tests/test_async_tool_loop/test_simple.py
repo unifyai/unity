@@ -621,25 +621,22 @@ async def test_seeded_messages_then_final_tool_call(model):
 
     # Verify the seeded fast_tool context is present:
     # - For most models: appears as a formal tool message
-    # - For Gemini/Claude: transformed into a system context message
-    #   (to avoid thought_signature / extended thinking requirements)
+    # - For Claude: transformed into a system context message
+    #   (to avoid extended thinking requirements)
     model_base = model.split("@")[0]
-    is_gemini = model_base.startswith("gemini")
     is_claude = model_base.startswith("claude")
-    if is_gemini or is_claude:
+    if is_claude:
         # Check for the context system message describing the seeded tool call
-        marker_key = "_gemini_seeded_context" if is_gemini else "_claude_seeded_context"
         has_seeded_context = any(
             m.get("role") == "system"
-            and m.get(marker_key)
+            and m.get("_claude_seeded_context")
             and "fast_tool" in str(m.get("content", ""))
             for m in client.messages
         )
-        model_name = "Gemini" if is_gemini else "Claude"
         assert (
             has_seeded_context
-        ), f"{model_name} should have a seeded context system message for fast_tool"
+        ), "Claude should have a seeded context system message for fast_tool"
     else:
         assert (
             "fast_tool" in tool_names
-        ), "Non-Gemini/Claude models should have fast_tool as a formal tool message"
+        ), "Non-Claude models should have fast_tool as a formal tool message"
