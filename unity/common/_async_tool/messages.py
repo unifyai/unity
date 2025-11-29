@@ -8,9 +8,45 @@ import unify
 from typing import Callable, Optional, Any
 from .utils import maybe_await
 from ...constants import LOGGER
-from contextlib import suppress
+from contextlib import suppress, contextmanager
 from .tools_utils import create_tool_call_message
 from .images import append_images_with_source
+
+
+@contextmanager
+def _preserve_canonical_messages(client, canonical_msgs):
+    """Context manager to ensure client.messages returns canonical_msgs during the block.
+
+    Properties defined at class level cannot be shadowed by instance attributes,
+    so we temporarily patch the class-level property to check for a special
+    `_canonical_messages` attribute first.
+    """
+    prop_class = None
+    orig_prop = None
+    try:
+        client._canonical_messages = canonical_msgs
+        for klass in type(client).__mro__:
+            if "messages" in klass.__dict__:
+                prop_class = klass
+                orig_prop = klass.__dict__["messages"]
+                break
+        if prop_class is not None and orig_prop is not None:
+
+            def _patched_getter(self, _orig=orig_prop):
+                cm = getattr(self, "_canonical_messages", None)
+                return cm if cm is not None else _orig.fget(self)
+
+            prop_class.messages = property(_patched_getter)
+    except Exception:
+        pass
+    try:
+        yield
+    finally:
+        if prop_class is not None and orig_prop is not None:
+            with suppress(Exception):
+                prop_class.messages = orig_prop
+        with suppress(Exception):
+            del client._canonical_messages
 
 
 # TODO: Some of these helpers should not be placed here, but in utils.py or their own files
@@ -333,38 +369,43 @@ async def generate_with_preprocess(
     # ``messages`` list.  To remain compatible with *both* variants we
     # detect the attribute that is actually consumed by the downstream
     # ``generate`` call and patch **that** for the duration of the call.
+    #
+    # When we swap ``_messages``, the public ``messages`` property would
+    # also return the patched list, causing a race condition for external
+    # code polling ``client.messages``. We use _preserve_canonical_messages
+    # to ensure external observers see the canonical log during the swap.
     # ------------------------------------------------------------------
     target_attr = "_messages" if hasattr(client, "_messages") else "messages"
     original_system_message = getattr(client, "system_message", None)
-    try:
-        # Patch the system message to the injected version for the duration of the call
+    with suppress(Exception):
         if original_system_message is not None:
             setattr(client, "system_message", sys_patched)
-    except Exception:
-        pass
 
     original_container = getattr(client, target_attr)
-    setattr(client, target_attr, patched)
-    try:
-        result = await maybe_await(client.generate(**gen_kwargs))
 
-        # Append any new messages the LLM produced back to canonical log
-        current_msgs = getattr(client, target_attr)
-        if len(current_msgs) > start_len:
-            original_msgs.extend(copy.deepcopy(current_msgs[start_len:]))
+    # Use context manager to preserve canonical messages visibility when swapping
+    preserve_ctx = (
+        _preserve_canonical_messages(client, original_container)
+        if target_attr == "_messages"
+        else suppress()
+    )
 
-        return result
-    finally:
-        # Always restore the canonical chat log so the outer loop remains
-        # consistent irrespective of whether we patched `_messages` or
-        # `messages`.
-        setattr(client, target_attr, original_container)
-        # Restore original system message
+    with preserve_ctx:
+        setattr(client, target_attr, patched)
         try:
-            if original_system_message is not None:
-                setattr(client, "system_message", original_system_message)
-        except Exception:
-            pass
+            result = await maybe_await(client.generate(**gen_kwargs))
+
+            # Append any new messages the LLM produced back to canonical log
+            current_msgs = getattr(client, target_attr)
+            if len(current_msgs) > start_len:
+                original_msgs.extend(copy.deepcopy(current_msgs[start_len:]))
+
+            return result
+        finally:
+            setattr(client, target_attr, original_container)
+            with suppress(Exception):
+                if original_system_message is not None:
+                    setattr(client, "system_message", original_system_message)
 
 
 def chat_context_repr(
