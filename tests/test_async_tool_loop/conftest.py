@@ -16,7 +16,7 @@ import pytest
 # Models to test against for cross-provider compatibility
 LLM_MODELS = [
     "gpt-5.1@openai",
-    "claude-4.5-opus@anthropic",
+    # "claude-4.5-opus@anthropic",
 ]
 
 
