@@ -44,6 +44,10 @@ class BaseFileManager(BaseStateManager):
     per-file/per-table contexts.
     """
 
+    _as_caller_description: str = (
+        "a FileManager, analyzing files on behalf of the end user"
+    )
+
     # ------------------------------------------------------------------ #
     # Basic inventory operations                                          #
     # ------------------------------------------------------------------ #
