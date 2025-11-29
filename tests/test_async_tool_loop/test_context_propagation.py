@@ -40,8 +40,14 @@ async def test_chat_context_propagation(model) -> None:
     final_ans = await handle.result()
     assert "done" in final_ans.lower()
 
-    assert client.messages[0]["role"] == "system"
-    assert client.messages[0].get("_ctx_header") is True
+    # Find the runtime context header message (may not be at position 0 due to
+    # other system messages like User Visibility Context being prepended)
+    ctx_header_msg = next(
+        (m for m in client.messages if m.get("_ctx_header") is True),
+        None,
+    )
+    assert ctx_header_msg is not None, "Expected a system message with _ctx_header=True"
+    assert ctx_header_msg["role"] == "system"
 
     assert len(captured_ctx) == 1
     combined = captured_ctx[0]
@@ -49,7 +55,13 @@ async def test_chat_context_propagation(model) -> None:
     assert combined[0]["content"] == "root-level message"
     assert "children" in combined[0]
     child_msgs = combined[0]["children"]
-    assert child_msgs and child_msgs[0]["content"].startswith(
+    # Find the user message (may not be at position 0 due to system messages
+    # like User Visibility Context being prepended)
+    user_msg = next(
+        (m for m in child_msgs if m.get("role") == "user"),
+        None,
+    )
+    assert user_msg is not None and user_msg["content"].startswith(
         "Please call the function",
     )
 
