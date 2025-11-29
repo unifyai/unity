@@ -74,6 +74,28 @@ if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
 
 
+def prune_duplicate_tool_calls(tool_calls: list) -> tuple[list, set[str]]:
+    """Remove duplicate tool calls from a list.
+
+    Returns (unique_calls, pruned_call_ids) where pruned_call_ids contains
+    the IDs of calls that were removed as duplicates.
+    """
+    seen: Set[tuple[str, str]] = set()
+    unique_calls: list = []
+    pruned_ids: set[str] = set()
+    for call in tool_calls:
+        _fn = call.get("function") or {}
+        _args = _fn.get("arguments", "")
+        _args_str = _args if isinstance(_args, str) else json.dumps(_args)
+        sig = (_fn.get("name", ""), _args_str)
+        if sig not in seen:
+            seen.add(sig)
+            unique_calls.append(call)
+        else:
+            pruned_ids.add(call.get("id", ""))
+    return unique_calls, pruned_ids
+
+
 class LoopLogger:
     def __init__(self, cfg: LoopConfig, log_steps: bool | str) -> None:
         self._label = cfg.label
@@ -889,6 +911,14 @@ async def async_tool_loop_inner(
                 amsg = entry["assistant_msg"]
                 # Before scheduling, drop any over-quota tool calls in this message
                 tools_data.prune_over_quota_tool_calls(amsg)
+                # De-duplicate tool calls if pruning is enabled
+                if prune_tool_duplicates and amsg.get("tool_calls"):
+                    unique, pruned = prune_duplicate_tool_calls(amsg["tool_calls"])
+                    if pruned:
+                        amsg["tool_calls"] = unique
+                        entry["missing"] = [
+                            cid for cid in entry["missing"] if cid not in pruned
+                        ]
                 # Exclude any call_ids that will be adopted as resume_children
                 missing_ids = set(entry["missing"]) - resume_children_call_ids
                 if not missing_ids:
@@ -2662,22 +2692,9 @@ async def async_tool_loop_inner(
             if msg["tool_calls"]:
                 # ── De-duplicate tool calls (optional) ────────────────────────
                 if prune_tool_duplicates:
-                    seen: Set[tuple[str, str]] = set()
-                    unique_calls: list = []
-                    for call in msg["tool_calls"]:
-                        _fn = call["function"]
-                        # Ensure arguments is a string for hashable signature
-                        _args = _fn["arguments"]
-                        _args_str = (
-                            _args if isinstance(_args, str) else json.dumps(_args)
-                        )
-                        sig = (_fn["name"], _args_str)
-                        if sig not in seen:
-                            seen.add(sig)
-                            unique_calls.append(call)
-                    if len(unique_calls) != len(msg["tool_calls"]):
-                        # mutate in-place so history never contains duplicates
-                        msg["tool_calls"] = unique_calls
+                    unique, _ = prune_duplicate_tool_calls(msg["tool_calls"])
+                    if len(unique) != len(msg["tool_calls"]):
+                        msg["tool_calls"] = unique
 
                 # Always ensure over-quota tool calls are removed regardless of
                 # deduplication settings, before any scheduling occurs.

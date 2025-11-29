@@ -315,13 +315,30 @@ async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noq
     echo.__name__ = "echo"
     echo.__qualname__ = "echo"
 
-    prompt = (
-        "You have access to a function named `echo(text: str)`.\n"
-        "CRITICAL: In your FIRST assistant message, request TWO tool calls to `echo`, "
-        "both in the SAME assistant message. Use the exact JSON arguments string "
-        '`{ "text": "hello" }` for each tool call (identical including spaces). Do not include any normal assistant text in that first message; only tool calls.\n'
-        "After you receive both tool replies, answer with a single short sentence."
-    )
+    # Seed a transcript with an assistant message containing TWO identical parallel
+    # tool calls. This removes dependency on model behavior for making parallel calls.
+    seeded = [
+        {
+            "role": "user",
+            "content": "Call echo twice with 'hello', then reply with a short sentence.",
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_dup_1",
+                    "type": "function",
+                    "function": {"name": "echo", "arguments": '{"text": "hello"}'},
+                },
+                {
+                    "id": "call_dup_2",
+                    "type": "function",
+                    "function": {"name": "echo", "arguments": '{"text": "hello"}'},
+                },
+            ],
+        },
+    ]
 
     # ------------------------------------------------------------------ #
     # 1️⃣  duplicates SHOULD be executed when pruning is disabled
@@ -330,82 +347,53 @@ async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noq
     client = new_client(model=model)
     await start_async_tool_loop(
         client=client,
-        message=prompt,
+        message=seeded,
         tools={"echo": echo},
         prune_tool_duplicates=False,
     ).result()
-    assert log[:2] == [
+    # Both duplicate calls should execute
+    assert log == [
         "hello",
         "hello",
-    ], "With prune_tool_duplicates=False, both duplicate tool calls from the first turn should be invoked."
-    roles = [
-        m["role"]
+    ], "With prune_tool_duplicates=False, both duplicate tool calls should be invoked."
+    # Verify transcript structure: both tool results appear after the seeded assistant turn
+    tool_results = [
+        m
         for m in client.messages
-        if not (
-            m.get("role") == "assistant"
-            and m.get("tool_calls")
-            and any(
-                (tc.get("function", {}) or {})
-                .get("name", "")
-                .startswith("check_status_")
-                for tc in m["tool_calls"]
-            )
-        )
-        and not (
-            m.get("role") == "tool"
-            and str(m.get("name", "")).startswith("check_status_")
-        )
+        if m.get("role") == "tool" and m.get("name") == "echo"
     ]
-    expected_prefix = ["system", "user", "assistant", "tool", "tool", "assistant"]
-    assert (
-        roles[: len(expected_prefix)] == expected_prefix
-    ), "First turn should produce 2 tool results; model quirks in subsequent turns are tolerated."
+    assert len(tool_results) == 2, "Expected 2 tool results when pruning is disabled"
 
     # ------------------------------------------------------------------ #
-    # 2️⃣  duplicates SHOULD be removed when pruning is enabled
+    # 2️⃣  duplicates SHOULD be pruned when pruning is enabled
     # ------------------------------------------------------------------ #
     log.clear()
     client = new_client(model=model)
     await start_async_tool_loop(
         client=client,
-        message=prompt,
+        message=seeded,
         tools={"echo": echo},
         prune_tool_duplicates=True,
     ).result()
-    assert log[:2] == [
-        "hello",
-        "hello",
-    ], "With prune_tool_duplicates=True, both duplicate tool calls from the first turn should still be invoked."
-    roles = [
-        m["role"]
-        for m in client.messages
-        if not (
-            m.get("role") == "assistant"
-            and m.get("tool_calls")
-            and any(
-                (tc.get("function", {}) or {})
-                .get("name", "")
-                .startswith("check_status_")
-                for tc in m["tool_calls"]
-            )
-        )
-        and not (
-            m.get("role") == "tool"
-            and str(m.get("name", "")).startswith("check_status_")
-        )
-    ]
-    expected_prefix = [
-        "system",
-        "user",
-        "assistant",
-        "tool",
-        "assistant",
-        "tool",
-        "assistant",
-    ]
+    # Only one call should execute from the seeded turn (duplicate pruned)
+    assert log[0] == "hello", "First tool call should execute"
+    # The seeded turn should only produce 1 tool result due to pruning
+    # (model may make additional calls in subsequent turns to compensate)
+    first_assistant_idx = next(
+        i
+        for i, m in enumerate(client.messages)
+        if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    # Count tool results that appear before the next assistant turn
+    tool_results_after_first = []
+    for m in client.messages[first_assistant_idx + 1 :]:
+        if m.get("role") == "tool" and m.get("name") == "echo":
+            tool_results_after_first.append(m)
+        elif m.get("role") == "assistant":
+            break
     assert (
-        roles[: len(expected_prefix)] == expected_prefix
-    ), "First turn should have tool calls handled; model quirks in subsequent turns are tolerated."
+        len(tool_results_after_first) == 1
+    ), "With prune_tool_duplicates=True, only 1 tool result should follow the seeded assistant turn"
 
 
 # --------------------------------------------------------------------------- #
