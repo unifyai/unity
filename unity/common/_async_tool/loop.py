@@ -511,6 +511,35 @@ async def async_tool_loop_inner(
         except Exception as _exc:  # noqa: BLE001
             logger.error(f"response_format hint failed: {_exc!r}")
 
+    # ── User visibility guidance ──────────────────────────────────────────────
+    # Explain to the model what the end-user can and cannot see. This guidance
+    # is appended to the system message so that the model understands that:
+    # 1. The user does NOT see any intermediate tool calls or tool results
+    # 2. The user only sees the initial request and any interjection messages
+    # 3. The user sees the final plain-text response from the assistant
+    # This is important because interjections are now sent as simple user
+    # messages (not system messages) so the model needs to understand context.
+    _user_visibility_guidance = (
+        "\n\n## User Visibility Context\n"
+        "IMPORTANT: The end-user who initiated this conversation can ONLY see:\n"
+        "1. Their original request and any follow-up messages they send (interjections)\n"
+        "2. Your FINAL plain-text response at the end of this tool-use session\n\n"
+        "The user CANNOT see:\n"
+        "- Any intermediate tool calls you make\n"
+        "- Any tool results or outputs\n"
+        "- Any assistant messages that include tool_calls\n\n"
+        "When the user sends follow-up messages (interjections) during your tool-use "
+        "session, these appear as regular user messages. Consider and incorporate ALL "
+        "user interjections in your final response. Later interjections should override "
+        "earlier ones if there are any conflicting comments or requests."
+    )
+    try:
+        client.set_system_message(
+            (client.system_message or "") + _user_visibility_guidance,
+        )
+    except Exception:
+        pass
+
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
     timer: TimeoutTimer = TimeoutTimer(
@@ -1967,51 +1996,17 @@ async def async_tool_loop_inner(
                         history_lines = []
 
                 # Support dict-style interjections carrying continued parent context
+                # Interjections are now sent as simple user messages (not system messages)
+                # because Claude and Gemini models do not support in-chat system messages.
+                # The user-visibility context has been moved to the topmost system message.
                 if isinstance(extra, dict):
                     _msg_text = str(extra.get("message", "")).strip()
                     _ctx_cont = extra.get("parent_chat_context_continuted")
                     _incoming_images = extra.get("images")
-                    with suppress(Exception):
-                        _ctx_str = (
-                            json.dumps(_ctx_cont, indent=2)
-                            if _ctx_cont is not None
-                            else None
-                        )
-
-                    sys_content = (
-                        "The user *cannot* see *any* of the contents of this ongoing tool use chat context. "
-                        "They have just interjected with the following message (in bold at the bottom). "
-                        "From their perspective, the conversation thus far is as follows:\n"
-                        "--\n"
-                        + ("\n".join(history_lines))
-                        + f"\nuser: **{_msg_text}**\n"
-                        "--\n"
-                        + (
-                            "A continued parent chat context has been provided for this interjection.\n"
-                            + (_ctx_str or "(unserializable)")
-                            + "\n"
-                            if _ctx_cont is not None
-                            else ""
-                        )
-                        + "Please consider and incorporate *all* interjections in your final response to the user. "
-                        + "Later interjections should always override earlier interjections if there are "
-                        + "any conflicting comments/requests across the different interjections."
-                    )
                 else:
                     _msg_text = str(extra)
+                    _ctx_cont = None
                     _incoming_images = None
-                    sys_content = (
-                        "The user *cannot* see *any* of the contents of this ongoing tool use chat context. "
-                        "They have just interjected with the following message (in bold at the bottom). "
-                        "From their perspective, the conversation thus far is as follows:\n"
-                        "--\n"
-                        + ("\n".join(history_lines))
-                        + f"\nuser: **{_msg_text}**\n"
-                        "--\n"
-                        "Please consider and incorporate *all* interjections in your final response to the user. "
-                        "Later interjections should always override earlier interjections if there are "
-                        "any conflicting comments/requests across the different interjections."
-                    )
 
                 # Log a single concise interjection line
                 try:
@@ -2019,9 +2014,11 @@ async def async_tool_loop_inner(
                 except Exception:
                     pass
 
-                interjection_msg = {"role": "system", "content": sys_content}
+                # Send as a simple user message - the model already knows from the
+                # system message that the user cannot see intermediate tool results
+                interjection_msg = {"role": "user", "content": _msg_text}
                 await _msg_dispatcher.append_msgs([interjection_msg])
-                last_valid_user_history = history_lines + [f"user: {extra}"]
+                last_valid_user_history = history_lines + [f"user: {_msg_text}"]
 
                 # If images accompany this interjection, accept source-scoped keys and append
                 if _append_and_log_images_safely(_incoming_images):

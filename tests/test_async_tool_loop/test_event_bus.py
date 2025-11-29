@@ -123,11 +123,11 @@ async def test_interjection_publishes_user_event(model) -> None:
     events = captured_events
     roles = [evt.payload["message"]["role"] for evt in events]
     assert "user" in roles  # initial user
-    # Interjection is now published as a system message that includes the
-    # user-visible text in bold. Ensure we saw exactly one initial user and a system interjection.
-    assert roles.count("user") == 1
+    # Interjection is now published as a simple user message (not system message)
+    # for Claude/Gemini compatibility. We expect 2 user messages: initial + interjection.
+    assert roles.count("user") == 2
     assert any(
-        evt.payload["message"]["role"] == "system"
-        and "user: **pineapple**" in (evt.payload["message"].get("content") or "")
+        evt.payload["message"]["role"] == "user"
+        and "pineapple" in (evt.payload["message"].get("content") or "")
         for evt in events
     )
