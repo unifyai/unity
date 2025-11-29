@@ -442,11 +442,12 @@ async def test_no_tools_with_system_message(model) -> None:
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_no_tools_without_system_message(model) -> None:
+async def test_no_tools_without_explicit_system_message(model) -> None:
     """
-    Same as above, but without a leading system message, giving the flow:
+    No tools, no explicit system message provided by the caller.
 
-        user → assistant
+    The loop still injects a user-visibility guidance system message,
+    giving the flow: system → user → assistant
     """
     client = new_llm_client(model=model)
 
@@ -459,6 +460,7 @@ async def test_no_tools_without_system_message(model) -> None:
     assert answer.strip(), "Assistant reply should not be empty."
     assert count_tool_messages(client) == 0
     assert [m["role"] for m in client.messages] == [
+        "system",
         "user",
         "assistant",
     ]
