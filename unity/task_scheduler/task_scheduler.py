@@ -99,6 +99,10 @@ from .storage import TasksStore, LocalTaskView
 
 
 class TaskScheduler(BaseTaskScheduler):
+    _as_caller_description: str = (
+        "the TaskScheduler, executing a scheduled task on behalf of the end user"
+    )
+
     @dataclass
     class ActivePointer:
         task_id: int

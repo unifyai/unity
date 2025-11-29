@@ -172,6 +172,7 @@ async def async_tool_loop_inner(
     interrupt_llm_with_interjections: bool = True,
     propagate_chat_context: bool = True,
     parent_chat_context: Optional[list[dict]] = None,
+    caller_description: Optional[str] = None,
     log_steps: Union[bool, str] = True,
     max_steps: Optional[int] = None,
     timeout: Optional[int] = None,
@@ -583,24 +584,61 @@ async def async_tool_loop_inner(
             if not isinstance(message, list):
                 logger.info(f"User Message: {message}{suffix}", prefix="🧑‍💻")
 
-    # ── 0-a. Inject **system** header with broader context ───────────────────
+    # ── 0-a. Inject **system** header with runtime context ─────────────────────
     #
-    # When a parent context is supplied we prepend a single synthetic system
-    # message that *summarises* it.  This offers the LLM immediate awareness
-    # of the wider conversation without having to scroll the nested JSON.
-    # The special marker ``_ctx_header=True`` lets us later strip it when
-    # propagating context further down (avoids duplication).
-    # -----------------------------------------------------------------------
+    # Consolidate caller context and parent chat context into a single system
+    # message at the start of the conversation. This explains:
+    # 1. Who the "user" is (which manager is calling this loop)
+    # 2. The broader conversation context (for nested loops)
+    #
+    # The special marker ``_runtime_context=True`` lets us identify this message
+    # later. For backwards compatibility, ``_ctx_header=True`` is also set.
+    # -------------------------------------------------------------------------
 
+    # Derive caller description from lineage if not explicitly provided
+    _effective_caller_description = caller_description
+    if _effective_caller_description is None and lineage and len(lineage) >= 2:
+        # The parent caller is the second-to-last entry in the lineage
+        # (the last entry is this loop's own id)
+        try:
+            parent_label = lineage[-2]
+            # Extract class name from "ClassName.method" or "ClassName.method(id)"
+            parent_class = parent_label.split(".")[0].split("(")[0]
+            # Strip common prefixes like "Simulated", "Base", "V3" etc.
+            for prefix in ("Simulated", "Base"):
+                if parent_class.startswith(prefix) and len(parent_class) > len(prefix):
+                    parent_class = parent_class[len(prefix) :]
+            # Look up the caller description from the manager registry
+            from ..state_managers import get_caller_description
+
+            _effective_caller_description = get_caller_description(parent_class)
+        except Exception:
+            pass
+
+    runtime_context_parts: list[str] = []
+
+    # Add caller context if available
+    if _effective_caller_description:
+        runtime_context_parts.append(
+            f"## Caller Context\n"
+            f"The 'user' messages in this conversation are from {_effective_caller_description}. "
+            f"The end user cannot see the details of this tool-use conversation.",
+        )
+
+    # Add parent chat context if available
     if parent_chat_context:
+        runtime_context_parts.append(
+            f"## Broader Context (read-only)\n"
+            f"{json.dumps(parent_chat_context, indent=2)}\n\n"
+            f"Resolve the *next* user request in light of this.",
+        )
+
+    if runtime_context_parts:
         sys_msg = {
             "role": "system",
-            "_ctx_header": True,
-            "content": (
-                "Broader context (read-only):\n"
-                f"{json.dumps(parent_chat_context, indent=2)}\n\n"
-                "Resolve the *next* user request in light of this."
-            ),
+            "_runtime_context": True,
+            "_ctx_header": True,  # backwards compatibility
+            "content": "\n\n".join(runtime_context_parts),
         }
         await _msg_dispatcher.append_msgs([sys_msg])
 
