@@ -21,6 +21,10 @@ class BaseTranscriptManager(BaseStateManager, metaclass=SingletonABCMeta):
     • **ask** — answer questions about stored transcripts
     """
 
+    _as_caller_description: str = (
+        "the TranscriptManager, analyzing conversation transcripts"
+    )
+
     # ------------------------------------------------------------------ #
     # Public interface                                                   #
     # ------------------------------------------------------------------ #

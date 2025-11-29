@@ -41,6 +41,10 @@ class BaseKnowledgeManager(BaseStateManager, metaclass=SingletonABCMeta):
     public methods documented below.
     """
 
+    _as_caller_description: str = (
+        "the KnowledgeManager, managing domain knowledge on behalf of the end user"
+    )
+
     # ------------------------------------------------------------------ #
     # Public interface                                                   #
     # ------------------------------------------------------------------ #

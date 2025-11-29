@@ -29,6 +29,10 @@ if TYPE_CHECKING:  # type hints only
 
 
 class BaseConductor(BaseStateManager, metaclass=SingletonABCMeta):
+    _as_caller_description: str = (
+        "the Conductor, orchestrating work across managers on behalf of the end user"
+    )
+
     # ------------------------------------------------------------------ #
     #  ask – read-only                                                   #
     # ------------------------------------------------------------------ #

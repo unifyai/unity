@@ -21,6 +21,10 @@ class BaseWebSearcher(BaseStateManager, metaclass=SingletonABCMeta):
     but they all expose exactly the public method documented below.
     """
 
+    _as_caller_description: str = (
+        "the WebSearcher, performing web research on behalf of the end user"
+    )
+
     @abstractmethod
     async def ask(
         self,

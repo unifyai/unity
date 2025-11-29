@@ -20,6 +20,10 @@ class BaseSecretManager(BaseStateManager, metaclass=SingletonABCMeta):
     SteerableToolHandle so callers can pause/resume/stop or interject.
     """
 
+    _as_caller_description: str = (
+        "the SecretManager, managing secrets on behalf of the end user"
+    )
+
     # ------------------------------------------------------------------ #
     # Public interface                                                   #
     # ------------------------------------------------------------------ #

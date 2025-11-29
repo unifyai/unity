@@ -16,6 +16,8 @@ class BaseImageManager(BaseStateManager):
     `caption: str | None`, `data: str` (base64).
     """
 
+    _as_caller_description: str = "the ImageManager, managing images"
+
     # ------------------------------ Reads ---------------------------------
     @abstractmethod
     def filter_images(
