@@ -322,17 +322,11 @@ class ToolsData:
 
         1.  Pop bookkeeping (``pending`` / ``task_info``).
         2.  Serialise *success* or *exception* into ``result``.
-        3.  Patch or insert the correct **tool** message so the transcript
-            stays perfectly chronological.
+        3.  Patch or insert the correct **tool** message.
         4.  Emit the event-bus hook (if configured).
         5.  Record the payload in ``completed_results`` for potential post-hoc lookups.
         6.  Enforce the *max_consecutive_failures* safety valve.
         """
-
-        def _at_tail(msg: dict) -> bool:
-            """True when *msg* is the very last entry in client.messages."""
-            return bool(self._client.messages) and self._client.messages[-1] is msg
-
         info: ToolCallMetadata = self.pop_task(task)
         name = info.name
         call_id = info.call_id
@@ -463,24 +457,11 @@ class ToolsData:
 
         # When a placeholder already exists for this call_id, update it in place.
         # OpenAI requires exactly ONE tool response per tool_call_id.
-        #
-        # To preserve chronological accuracy, when the placeholder is NOT at the
-        # tail (i.e., other messages were appended after it), we append a system
-        # message noting when the tool actually completed.
         placeholder = clarify_ph or tool_reply_msg
 
         if placeholder is not None:
             placeholder["content"] = result
             tool_msg = placeholder
-            if not _at_tail(placeholder):
-                await msg_dispatcher.append_msgs(
-                    [
-                        {
-                            "role": "system",
-                            "content": f"[Tool '{name}' completed at this point]",
-                        },
-                    ],
-                )
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
             await insert_tool_message_after_assistant(
