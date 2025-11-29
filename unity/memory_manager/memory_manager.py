@@ -47,10 +47,6 @@ class MemoryManager(BaseMemoryManager):
     Offline helper that processes transcripts in chunks (~50 messages by default).
     """
 
-    _as_caller_description: str = (
-        "the MemoryManager, performing offline memory maintenance"
-    )
-
     # Rolling activity logic removed
 
     # ------------------------------------------------------------------ #

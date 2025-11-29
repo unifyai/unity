@@ -24,6 +24,8 @@ class BaseSkillManager(BaseStateManager, metaclass=SingletonABCMeta):
     contract is the same.
     """
 
+    _as_caller_description: str = "the SkillManager, discovering assistant capabilities"
+
     # ------------------------------------------------------------------ #
     # Public interface                                                   #
     # ------------------------------------------------------------------ #

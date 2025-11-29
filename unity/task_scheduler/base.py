@@ -75,6 +75,10 @@ class BaseTaskScheduler(BaseStateManager, metaclass=SingletonABCMeta):
     It returns a steerable execution handle when starting such tasks.
     """
 
+    _as_caller_description: str = (
+        "the TaskScheduler, executing a scheduled task on behalf of the end user"
+    )
+
     # ------------------------------------------------------------------ #
     # Public interface                                                   #
     # ------------------------------------------------------------------ #

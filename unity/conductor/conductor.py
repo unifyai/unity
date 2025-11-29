@@ -79,10 +79,6 @@ class Conductor(BaseConductor):
     • `request()` → read-only + *all* active tools + all plan methods
     """
 
-    _as_caller_description: str = (
-        "the Conductor, which orchestrates work across managers on behalf of the end user"
-    )
-
     # ------------------------------------------------------------------ #
 
     def __init__(
