@@ -75,14 +75,22 @@ def _first_with_tool_calls(msgs: List[dict]) -> int:
 
 @unify.traced
 def _interjection_index(msgs: List[dict], snippet: str) -> int:
-    """Return index of the system-role interjection whose content includes snippet."""
-    return next(
-        i
-        for i, m in enumerate(msgs)
-        if m["role"] == "system"
-        and "user: **" in m.get("content", "")
-        and snippet in m["content"]
-    )
+    """Return index of a user-role interjection whose content includes snippet.
+
+    Interjections are now sent as simple user messages (not system messages)
+    for Claude/Gemini compatibility. This looks for user messages after the
+    first user message that contain the given snippet.
+    """
+    first_user_seen = False
+    for i, m in enumerate(msgs):
+        if m["role"] == "user":
+            if not first_user_seen:
+                first_user_seen = True
+                continue
+            # This is an interjection (user message after the first one)
+            if snippet in m.get("content", ""):
+                return i
+    raise StopIteration(f"No interjection found containing snippet: {snippet}")
 
 
 @unify.traced
@@ -160,9 +168,10 @@ async def test_interject_triggers_tool_and_result(model):
     idx_second_asst = msgs.index(assistant_tool_turns[1])
     assert idx_first_asst < idx_inter_B < idx_second_asst
 
+    # Interjections are now simple user messages (not system messages with wrapper content)
     inter_msg = msgs[idx_inter_B]
-    assert inter_msg["content"].startswith("The user *cannot* see")
-    assert "user: **" in inter_msg["content"] and "echo B" in inter_msg["content"]
+    assert inter_msg["role"] == "user"
+    assert "echo B" in inter_msg["content"]
 
 
 @pytest.mark.asyncio
@@ -313,17 +322,20 @@ async def test_patient_interjection_defers_turn(
     assistant_msgs = [m for m in client.messages if m.get("role") == "assistant"]
     assert len(assistant_msgs) >= 2
 
-    # Verify the system interjection message is present and appears between the two assistant turns
-    sys_indices = [
+    # Verify the user interjection message is present and appears between the two assistant turns
+    # Interjections are now user messages (not system messages) for Claude/Gemini compatibility
+    interjection_indices = [
         i
         for i, m in enumerate(client.messages)
-        if m.get("role") == "system"
+        if m.get("role") == "user"
         and "please consider this later" in (m.get("content") or "")
     ]
-    assert sys_indices, "Expected a system interjection message in the transcript"
+    assert (
+        interjection_indices
+    ), "Expected a user interjection message in the transcript"
     idx_first_asst = client.messages.index(assistant_msgs[0])
     idx_second_asst = client.messages.index(assistant_msgs[-1])
-    assert any(idx_first_asst < si < idx_second_asst for si in sys_indices)
+    assert any(idx_first_asst < si < idx_second_asst for si in interjection_indices)
 
     # Final answer should be from the second turn
     assert isinstance(final, str) and final.strip()
@@ -487,16 +499,17 @@ async def test_interjections_processed_successfully(model):
     assert isinstance(final, str) and final.strip()
 
     msgs = client.messages
-    # New behaviour: multiple interjections can be consolidated into the same
-    # system message block. Instead of requiring distinct message indices,
-    # assert that both snippets appear and that "B please" precedes "C please"
-    # within the combined interjection text.
-    inter_sys_msgs = [
-        m.get("content", "")
-        for m in msgs
-        if m.get("role") == "system" and "user: **" in (m.get("content", "") or "")
-    ]
-    combined = "\n".join(inter_sys_msgs)
+    # Interjections are now user messages (not system messages with wrapper content)
+    # Find all user messages after the first one (which is the original request)
+    first_user_seen = False
+    interjection_contents = []
+    for m in msgs:
+        if m.get("role") == "user":
+            if not first_user_seen:
+                first_user_seen = True
+                continue
+            interjection_contents.append(m.get("content", ""))
+    combined = "\n".join(interjection_contents)
     assert "B please" in combined and "C please" in combined
     assert combined.find("B please") < combined.find("C please")
 
@@ -594,9 +607,11 @@ async def test_interjection_stops_ongoing_llm(model):
     assert len(assistant_msgs) == 1
 
     roles = [m["role"] for m in client.messages]
-    assert roles.count("user") == 1
+    # Now we expect 2 user messages: original request + interjection
+    assert roles.count("user") == 2
+    # The interjection about dolphins should be a user message
     assert any(
-        m["role"] == "system" and "dolphins" in m.get("content", "")
+        m["role"] == "user" and "dolphins" in m.get("content", "")
         for m in client.messages
     )
 
@@ -718,10 +733,11 @@ async def test_immediate_interjection_has_reply(model) -> None:
 
     await handle.interject("finish")
 
-    # Wait until the interjection system message appears; then assert placeholder adjacency
+    # Wait until the interjection user message appears; then assert placeholder adjacency
+    # Interjections are now simple user messages (not system messages with wrapper)
     async def _saw_interjection_msg() -> bool:
         return any(
-            m.get("role") == "system" and "user: **finish**" in (m.get("content") or "")
+            m.get("role") == "user" and "finish" in (m.get("content") or "")
             for m in (client.messages or [])
         )
 

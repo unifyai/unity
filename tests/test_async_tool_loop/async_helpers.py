@@ -403,14 +403,16 @@ def first_tool_message_by_name(msgs: List[dict], name: str) -> dict:
 
 
 @unify.traced
-async def _wait_for_system_interjection_event(
+async def _wait_for_interjection_event(
     *,
     contains: str | None = None,
     timeout: float = 300.0,
 ):
-    """Await the next ToolLoop event whose message is a non-leading system interjection.
+    """Await the next ToolLoop event whose message is a user interjection.
 
-    We subscribe to the EventBus and trigger on the first matching event after registration.
+    Interjections are now sent as simple user messages (not system messages)
+    for Claude/Gemini compatibility. We subscribe to the EventBus and trigger
+    on the first matching user message event after registration.
     """
     from unity.events.event_bus import EVENT_BUS
 
@@ -418,7 +420,8 @@ async def _wait_for_system_interjection_event(
 
     # Build a safe filter expression evaluated against evt.model_dump() namespace
     # Payload shape published by LoopMessageDispatcher.to_event_bus: {"message": <dict>, ...}
-    base = "(payload['message'].get('role') == 'system')"
+    # Interjections are now user messages (not system messages)
+    base = "(payload['message'].get('role') == 'user')"
     if contains is not None:
         # substring match in content without relying on builtins
         sub = contains.replace("'", "\\'")
@@ -439,6 +442,10 @@ async def _wait_for_system_interjection_event(
     )
 
     await asyncio.wait_for(done.wait(), timeout=timeout)
+
+
+# Backwards compatibility alias
+_wait_for_system_interjection_event = _wait_for_interjection_event
 
 
 @unify.traced

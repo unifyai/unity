@@ -1096,7 +1096,8 @@ class AsyncToolLoopHandle(SteerableToolHandle):
             callid_to_tool_name=extracted.get("callid_to_tool_name", {}),
         )
         # Mirror pending interjection steering entries from steer_log which may not be in msgs yet.
-        # Represent them as system messages appended to the end with monotonically increasing indices.
+        # Represent them as user messages appended to the end with monotonically increasing indices.
+        # (Changed from system messages for Claude/Gemini compatibility.)
         try:
             steer_log = list(getattr(self, "_steer_log", []) or [])
         except Exception:
@@ -1127,7 +1128,7 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     continue
                 if content in existing_contents:
                     continue
-                interjections.append({"role": "system", "content": content})
+                interjections.append({"role": "user", "content": content})
                 interjections_indices.append(base_idx + appended)
                 existing_contents.add(content)
                 appended += 1
@@ -1591,13 +1592,17 @@ class AsyncToolLoopHandle(SteerableToolHandle):
                     combined.append((int(idx_val), tmsg))
             except Exception:
                 pass
-            # Interjections with indices
+            # Interjections with indices (supports both user and system roles for
+            # backwards compatibility - new format uses user, old format used system)
             try:
                 for idx_val, imsg in zip(
                     snap.interjection_positions or [],
                     snap.system_interjections or [],
                 ):
-                    if isinstance(imsg, dict) and imsg.get("role") == "system":
+                    if isinstance(imsg, dict) and imsg.get("role") in (
+                        "user",
+                        "system",
+                    ):
                         combined.append((int(idx_val), imsg))
             except Exception:
                 pass

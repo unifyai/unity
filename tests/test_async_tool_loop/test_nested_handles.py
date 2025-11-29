@@ -343,19 +343,19 @@ async def test_interject_nested_handle(model, monkeypatch):
         _started_ok
     ), f"Expected nested-start placeholder or legacy string, got: {_content!r}"
 
-    # c) Find the user message "switch to dogs"
+    # c) Find the user interjection message "switch to dogs"
+    # Interjections are now simple user messages (not system messages with wrapper)
     interjection_msg = next(
         (
             m
             for m in msgs
-            if m["role"] == "system"
-            and "user: **switch to dogs**" in (m.get("content") or "")
+            if m["role"] == "user" and "switch to dogs" in (m.get("content") or "")
         ),
         None,
     )
     assert (
         interjection_msg is not None
-    ), "Interjection 'switch to dogs' system message not found"
+    ), "Interjection 'switch to dogs' user message not found"
 
     # d) Find the assistant message that calls the interject helper
     interject_call_msg = next(

@@ -199,17 +199,40 @@ def extract_assistant_and_tool_steps(
 
 def extract_interjections(msgs: List[dict]) -> Tuple[List[dict], List[int]]:
     """
-    Return (interjections, interjections_indices) for non-leading system
-    messages.
+    Return (interjections, interjections_indices) for user interjection
+    messages (user messages that appear after the first user message).
 
-    Invariant: only system messages at positions > 0 are treated as
-    interjections; the leading system prompt is excluded.
+    Invariant: The first user message is the original request; all subsequent
+    user messages are treated as interjections. This design supports both
+    Claude and Gemini models which do not allow in-chat system messages.
+
+    For backwards compatibility, also captures any non-leading system messages
+    that may exist from older transcripts (system messages at positions > 0
+    that are not marked as context headers).
     """
     interjections: List[dict] = []
     interjections_indices: List[int] = []
+    first_user_seen = False
+
     for i, m in enumerate(msgs or []):
         try:
-            if m.get("role") == "system" and i > 0:
+            role = m.get("role")
+
+            # New format: user messages after the first user message are interjections
+            if role == "user":
+                if first_user_seen:
+                    interjections.append(m)
+                    interjections_indices.append(i)
+                else:
+                    first_user_seen = True
+                continue
+
+            # Backwards compatibility: non-leading system messages without _ctx_header
+            # are treated as interjections (from older transcripts)
+            if role == "system" and i > 0:
+                # Skip context header system messages
+                if m.get("_ctx_header"):
+                    continue
                 interjections.append(m)
                 interjections_indices.append(i)
         except Exception:
