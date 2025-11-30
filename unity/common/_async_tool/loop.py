@@ -538,14 +538,18 @@ async def async_tool_loop_inner(
 
     # ── User visibility guidance ──────────────────────────────────────────────
     # Explain to the model what the end-user can and cannot see. This guidance
-    # is added as a new system message (not mutating the original) so that the
-    # model understands:
+    # is injected as a system message ONLY when the first interjection arrives,
+    # not at the start of the loop. This keeps the LLM focused on the task at
+    # hand until an interjection actually occurs.
+    #
+    # The guidance helps the model understand:
     # 1. The user does NOT see any intermediate tool calls or tool results
     # 2. The user only sees the initial request and any interjection messages
     # 3. The user sees the final plain-text response from the assistant
-    # This is important because interjections are now sent as simple user
-    # messages (not system messages) so the model needs to understand context.
-    # NOTE: This is appended later via _msg_dispatcher.append_msgs().
+    #
+    # For Claude/Gemini: appended to the global system message via LiteLLM.
+    # For OpenAI: inserted positionally right before the first interjection.
+    # -------------------------------------------------------------------------
     _user_visibility_guidance = (
         "## User Visibility Context\n"
         "IMPORTANT: The end-user who initiated this conversation can ONLY see:\n"
@@ -562,6 +566,7 @@ async def async_tool_loop_inner(
         "user interjections in your final response. Later interjections should override "
         "earlier ones if there are any conflicting comments or requests."
     )
+    _visibility_guidance_injected = False
 
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
@@ -639,8 +644,8 @@ async def async_tool_loop_inner(
 
     runtime_context_parts: list[str] = []
 
-    # Add user visibility guidance (always included)
-    runtime_context_parts.append(_user_visibility_guidance)
+    # NOTE: User visibility guidance is NOT added here - it's injected lazily
+    # on the first interjection to keep the LLM focused on the task at hand.
 
     # Add response format hint if structured output is expected
     if _response_format_hint:
@@ -2120,8 +2125,16 @@ async def async_tool_loop_inner(
                 except Exception:
                     pass
 
-                # Send as a simple user message - the model already knows from the
-                # system message that the user cannot see intermediate tool results
+                # On the FIRST interjection, inject user visibility guidance as a
+                # system message so the model understands why a user message is
+                # appearing mid-tool-execution and what the user can/cannot see.
+                if not _visibility_guidance_injected:
+                    await _msg_dispatcher.append_msgs(
+                        [{"role": "system", "content": _user_visibility_guidance}],
+                    )
+                    _visibility_guidance_injected = True
+
+                # Send interjection as a simple user message
                 interjection_msg = {"role": "user", "content": _msg_text}
                 await _msg_dispatcher.append_msgs([interjection_msg])
                 last_valid_user_history = history_lines + [f"user: {_msg_text}"]
