@@ -3079,6 +3079,18 @@ async def async_tool_loop_inner(
                                     await _inject_live_images_overview(
                                         "clarify_helper_images",
                                     )
+
+                            # Update the original clarification_request placeholder to
+                            # reflect that the answer has been delivered. This ensures
+                            # Claude's transcript transformation sees a coherent state
+                            # even after the clarify assistant turn is collapsed.
+                            orig_placeholder = tools_data.info[tgt_task].tool_reply_msg
+                            if orig_placeholder is not None:
+                                orig_placeholder["content"] = (
+                                    f"Clarification answered: {ans!r}\n"
+                                    "(Waiting for tool to complete...)"
+                                )
+
                             # Always publish a tool reply acknowledging the clarify helper
                             tool_reply_msg = create_tool_call_message(
                                 name=name,
