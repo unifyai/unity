@@ -434,8 +434,8 @@ async def test_no_tools_without_explicit_system_message(model) -> None:
     """
     No tools, no explicit system message provided by the caller.
 
-    The loop still injects a user-visibility guidance system message,
-    giving the flow: system → user → assistant
+    User visibility guidance is only injected lazily on first interjection,
+    so without interjections the flow is simply: user → assistant
     """
     client = new_llm_client(model=model)
 
@@ -448,7 +448,6 @@ async def test_no_tools_without_explicit_system_message(model) -> None:
     assert answer.strip(), "Assistant reply should not be empty."
     assert count_tool_messages(client) == 0
     assert [m["role"] for m in client.messages] == [
-        "system",
         "user",
         "assistant",
     ]
