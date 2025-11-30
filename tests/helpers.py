@@ -39,9 +39,9 @@ def _parse_cache_value(v: Any) -> bool | str:
         return v
     if isinstance(v, str):
         lower = v.lower()
-        if lower == "true":
+        if lower in ("true", "yes", "1"):
             return True
-        if lower == "false":
+        if lower in ("false", "no", "0"):
             return False
         return v
     return bool(v)
