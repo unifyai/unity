@@ -10,6 +10,9 @@ from unity.blacklist_manager.blacklist_manager import BlackListManager
 from unity.transcript_manager.types.medium import Medium
 from tests.helpers import _handle_project
 
+# All tests in this file exercise end-to-end LLM reasoning for contact mutations
+pytestmark = pytest.mark.eval
+
 
 def _programmatic_contact_check(
     contact_manager: ContactManager,
