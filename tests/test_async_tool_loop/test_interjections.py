@@ -13,26 +13,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any, List
 
 import pytest
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_tool_result,
     _wait_for_condition,
     _wait_for_any_assistant_tool_call,
 )
-
-# --------------------------------------------------------------------------- #
-#  GLOBALS                                                                    #
-# --------------------------------------------------------------------------- #
-
-MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
 # --------------------------------------------------------------------------- #
@@ -60,12 +53,12 @@ async def fast() -> str:
 #  Utility                                                                    #
 # ---------------------------------------------------------------------------#
 @unify.traced
-def new_client(model: str = DEFAULT_MODEL) -> unify.AsyncUnify:
+def new_client() -> unify.AsyncUnify:
     """
     Return a fresh client with its own conversation state so tests do not
     interfere with one another.
     """
-    return new_llm_client(model=model)
+    return new_llm_client()
 
 
 @unify.traced

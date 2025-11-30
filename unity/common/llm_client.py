@@ -10,6 +10,11 @@ import unify
 DEFAULT_MODEL = "gpt-5.1@openai"
 
 
+def get_model() -> str:
+    """Return the LLM model to use, reading from UNIFY_MODEL env var if set."""
+    return os.environ.get("UNIFY_MODEL", DEFAULT_MODEL)
+
+
 def get_cache_setting(default: bool | str = True) -> bool | str:
     """
     Parse the UNIFY_CACHE environment variable.
@@ -32,7 +37,7 @@ def get_cache_setting(default: bool | str = True) -> bool | str:
 
 
 def new_llm_client(
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     *,
     async_client: bool = True,
     stateful: bool = False,
@@ -41,10 +46,14 @@ def new_llm_client(
     """
     Create a configured Unify client.
 
+    If model is not specified, reads from UNIFY_MODEL env var (default: gpt-5.1@openai).
     Defaults to high reasoning_effort and priority service_tier where applicable (otherwise dropped).
     Returns an AsyncUnify client by default, or a synchronous Unify client when
     async_client=False.
     """
+    if model is None:
+        model = get_model()
+
     config = {
         "cache": get_cache_setting(),
         "reasoning_effort": "high",

@@ -1,4 +1,3 @@
-import os
 import asyncio
 import pytest
 import unify
@@ -6,7 +5,7 @@ from typing import Dict, Callable
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.tool_spec import ToolSpec
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 
 
 # small helper: pre-seed an assistant tool_call so preflight backfill schedules it immediately
@@ -313,10 +312,8 @@ async def test_max_steps_graceful_termination(model):
 # 5. tool_policy behaviour
 # ─────────────────────────────────────────────────────────────────────────────
 
-MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
-
-def new_client(model: str = DEFAULT_MODEL) -> unify.AsyncUnify:
+def new_client(model: str | None = None) -> unify.AsyncUnify:
     """
     Return a fresh client *with its own conversation state* so that tests do
     not interfere with one another.

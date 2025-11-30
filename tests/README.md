@@ -336,6 +336,7 @@ These are defined in `tests/helpers.py:TestingSettings`. The script passes them 
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
+| `UNIFY_MODEL` | str | `gpt-5.1@openai` | LLM model to use for all test runs |
 | `UNIFY_CACHE` | bool/str | `true` | Enable/disable LLM response caching |
 | `UNIFY_DELETE_CONTEXT_ON_EXIT` | bool | `false` | Delete test context after each test |
 | `UNIFY_OVERWRITE_PROJECT` | bool | `false` | Overwrite project on activation |
