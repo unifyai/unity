@@ -3757,8 +3757,14 @@ class TaskScheduler(BaseTaskScheduler):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require search_tasks on the first step; auto thereafter."""
-        if step_index < 1 and "search_tasks" in current_tools:
+        """Require search_tasks on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
+            and step_index < 1
+            and "search_tasks" in current_tools
+        ):
             return (
                 "required",
                 {"search_tasks": current_tools["search_tasks"]},
@@ -3780,8 +3786,10 @@ class TaskScheduler(BaseTaskScheduler):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_tasks/ask_image/attach_image_raw; auto thereafter."""
-        if step_index < 1:
+        """On step 0, require one of search_tasks/ask_image/attach_image_raw (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
             allowed_first_turn: Dict[str, Any] = {}
             for name in ("search_tasks", "ask_image", "attach_image_raw"):
                 if name in current_tools:

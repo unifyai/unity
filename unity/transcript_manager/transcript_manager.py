@@ -1210,12 +1210,14 @@ class TranscriptManager(BaseTranscriptManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_messages/ask_image/attach_image_raw; auto thereafter.
+        """On step 0, require one of search_messages/ask_image/attach_image_raw (if enabled); auto thereafter.
 
         Encourages the model to either begin with a semantic query over transcripts
         or explicitly use the image helpers when visual context is supplied.
         """
-        if step_index < 1:
+        from unity.settings import SETTINGS
+
+        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
             allowed_first_turn: Dict[str, Any] = {}
             for name in ("search_messages", "ask_image", "attach_image_raw"):
                 if name in current_tools:

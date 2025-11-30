@@ -1179,8 +1179,14 @@ class ContactManager(BaseContactManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require search_contacts on the first step; auto thereafter."""
-        if step_index < 1 and "search_contacts" in current_tools:
+        """Require search_contacts on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
+            and step_index < 1
+            and "search_contacts" in current_tools
+        ):
             return (
                 "required",
                 {"search_contacts": current_tools["search_contacts"]},
@@ -1202,13 +1208,15 @@ class ContactManager(BaseContactManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """On step 0, require one of search_contacts/ask_image/attach_image_raw; auto thereafter.
+        """On step 0, require one of search_contacts/ask_image/attach_image_raw (if enabled); auto thereafter.
 
         This ensures the model begins by either running a semantic query, asking
         a provided image a question, or attaching image context; subsequent steps
         can proceed freely.
         """
-        if step_index < 1:
+        from unity.settings import SETTINGS
+
+        if SETTINGS.FIRST_ASK_TOOL_IS_SEARCH and step_index < 1:
             allowed_first_turn: Dict[str, Any] = {}
             for name in ("search_contacts", "ask_image", "attach_image_raw"):
                 if name in current_tools:
