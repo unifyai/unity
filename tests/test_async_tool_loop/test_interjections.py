@@ -103,6 +103,43 @@ def _are_contiguous(indices: List[int]) -> bool:
     return sorted(indices) == list(range(min(indices), max(indices) + 1))
 
 
+def _is_internal_bookkeeping(msg: dict) -> bool:
+    """Identify internal bookkeeping system messages that should be ignored for ordering checks.
+
+    These are system messages injected by the async tool loop for internal purposes
+    (e.g., visibility guidance, runtime context, semantic cache hints) that don't
+    represent user-visible message ordering.
+    """
+    if msg.get("role") != "system":
+        return False
+    # Check for known internal bookkeeping markers
+    return any(
+        msg.get(marker)
+        for marker in (
+            "_visibility_guidance",
+            "_runtime_context",
+            "_semantic_cache_hint",
+            "_ctx_header",
+        )
+    )
+
+
+def _effectively_adjacent(msgs: List[dict], idx1: int, idx2: int) -> bool:
+    """Check if idx2 immediately follows idx1 when ignoring internal bookkeeping messages.
+
+    Returns True if there are no non-bookkeeping messages between idx1 and idx2.
+    This is useful for verifying message ordering while ignoring internal system
+    messages that don't affect the semantic order of tool results and interjections.
+    """
+    if idx2 <= idx1:
+        return False
+    # Check that all messages between idx1 and idx2 are internal bookkeeping
+    for i in range(idx1 + 1, idx2):
+        if not _is_internal_bookkeeping(msgs[i]):
+            return False
+    return True
+
+
 @unify.traced
 def _assistant_tool_turns(msgs: List[dict[str, Any]]):
     """Yield assistant turns that contain tool_calls."""
@@ -545,7 +582,10 @@ async def test_tool_result_precedes_interjection(model):
     i_tool = _tool_indices(msgs)[0]
     i_user = _interjection_index(msgs, "thanks!")
 
-    assert (i_asst + 1 == i_tool) and (i_tool + 1 == i_user)
+    # Tool result should immediately follow assistant, interjection should
+    # effectively follow tool result (ignoring internal bookkeeping messages)
+    assert i_asst + 1 == i_tool
+    assert _effectively_adjacent(msgs, i_tool, i_user)
     assert len(msgs[i_asst]["tool_calls"]) == 1
 
 
@@ -581,9 +621,11 @@ async def test_parallel_results_shift_interjection(model):
     tool_idxs = _tool_indices(msgs)[:2]
     i_user = _interjection_index(msgs, "cheers!")
 
+    # Tool results should be contiguous and immediately follow assistant,
+    # interjection should effectively follow last tool result
     assert _are_contiguous(tool_idxs)
     assert tool_idxs[0] == i_asst + 1
-    assert i_user == max(tool_idxs) + 1
+    assert _effectively_adjacent(msgs, max(tool_idxs), i_user)
     assert len(msgs[i_asst]["tool_calls"]) >= 2
 
 

@@ -2130,7 +2130,13 @@ async def async_tool_loop_inner(
                 # appearing mid-tool-execution and what the user can/cannot see.
                 if not _visibility_guidance_injected:
                     await _msg_dispatcher.append_msgs(
-                        [{"role": "system", "content": _user_visibility_guidance}],
+                        [
+                            {
+                                "role": "system",
+                                "_visibility_guidance": True,
+                                "content": _user_visibility_guidance,
+                            },
+                        ],
                     )
                     _visibility_guidance_injected = True
 
