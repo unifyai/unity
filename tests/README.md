@@ -47,7 +47,7 @@ This means:
 - **Eval tests** *also* become deterministic after the first run—they replay the same LLM "thinking" that produced the original passing result
 - Both test types effectively verify that *symbolic logic has not regressed* once the cache is populated
 - Tests run fast on CI (milliseconds vs seconds/minutes for real LLM calls)
-- To re-evaluate LLM behavior, delete the relevant `.cache.ndjson`, set `UNIFY_CACHE="false"`, or use `--no-cache` with the parallel runner
+- To re-evaluate LLM behavior, delete the relevant `.cache.ndjson`, set `UNIFY_CACHE="false"`, or use `--env UNIFY_CACHE=false` with the parallel runner
 
 ### Tagging Tests as Eval
 
@@ -153,22 +153,15 @@ source ~/unity/.venv/bin/activate
 pytest <target>
 ```
 
-### Random Projects Mode (Legacy)
+### Random Projects Mode
 
-For backward compatibility or isolation purposes, you can use the `--random-projects` flag to give each tmux session its own isolated project:
-
-```bash
-./.parallel_run.sh --random-projects tests
-```
-
-In this mode, each session gets a unique project like `UnityTests_aB3xY9zQ` which is deleted on exit:
+For isolation purposes, you can use `--env` to give each tmux session its own isolated project:
 
 ```bash
-export UNIFY_TESTS_RAND_PROJ=True
-export UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True
-source ~/unity/.venv/bin/activate
-pytest <target>
+./.parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
 ```
+
+In this mode, each session gets a unique project like `UnityTests_aB3xY9zQ` which is deleted on exit. The script auto-detects when `UNIFY_TESTS_RAND_PROJ=true` is set and skips the shared project preparation.
 
 ### Live Status and Auto-Close
 
@@ -243,8 +236,12 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Wait for completion and log to files (CI / Agent mode)
 ./.parallel_run.sh --wait tests/unit
 
-# Use isolated random projects (legacy mode)
-./.parallel_run.sh --random-projects tests
+# Set environment variables (see "Environment Variable Overrides" below)
+./.parallel_run.sh --env UNIFY_CACHE=false tests
+./.parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+
+# Use isolated random projects
+./.parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
 
 # Run only eval tests (end-to-end LLM reasoning tests)
 ./.parallel_run.sh --eval-only tests
@@ -252,15 +249,12 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Run only symbolic tests (infrastructure/deterministic tests)
 ./.parallel_run.sh --symbolic-only tests
 
-# Disable LLM response caching (re-evaluate LLM behavior)
-./.parallel_run.sh --no-cache tests
-
 # Repeat tests for statistical sampling (see below)
-./.parallel_run.sh --no-cache --repeat 10 --eval-only tests/test_contact_manager
+./.parallel_run.sh --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager
 
 # Combine with other options
 ./.parallel_run.sh --eval-only --wait tests/test_contact_manager
-./.parallel_run.sh --no-cache --eval-only tests/test_contact_manager
+./.parallel_run.sh --env UNIFY_CACHE=false --eval-only tests/test_contact_manager
 ```
 
 How it interprets arguments:
@@ -316,6 +310,46 @@ Notes:
 - `*` means "anything before/after" in the filename. You can combine it with other characters (e.g., `test_*_tool_docstring*.py`).
 - When using `-m/--match`, the default behavior still applies: one tmux session per matching test file.
 
+### Environment Variable Overrides (`--env`)
+
+The `-e/--env KEY=VALUE` flag sets environment variables for all pytest sessions. This is the primary way to configure test behavior—any environment variable recognized by `TestingSettings` (see `tests/helpers.py`) can be overridden.
+
+**Usage:**
+
+```bash
+# Single override
+./.parallel_run.sh --env UNIFY_CACHE=false tests
+
+# Multiple overrides (flag can be repeated)
+./.parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests
+
+# Disable caching for fresh LLM calls
+./.parallel_run.sh --env UNIFY_CACHE=false tests
+
+# Use isolated random projects (each session gets its own project)
+./.parallel_run.sh --env UNIFY_TESTS_RAND_PROJ=true --env UNIFY_TESTS_DELETE_PROJ_ON_EXIT=true tests
+```
+
+**Available Variables:**
+
+These are defined in `tests/helpers.py:TestingSettings`. The script passes them through without validation—pydantic validates at runtime.
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `UNIFY_CACHE` | bool/str | `true` | Enable/disable LLM response caching |
+| `UNIFY_DELETE_CONTEXT_ON_EXIT` | bool | `false` | Delete test context after each test |
+| `UNIFY_OVERWRITE_PROJECT` | bool | `false` | Overwrite project on activation |
+| `UNIFY_REGISTER_SUMMARY_CALLBACKS` | bool | `false` | Register summary callbacks |
+| `UNIFY_REGISTER_UPDATE_CALLBACKS` | bool | `false` | Register update callbacks |
+| `UNIFY_TESTS_RAND_PROJ` | bool | `false` | Use random project names (isolated per session) |
+| `UNIFY_TESTS_DELETE_PROJ_ON_EXIT` | bool | `false` | Delete random project when session exits |
+| `UNIFY_CACHE_BENCHMARK` | bool | `false` | Enable cache hit/miss benchmarking |
+| `UNIFY_PRETEST_CONTEXT_CREATE` | bool | `false` | Pre-create contexts before tests |
+| `UNIFY_TEST_TAGS` | str | `""` | Comma-separated tags for duration logging |
+| `UNIFY_SKIP_SESSION_SETUP` | bool | `false` | Skip project/context creation (pre-done) |
+
+**Design note:** The `--env` approach is intentionally generic. Any new variable added to `TestingSettings` is immediately available via `--env` without modifying the shell script. The script simply passes through whatever you specify.
+
 ### Command-Line Options
 
 | Option | Description |
@@ -323,21 +357,20 @@ Notes:
 | `-w`, `--wait` | Block until all tests complete; exit 0 on success, 1 on any failure |
 | `-t`, `--per-test` | Create one session per test function instead of per file |
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
-| `--random-projects` | Use isolated random project names (legacy mode) |
+| `-e KEY=VALUE`, `--env KEY=VALUE` | Set environment variable for all sessions (repeatable) |
 | `--eval-only` | Run only tests marked with `pytest.mark.eval` (end-to-end LLM tests) |
 | `--symbolic-only` | Run only tests NOT marked with `pytest.mark.eval` (infrastructure tests) |
-| `--no-cache` | Disable LLM response caching (`UNIFY_CACHE=false`); forces fresh LLM calls |
 | `--repeat N` | Run each test N times; useful for statistical sampling (see below) |
 
 ### Statistical Sampling with `--repeat`
 
-The `--repeat N` flag runs each test target N times, creating N separate tmux sessions per target. While this works with any test, **the primary use case is for eval tests with `--no-cache`**.
+The `--repeat N` flag runs each test target N times, creating N separate tmux sessions per target. While this works with any test, **the primary use case is for eval tests with `UNIFY_CACHE=false`**.
 
 **Why this matters:**
 
 - **Symbolic tests** are deterministic—running them multiple times yields identical results (especially with caching enabled). There's no statistical value.
 - **Eval tests with caching** are also deterministic after the first run—the cached LLM responses are replayed exactly.
-- **Eval tests with `--no-cache`** make fresh LLM calls each run. The LLM may reason differently, take more/fewer steps, or even fail occasionally. Each run is an independent sample.
+- **Eval tests with `UNIFY_CACHE=false`** make fresh LLM calls each run. The LLM may reason differently, take more/fewer steps, or even fail occasionally. Each run is an independent sample.
 
 **Use cases for repeated eval runs:**
 
@@ -351,10 +384,10 @@ The `--repeat N` flag runs each test target N times, creating N separate tmux se
 
 ```bash
 # Run a specific eval test 10 times without caching
-./.parallel_run.sh --no-cache --repeat 10 --eval-only tests/test_contact_manager/test_ask.py
+./.parallel_run.sh --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager/test_ask.py
 
 # Run all eval tests 5 times each, wait for completion
-./.parallel_run.sh --no-cache --repeat 5 --eval-only --wait tests
+./.parallel_run.sh --env UNIFY_CACHE=false --repeat 5 --eval-only --wait tests
 ```
 
 Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to avoid name collisions) and its own log file in `.pytest_logs/`. After completion, you can analyze the logs to compute statistics.
@@ -364,7 +397,7 @@ Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to a
 - **Environment**:
   - If `../.env` exists relative to the `tests` directory (i.e., `~/unity/.env`), it will be sourced automatically so you can define `UNIFY_KEY`, `UNIFY_BASE_URL`, or other variables once.
   - By default, exports `UNIFY_SKIP_SESSION_SETUP=True` for shared project mode.
-  - With `--random-projects`, exports `UNIFY_TESTS_RAND_PROJ=True` and `UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True`.
+  - Use `--env` to override any `TestingSettings` variable (see table above).
 - **Virtualenv**: Assumes `~/unity/.venv/bin/activate`.
 - **Excludes**: Skips directories: `.git`, `.hg`, `.svn`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `__pycache__`, `.idea`, `.vscode`.
   - You can edit the `EXCLUDE_DIRS` array in the script to add/remove entries.
