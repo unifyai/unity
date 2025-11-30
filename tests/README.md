@@ -312,7 +312,7 @@ Notes:
 
 ### Environment Variable Overrides (`--env`)
 
-The `-e/--env KEY=VALUE` flag sets environment variables for all pytest sessions. This is the primary way to configure test behavior—any environment variable recognized by `TestingSettings` (see `tests/helpers.py`) can be overridden.
+The `-e/--env KEY=VALUE` flag sets environment variables for all pytest sessions. This is the primary way to configure test behavior—any environment variable recognized by `TestingSettings` (see `tests/settings.py`) can be overridden.
 
 **Usage:**
 
@@ -334,7 +334,7 @@ The `-e/--env KEY=VALUE` flag sets environment variables for all pytest sessions
 
 Settings are organized in two classes with inheritance:
 - `ProductionSettings` (`unity/settings.py`) - used in deployed system AND tests
-- `TestingSettings` (`tests/helpers.py`) - inherits production + adds test-only settings
+- `TestingSettings` (`tests/settings.py`) - inherits production + adds test-only settings
 
 The `--env` approach is intentionally generic. Any variable from either class is available via `--env` without modifying the shell script.
 

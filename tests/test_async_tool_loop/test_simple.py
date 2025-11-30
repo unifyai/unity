@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from tests.settings import SETTINGS
 from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
