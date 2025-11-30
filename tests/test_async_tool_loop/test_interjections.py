@@ -49,18 +49,6 @@ async def fast() -> str:
     return "fast"
 
 
-# ---------------------------------------------------------------------------#
-#  Utility                                                                    #
-# ---------------------------------------------------------------------------#
-@unify.traced
-def new_client() -> unify.AsyncUnify:
-    """
-    Return a fresh client with its own conversation state so tests do not
-    interfere with one another.
-    """
-    return new_llm_client()
-
-
 @unify.traced
 def _first_with_tool_calls(msgs: List[dict]) -> int:
     return next(i for i, m in enumerate(msgs) if m.get("tool_calls"))
@@ -149,7 +137,7 @@ async def test_interject_triggers_tool_and_result(model):
     Start with echo("A"), then interject to also echo("B"). Expect two tool
     calls and a final plain-text result.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         message=("Use the `echo` tool to output the text 'A'."),
@@ -208,7 +196,7 @@ async def test_interject_triggers_tool_and_result(model):
 @_handle_project
 async def test_stop_stops_gracefully(model):
     """handle.stop() cancels the loop and result() returns a standard notice string."""
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         "Echo something then say 'ok'.",
@@ -229,7 +217,7 @@ async def test_backfills_helper_call_reply(model) -> None:
     New behaviour: helper `wait` is pruned (no backfilled tool reply, no chat clutter).
     The pre-seeded assistant helper turn should be removed, and no tool reply should appear.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     helper_call_id = "call_TEST_HELPER"
     helper_name = "wait"
@@ -295,7 +283,7 @@ async def test_patient_interjection_defers_turn(
     is already thinking must trigger exactly one extra LLM turn after the current one
     completes, so the interjection is processed (without cancelling the in-flight LLM).
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     from unity.common._async_tool import loop as _loop
 
@@ -382,7 +370,7 @@ async def test_patient_interjection_preserves_llm(model, monkeypatch) -> None:
     When the LLM is currently thinking, a patient interjection
     (trigger_immediate_llm_turn=False) must NOT cancel the in-flight LLM call.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     # Spy/patch the inner generation wrapper to gate completion and record cancellation
     from unity.common._async_tool import loop as _loop
@@ -442,7 +430,7 @@ async def test_immediate_interjection_cancels_llm(model, monkeypatch) -> None:
     When the LLM is currently thinking, an immediate interjection
     (default behaviour) MUST cancel the in-flight LLM call.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     from unity.common._async_tool import loop as _loop
 
@@ -500,7 +488,7 @@ async def test_interjections_processed_successfully(model):
     """
     Fire two interjections (B, then C) and validate FIFO order and sufficient tool work.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     client.set_cache(False)
     handle = start_async_tool_loop(
         client,
@@ -554,7 +542,7 @@ async def test_tool_result_precedes_interjection(model):
     Run `slow` once then reply "ACK". Interject while running.
     Expect: assistant → tool result → interjection.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         (
@@ -589,7 +577,7 @@ async def test_parallel_results_shift_interjection(model):
     Run both `fast` and `slow`, interject while they are running.
     Expect both tool results right after the assistant turn, interjection follows.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     client.set_cache(False)
     handle = start_async_tool_loop(
         client,
@@ -626,7 +614,7 @@ async def test_parallel_results_shift_interjection(model):
 @_handle_project
 async def test_interjection_stops_ongoing_llm(model):
     """The first LLM generation is stopped once the user interjects."""
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     client.set_cache(False)
     handle = start_async_tool_loop(
         client,
@@ -657,7 +645,7 @@ async def test_interjection_stops_ongoing_llm(model):
 @pytest.mark.asyncio
 @_handle_project
 async def test_interjectable_tool_roundtrip(model) -> None:
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     exec_log: List[str] = []
 
@@ -729,7 +717,7 @@ async def test_immediate_interjection_has_reply(model) -> None:
     When an interjection arrives immediately after an assistant tool_calls turn,
     a tool placeholder must already be present to maintain API ordering.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     import time as _time
 
@@ -793,7 +781,7 @@ async def test_backfills_prior_assistant_reply(model) -> None:
     Pre-seed transcript with assistant tool_call but no tool reply.
     The loop must backfill a tool message directly after that assistant turn.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     def slow_tool(x: int) -> str:
         return f"ok:{x}"

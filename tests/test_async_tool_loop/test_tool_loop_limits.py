@@ -313,14 +313,6 @@ async def test_max_steps_graceful_termination(model):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def new_client(model: str | None = None) -> unify.AsyncUnify:
-    """
-    Return a fresh client *with its own conversation state* so that tests do
-    not interfere with one another.
-    """
-    return new_llm_client(model=model)
-
-
 @pytest.mark.asyncio
 async def test_default_policy_returns_immediately(model):
     """With ``tool_policy=None`` the loop should accept the LLM's first
@@ -329,7 +321,7 @@ async def test_default_policy_returns_immediately(model):
     async def noop_tool():  # pragma: no cover – should never be called
         raise RuntimeError("tool should not have been invoked")
 
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         message="You are part of a test. Do *not* call any tools, just return to the user immediately",
@@ -351,7 +343,7 @@ async def test_policy_forces_single_tool_invocation(model):
         flag["called"] = True
         return "ok"
 
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         message="You are part of a test. Do *not* call any tools, just return to the user immediately",
@@ -391,7 +383,7 @@ async def test_policy_shows_then_hides_tool(model):
         # Reveal all tools afterwards (no *required* flag).
         return "auto", {}
 
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         "You are part of a test. Continue calling `observed_tool` until the tool option disappears, up to a *maximum* of two *consecutive* tool calls.",
@@ -419,7 +411,7 @@ async def test_policy_two_required_then_auto(model):
     def first_two_required(step: int, tools: Dict[str, Callable]):
         return ("required" if step < 2 else "auto", tools)
 
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     handle = start_async_tool_loop(
         client,
         "You are part of a test. You will have no other option but to call the 'counting_tool' a certain number of times. "
@@ -449,7 +441,7 @@ async def test_max_parallel_tool_calls(model):
     short.__name__ = "short"
     short.__qualname__ = "short"
 
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     prompt = (
         "You are part of a test. In a single assistant turn, call the tool `short(i: int)` "
