@@ -47,7 +47,7 @@ This means:
 - **Eval tests** *also* become deterministic after the first run—they replay the same LLM "thinking" that produced the original passing result
 - Both test types effectively verify that *symbolic logic has not regressed* once the cache is populated
 - Tests run fast on CI (milliseconds vs seconds/minutes for real LLM calls)
-- To re-evaluate LLM behavior, delete the relevant `.cache.ndjson` or set `UNIFY_CACHE="false"`
+- To re-evaluate LLM behavior, delete the relevant `.cache.ndjson`, set `UNIFY_CACHE="false"`, or use `--no-cache` with the parallel runner
 
 ### Tagging Tests as Eval
 
@@ -252,8 +252,12 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Run only symbolic tests (infrastructure/deterministic tests)
 ./.parallel_run.sh --symbolic-only tests
 
+# Disable LLM response caching (re-evaluate LLM behavior)
+./.parallel_run.sh --no-cache tests
+
 # Combine with other options
 ./.parallel_run.sh --eval-only --wait tests/test_contact_manager
+./.parallel_run.sh --no-cache --eval-only tests/test_contact_manager
 ```
 
 How it interprets arguments:
@@ -319,6 +323,7 @@ Notes:
 | `--random-projects` | Use isolated random project names (legacy mode) |
 | `--eval-only` | Run only tests marked with `pytest.mark.eval` (end-to-end LLM tests) |
 | `--symbolic-only` | Run only tests NOT marked with `pytest.mark.eval` (infrastructure tests) |
+| `--no-cache` | Disable LLM response caching (`UNIFY_CACHE=false`); forces fresh LLM calls |
 
 ### Defaults & Conventions
 

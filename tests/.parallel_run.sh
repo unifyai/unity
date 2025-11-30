@@ -34,6 +34,10 @@ RANDOM_PROJECTS=0
 EVAL_ONLY=0
 SYMBOLIC_ONLY=0
 
+# Cache control
+# With --no-cache: disable LLM response caching (UNIFY_CACHE=false)
+NO_CACHE=0
+
 # Resolve repo root (parent of this script's directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -69,6 +73,10 @@ while (( "$#" )); do
       ;;
     --symbolic-only)
       SYMBOLIC_ONLY=1
+      shift
+      ;;
+    --no-cache)
+      NO_CACHE=1
       shift
       ;;
     *)
@@ -130,6 +138,10 @@ run_cmd() {
   else
     # Shared project mode: skip session setup (already done by prepare script)
     env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
+  fi
+  # Add cache control if --no-cache was specified
+  if (( NO_CACHE )); then
+    env_exports="$env_exports UNIFY_CACHE=false"
   fi
   # Build pytest command with optional marker filter
   local pytest_cmd
@@ -297,6 +309,10 @@ collect_nodes_for_target() {
   else
     env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
   fi
+  # Add cache control if --no-cache was specified
+  if (( NO_CACHE )); then
+    env_exports="$env_exports UNIFY_CACHE=false"
+  fi
   # Build collection command with optional marker filter
   if [[ -n "$marker_arg" ]]; then
     cmd=$(printf '%s; source ~/unity/.venv/bin/activate && pytest --collect-only -q %s %q' "$env_exports" "$marker_arg" "$target")
@@ -430,6 +446,7 @@ echo "  • Per-test (everything here):            ./.parallel_run.sh -t"
 echo "  • Use isolated random projects:          ./.parallel_run.sh --random-projects tests"
 echo "  • Run only eval tests:                   ./.parallel_run.sh --eval-only tests"
 echo "  • Run only symbolic tests:               ./.parallel_run.sh --symbolic-only tests"
+echo "  • Disable LLM caching:                   ./.parallel_run.sh --no-cache tests"
 echo
 echo "Observe:"
 echo "  • Watch sessions: watch -n 0.5 'tmux ls'"
