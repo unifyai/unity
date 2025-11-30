@@ -522,28 +522,32 @@ async def async_tool_loop_inner(
     # If structured output is expected, inform the model up-front so it can
     # plan its reasoning with the final JSON shape in mind.  Enforcement via
     # `set_response_format` still happens at the end of the loop.
+    # NOTE: This hint is added as a new system message (not mutating the original)
+    # and is appended later via _msg_dispatcher.append_msgs().
+    _response_format_hint: str | None = None
     if response_format is not None:
         try:
             _schema = _check_valid_response_format(response_format)
-            _hint = (
-                "\n\nNOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
+            _response_format_hint = (
+                "## Response Format\n"
+                "NOTE: After completing all tool calls, your **final** assistant reply must be valid JSON that conforms to the following schema. Do NOT include any extra keys or commentary.\n"
                 + json.dumps(_schema, indent=2)
             )
-
-            client.set_system_message((client.system_message or "") + _hint)
         except Exception as _exc:  # noqa: BLE001
             logger.error(f"response_format hint failed: {_exc!r}")
 
     # ── User visibility guidance ──────────────────────────────────────────────
     # Explain to the model what the end-user can and cannot see. This guidance
-    # is appended to the system message so that the model understands that:
+    # is added as a new system message (not mutating the original) so that the
+    # model understands:
     # 1. The user does NOT see any intermediate tool calls or tool results
     # 2. The user only sees the initial request and any interjection messages
     # 3. The user sees the final plain-text response from the assistant
     # This is important because interjections are now sent as simple user
     # messages (not system messages) so the model needs to understand context.
+    # NOTE: This is appended later via _msg_dispatcher.append_msgs().
     _user_visibility_guidance = (
-        "\n\n## User Visibility Context\n"
+        "## User Visibility Context\n"
         "IMPORTANT: The end-user who initiated this conversation can ONLY see:\n"
         "1. Their original request and any follow-up messages they send (interjections)\n"
         "2. Any notifications you emit (status updates, progress indicators, etc.)\n"
@@ -558,12 +562,6 @@ async def async_tool_loop_inner(
         "user interjections in your final response. Later interjections should override "
         "earlier ones if there are any conflicting comments or requests."
     )
-    try:
-        client.set_system_message(
-            (client.system_message or "") + _user_visibility_guidance,
-        )
-    except Exception:
-        pass
 
     # ── runtime guards ────────────────────────────────────────────────────
     # rolling timeout ----------------------------------------------------
@@ -641,6 +639,13 @@ async def async_tool_loop_inner(
 
     runtime_context_parts: list[str] = []
 
+    # Add user visibility guidance (always included)
+    runtime_context_parts.append(_user_visibility_guidance)
+
+    # Add response format hint if structured output is expected
+    if _response_format_hint:
+        runtime_context_parts.append(_response_format_hint)
+
     # Add caller context if available
     if _effective_caller_description:
         runtime_context_parts.append(
@@ -657,6 +662,7 @@ async def async_tool_loop_inner(
             f"Resolve the *next* user request in light of this.",
         )
 
+    # Always append runtime context as a new system message (never mutate the original)
     if runtime_context_parts:
         sys_msg = {
             "role": "system",
@@ -858,8 +864,15 @@ async def async_tool_loop_inner(
                     prefix="🔍",
                 )
             client.append_messages(msgs)
-            client.set_system_message(
-                (client.system_message or "") + sc.get_system_msg_hint(),
+            # Append semantic cache hint as a new system message (never mutate the original)
+            await _msg_dispatcher.append_msgs(
+                [
+                    {
+                        "role": "system",
+                        "_semantic_cache_hint": True,
+                        "content": sc.get_system_msg_hint(),
+                    },
+                ],
             )
             tools_data.normalized["semantic_search"] = ToolSpec(
                 fn=sc.semantic_search_placeholder,
