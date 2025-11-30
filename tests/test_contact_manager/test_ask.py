@@ -12,6 +12,9 @@ from unity.contact_manager.types.contact import Contact
 from tests.assertion_helpers import assertion_failed
 from tests.helpers import _handle_project, SETTINGS
 
+# All tests in this file exercise end-to-end LLM reasoning for contact retrieval
+pytestmark = pytest.mark.eval
+
 
 def _llm_judge_contact_retrieval(
     question: str,

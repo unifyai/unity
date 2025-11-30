@@ -49,6 +49,42 @@ This means:
 - Tests run fast on CI (milliseconds vs seconds/minutes for real LLM calls)
 - To re-evaluate LLM behavior, delete the relevant `.cache.ndjson` or set `UNIFY_CACHE="false"`
 
+### Tagging Tests as Eval
+
+To mark a test file as eval (end-to-end LLM reasoning), add a module-level pytest marker:
+
+```python
+import pytest
+
+# All tests in this file exercise end-to-end LLM reasoning
+pytestmark = pytest.mark.eval
+```
+
+For mixed files where only some tests are eval, use test-level markers:
+
+```python
+@pytest.mark.eval
+@pytest.mark.asyncio
+async def test_natural_language_query():
+    ...
+```
+
+### Running Test Categories
+
+Use the parallel runner flags to filter by test category:
+
+```bash
+# Run only eval tests (end-to-end LLM reasoning)
+./.parallel_run.sh --eval-only tests
+
+# Run only symbolic tests (infrastructure/deterministic)
+./.parallel_run.sh --symbolic-only tests
+
+# Standard pytest also works
+pytest -m eval tests/
+pytest -m "not eval" tests/
+```
+
 ---
 
 ## Running Tests
@@ -209,6 +245,15 @@ Limit the search by passing directories and/or `.py` files. Examples:
 
 # Use isolated random projects (legacy mode)
 ./.parallel_run.sh --random-projects tests
+
+# Run only eval tests (end-to-end LLM reasoning tests)
+./.parallel_run.sh --eval-only tests
+
+# Run only symbolic tests (infrastructure/deterministic tests)
+./.parallel_run.sh --symbolic-only tests
+
+# Combine with other options
+./.parallel_run.sh --eval-only --wait tests/test_contact_manager
 ```
 
 How it interprets arguments:
@@ -272,6 +317,8 @@ Notes:
 | `-t`, `--per-test` | Create one session per test function instead of per file |
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
 | `--random-projects` | Use isolated random project names (legacy mode) |
+| `--eval-only` | Run only tests marked with `pytest.mark.eval` (end-to-end LLM tests) |
+| `--symbolic-only` | Run only tests NOT marked with `pytest.mark.eval` (infrastructure tests) |
 
 ### Defaults & Conventions
 

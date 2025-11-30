@@ -10,6 +10,9 @@ from tests.helpers import _handle_project
 from unity.common._async_tool import semantic_cache as sc
 from unity.common._async_tool.semantic_cache import _Config
 
+# Tests semantic cache behavior which depends on LLM responses
+pytestmark = pytest.mark.eval
+
 
 @pytest.fixture(autouse=True)
 def _patch_semantic_cache_config(monkeypatch):
