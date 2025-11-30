@@ -11,7 +11,6 @@ _ASSISTANT_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
 _TOOL_PREFIX_COUNTS: dict[tuple[int, str], int] = {}
 
 
-@unify.traced
 def count_assistant_tool_calls(msgs: List[dict], tool_name: str) -> int:
     """Return the number of *assistant* turns whose visible ``tool_calls``
     reference *tool_name* (exact match).
@@ -44,7 +43,6 @@ async def _wait_for_condition(predicate, poll: float, timeout: float):
     raise TimeoutError("Timed out waiting for condition to become true.")
 
 
-@unify.traced
 async def _wait_for_tool_request(
     client: "unify.AsyncUnify",
     tool_name: str,
@@ -63,7 +61,6 @@ async def _wait_for_tool_request(
     await _wait_for_condition(_predicate, poll=poll, timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_tool_scheduled(
     outer_handle,
     tool_name: str,
@@ -93,7 +90,6 @@ async def _wait_for_tool_scheduled(
     )
 
 
-@unify.traced
 async def _wait_for_tools_scheduled(
     outer_handle,
     tool_names: list[str],
@@ -121,7 +117,6 @@ async def _wait_for_tools_scheduled(
     )
 
 
-@unify.traced
 async def _wait_for_tool_requested_and_scheduled(
     client: "unify.AsyncUnify",
     outer_handle,
@@ -141,7 +136,6 @@ async def _wait_for_tool_requested_and_scheduled(
     )
 
 
-@unify.traced
 async def _wait_for_tools_requested_and_scheduled(
     client: "unify.AsyncUnify",
     outer_handle,
@@ -162,7 +156,6 @@ async def _wait_for_tools_requested_and_scheduled(
     )
 
 
-@unify.traced
 async def _wait_for_tool_result(
     client: "unify.AsyncUnify",
     tool_name: str | None = None,
@@ -191,7 +184,6 @@ async def _wait_for_tool_result(
     await _wait_for_condition(_predicate, poll=poll, timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_assistant_call_prefix(
     client: "unify.AsyncUnify",
     prefix: str,
@@ -244,7 +236,6 @@ async def _wait_for_assistant_call_prefix(
     )
 
 
-@unify.traced
 async def _wait_for_tool_message_prefix(
     client: "unify.AsyncUnify",
     prefix: str,
@@ -402,7 +393,6 @@ def first_tool_message_by_name(msgs: List[dict], name: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-@unify.traced
 async def _wait_for_interjection_event(
     *,
     contains: str | None = None,
@@ -448,7 +438,6 @@ async def _wait_for_interjection_event(
 _wait_for_system_interjection_event = _wait_for_interjection_event
 
 
-@unify.traced
 async def _wait_for_any_assistant_tool_call(
     tool_name: str,
     *,
@@ -482,7 +471,6 @@ async def _wait_for_any_assistant_tool_call(
     await asyncio.wait_for(done.wait(), timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_any_tool_message_by_name(
     tool_name: str,
     *,
@@ -514,7 +502,6 @@ async def _wait_for_any_tool_message_by_name(
     await asyncio.wait_for(done.wait(), timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_any_tool_message_prefix(
     prefix: str,
     *,
@@ -551,7 +538,6 @@ async def _wait_for_any_tool_message_prefix(
     await asyncio.wait_for(done.wait(), timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_assistant_tool_calls(
     tool_names: list[str],
     *,
@@ -597,7 +583,6 @@ async def _wait_for_assistant_tool_calls(
     await asyncio.wait_for(done.wait(), timeout=timeout)
 
 
-@unify.traced
 async def _wait_for_next_assistant_response_event(
     *,
     timeout: float = 300.0,

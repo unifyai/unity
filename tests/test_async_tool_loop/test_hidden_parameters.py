@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import pytest
-import unify
 
 import unity.common.llm_helpers as llmh
 
@@ -33,7 +32,6 @@ def _assert_internal_queues_hidden(fn) -> None:
 # --------------------------------------------------------------------------- #
 # 1. Original “Google style” example (colon after each name)                  #
 # --------------------------------------------------------------------------- #
-@unify.traced
 def tool_google_style(
     a: int,
     _clarification_up_q: asyncio.Queue[str],
@@ -55,7 +53,6 @@ def tool_google_style(
 # --------------------------------------------------------------------------- #
 # 2. New *slash-separated* NumPy variant: “name_a / name_b : type”            #
 # --------------------------------------------------------------------------- #
-@unify.traced
 def tool_numpy_slash(
     a: int,
     _clarification_up_q: asyncio.Queue[str] | None = None,
@@ -78,7 +75,6 @@ def tool_numpy_slash(
 # --------------------------------------------------------------------------- #
 # 3. New *comma-separated* variant: “name_a, name_b, …” (no type, no colon)   #
 # --------------------------------------------------------------------------- #
-@unify.traced
 def tool_numpy_commas(
     a: int,
     _clarification_up_q: asyncio.Queue[str] | None = None,

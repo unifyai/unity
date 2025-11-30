@@ -63,7 +63,6 @@ Notes on safety
 ---------------
 - The tool-loop prompts and tools are designed to never reveal raw secret values to LLMs. Read paths redact `value`.
 - `resolve` and `extract` bypass LLMs and publish only value-free metadata to logs.
-- If you wrap the manager with `unify.traced`, traces include method calls and arguments; secret values in tool arguments should be treated carefully in higher layers. The manager itself avoids echoing values in outcomes/messages.
 
 Example session (text mode)
 ---------------------------

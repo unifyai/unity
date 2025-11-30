@@ -44,35 +44,29 @@ from unity.common.tool_spec import ToolSpec
 # --------------------------------------------------------------------------- #
 #  TOOL IMPLEMENTATIONS (sync + async)                                        #
 # --------------------------------------------------------------------------- #
-@unify.traced
 def add(x: int, y: int) -> int:
     return x + y
 
 
-@unify.traced
 def divide(a: int, b: int) -> float:  # may raise
     return a / b
 
 
-@unify.traced
 def launch() -> None:
     raise Exception
 
 
-@unify.traced
 async def fast_tool(res: str = "fast") -> str:
     await asyncio.sleep(0.05)
     return res
 
 
-@unify.traced
 async def slow_tool(res: str = "slow") -> str:
     await asyncio.sleep(0.3)
     return res
 
 
-@unify.traced
-def count_tool_messages(client: unify.AsyncUnify) -> int:
+def count_tool_messages(client) -> int:
     return sum(1 for m in client.messages if m["role"] == "tool")
 
 
@@ -107,7 +101,6 @@ async def test_concurrent_tools_waits_for_all_results(model):
     """
     events: list[tuple[str, float]] = []
 
-    @unify.traced
     async def fast():
         events.append(("fast_start", time.monotonic()))
         await asyncio.sleep(0.05)
@@ -117,7 +110,6 @@ async def test_concurrent_tools_waits_for_all_results(model):
     fast.__name__ = "fast"
     fast.__qualname__ = "fast"
 
-    @unify.traced
     async def slow():
         events.append(("slow_start", time.monotonic()))
         await asyncio.sleep(0.30)
@@ -127,7 +119,7 @@ async def test_concurrent_tools_waits_for_all_results(model):
     slow.__name__ = "slow"
     slow.__qualname__ = "slow"
 
-    class InstrumentedClient(unify.AsyncUnify):  # type: ignore[misc]
+    class InstrumentedClient(unify.AsyncUnify):
         async def generate(self, **kwargs):  # noqa: D401
             events.append(("generate", time.monotonic()))
             return await super().generate(**kwargs)
@@ -240,7 +232,6 @@ async def test_mixed_sync_async_tools(model):
 # --------------------------------------------------------------------------- #
 #  PRETTY PRINTING – tool returns pure JSON string                            #
 # --------------------------------------------------------------------------- #
-@unify.traced
 def emit_json() -> str:
     # Compact JSON string (no spaces/newlines). The loop should pretty‑print it.
     return '{"foo":1,"bar":[2,3],"baz":{"ok":true}}'
@@ -456,7 +447,6 @@ async def test_max_concurrent_limit_is_obeyed(model) -> None:  # noqa: D401
 
     events: list[tuple[str, float]] = []
 
-    @unify.traced
     async def limited(label: str) -> str:
         events.append(("start", time.monotonic()))
         await asyncio.sleep(0.15)

@@ -4,7 +4,6 @@ import asyncio
 from typing import Optional, List, Dict, Any
 
 import pytest
-import unify
 
 from unity.common.async_tool_loop import (
     SteerableToolHandle,
@@ -76,7 +75,6 @@ class CustomImagesHandle(SteerableToolHandle):
         return None
 
 
-@unify.traced
 async def spawn_images_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
     h = CustomImagesHandle()
     _HANDLES.append(h)

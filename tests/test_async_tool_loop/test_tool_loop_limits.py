@@ -432,7 +432,6 @@ async def test_max_parallel_tool_calls(model):
 
     counter = {"n": 0}
 
-    @unify.traced
     async def short(i: int) -> str:
         counter["n"] += 1
         await asyncio.sleep(0.01)

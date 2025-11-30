@@ -2016,9 +2016,6 @@ class TranscriptGenerator:
     ----------
     endpoint
         Chat-completion model identifier (same format used across sandboxes).
-    traced
-        Forwarded to :class:`unify.AsyncUnify` so unit-tests can inspect
-        detailed traces when needed.
     stateful
         Re-use the underlying client across multiple ``generate`` calls –
         handy when chaining several transcripts together inside higher-level
@@ -2029,12 +2026,10 @@ class TranscriptGenerator:
         self,
         *,
         endpoint: str = DEFAULT_MODEL,
-        traced: bool = True,
         stateful: bool = True,
         in_conversation_manager: bool = False,
     ) -> None:
         self._endpoint = endpoint
-        self._traced = traced
         self._stateful = stateful
         self._tm = TranscriptManager()
         self._in_cm = in_conversation_manager
@@ -2505,7 +2500,6 @@ class TranscriptGenerator:
                 "update_contacts": self._tm._contact_manager.update,
             },
             endpoint=self._endpoint,
-            traced=self._traced,
             stateful=self._stateful,
         )
 

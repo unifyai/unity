@@ -307,7 +307,6 @@ async def test_async_tool_loop_calls_append_helper():
          to append another task while the first is running.
     """
     # Localized imports to mirror other async tool loop tests
-    import unify  # type: ignore
     from unity.common.async_tool_loop import start_async_tool_loop
     from unity.common.llm_client import new_llm_client
     from tests.settings import SETTINGS  # reuse cache/tracing settings
@@ -327,7 +326,6 @@ async def test_async_tool_loop_calls_append_helper():
     b_id = ts._create_task(name="BTask", description="BTask")["details"]["task_id"]  # type: ignore[index]
 
     # Tool that starts execution and returns the steerable ActiveQueue handle
-    @unify.traced
     async def scheduler_execute(*, task_id: int) -> "object":
         return await ts.execute(task_id=task_id)
 

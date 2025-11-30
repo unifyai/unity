@@ -23,7 +23,6 @@ import asyncio
 from typing import List
 
 import pytest
-import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
 
 # Shared helpers
@@ -40,7 +39,6 @@ from tests.test_async_tool_loop.async_helpers import (
 # --------------------------------------------------------------------------- #
 #  TOOLS                                                                      #
 # --------------------------------------------------------------------------- #
-@unify.traced
 async def slow() -> str:
     """A slow-poke async tool – sleeps `delay` seconds then returns 'done'."""
     await asyncio.sleep(0.50)
@@ -50,7 +48,6 @@ async def slow() -> str:
 # --------------------------------------------------------------------------- #
 #  HELPERS                                                                    #
 # --------------------------------------------------------------------------- #
-@unify.traced
 def _assistant_calls(msgs: List[dict], tool_name: str) -> int:
     """Count assistant turns whose *visible* `tool_calls` reference `tool_name`."""
     return sum(
@@ -63,7 +60,6 @@ def _assistant_calls(msgs: List[dict], tool_name: str) -> int:
     )
 
 
-@unify.traced
 def _assistant_calls_prefix(msgs: List[dict], prefix: str) -> int:
     """Count assistant turns whose tool-call name *starts with* `prefix`."""
     return sum(
@@ -77,7 +73,6 @@ def _assistant_calls_prefix(msgs: List[dict], prefix: str) -> int:
     )
 
 
-@unify.traced
 def _tool_results(msgs: List[dict], tool_name: str) -> int:
     """Count tool-result messages for `tool_name`."""
     return sum(1 for m in msgs if m["role"] == "tool" and m["name"] == tool_name)
@@ -570,7 +565,6 @@ async def test_nested_resume_forwarded_once_to_delegate(client):
 
     inner_handle = MockPassthroughHandle()
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         """Return a passthrough handle immediately so the outer loop adopts it."""
         return inner_handle
@@ -852,7 +846,6 @@ async def test_helpers_hide_notification_clarification(client):
 
     inner_handle = MockPassthroughHandle()
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         return inner_handle
 
@@ -920,7 +913,6 @@ async def test_helpers_hide_get_history(client, model):
     exclusion).
     """
 
-    @unify.traced
     async def spawn_inner_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         # Start an inner async tool loop and return its handle immediately
         inner_client = new_llm_client(model=model)

@@ -56,9 +56,6 @@ class ScenarioBuilder:
     model
         Identifier of the chat‑completion model to use (defaults to the same
         *o4-mini* model the concrete managers rely on).
-    traced
-        Mirror the manager behaviour – when *True* every public method call is
-        wrapped by :pyfunc:`unify.traced`.
     stateful
         If *True* the underlying :class:`unify.AsyncUnify` instance keeps
         conversational state across multiple `create()` invocations – handy
@@ -75,7 +72,6 @@ class ScenarioBuilder:
         description: str,
         tools: Dict[str, Callable],
         endpoint: str = DEFAULT_MODEL,
-        traced: bool = True,
         stateful: bool = True,
         enable_voice: bool = False,
         clarifications_enabled: bool = True,
@@ -90,7 +86,6 @@ class ScenarioBuilder:
 
         self._client = new_llm_client(
             model=endpoint,
-            traced=traced,
             stateful=stateful,
         )
         self._enable_voice = enable_voice

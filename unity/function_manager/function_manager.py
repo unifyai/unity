@@ -122,7 +122,6 @@ class FunctionManager(BaseFunctionManager):
         self,
         *,
         daemon: bool = True,
-        traced: bool = False,
         file_manager: Optional[FileManager] = None,
     ) -> None:
         # No thread behavior; keep parameter for backward compatibility
@@ -154,10 +153,6 @@ class FunctionManager(BaseFunctionManager):
             read_ctx == write_ctx
         ), "read and write contexts must be the same when instantiating a FunctionManager."
         self._ctx = ContextRegistry.get_context(self, "Functions")
-
-        # Add tracing
-        if traced:
-            self = unify.traced(self)
 
         # ------------------------------------------------------------------ #
         #  File system mirroring (functions folder under FileManager root)    #

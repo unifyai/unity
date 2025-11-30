@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-import unify
 
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
@@ -24,7 +23,6 @@ from tests.test_async_tool_loop.async_helpers import (
 # ---------------------------------------------------------------------------
 
 
-@unify.traced
 async def sleeper(delay: float = 1.0) -> str:  # noqa: D401 – simple async
     """Sleep *delay* seconds then return."""
     await asyncio.sleep(delay)
@@ -70,8 +68,9 @@ async def test_outer_interjection_forwarded_to_inner(model, monkeypatch):
     """
 
     # ---- helper tool -----------------------------------------------------
-    @unify.traced  # noqa: D401 – simple async tool (no sleep for determinism)
-    async def sleeper(delay: float = 0.1) -> str:
+    async def sleeper(
+        delay: float = 0.1,
+    ) -> str:  # noqa: D401 – simple async tool (no sleep for determinism)
         return "slept"
 
     # ---- counter to verify delegate.interject was called ------------------
@@ -840,7 +839,6 @@ async def test_no_extra_turn_passthrough_handover(model, monkeypatch):
     )
 
     # Tool: quick async sleep
-    @unify.traced
     async def sleeper(delay: float = 0.01) -> str:
         return "slept"
 
@@ -1654,7 +1652,6 @@ async def test_custom_method_propagates_matching(
     client_one = new_llm_client(model=model)
     client_two = new_llm_client(model=model)
 
-    @unify.traced
     async def noop():
         return "ok"
 

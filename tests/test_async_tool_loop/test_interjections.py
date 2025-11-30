@@ -16,7 +16,6 @@ import json
 from typing import Any, List
 
 import pytest
-import unify
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
 from unity.common.llm_client import new_llm_client
@@ -31,30 +30,25 @@ from tests.test_async_tool_loop.async_helpers import (
 # --------------------------------------------------------------------------- #
 #  TOOL IMPLEMENTATIONS                                                       #
 # --------------------------------------------------------------------------- #
-@unify.traced
 async def echo(txt: str) -> str:  # noqa: D401 – simple async tool
     await asyncio.sleep(0.50)
     return txt
 
 
-@unify.traced
 async def slow() -> str:
     await asyncio.sleep(0.15)
     return "slow"
 
 
-@unify.traced
 async def fast() -> str:
     await asyncio.sleep(0.05)
     return "fast"
 
 
-@unify.traced
 def _first_with_tool_calls(msgs: List[dict]) -> int:
     return next(i for i, m in enumerate(msgs) if m.get("tool_calls"))
 
 
-@unify.traced
 def _interjection_index(msgs: List[dict], snippet: str) -> int:
     """Return index of a user-role interjection whose content includes snippet.
 
@@ -74,12 +68,10 @@ def _interjection_index(msgs: List[dict], snippet: str) -> int:
     raise StopIteration(f"No interjection found containing snippet: {snippet}")
 
 
-@unify.traced
 def _tool_indices(msgs: List[dict]) -> List[int]:
     return [i for i, m in enumerate(msgs) if m["role"] == "tool"]
 
 
-@unify.traced
 def _are_contiguous(indices: List[int]) -> bool:
     return sorted(indices) == list(range(min(indices), max(indices) + 1))
 
@@ -121,7 +113,6 @@ def _effectively_adjacent(msgs: List[dict], idx1: int, idx2: int) -> bool:
     return True
 
 
-@unify.traced
 def _assistant_tool_turns(msgs: List[dict[str, Any]]):
     """Yield assistant turns that contain tool_calls."""
     return [m for m in msgs if m["role"] == "assistant" and m.get("tool_calls")]

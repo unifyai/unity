@@ -103,7 +103,6 @@ def test_schema_hides_private_optionals() -> None:
     """
 
     # ── 1. optional private argument should be hidden ─────────────────────
-    @unify.traced
     def sample_tool(a: int, b: int = 0, _secret: str = "x") -> int:
         """
         Sample calculator.
@@ -131,7 +130,6 @@ def test_schema_hides_private_optionals() -> None:
     assert "a" in required and "b" not in required
 
     # ── 2. required private argument should be kept ───────────────────────
-    @unify.traced
     def tool_with_required_private(x: int, _hidden: str) -> str:
         """
         Echo tool.
@@ -166,7 +164,6 @@ def test_schema_hides_context_param() -> None:
     docstring that is sent to the LLM.
     """
 
-    @unify.traced
     def tool_with_ctx(a: int, _parent_chat_context: list[dict]):
         """
         Dummy tool.
@@ -180,7 +177,6 @@ def test_schema_hides_context_param() -> None:
         """
         return a
 
-    @unify.traced
     def tool_with_ctx_optional(
         a: int,
         _parent_chat_context: list[dict] | None = None,
