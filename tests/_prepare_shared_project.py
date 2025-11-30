@@ -63,6 +63,7 @@ def prepare_shared_project() -> None:
                 "tags": {"type": "list", "mutable": True},
                 "duration": {"type": "float", "mutable": True},
                 "llm_io": {"type": "list", "mutable": True},
+                "settings": {"type": "dict", "mutable": True},
             },
         )
     except Exception:

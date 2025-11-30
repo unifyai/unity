@@ -124,7 +124,7 @@ def _log_test_combined(
     duration: float,
     llm_io: List[str],
 ) -> None:
-    """Log test duration and LLM I/O to the Combined context."""
+    """Log test duration, LLM I/O, and settings to the Combined context."""
     try:
         unify.log(
             context="Combined",
@@ -132,6 +132,7 @@ def _log_test_combined(
             tags=get_session_tags(),
             duration=duration,
             llm_io=llm_io,
+            settings=SETTINGS.model_dump(),
             new=True,
         )
     except Exception:
