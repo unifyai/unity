@@ -106,7 +106,9 @@ async def test_nested_async_tool_loop(model):
     # The assistant must answer as instructed.
     assert final_reply.strip().lower() == "all done"
 
-    assert len(client.messages) == 6, "Expected a 6-message sequence"
+    # No runtime context system message is appended because this test provides
+    # no response_format, no caller_description, and no parent_chat_context.
+    assert len(client.messages) == 5, "Expected a 5-message sequence"
 
     # 0. Original system message (unchanged)
     assert client.messages[0]["role"] == "system"
@@ -117,15 +119,11 @@ async def test_nested_async_tool_loop(model):
         "3\ufe0f\u20e3  Once it is *completed*, respond with exactly 'all done'."
     )
 
-    # 1. Runtime context system message (appended, not mutated onto original)
-    assert client.messages[1]["role"] == "system"
-    assert client.messages[1].get("_runtime_context") is True
+    # 1. User message
+    assert client.messages[1] == {"role": "user", "content": "start"}
 
-    # 2. User message
-    assert client.messages[2] == {"role": "user", "content": "start"}
-
-    # 3. Assistant: initial tool selection
-    initial_call = client.messages[3]
+    # 2. Assistant: initial tool selection
+    initial_call = client.messages[2]
     assert initial_call["role"] == "assistant"
     assert (
         initial_call.get("tool_calls") is not None
@@ -136,17 +134,17 @@ async def test_nested_async_tool_loop(model):
         "name": "outer_tool",
     }
 
-    # 4. Tool: response for outer_tool.
+    # 3. Tool: response for outer_tool.
     # Its content should reflect the final result of the nested loop ("done" as a JSON string).
-    first_tool_resp = client.messages[4]
+    first_tool_resp = client.messages[3]
     assert first_tool_resp["role"] == "tool"
     assert first_tool_resp["name"] == "outer_tool"
     assert (
         first_tool_resp["content"] == "done"
     ), "The placeholder for outer_tool should be updated with the inner loop's final result."
 
-    # 5. Assistant: final response "all done"
-    final_assistant_msg = client.messages[5]
+    # 4. Assistant: final response "all done"
+    final_assistant_msg = client.messages[4]
     assert final_assistant_msg["role"] == "assistant"
     assert final_assistant_msg["content"].strip().lower() == "all done"
     assert (
