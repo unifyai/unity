@@ -38,6 +38,10 @@ SYMBOLIC_ONLY=0
 # With --no-cache: disable LLM response caching (UNIFY_CACHE=false)
 NO_CACHE=0
 
+# Repeat count for statistical sampling
+# With --repeat N: run each test N times (useful for eval tests with --no-cache)
+REPEAT_COUNT=1
+
 # Resolve repo root (parent of this script's directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -78,6 +82,15 @@ while (( "$#" )); do
     --no-cache)
       NO_CACHE=1
       shift
+      ;;
+    --repeat)
+      if [[ -n "${2-}" && "$2" =~ ^[0-9]+$ && "$2" -ge 1 ]]; then
+        REPEAT_COUNT="$2"
+        shift 2
+      else
+        echo "Error: --repeat requires a positive integer argument (e.g., --repeat 5)." >&2
+        exit 2
+      fi
       ;;
     *)
       POSITIONAL_ARGS+=( "$1" )
@@ -401,6 +414,18 @@ if (( ${#files[@]} == 0 )); then
   exit 0
 fi
 
+# Expand targets for repeat runs (statistical sampling)
+if (( REPEAT_COUNT > 1 )); then
+  original_files=( "${files[@]}" )
+  files=()
+  for (( r=1; r<=REPEAT_COUNT; r++ )); do
+    for f in "${original_files[@]}"; do
+      files+=( "$f" )
+    done
+  done
+  echo "Repeating each test $REPEAT_COUNT times (${#files[@]} total sessions from ${#original_files[@]} unique targets)"
+fi
+
 declare -a made_sessions=()
 declare -a session_ids=()
 for target in "${files[@]}"; do
@@ -447,6 +472,7 @@ echo "  • Use isolated random projects:          ./.parallel_run.sh --random-p
 echo "  • Run only eval tests:                   ./.parallel_run.sh --eval-only tests"
 echo "  • Run only symbolic tests:               ./.parallel_run.sh --symbolic-only tests"
 echo "  • Disable LLM caching:                   ./.parallel_run.sh --no-cache tests"
+echo "  • Repeat tests for sampling:             ./.parallel_run.sh --no-cache --repeat 5 --eval-only tests"
 echo
 echo "Observe:"
 echo "  • Watch sessions: watch -n 0.5 'tmux ls'"

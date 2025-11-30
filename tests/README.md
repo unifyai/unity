@@ -255,6 +255,9 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Disable LLM response caching (re-evaluate LLM behavior)
 ./.parallel_run.sh --no-cache tests
 
+# Repeat tests for statistical sampling (see below)
+./.parallel_run.sh --no-cache --repeat 10 --eval-only tests/test_contact_manager
+
 # Combine with other options
 ./.parallel_run.sh --eval-only --wait tests/test_contact_manager
 ./.parallel_run.sh --no-cache --eval-only tests/test_contact_manager
@@ -324,6 +327,37 @@ Notes:
 | `--eval-only` | Run only tests marked with `pytest.mark.eval` (end-to-end LLM tests) |
 | `--symbolic-only` | Run only tests NOT marked with `pytest.mark.eval` (infrastructure tests) |
 | `--no-cache` | Disable LLM response caching (`UNIFY_CACHE=false`); forces fresh LLM calls |
+| `--repeat N` | Run each test N times; useful for statistical sampling (see below) |
+
+### Statistical Sampling with `--repeat`
+
+The `--repeat N` flag runs each test target N times, creating N separate tmux sessions per target. While this works with any test, **the primary use case is for eval tests with `--no-cache`**.
+
+**Why this matters:**
+
+- **Symbolic tests** are deterministic—running them multiple times yields identical results (especially with caching enabled). There's no statistical value.
+- **Eval tests with caching** are also deterministic after the first run—the cached LLM responses are replayed exactly.
+- **Eval tests with `--no-cache`** make fresh LLM calls each run. The LLM may reason differently, take more/fewer steps, or even fail occasionally. Each run is an independent sample.
+
+**Use cases for repeated eval runs:**
+
+1. **Pass rate estimation**: Run an eval test 20 times to measure reliability (e.g., "passes 18/20 = 90%")
+2. **Runtime distribution**: Plot test durations across runs to understand variance
+3. **LLM step analysis**: Compare how many tool calls or reasoning steps the model takes
+4. **Thinking time metrics**: Measure average LLM response latency across samples
+5. **Regression detection**: A test that was 100% reliable but now fails 5% of the time indicates a problem
+
+**Example workflow:**
+
+```bash
+# Run a specific eval test 10 times without caching
+./.parallel_run.sh --no-cache --repeat 10 --eval-only tests/test_contact_manager/test_ask.py
+
+# Run all eval tests 5 times each, wait for completion
+./.parallel_run.sh --no-cache --repeat 5 --eval-only --wait tests
+```
+
+Each repeated run gets its own tmux session (with `-2`, `-3`, etc. suffixes to avoid name collisions) and its own log file in `.pytest_logs/`. After completion, you can analyze the logs to compute statistics.
 
 ### Defaults & Conventions
 
