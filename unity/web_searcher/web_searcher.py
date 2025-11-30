@@ -948,13 +948,19 @@ class WebSearcher(BaseWebSearcher):
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
         """
-        Require an initial read-only ask on the first turn; auto thereafter.
+        Require an initial read-only ask on the first turn (if enabled); auto thereafter.
 
         This mirrors ContactManager behaviour so that update flows that depend
         on catalog inspection begin with a deterministic nested ask handle,
         making nested-structure behaviour stable.
         """
-        if step_index < 1 and "ask" in current_tools:
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
+            and step_index < 1
+            and "ask" in current_tools
+        ):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)
 
