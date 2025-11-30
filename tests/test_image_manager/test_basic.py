@@ -14,7 +14,6 @@ PNG_RED_B64 = make_solid_png_base64(8, 8, (255, 0, 0))
 PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_add_and_filter_images():
     im = ImageManager()
@@ -45,7 +44,6 @@ def test_add_and_filter_images():
     assert any("red" in (r.caption or "").lower() for r in reds)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_add_images_return_handles_mode():
     im = ImageManager()
@@ -85,7 +83,6 @@ def test_add_images_return_handles_mode():
             break
 
 
-@pytest.mark.unit
 @_handle_project
 def test_add_images_async_mode_returns_handles_and_schedules_uploads():
     im = ImageManager()
@@ -118,7 +115,6 @@ def test_add_images_async_mode_returns_handles_and_schedules_uploads():
     assert set(mapping.keys()) == set(pids)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_add_images_async_invalid_combo_raises():
     im = ImageManager()
@@ -136,7 +132,6 @@ def test_add_images_async_invalid_combo_raises():
         )
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_images():
     im = ImageManager()
@@ -165,7 +160,6 @@ def test_update_images():
     assert row and row[0].caption == "updated caption"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_get_images_order_and_raw():
     im = ImageManager()
@@ -195,7 +189,6 @@ def test_get_images_order_and_raw():
     assert raw1 == base64.b64decode(PNG_RED_B64)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_clear():
     im = ImageManager()

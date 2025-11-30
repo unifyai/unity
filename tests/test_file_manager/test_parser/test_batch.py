@@ -12,7 +12,6 @@ from tests.helpers import _handle_project
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_batch_multiple_files(parser, supported_format_files):
     """Test batch parsing of multiple files."""
@@ -41,7 +40,6 @@ async def test_batch_multiple_files(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_batch_empty_list(parser):
     """Test batch parsing with empty file list."""
@@ -50,7 +48,6 @@ async def test_batch_empty_list(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_batch_single_file(parser, supported_format_files):
     """Test batch parsing with single file."""
@@ -63,7 +60,6 @@ async def test_batch_single_file(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_batch_with_options(parser, supported_format_files):
     """Test batch parsing with custom options."""
@@ -85,7 +81,6 @@ async def test_batch_with_options(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_batch_mixed_success_failure(
     parser,
@@ -113,7 +108,6 @@ async def test_batch_mixed_success_failure(
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_batch_async(parser, supported_format_files):
     """Test async batch parsing."""
@@ -147,7 +141,6 @@ async def test_batch_async(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_batch_async_empty(parser):
     """Test async batch parsing with empty list."""
@@ -159,7 +152,6 @@ async def test_batch_async_empty(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_batch_async_large_batch(
     parser,
@@ -189,7 +181,6 @@ async def test_batch_async_large_batch(
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_batch_consistent_with_single(parser, supported_format_files):
     """Test that batch parsing gives same results as individual parsing."""

@@ -372,10 +372,6 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "unit: mark a test as a deterministic unit test",
-    )
-    config.addinivalue_line(
-        "markers",
         "eval: mark a test as a fuzzy evaluation test for English language APIs",
     )
 

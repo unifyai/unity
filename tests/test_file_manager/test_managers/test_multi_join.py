@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from tests.helpers import _handle_project
 from unity.file_manager.types import FilePipelineConfig
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_multi_join_chain(file_manager, tmp_path: Path):
     fm = file_manager
@@ -42,7 +40,6 @@ def test_filter_multi_join_chain(file_manager, tmp_path: Path):
     assert isinstance(out, dict) and "rows" in out
 
 
-@pytest.mark.unit
 @_handle_project
 def test_search_multi_join_chain_backfill(file_manager, tmp_path: Path):
     fm = file_manager

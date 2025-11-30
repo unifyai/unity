@@ -14,7 +14,6 @@ from tests.helpers import _handle_project
 PNG_GRAY_B64 = make_solid_png_base64(4, 4, (128, 128, 128))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_handle_local_annotation_is_not_persisted():
     im = ImageManager()
@@ -49,7 +48,6 @@ def test_handle_local_annotation_is_not_persisted():
     assert getattr(h2, "annotation", None) is None
 
 
-@pytest.mark.unit
 @_handle_project
 def test_pending_handle_annotation_stays_local_and_not_persisted():
     im = ImageManager()
@@ -95,7 +93,6 @@ def test_pending_handle_annotation_stays_local_and_not_persisted():
     assert row.get("caption") == "pending base"
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_wait_for_annotation_immediate():
@@ -121,7 +118,6 @@ async def test_wait_for_annotation_immediate():
     assert got == "ready"
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_wait_for_annotation_blocks_then_returns():
@@ -152,7 +148,6 @@ async def test_wait_for_annotation_blocks_then_returns():
     assert got == "late"
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_wait_for_annotation_and_resolution_with_gather():
@@ -187,7 +182,6 @@ async def test_wait_for_annotation_and_resolution_with_gather():
     assert ann == "both-ready"
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_wait_for_caption_immediate_and_delayed():
@@ -240,7 +234,6 @@ async def test_wait_for_caption_immediate_and_delayed():
     assert got2 == "arrived"
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_wait_for_caption_and_resolution_together():
@@ -275,7 +268,6 @@ async def test_wait_for_caption_and_resolution_together():
     assert cap == "label-ready"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_constructor_annotation_is_set_and_not_persisted():
     from unity.image_manager.image_manager import ImageHandle
@@ -310,7 +302,6 @@ def test_constructor_annotation_is_set_and_not_persisted():
     assert row2.get("caption") == "ctor base"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_add_images_with_annotation_sets_handle_local_only():
     im = ImageManager()
@@ -340,7 +331,6 @@ def test_add_images_with_annotation_sets_handle_local_only():
     assert getattr(h2, "annotation", None) is None
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_wait_for_annotation_immediate_via_constructor():

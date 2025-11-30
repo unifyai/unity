@@ -15,7 +15,6 @@ def _stable_project_and_clean_registry(monkeypatch):
     DataStore._REGISTRY.clear()
 
 
-@pytest.mark.unit
 def test_singleton_per_project_context(monkeypatch):
     monkeypatch.setattr(unify, "active_project", lambda: "P1")
 
@@ -31,7 +30,6 @@ def test_singleton_per_project_context(monkeypatch):
     ), "Different project should yield a different instance"
 
 
-@pytest.mark.unit
 def test_crud_single_key():
     ds = DataStore.for_context("C/Contacts", key_fields=("contact_id",))
 
@@ -71,7 +69,6 @@ def test_crud_single_key():
     assert ds.get(2, default={"x": 1}) == {"x": 1}
 
 
-@pytest.mark.unit
 def test_composite_key_snapshot():
     ds = DataStore.for_context("C/Tasks", key_fields=("task_id", "instance_id"))
 
@@ -89,7 +86,6 @@ def test_composite_key_snapshot():
     assert snap == {"10.0": {"task_id": 10, "instance_id": 0, "status": "queued"}}
 
 
-@pytest.mark.unit
 def test_miss_raises_keyerror():
     ds = DataStore.for_context("C/Tasks", key_fields=("task_id", "instance_id"))
 
@@ -100,7 +96,6 @@ def test_miss_raises_keyerror():
         ds.delete("99.1")
 
 
-@pytest.mark.unit
 def test_clear_len_repr():
     ds = DataStore.for_context("C/Contacts", key_fields=("contact_id",))
     ds.put({"contact_id": 1, "first_name": "A"})
@@ -112,7 +107,6 @@ def test_clear_len_repr():
     assert len(ds) == 0
 
 
-@pytest.mark.unit
 def test_negative_number_key_coercion():
     ds = DataStore.for_context("C/Contacts", key_fields=("contact_id",))
     ds.put({"contact_id": -12, "first_name": "Neg"})

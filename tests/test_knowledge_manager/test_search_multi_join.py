@@ -4,7 +4,6 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_multi_join_single_reference_basic():
@@ -99,7 +98,6 @@ def test_multi_join_single_reference_basic():
     assert results[0]["title"] == "Quick reference for Linux"
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_multi_join_multi_columns_sum():
@@ -196,7 +194,6 @@ def test_multi_join_multi_columns_sum():
     assert results[0]["title"] in {"Text processing toolkit", "Compose LaTeX quickly"}
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_multi_join_all_columns_default_derivation():
@@ -300,7 +297,6 @@ def test_multi_join_all_columns_default_derivation():
     assert results[0]["title"] == "Email notifications config"
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_multi_join_mean_of_cosine_ranking():
@@ -407,7 +403,6 @@ def test_multi_join_mean_of_cosine_ranking():
     )
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_multi_join_backfills_when_insufficient_similarity_results():

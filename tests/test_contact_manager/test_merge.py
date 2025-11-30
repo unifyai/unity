@@ -13,7 +13,6 @@ from tests.helpers import _handle_project
 # ─────────────────────────────────────────────────────────────────────────────
 # 1.  Low-level helper: _merge_contacts                                        #
 # ─────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
 @_handle_project
 def test_private():
     """Programmatically merge two contacts and verify the result."""
@@ -76,7 +75,6 @@ def test_private():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.unit
 @_handle_project
 def test_updates_transcripts():
     """Merging contacts should rewrite historic transcript ids."""

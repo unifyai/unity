@@ -1,10 +1,7 @@
-import pytest
-
 from unity.contact_manager.contact_manager import ContactManager
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @_handle_project
 def test_create():
     contact_manager = ContactManager()
@@ -39,7 +36,6 @@ def test_create():
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update():
     contact_manager = ContactManager()
@@ -80,7 +76,6 @@ def test_update():
     assert contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
 
-@pytest.mark.unit
 @_handle_project
 def test_create_multiple():
     contact_manager = ContactManager()
@@ -129,7 +124,6 @@ def test_create_multiple():
     assert dan_contact.response_policy == ContactManager.DEFAULT_RESPONSE_POLICY
 
 
-@pytest.mark.unit
 @_handle_project
 def test_search():
     contact_manager = ContactManager()
@@ -143,7 +137,6 @@ def test_search():
 # ────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.unit
 @_handle_project
 def test_timezone():
     cm = ContactManager()
@@ -180,7 +173,6 @@ def test_timezone():
 # ────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.unit
 @_handle_project
 def test_system_respond_to():
     """Assistant (id 0) and default user (id 1) should have respond_to == True."""
@@ -200,7 +192,6 @@ def test_system_respond_to():
     assert user[0].response_policy == ContactManager.USER_MANAGER_RESPONSE_POLICY
 
 
-@pytest.mark.unit
 @_handle_project
 def test_clear():
     cm = ContactManager()

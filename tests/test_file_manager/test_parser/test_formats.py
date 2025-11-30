@@ -50,7 +50,6 @@ def normalize_html_for_comparison(html_str: str) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_txt_simple(parser, supported_format_files):
     """Test parsing simple text file."""
@@ -73,7 +72,6 @@ async def test_txt_simple(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_txt_multi_paragraph(parser, supported_format_files):
     """Test parsing multi-paragraph text file."""
@@ -97,7 +95,6 @@ async def test_txt_multi_paragraph(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_txt_special_characters(parser, supported_format_files):
     """Test parsing text file with special characters."""
@@ -121,7 +118,6 @@ async def test_txt_special_characters(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_pdf(parser):
     """Test parsing PDF file from sample directory."""
@@ -152,7 +148,6 @@ async def test_pdf(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_docx(parser):
     """Test parsing DOCX file from sample directory."""
@@ -185,7 +180,6 @@ async def test_docx(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv(parser):
     """Test parsing CSV file from sample directory."""
@@ -285,7 +279,6 @@ async def test_csv(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_xlsx(parser):
     """Test parsing XLSX file from sample directory."""
@@ -429,7 +422,6 @@ async def test_xlsx(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_empty_txt(parser, supported_format_files):
     """Test parsing an empty text file."""
@@ -450,7 +442,6 @@ async def test_empty_txt(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_formats_comprehensive(parser):
     """Test parsing all supported formats comprehensively."""
@@ -489,7 +480,6 @@ async def test_formats_comprehensive(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_binary_metadata(parser):
     """Test that binary formats (PDF, DOCX) have correct metadata."""
@@ -539,7 +529,6 @@ async def test_binary_metadata(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_all_supported_formats_dynamic(
     parser,
@@ -610,7 +599,6 @@ async def test_all_supported_formats_dynamic(
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_empty_files_all_formats(parser, supported_format_files):
     """Test handling of empty files across all supported formats."""
@@ -638,7 +626,6 @@ async def test_empty_files_all_formats(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_flat_records_all_formats(
     parser,
@@ -690,7 +677,6 @@ async def test_flat_records_all_formats(
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_content_preservation_across_formats(parser, supported_format_files):
     """Test that content is properly preserved across different formats."""
@@ -742,7 +728,6 @@ async def test_content_preservation_across_formats(parser, supported_format_file
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_metadata_consistency_across_formats(parser, supported_format_files):
     """Test that metadata is consistently set across all formats."""
@@ -781,7 +766,6 @@ async def test_metadata_consistency_across_formats(parser, supported_format_file
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_large_files_performance(
     parser,
@@ -832,7 +816,6 @@ async def test_large_files_performance(
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_simple(parser, supported_format_files):
     """Test parsing simple CSV file with Docling's native support."""
@@ -890,7 +873,6 @@ async def test_csv_simple(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_complex(parser, supported_format_files):
     """Test parsing complex CSV with quotes and special characters."""
@@ -945,7 +927,6 @@ async def test_csv_complex(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_semicolon_delimiter(parser, tmp_path):
     """Test CSV with semicolon delimiter (Docling supports multiple delimiters)."""
@@ -998,7 +979,6 @@ Charlie;35;Madrid"""
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_pipe_delimiter(parser, tmp_path):
     """Test CSV with pipe delimiter (Docling supports |, ;, comma, tab)."""
@@ -1051,7 +1031,6 @@ Steve|HR|65000"""
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_with_unicode(parser, tmp_path):
     """Test CSV with Unicode characters."""
@@ -1103,7 +1082,6 @@ François,Montréal,Bonjour
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_empty_cells(parser, tmp_path):
     """Test CSV with empty cells and sparse data."""
@@ -1157,7 +1135,6 @@ Bob,35,Sydney,Australia
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_large_file_performance(parser, tmp_path):
     """Test parsing performance on larger CSV files."""
@@ -1187,7 +1164,6 @@ async def test_csv_large_file_performance(parser, tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_to_schema_rows(parser, tmp_path):
     """Test that CSV documents can be converted to schema rows."""
@@ -1246,7 +1222,6 @@ Bob,Sales,75000"""
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_metadata_extraction(parser, tmp_path):
     """Test that CSV files have proper metadata extracted."""
@@ -1305,7 +1280,6 @@ Data,456"""
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_csv_document_structure(parser, tmp_path):
     """Test the hierarchical structure of parsed CSV documents."""
@@ -1339,7 +1313,6 @@ Gizmo,39.99,75"""
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_workforce_data_xlsx(parser):
     """Test parsing workforce_data.xlsx with multiple sheets (Employees, Attendance, Salaries)."""
@@ -1505,7 +1478,6 @@ async def test_workforce_data_xlsx(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_retail_data_xlsx(parser):
     """Test parsing retail_data.xlsx with multiple sheets (Stores, Sales, Inventory, Returns)."""
@@ -1701,7 +1673,6 @@ async def test_retail_data_xlsx(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_xlsx_multiple_sheets(parser, tmp_path):
     """Test XLSX with multiple sheets."""
@@ -1801,7 +1772,6 @@ async def test_xlsx_multiple_sheets(parser, tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_xlsx_with_formulas(parser, tmp_path):
     """Test XLSX with formulas."""
@@ -1875,7 +1845,6 @@ async def test_xlsx_with_formulas(parser, tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_xlsx_metadata_extraction(parser, tmp_path):
     """Test metadata extraction from XLSX files."""

@@ -15,7 +15,6 @@ from tests.helpers import _handle_project
 PNG_RED_B64 = make_solid_png_base64(8, 8, (255, 0, 0))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_get_images_returns_metadata_only():
     im = ImageManager()
@@ -52,7 +51,6 @@ def test_get_images_returns_metadata_only():
     assert entry.get("annotation") in (None, "layout screenshot")
 
 
-@pytest.mark.unit
 @_handle_project
 def test_attach_image_to_context_promotes_image_block():
     im = ImageManager()
@@ -75,7 +73,6 @@ def test_attach_image_to_context_promotes_image_block():
     base64.b64decode(payload["image"])  # will raise if invalid
 
 
-@pytest.mark.unit
 @_handle_project
 def test_get_images_includes_annotation():
     im = ImageManager()
@@ -103,7 +100,6 @@ def test_get_images_includes_annotation():
     assert items and (items[0].get("annotation") in (None, "button area"))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_images_field_schema_is_nested_and_enforced():
     gm = GuidanceManager()

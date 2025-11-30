@@ -4,7 +4,6 @@ import base64
 from datetime import datetime, timezone
 from typing import Any
 
-import pytest
 import unify
 from unity.image_manager.image_manager import ImageManager
 from unity.common.data_store import DataStore
@@ -22,7 +21,6 @@ PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 # per-test contexts, so no explicit registry resets are required here.
 
 
-@pytest.mark.unit
 @_handle_project
 def test_data_store_updated_after_add_and_update():
     im = ImageManager()
@@ -52,7 +50,6 @@ def test_data_store_updated_after_add_and_update():
     assert row2.get("caption") == "Updated"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_images_repopulates_data_store():
     im = ImageManager()
@@ -77,7 +74,6 @@ def test_filter_images_repopulates_data_store():
     assert cached.get("caption") == "Filter"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_search_images_repopulates_data_store():
     im = ImageManager()
@@ -102,7 +98,6 @@ def test_search_images_repopulates_data_store():
     assert "vector" in (cached.get("caption") or "").lower()
 
 
-@pytest.mark.unit
 @_handle_project
 def test_get_images_prefers_cache_and_falls_back_backend(monkeypatch):
     im = ImageManager()
@@ -154,7 +149,6 @@ def test_get_images_prefers_cache_and_falls_back_backend(monkeypatch):
     assert calls["count"] == pre + 1
 
 
-@pytest.mark.unit
 @_handle_project
 def test_image_handle_raw_caches_gcs_download(monkeypatch):
     im = ImageManager()
@@ -245,7 +239,6 @@ def test_image_handle_raw_caches_gcs_download(monkeypatch):
     assert fake_client.bucket("x").blob("y")._downloads == 1
 
 
-@pytest.mark.unit
 @_handle_project
 def test_clear_empties_data_store():
     im = ImageManager()

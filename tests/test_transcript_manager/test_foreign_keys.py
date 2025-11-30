@@ -51,7 +51,6 @@ def _make_test_image_b64(
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_sender_id_valid_reference():
     """Test that messages can reference valid contact IDs as sender."""
     cm = ContactManager()
@@ -103,7 +102,6 @@ def test_fk_message_sender_id_valid_reference():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_sender_id_set_null_on_delete():
     """Test SET NULL: sender_id becomes null when sender contact is deleted."""
     cm = ContactManager()
@@ -178,7 +176,6 @@ def test_fk_message_sender_id_set_null_on_delete():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_sender_id_null_does_not_break_manager_init():
     """Test that loading messages with null sender_id doesn't break TranscriptManager initialization."""
     cm = ContactManager()
@@ -244,7 +241,6 @@ def test_fk_message_sender_id_null_does_not_break_manager_init():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_receiver_ids_null_does_not_break_manager_init():
     """Test that messages with null entries in receiver_ids can be loaded without errors."""
     cm = ContactManager()
@@ -329,7 +325,6 @@ def test_fk_message_receiver_ids_null_does_not_break_manager_init():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_images_null_does_not_break_manager_init():
     """Test that messages with null image_ids in nested images can be loaded without errors."""
     cm = ContactManager()
@@ -448,7 +443,6 @@ def test_fk_message_images_null_does_not_break_manager_init():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_receiver_ids_valid_reference():
     """Test that messages can reference valid contact IDs in receiver_ids array."""
     cm = ContactManager()
@@ -499,7 +493,6 @@ def test_fk_message_receiver_ids_valid_reference():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_receiver_ids_set_null_on_delete():
     """Test SET NULL: Deleting contact replaces it with None in receiver_ids array (in-place)."""
     cm = ContactManager()
@@ -568,7 +561,6 @@ def test_fk_message_receiver_ids_set_null_on_delete():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_exchange_id_cascade_delete():
     """Test CASCADE: Messages deleted when exchange is deleted."""
     cm = ContactManager()
@@ -652,7 +644,6 @@ def test_fk_message_exchange_id_cascade_delete():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_images_valid_reference():
     """Test that messages can reference valid image IDs in nested structure."""
     cm = ContactManager()
@@ -723,7 +714,6 @@ def test_fk_message_images_valid_reference():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_message_images_set_null_on_delete():
     """Test SET NULL: Deleting image replaces nested image_id with None (in-place)."""
     cm = ContactManager()

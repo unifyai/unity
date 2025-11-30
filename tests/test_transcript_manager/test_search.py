@@ -9,7 +9,6 @@ from unity.contact_manager.types.contact import Contact
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
@@ -73,7 +72,6 @@ async def test_simple_similarity():
     ]
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
@@ -155,7 +153,6 @@ async def test_cross_contact_disambiguation():
     assert top.content == "let's meet next week"
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
@@ -210,7 +207,6 @@ async def test_sender_bio_only():
     assert sender.first_name == "Alice"
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
@@ -254,7 +250,6 @@ async def test_receiver_bio_only():
     assert len(top.receiver_ids) == 1
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
@@ -300,7 +295,6 @@ async def test_receiver_bio_min_aggregation():
     assert bob_rec.contact_id in top.receiver_ids
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
@@ -356,7 +350,6 @@ async def test_contacts_table_output():
             assert rid in contact_ids_from_table
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
@@ -412,7 +405,6 @@ async def test_combined_bio_terms():
     assert bob_rec.contact_id in top.receiver_ids
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project

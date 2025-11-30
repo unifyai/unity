@@ -2,13 +2,11 @@
 Tests for the 'verify' field in FunctionManager.
 """
 
-import pytest
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
 
 
 @_handle_project
-@pytest.mark.unit
 def test_add_default_verify():
     """Test that functions have verify=True by default."""
     fm = FunctionManager()
@@ -21,7 +19,6 @@ def test_add_default_verify():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_add_explicit_verify_true():
     """Test explicitly setting verify=True."""
     fm = FunctionManager()
@@ -33,7 +30,6 @@ def test_add_explicit_verify_true():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_add_explicit_verify_false():
     """Test explicitly setting verify=False."""
     fm = FunctionManager()
@@ -45,7 +41,6 @@ def test_add_explicit_verify_false():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_verify():
     """Test updating the verify status of a function."""
     fm = FunctionManager()

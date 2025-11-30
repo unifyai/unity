@@ -4,7 +4,6 @@ import pytest
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 async def test_parse_compact_returns_typed_models(
     file_manager,
     supported_file_examples: dict,

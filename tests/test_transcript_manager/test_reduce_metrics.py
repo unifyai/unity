@@ -9,7 +9,6 @@ from unity.transcript_manager.types.message import Message
 from unity.contact_manager.contact_manager import ContactManager
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_transcript_reduce_param_shapes():

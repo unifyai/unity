@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import pytest
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
 from unity.file_manager.managers.local import LocalFileManager as FileManager
 
 
 @_handle_project
-@pytest.mark.unit
 def test_filesystem_mirror_is_registered(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
@@ -33,7 +31,6 @@ def test_filesystem_mirror_is_registered(tmp_path):
 
 
 @_handle_project
-@pytest.mark.unit
 def test_files_are_protected_and_visible(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
@@ -51,7 +48,6 @@ def test_files_are_protected_and_visible(tmp_path):
 
 
 @_handle_project
-@pytest.mark.unit
 def test_sync_from_disk(tmp_path):
     root = tmp_path / "root"
     root.mkdir()

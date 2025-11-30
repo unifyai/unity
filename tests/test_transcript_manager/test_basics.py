@@ -38,7 +38,6 @@ MESSAGES = [
 ]
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_log_messages():
@@ -59,7 +58,6 @@ async def test_log_messages():
     tm.join_published()
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_get_messages():
@@ -201,7 +199,6 @@ async def test_get_messages():
 # ────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_multiple_receivers():
@@ -236,7 +233,6 @@ async def test_multiple_receivers():
     assert m.receiver_ids == [1, 2], "receiver_ids should preserve the full list"
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_filter_messages_contacts_table_output():
@@ -294,7 +290,6 @@ async def test_filter_messages_contacts_table_output():
     ), "All participant ids must be included in contacts table"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_clear():
     tm = TranscriptManager()

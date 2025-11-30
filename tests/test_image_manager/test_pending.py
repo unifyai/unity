@@ -17,7 +17,6 @@ PNG_RED_B64 = make_solid_png_base64(8, 8, (255, 0, 0))
 PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_async_enqueue_immediate_raw_and_pending_flag():
     im = ImageManager()
@@ -62,7 +61,6 @@ def _run(coro):
         loop.close()
 
 
-@pytest.mark.unit
 @_handle_project
 def test_await_pending_remaps_ids_and_updates_data_store():
     im = ImageManager()
@@ -111,7 +109,6 @@ def test_await_pending_remaps_ids_and_updates_data_store():
     assert row2.get("caption") == "updated"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_metadata_while_pending_reflects_locally():
     im = ImageManager()
@@ -134,7 +131,6 @@ def test_update_metadata_while_pending_reflects_locally():
     assert row.get("caption") == "xfer-updated"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_is_pending_id_and_resolution():
     im = ImageManager()
@@ -158,7 +154,6 @@ def test_is_pending_id_and_resolution():
     assert im.is_pending_id(real_id) is False
 
 
-@pytest.mark.unit
 @_handle_project
 def test_get_images_for_pending_prefers_cache_no_backend(monkeypatch):
     im = ImageManager()
@@ -194,7 +189,6 @@ def test_get_images_for_pending_prefers_cache_no_backend(monkeypatch):
     assert calls["count"] == 0
 
 
-@pytest.mark.unit
 @_handle_project
 def test_async_enqueue_accepts_base64_and_raw_roundtrip():
     im = ImageManager()
@@ -213,7 +207,6 @@ def test_async_enqueue_accepts_base64_and_raw_roundtrip():
     assert h.raw() == base64.b64decode(PNG_RED_B64)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_await_pending_multiple_and_datastore_updates():
     im = ImageManager()
@@ -254,7 +247,6 @@ def test_await_pending_multiple_and_datastore_updates():
     assert getattr(hs[1], "annotation", None) is None
 
 
-@pytest.mark.unit
 @_handle_project
 def test_temp_image_id_persists_after_resolution():
     im = ImageManager()
@@ -282,7 +274,6 @@ def test_temp_image_id_persists_after_resolution():
     assert row.get("temp_image_id") == pid
 
 
-@pytest.mark.unit
 @_handle_project
 def test_await_pending_omits_missing_rows():
     im = ImageManager()
@@ -308,7 +299,6 @@ def test_await_pending_omits_missing_rows():
     assert set(mapping.keys()) == {h.image_id}
 
 
-@pytest.mark.unit
 @_handle_project
 def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypatch):
     im = ImageManager()
@@ -369,7 +359,6 @@ def test_pending_update_persists_after_resolution_and_backend_reflects(monkeypat
     assert calls["count"] == 1
 
 
-@pytest.mark.unit
 @_handle_project
 def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
     im = ImageManager()

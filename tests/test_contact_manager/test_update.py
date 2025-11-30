@@ -46,7 +46,6 @@ def _programmatic_contact_check(
 
 
 @_handle_project
-@pytest.mark.unit
 @pytest.mark.asyncio
 @pytest.mark.parametrize("identify_by", ["name", "email", "id"])
 async def test_selects_move_to_blacklist(identify_by: str):

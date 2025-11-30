@@ -86,7 +86,6 @@ async def test_ask_with_response_format():
     assert isinstance(parsed.summary, str) and parsed.summary.strip() != ""
 
 
-@pytest.mark.unit
 def test_clear_initialises_and_resets_caches():
     """
     Ensure WebSearcher.clear flushes internal caches and keeps them provisioned.

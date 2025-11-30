@@ -5,7 +5,6 @@ from unity.transcript_manager.types.medium import Medium
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @_handle_project
 def test_create_and_filter():
     bl = BlackListManager()
@@ -49,7 +48,6 @@ def test_create_and_filter():
     assert only_phone[0].medium == Medium.SMS_MESSAGE
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_entry():
     bl = BlackListManager()
@@ -80,7 +78,6 @@ def test_update_entry():
     assert after2[0].contact_detail == "+441234567890"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_requires_field():
     bl = BlackListManager()
@@ -96,7 +93,6 @@ def test_update_requires_field():
         bl.update_blacklist_entry(blacklist_id=bid)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete_entry():
     bl = BlackListManager()
@@ -123,7 +119,6 @@ def test_delete_entry():
     assert all_after[0].blacklist_id == id2
 
 
-@pytest.mark.unit
 @_handle_project
 def test_clear_resets_context():
     bl = BlackListManager()
@@ -138,7 +133,6 @@ def test_clear_resets_context():
     assert len(bl.filter_blacklist()["entries"]) == 0
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_shape_contains_shorthand_maps():
     bl = BlackListManager()

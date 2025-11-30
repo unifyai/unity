@@ -1,9 +1,7 @@
 from tests.helpers import _handle_project
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-import pytest
 
 
-@pytest.mark.unit
 @_handle_project
 def test_create_empty_column():
     knowledge_manager = KnowledgeManager()
@@ -23,7 +21,6 @@ def test_create_empty_column():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_create_derived_column():
     knowledge_manager = KnowledgeManager()
@@ -47,7 +44,6 @@ def test_create_derived_column():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete_column():
     knowledge_manager = KnowledgeManager()
@@ -67,7 +63,6 @@ def test_delete_column():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete_empty_column():
     knowledge_manager = KnowledgeManager()
@@ -98,7 +93,6 @@ def test_delete_empty_column():
     assert data == {"Contacts": [], "MyTable": []}
 
 
-@pytest.mark.unit
 @_handle_project
 def test_rename_column():
     knowledge_manager = KnowledgeManager()

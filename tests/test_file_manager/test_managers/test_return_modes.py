@@ -9,7 +9,6 @@ from tests.helpers import _handle_project
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.unit
 async def test_parse_return_modes(file_manager, tmp_path: Path):
     p = tmp_path / "sample.txt"
     p.write_text("Hello world. This is a sample file.", encoding="utf-8")
@@ -53,7 +52,6 @@ async def test_parse_return_modes(file_manager, tmp_path: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.unit
 async def test_ask_about_file_with_response_format(file_manager, tmp_path: Path):
     p = tmp_path / "report.txt"
     p.write_text("Quarterly Report Q1 2025. Revenue grew to $10M.", encoding="utf-8")

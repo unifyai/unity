@@ -9,7 +9,6 @@ from unity.task_scheduler.types.schedule import Schedule
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_task_name():
     task_scheduler = TaskScheduler()
 
@@ -31,7 +30,6 @@ def test_update_task_name():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_task_description():
     task_scheduler = TaskScheduler()
 
@@ -59,7 +57,6 @@ def test_update_task_description():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_task_status():
     task_scheduler = TaskScheduler()
 
@@ -84,7 +81,6 @@ def test_update_task_status():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_head_of_queue_scheduled_cannot_be_queued():
     """A task at the queue head with an explicit start_at must stay 'scheduled'."""
 
@@ -111,7 +107,6 @@ def test_head_of_queue_scheduled_cannot_be_queued():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_task_start_at():
     ts = TaskScheduler()
 
@@ -129,7 +124,6 @@ def test_update_task_start_at():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_task_deadline():
     ts = TaskScheduler()
 
@@ -146,7 +140,6 @@ def test_update_task_deadline():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_task_repetition():
     ts = TaskScheduler()
 
@@ -163,7 +156,6 @@ def test_update_task_repetition():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_task_priority():
     ts = TaskScheduler()
 

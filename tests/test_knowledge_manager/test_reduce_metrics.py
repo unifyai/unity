@@ -6,7 +6,6 @@ from tests.helpers import _handle_project
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_knowledge_reduce_param_shapes():

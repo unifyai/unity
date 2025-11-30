@@ -17,7 +17,6 @@ Coverage
 
 from __future__ import annotations
 
-import pytest
 import unify
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
@@ -41,7 +40,6 @@ def _make_test_image_b64(
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_images_valid_reference():
     """Test that guidance can reference valid image IDs in nested structure."""
     gm = GuidanceManager()
@@ -82,7 +80,6 @@ def test_fk_images_valid_reference():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_images_set_null_on_delete():
     """Test SET NULL: Deleting image replaces image_id with None in-place."""
     gm = GuidanceManager()
@@ -151,7 +148,6 @@ def test_fk_images_set_null_on_delete():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_images_multiple_deletes():
     """Test SET NULL with multiple sequential image deletes."""
     gm = GuidanceManager()
@@ -216,7 +212,6 @@ def test_fk_images_multiple_deletes():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_images_null_tolerance():
     """Test that guidance with None image_ids (after SET NULL) loads correctly."""
     gm = GuidanceManager()
@@ -288,7 +283,6 @@ def test_fk_images_null_tolerance():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_function_ids_valid_reference():
     """Test that guidance can reference valid function IDs."""
     gm = GuidanceManager()
@@ -321,7 +315,6 @@ def test_fk_function_ids_valid_reference():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_function_ids_set_null_on_delete():
     """Test SET NULL: Deleting function removes it from guidance.function_ids array."""
     gm = GuidanceManager()
@@ -360,7 +353,6 @@ def test_fk_function_ids_set_null_on_delete():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_function_ids_empty_array():
     """Test that empty function_ids array is valid."""
     gm = GuidanceManager()
@@ -382,7 +374,6 @@ def test_fk_function_ids_empty_array():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_fk_combined_images_and_functions():
     """Test combined FK constraints: images + function_ids."""
     gm = GuidanceManager()

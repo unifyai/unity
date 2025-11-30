@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from tests.helpers import _handle_project
 from unity.file_manager.types import FilePipelineConfig
 
 
-@pytest.mark.unit
 @_handle_project
 def test_rename_updates_index_and_contexts(file_manager, tmp_path: Path):
     fm = file_manager
@@ -39,7 +37,6 @@ def test_rename_updates_index_and_contexts(file_manager, tmp_path: Path):
     assert roots and "/Content" in str(roots[0]["Content"].get("context", ""))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_move_updates_index_and_contexts(file_manager, tmp_path: Path):
     fm = file_manager
@@ -62,7 +59,6 @@ def test_move_updates_index_and_contexts(file_manager, tmp_path: Path):
     assert any(r.get("file_path") == dst for r in rows_new)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete_removes_index_row(file_manager, tmp_path: Path):
     fm = file_manager
@@ -83,7 +79,6 @@ def test_delete_removes_index_row(file_manager, tmp_path: Path):
     assert len(rows_after) == 0
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete_using_file_path(file_manager, tmp_path: Path):
     """Test that deletion works with file_path as well as file_id."""

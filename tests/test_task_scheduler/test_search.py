@@ -5,7 +5,6 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_tasks_single_reference_basic():
@@ -39,7 +38,6 @@ def test_search_tasks_single_reference_basic():
     assert "_description_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_tasks_multi_columns_json_and_vec_created():
@@ -74,7 +72,6 @@ def test_search_tasks_multi_columns_json_and_vec_created():
     assert "_name_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_tasks_all_columns_default_derivation():
@@ -107,7 +104,6 @@ def test_search_tasks_all_columns_default_derivation():
     assert any(k.startswith("_expr_") and k.endswith("_emb") for k in cols.keys())
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_tasks_mean_of_cosine_ranking():
@@ -158,7 +154,6 @@ def test_search_tasks_mean_of_cosine_ranking():
     assert any(k.startswith("_sum_cos_") for k in cols.keys())
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_tasks_backfills_when_insufficient_similarity_results():

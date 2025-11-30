@@ -25,7 +25,6 @@ from unity.function_manager.function_manager import FunctionManager
 
 
 @_handle_project
-@pytest.mark.unit
 def test_add_single_success():
     src = (
         "def double(x):\n"
@@ -40,7 +39,6 @@ def test_add_single_success():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_add_multiple_with_dependency():
     add_src = "def add(a, b):\n    return a + b\n"
     # Update to avoid user-defined function calls (now disallowed)
@@ -51,7 +49,6 @@ def test_add_multiple_with_dependency():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_batch_add_multiple():
     """Test that adding multiple functions works efficiently (uses batch creation)."""
     # Create several independent functions
@@ -86,7 +83,6 @@ def test_batch_add_multiple():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_add_duplicate_skips_by_default():
     """Test that adding duplicate functions skips them by default."""
     fm = FunctionManager()
@@ -111,7 +107,6 @@ def test_add_duplicate_skips_by_default():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_add_duplicate_with_overwrite():
     """Test that adding duplicate functions with overwrite=True updates them in-place."""
     fm = FunctionManager()
@@ -145,7 +140,6 @@ def test_add_duplicate_with_overwrite():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_add_mixed_new_and_duplicate():
     """Test adding a batch with both new and duplicate functions."""
     fm = FunctionManager()
@@ -202,7 +196,6 @@ def test_add_mixed_new_and_duplicate():
         # ),
     ],
 )
-@pytest.mark.unit
 def test_validation_errors(source: str, exp_msg: str):
     fm = FunctionManager()
     results = fm.add_functions(implementations=source)
@@ -217,7 +210,6 @@ def test_validation_errors(source: str, exp_msg: str):
 
 
 @_handle_project
-@pytest.mark.unit
 def test_list_with_and_without_implementations():
     add_src = (
         "def add(a: int, b: int) -> int:\n"
@@ -246,7 +238,6 @@ def test_list_with_and_without_implementations():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_delete_single():
     fm = FunctionManager()
     fm.add_functions(implementations="def alpha():\n    return 1\n")
@@ -257,7 +248,6 @@ def test_delete_single():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_delete_with_dependants_cascades():
     add_src = "def add(a, b):\n    return a + b\n"
     # No user-defined calls allowed; keep independent
@@ -272,7 +262,6 @@ def test_delete_with_dependants_cascades():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_delete_without_cascading_leaves_dependants():
     add_src = "def add(a, b):\n    return a + b\n"
     twin_src = "def twin(x):\n    return x + x\n"
@@ -285,7 +274,6 @@ def test_delete_without_cascading_leaves_dependants():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_delete_already_deleted():
     """Test that deleting an already-deleted function doesn't raise an error."""
     fm = FunctionManager()
@@ -304,7 +292,6 @@ def test_delete_already_deleted():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_delete_multiple_handles_duplicates():
     """Test that deleting multiple functions handles cases where some are already deleted."""
     fm = FunctionManager()
@@ -332,7 +319,6 @@ def test_delete_multiple_handles_duplicates():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_batch_delete():
     """Test batch deletion of multiple functions at once."""
     fm = FunctionManager()
@@ -362,7 +348,6 @@ def test_batch_delete():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_batch_delete_all():
     """Test deleting all functions at once by passing all IDs."""
     fm = FunctionManager()
@@ -387,7 +372,6 @@ def test_batch_delete_all():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_batch_delete_with_cascade():
     """Test batch deletion with cascading deletes of dependents."""
     fm = FunctionManager()
@@ -420,7 +404,6 @@ def test_batch_delete_with_cascade():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_batch_delete_empty_list():
     """Test that batch deleting an empty list is a no-op."""
     fm = FunctionManager()
@@ -434,7 +417,6 @@ def test_batch_delete_empty_list():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_batch_delete_nonexistent():
     """Test that batch deleting non-existent functions doesn't error."""
     fm = FunctionManager()
@@ -456,7 +438,6 @@ def test_batch_delete_nonexistent():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_search_filtering_across_columns():
     price_src = (
         "def price_total(p, tax):\n"
@@ -484,7 +465,6 @@ def test_search_filtering_across_columns():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_clear():
     fm = FunctionManager()
 

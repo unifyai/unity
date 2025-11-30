@@ -6,7 +6,6 @@ from tests.helpers import _handle_project
 from tests.test_screen_share_manager.conftest import load_asset_image, PNG_BLUE_B64
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_drops_frames_when_queue_full(caplog):

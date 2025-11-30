@@ -27,7 +27,6 @@ def temp_dir(tmp_path: Path) -> Path:
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.unit
 async def test_unique_name_generation(file_manager, tmp_path: Path):
     """Test unique name generation when importing files with same names."""
     # Create two identical names in different folders and import sequentially
@@ -58,7 +57,6 @@ async def test_unique_name_generation(file_manager, tmp_path: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.unit
 async def test_parse_all_formats(file_manager, supported_file_examples: dict):
     """Test parsing of all supported file formats."""
     fm = file_manager
@@ -111,7 +109,6 @@ async def test_parse_all_formats(file_manager, supported_file_examples: dict):
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.unit
 async def test_parse_errors(file_manager, tmp_path: Path):
     """Test handling of files that can't be parsed."""
     # Create a file with an unsupported extension
@@ -146,7 +143,6 @@ async def test_parse_errors(file_manager, tmp_path: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.unit
 async def test_ask_uses_parse(file_manager, temp_dir: Path):
     """Test that the ask method correctly uses the parse tool."""
     fm = file_manager
@@ -178,7 +174,6 @@ async def test_ask_uses_parse(file_manager, temp_dir: Path):
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.unit
 async def test_content_preservation(file_manager, supported_file_examples: dict):
     """Test that file content is preserved correctly during parsing."""
     fm = file_manager
@@ -218,7 +213,6 @@ async def test_content_preservation(file_manager, supported_file_examples: dict)
 
 @pytest.mark.asyncio
 @_handle_project
-@pytest.mark.unit
 async def test_structure_integrity(
     file_manager,
     supported_file_examples: dict,
@@ -266,7 +260,6 @@ async def test_structure_integrity(
 
 
 @_handle_project
-@pytest.mark.unit
 def test_singleton(file_manager):
     """Test that FileManager is a singleton."""
     fm1 = file_manager

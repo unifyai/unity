@@ -17,7 +17,6 @@ from tests.test_screen_share_manager.conftest import (
 )
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_should_handle_empty_turn():
@@ -32,7 +31,6 @@ async def test_should_handle_empty_turn():
     await manager.stop()
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_should_retry_on_llm_failure(mocked_manager):
@@ -54,7 +52,6 @@ async def test_should_retry_on_llm_failure(mocked_manager):
     assert mocks["detect"].generate.call_count == 3
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_should_handle_invalid_llm_json(mocked_manager):
@@ -73,7 +70,6 @@ async def test_should_handle_invalid_llm_json(mocked_manager):
     assert manager._detection_queue.empty()
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_should_handle_llm_timeouts(mocked_manager):
@@ -90,7 +86,6 @@ async def test_should_handle_llm_timeouts(mocked_manager):
     assert mocks["detect"].generate.call_count >= 1
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_consolidates_speech_with_subsequent_visual_outcome(

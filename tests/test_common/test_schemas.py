@@ -309,7 +309,6 @@ def test_schema_plain_function() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.unit
 @_handle_project
 def test_nested_image_schema_enforcement() -> None:
     """Provision a context with the Message schema and assert:
@@ -412,7 +411,6 @@ class _Record(BaseModel):
     payload: _Payload
 
 
-@pytest.mark.unit
 @_handle_project
 def test_nested_pydantic_schema_enforcement() -> None:
     """Provision a context from an arbitrary nested Pydantic model and assert:

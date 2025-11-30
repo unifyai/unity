@@ -11,7 +11,6 @@ from tests.helpers import _handle_project
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  Low-level helper: _delete_contact                                      #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
 @_handle_project
 def test_delete_private():
     """Creating a contact programmatically and deleting it via the private helper."""
@@ -34,7 +33,6 @@ def test_delete_private():
 # ────────────────────────────────────────────────────────────────────────────
 # 2.  Guard against deleting system contacts (assistant / default user)     #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
 @_handle_project
 def test_delete_system_raises():
     cm = ContactManager()

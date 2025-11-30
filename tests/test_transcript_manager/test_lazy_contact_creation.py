@@ -7,7 +7,6 @@ from unity.contact_manager.types.contact import Contact
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_creates_contacts_and_logs():

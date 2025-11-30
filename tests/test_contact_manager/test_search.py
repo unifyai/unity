@@ -4,7 +4,6 @@ from unity.contact_manager.contact_manager import ContactManager
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_single_reference_basic():
@@ -29,7 +28,6 @@ def test_single_reference_basic():
     assert "_bio_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_multi_columns_json_vec():
@@ -56,7 +54,6 @@ def test_multi_columns_json_vec():
     assert "_first_name_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_all_columns_default():
@@ -101,7 +98,6 @@ def test_all_columns_default():
     assert any(k.startswith("_expr_") and k.endswith("_emb") for k in cols.keys())
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_mean_cosine_ranking():
@@ -154,7 +150,6 @@ def test_mean_cosine_ranking():
     assert any(k.startswith("_sum_cos_") for k in cols.keys())
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_backfills_insufficient_results():

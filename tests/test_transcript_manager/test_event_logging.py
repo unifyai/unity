@@ -9,7 +9,6 @@ from tests.helpers import _handle_project, capture_events
 # ─────────────────────────  ask() logging  ──────────────────────────
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_events_ask():

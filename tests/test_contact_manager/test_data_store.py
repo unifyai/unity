@@ -7,7 +7,6 @@ from unity.common.data_store import DataStore
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @_handle_project
 def test_data_store_updated_after_create():
     cm = ContactManager()
@@ -26,7 +25,6 @@ def test_data_store_updated_after_create():
     assert row.get("surname") == "One"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_data_store_updated_after_update():
     cm = ContactManager()
@@ -46,7 +44,6 @@ def test_data_store_updated_after_update():
     assert row.get("surname") == "Updated"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_data_store_deleted_after_delete():
     cm = ContactManager()
@@ -67,7 +64,6 @@ def test_data_store_deleted_after_delete():
         _ = ds[cid]
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_repopulates():
     cm = ContactManager()
@@ -91,7 +87,6 @@ def test_filter_repopulates():
     assert row.get("first_name") == "CacheTest"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_search_repopulates():
     cm = ContactManager()
@@ -113,7 +108,6 @@ def test_search_repopulates():
     assert row.get("first_name") == "CacheTest"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_system_present_after_init():
     cm = ContactManager()
@@ -127,7 +121,6 @@ def test_system_present_after_init():
     assert u is not None and u.get("respond_to") is True
 
 
-@pytest.mark.unit
 @_handle_project
 def test_data_store_hygiene_after_custom_column_delete():
     cm = ContactManager()
@@ -151,7 +144,6 @@ def test_data_store_hygiene_after_custom_column_delete():
     assert "department" not in row2
 
 
-@pytest.mark.unit
 @_handle_project
 def test_after_merge():
     cm = ContactManager()
@@ -180,7 +172,6 @@ def test_after_merge():
         _ = ds[cid2]
 
 
-@pytest.mark.unit
 @_handle_project
 def test_data_store_never_contains_vector_columns():
     cm = ContactManager()
@@ -196,7 +187,6 @@ def test_data_store_never_contains_vector_columns():
         assert all(not str(k).endswith("_emb") for k in row.keys())
 
 
-@pytest.mark.unit
 @_handle_project
 def test_get_info_cache_fallback():
     cm = ContactManager()

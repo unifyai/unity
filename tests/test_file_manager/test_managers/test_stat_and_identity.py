@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.unit
 def test_extract_filesystem_type_and_safe(file_manager):
     fm = file_manager
 

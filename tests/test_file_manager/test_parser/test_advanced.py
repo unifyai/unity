@@ -19,7 +19,6 @@ from unity.file_manager.parser import DoclingParser
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_with_llm_enrichment_mock(supported_format_files):
     """Test parser with LLM enrichment enabled (mocked)."""
@@ -52,7 +51,6 @@ async def test_with_llm_enrichment_mock(supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_fallback_when_docling_unavailable(supported_format_files):
     """Test parser falls back gracefully when Docling is not available."""
@@ -68,7 +66,6 @@ async def test_fallback_when_docling_unavailable(supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_error_handling_corrupt_file(tmp_path: Path):
     """Test parser handles corrupt files gracefully."""
@@ -90,7 +87,6 @@ async def test_error_handling_corrupt_file(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_with_very_long_lines(tmp_path: Path):
     """Test parser handles files with very long lines."""
@@ -114,7 +110,6 @@ async def test_with_very_long_lines(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_sentence_splitting_edge_cases(tmp_path: Path):
     """Test sentence splitting with edge cases."""
@@ -148,7 +143,6 @@ async def test_sentence_splitting_edge_cases(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_with_mixed_encodings(tmp_path: Path):
     """Test parser handles files with different encodings."""
@@ -172,7 +166,6 @@ async def test_with_mixed_encodings(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_memory_efficiency(tmp_path: Path):
     """Test parser doesn't load entire file into memory at once."""
@@ -197,7 +190,6 @@ async def test_memory_efficiency(tmp_path: Path):
     assert total_paragraphs > 10  # Should be chunked
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_concurrent_parsing(parser, supported_format_files):
@@ -228,7 +220,6 @@ async def test_concurrent_parsing(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_metadata_extraction(tmp_path: Path):
     """Test comprehensive metadata extraction."""

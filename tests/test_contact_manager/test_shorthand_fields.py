@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 import re
 
 from unity.contact_manager.types.contact import Contact
@@ -8,7 +7,6 @@ from tests.helpers import _handle_project
 from unity.contact_manager.contact_manager import ContactManager
 
 
-@pytest.mark.unit
 @_handle_project
 def test_json_shorthand_aliases():
     c = Contact(
@@ -33,7 +31,6 @@ def test_json_shorthand_aliases():
         assert k not in dumped, f"did not expect original key {k} in dump"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_json_shorthand_prune():
     c = Contact(
@@ -55,7 +52,6 @@ def test_json_shorthand_prune():
         assert k not in dumped, f"did not expect empty shorthand key {k} in dump"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_custom_column_shorthand():
     cm = ContactManager()
@@ -87,7 +83,6 @@ def test_custom_column_shorthand():
     ), "Original custom field key should be aliased in shorthand JSON"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_custom_column_inverse():
     cm = ContactManager()
