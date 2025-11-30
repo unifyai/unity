@@ -6,6 +6,9 @@ Tests for communication flows (SMS, email, calls, etc.)
 """
 
 import pytest
+
+pytestmark = pytest.mark.eval
+
 from tests.helpers import _handle_project
 from tests.test_conversation_manager.helpers import (
     contacts,

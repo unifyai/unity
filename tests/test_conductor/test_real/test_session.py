@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import pytest
+
+pytestmark = pytest.mark.eval
 from unittest.mock import AsyncMock
 
 from unity.conductor.simulated import SimulatedConductor

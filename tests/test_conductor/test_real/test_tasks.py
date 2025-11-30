@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from unity.conductor.simulated import SimulatedConductor
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.actor.simulated import SimulatedActor

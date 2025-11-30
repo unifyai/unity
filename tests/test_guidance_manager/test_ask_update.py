@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from unity.guidance_manager.guidance_manager import GuidanceManager
 from tests.helpers import _handle_project
 

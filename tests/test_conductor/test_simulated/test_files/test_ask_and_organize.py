@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from unity.conductor.simulated import SimulatedConductor
 from unity.file_manager.managers.local import LocalFileManager
 from unity.file_manager.global_file_manager import GlobalFileManager

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from tests.helpers import _handle_project
 from tests.test_conductor.utils import (
     tool_names_from_messages,

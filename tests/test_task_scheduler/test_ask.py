@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 import os
 
 import pytest
+
+pytestmark = pytest.mark.eval
 import unify
 
 from unity.task_scheduler.task_scheduler import TaskScheduler

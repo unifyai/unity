@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from unity.conductor.simulated import SimulatedConductor
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from unity.knowledge_manager.types import ColumnType

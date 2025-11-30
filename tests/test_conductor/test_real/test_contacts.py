@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from unity.conductor.simulated import SimulatedConductor
 from unity.contact_manager.contact_manager import ContactManager
 

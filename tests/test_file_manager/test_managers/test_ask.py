@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+pytestmark = pytest.mark.eval
 from tests.helpers import _handle_project
 from tests.test_file_manager.helpers import ask_judge
 
