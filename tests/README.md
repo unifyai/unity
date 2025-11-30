@@ -332,12 +332,34 @@ The `-e/--env KEY=VALUE` flag sets environment variables for all pytest sessions
 
 **Available Variables:**
 
-These are defined in `tests/helpers.py:TestingSettings`. The script passes them through without validation—pydantic validates at runtime.
+Settings are organized in two classes with inheritance:
+- `ProductionSettings` (`unity/settings.py`) - used in deployed system AND tests
+- `TestingSettings` (`tests/helpers.py`) - inherits production + adds test-only settings
+
+The `--env` approach is intentionally generic. Any variable from either class is available via `--env` without modifying the shell script.
+
+**Production Settings** (also used in tests):
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `UNIFY_MODEL` | str | `gpt-5.1@openai` | LLM model to use for all test runs |
+| `UNIFY_MODEL` | str | `gpt-5.1@openai` | LLM model to use |
 | `UNIFY_CACHE` | bool/str | `true` | Enable/disable LLM response caching |
+| `LLM_IO_DEBUG` | bool | `true` | Log full LLM request/response payloads |
+| `ASYNCIO_DEBUG` | bool | `false` | Enable asyncio debug mode |
+| `ASYNCIO_VERBOSE_DEBUG` | bool | `false` | Verbose asyncio logging with task/thread breadcrumbs |
+| `PYTEST_LOG_TO_FILE` | bool | `true` | Log pytest output to files |
+| `UNITY_SEMANTIC_CACHE` | bool | `false` | Enable semantic cache mode |
+| `UNITY_READONLY_ASK_GUARD` | bool | `true` | Enable read-only ask guard (mutation-intent classifier) |
+| `UNITY_SILENCE_HTTPX` | bool | `true` | Silence httpx library logging |
+| `UNITY_SILENCE_URLLIB3` | bool | `true` | Silence urllib3 library logging |
+| `UNITY_SILENCE_OPENAI` | bool | `true` | Silence openai library logging |
+| `UNITY_LOG_ONLY_PROJECT` | bool | `true` | Only log unity project messages |
+| `UNITY_LOG_INCLUDE_PREFIXES` | str | `"unity"` | Comma-separated logger prefixes to include |
+
+**Test-Only Settings**:
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
 | `UNIFY_DELETE_CONTEXT_ON_EXIT` | bool | `false` | Delete test context after each test |
 | `UNIFY_OVERWRITE_PROJECT` | bool | `false` | Overwrite project on activation |
 | `UNIFY_REGISTER_SUMMARY_CALLBACKS` | bool | `false` | Register summary callbacks |
@@ -348,8 +370,6 @@ These are defined in `tests/helpers.py:TestingSettings`. The script passes them 
 | `UNIFY_PRETEST_CONTEXT_CREATE` | bool | `false` | Pre-create contexts before tests |
 | `UNIFY_TEST_TAGS` | str | `""` | Comma-separated tags for duration logging |
 | `UNIFY_SKIP_SESSION_SETUP` | bool | `false` | Skip project/context creation (pre-done) |
-
-**Design note:** The `--env` approach is intentionally generic. Any new variable added to `TestingSettings` is immediately available via `--env` without modifying the shell script. The script simply passes through whatever you specify.
 
 ### Command-Line Options
 

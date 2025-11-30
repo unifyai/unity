@@ -8,8 +8,7 @@ from os import sep
 from pathlib import Path
 from typing import Any, Callable, List
 from unity.events.event_bus import EVENT_BUS
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from unity.settings import ProductionSettings
 
 # Contexts that were pre-created during collection;
 PRECREATED_CONTEXTS: set[str] = set()
@@ -29,28 +28,16 @@ def get_session_tags() -> List[str]:
     return list(_SESSION_TAGS)
 
 
-def _parse_cache_value(v: Any) -> bool | str:
+class TestingSettings(ProductionSettings):
+    """Test environment settings - inherits all production settings.
+
+    Production settings (UNIFY_MODEL, UNIFY_CACHE, LLM_IO_DEBUG, etc.) are
+    inherited from ProductionSettings. This class adds test-only settings.
     """
-    Parse a cache setting value.
 
-    Returns True/False for boolean strings, otherwise passes through as string.
-    """
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, str):
-        lower = v.lower()
-        if lower in ("true", "yes", "1"):
-            return True
-        if lower in ("false", "no", "0"):
-            return False
-        return v
-    return bool(v)
-
-
-# Settings for the testing environment
-class TestingSettings(BaseSettings):
-    UNIFY_MODEL: str = "gpt-5.1@openai"
-    UNIFY_CACHE: bool | str = True
+    # ─────────────────────────────────────────────────────────────────────────
+    # Test Infrastructure Settings
+    # ─────────────────────────────────────────────────────────────────────────
     UNIFY_DELETE_CONTEXT_ON_EXIT: bool = False
     UNIFY_OVERWRITE_PROJECT: bool = False
     UNIFY_REGISTER_SUMMARY_CALLBACKS: bool = False
@@ -61,17 +48,6 @@ class TestingSettings(BaseSettings):
     UNIFY_PRETEST_CONTEXT_CREATE: bool = False
     UNIFY_TEST_TAGS: str = ""  # Comma-separated list of tags for duration logging
     UNIFY_SKIP_SESSION_SETUP: bool = False  # Skip project/context creation (pre-done)
-
-    @field_validator("UNIFY_CACHE", mode="before")
-    @classmethod
-    def parse_cache(cls, v: Any) -> bool | str:
-        return _parse_cache_value(v)
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        case_sensitive=True,
-        extra="ignore",
-    )
 
 
 SETTINGS = TestingSettings()
