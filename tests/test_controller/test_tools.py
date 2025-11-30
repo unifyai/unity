@@ -1,16 +1,12 @@
-import os
 import pytest
 from pathlib import Path
 import base64
-import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
-from tests.helpers import _handle_project, SETTINGS
+from unity.common.llm_client import new_llm_client
+from tests.helpers import _handle_project
 from unity.controller.controller import Controller
 from unity.controller.playwright_utils.worker import BrowserWorker
-
-# Use the same model as other tests (override via UNIFY_MODEL env)
-MODEL_NAME = os.getenv("UNIFY_MODEL", "gpt-4o@openai")
 
 
 @pytest.mark.asyncio
@@ -20,11 +16,7 @@ async def test_act_tool_loop():
     Verify that the Controller.act method can be used as a tool
     within the async-tool-use loop to perform a browser action.
     """
-    client = unify.AsyncUnify(
-        MODEL_NAME,
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-    )
+    client = new_llm_client()
     client.set_system_message("Feel free to call multiple tools per turn.")
 
     controller = Controller()
@@ -58,12 +50,7 @@ async def test_observe_tool_loop():
     Verify that the Controller.observe method can be used as a tool
     within the async-tool-use loop to answer a simple question.
     """
-    # Create a fresh AsyncUnify client
-    client = unify.AsyncUnify(
-        MODEL_NAME,
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-    )
+    client = new_llm_client()
     client.set_system_message("Feel free to call multiple tools per turn.")
 
     # Instantiate Controller and prime minimal context
@@ -90,12 +77,7 @@ async def test_complex_tool_loop():
     Verify that the Controller.observe method can be used as a tool
     within the async-tool-use loop to answer a simple question.
     """
-    # Create a fresh AsyncUnify client
-    client = unify.AsyncUnify(
-        MODEL_NAME,
-        service_tier="priority",
-        cache=SETTINGS.UNIFY_CACHE,
-    )
+    client = new_llm_client()
     client.set_system_message("Feel free to call multiple tools per turn.")
 
     # Instantiate Controller and prime minimal context

@@ -40,7 +40,7 @@ This actor takes a more proactive, code-first approach. It generates a complete,
 
 First, ensure you have the necessary setup:
 
-1.  **Environment Variables**: Create a `.env` file in the project root with your `OPENAI_API_KEY` and desired `UNIFY_MODEL`.
+1.  **Environment Variables**: Create a `.env` file in the project root with your `OPENAI_API_KEY`. Optionally set `UNIFY_MODEL` to override the default LLM model.
 2.  **Redis**: Make sure a Redis server is running on `localhost:6379`.
 3.  **Dependencies**: Install all required packages (`pip install -r requirements.txt`).
 4.  **Playwright**: Install browser binaries with `playwright install`.

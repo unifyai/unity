@@ -49,6 +49,7 @@ def _parse_cache_value(v: Any) -> bool | str:
 
 # Settings for the testing environment
 class TestingSettings(BaseSettings):
+    UNIFY_MODEL: str = "gpt-5.1@openai"
     UNIFY_CACHE: bool | str = True
     UNIFY_DELETE_CONTEXT_ON_EXIT: bool = False
     UNIFY_OVERWRITE_PROJECT: bool = False

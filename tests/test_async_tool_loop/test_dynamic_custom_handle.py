@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import inspect
 from typing import Any, Dict, List, Optional
 
@@ -15,14 +14,11 @@ from unity.common.async_tool_loop import (
     start_async_tool_loop,
 )
 from tests.helpers import _handle_project
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import (
     _wait_for_tool_request,
     _wait_for_condition,
 )
-
-
-MODEL_NAME = os.getenv("UNIFY_MODEL", DEFAULT_MODEL)
 
 
 class CustomArgsHandle(SteerableToolHandle):

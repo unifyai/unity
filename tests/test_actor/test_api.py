@@ -2,23 +2,18 @@ from typing import Tuple, Type
 import pytest
 import asyncio
 import functools
-import unify
-import os
 
 from unity.common.async_tool_loop import start_async_tool_loop
+from unity.common.llm_client import new_llm_client
 from unity.actor.base import BaseActor
 from unity.task_scheduler.base import BaseActiveTask
 from unity.actor.browser_use_actor import BrowserUseActor, BrowserUsePlan
 from unity.actor.tool_loop_actor import ToolLoopActor, ToolLoopPlan
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
 
 
-# Fixtures to create a real LLM client for each test
 def make_client(system_message: str):
-    client = unify.AsyncUnify(
-        os.environ.get("UNIFY_MODEL", "gpt-4o@openai"),
-        cache=SETTINGS.UNIFY_CACHE,
-    )
+    client = new_llm_client()
     client.set_system_message(system_message)
     return client
 
