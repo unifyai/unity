@@ -11,6 +11,27 @@ import unify
 DEFAULT_MODEL = "gpt-5.1@openai"
 
 
+def get_cache_setting(default: bool | str = True) -> bool | str:
+    """
+    Parse the UNIFY_CACHE environment variable.
+
+    Returns:
+        - True if the value is "true" (case-insensitive) or not set (uses default)
+        - False if the value is "false" (case-insensitive)
+        - The string value as-is for any other cache mode (e.g., "read", "write",
+          "read-only", "both", and their "-closest" variants)
+    """
+    raw = os.environ.get("UNIFY_CACHE")
+    if raw is None:
+        return default
+    lower = raw.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    return raw
+
+
 def new_llm_client(
     model: str = DEFAULT_MODEL,
     *,
@@ -26,7 +47,7 @@ def new_llm_client(
     async_client=False.
     """
     config = {
-        "cache": json.loads(os.environ.get("UNIFY_CACHE", "true")),
+        "cache": get_cache_setting(),
         "traced": json.loads(os.environ.get("UNIFY_TRACED", "false")),
         "reasoning_effort": "high",
         "service_tier": "priority",

@@ -33,6 +33,7 @@ from .types.document import (
 )
 from .types.enums import FileFormat, MimeType, extension_to_format, extension_to_mime
 from .summary_utils import generate_summary_with_compression
+from unity.common.llm_client import get_cache_setting
 from .parser_utils import (
     extract_bbox_with_origin,
     merge_consecutive_table_items,
@@ -2838,7 +2839,7 @@ class DoclingParser(GenericParser[Document]):
 
             client = unify.Unify(
                 "o4-mini@openai",
-                cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+                cache=get_cache_setting(),
             )
 
             # Token accounting (align with main summariser defaults; no fixed caps)
@@ -3220,7 +3221,7 @@ class DoclingParser(GenericParser[Document]):
             # Create a single client for the entire summarization process
             client = unify.Unify(
                 "o4-mini@openai",
-                cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+                cache=get_cache_setting(),
             )
 
             # ---------- Token accounting (tiktoken-backed) ----------

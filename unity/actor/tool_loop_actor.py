@@ -26,6 +26,7 @@ from .base import BaseActor, BaseActorHandle
 from unity.controller.controller import Controller, ActionFailedError
 from unify import AsyncUnify
 import unify
+from unity.common.llm_client import get_cache_setting
 
 logger = logging.getLogger(__name__)
 if not logger.hasHandlers():
@@ -236,13 +237,13 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
 
         self._plan_client = AsyncUnify(
             "claude-4.5-sonnet@anthropic",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            cache=get_cache_setting(),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         self._ask_client = unify.AsyncUnify(
             "claude-4.5-sonnet@anthropic",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            cache=get_cache_setting(),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 

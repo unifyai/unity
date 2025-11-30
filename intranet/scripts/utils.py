@@ -118,10 +118,24 @@ def get_env_var(
     return value
 
 
+def _parse_unify_cache(value: str) -> bool | str:
+    """
+    Parse the UNIFY_CACHE value.
+
+    Returns True/False for boolean strings, otherwise passes through as string.
+    """
+    lower = value.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    return value
+
+
 def get_config_values() -> Dict[str, Any]:
     """Get configuration values from environment variables."""
     return {
-        "unify_cache": get_env_var("UNIFY_CACHE", "true").lower() == "true",
+        "unify_cache": _parse_unify_cache(get_env_var("UNIFY_CACHE", "true")),
         "unify_traced": get_env_var("UNIFY_TRACED", "true").lower() == "true",
         "log_level": get_env_var("LOG_LEVEL", "INFO"),
         "documents_path": get_env_var("DOCUMENTS_PATH", "intranet/policies"),

@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 
 # RAG Agent components
 from .rag_agent import IntranetRAGAgent
+from unity.common.llm_client import get_cache_setting
 
 # Import new Pydantic models
 try:
@@ -81,7 +82,7 @@ class ResponseEnhancer:
         # Initialize LLM for response enhancement
         self.llm_client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            cache=get_cache_setting(),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 

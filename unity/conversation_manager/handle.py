@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from enum import Enum
 import unify
 from unity.common.async_tool_loop import start_async_tool_loop, SteerableToolHandle
+from unity.common.llm_client import get_cache_setting
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from .base import BaseConversationManagerHandle
 from .events import (
@@ -496,7 +497,7 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         # ──────────────────────────────────────────────────────────────────
         llm = unify.AsyncUnify(
             "gemini-2.5-flash@vertex-ai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            cache=get_cache_setting(),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             return_full_completion=False,
         )

@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional, Union
 import unify
 from .base import BaseFileManager, BaseGlobalFileManager
 from ..common.async_tool_loop import SteerableToolHandle
-from ..common.llm_client import new_llm_client
+from ..common.llm_client import new_llm_client, get_cache_setting
 from .prompt_builders import (
     build_file_manager_ask_prompt,
     build_file_manager_ask_about_file_prompt,
@@ -1014,7 +1014,7 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         self._managers: List[BaseFileManager] = list(managers)
         self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
-            cache=json.loads(os.getenv("UNIFY_CACHE", "true")),
+            cache=get_cache_setting(),
             traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
