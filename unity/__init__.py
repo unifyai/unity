@@ -97,6 +97,31 @@ _configure_default_logging()
 
 
 # ---------------------------------------------------------------------------
+# LLM I/O debug hooks (monkeypatch unify client when enabled)
+# ---------------------------------------------------------------------------
+
+
+def _install_llm_io_hooks() -> None:
+    """Install LLM I/O debug hooks if enabled via settings."""
+    if getattr(_install_llm_io_hooks, "_done", False):
+        return
+
+    try:
+        if _SETTINGS.LLM_IO_DEBUG:
+            from unity.common.llm_io_hooks import install_llm_io_hooks
+
+            install_llm_io_hooks()
+    except Exception:
+        # Never let hook installation crash imports
+        pass
+
+    _install_llm_io_hooks._done = True  # type: ignore[attr-defined]
+
+
+_install_llm_io_hooks()
+
+
+# ---------------------------------------------------------------------------
 # Lazy runtime initialisation
 # ---------------------------------------------------------------------------
 

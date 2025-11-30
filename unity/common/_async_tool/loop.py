@@ -2,10 +2,7 @@ import asyncio
 import unify
 import json
 import inspect
-import os
-from pathlib import Path
 import copy
-import re
 
 from typing import (
     Dict,
@@ -21,7 +18,7 @@ from typing import (
 from contextlib import suppress
 from pydantic import BaseModel
 
-from ...constants import LOGGER, LLM_IO_DEBUG, SESSION_ID
+from ...constants import LOGGER
 from ..tool_spec import ToolSpec, normalise_tools
 from .utils import maybe_await
 from .event_bus_util import to_event_bus
@@ -48,7 +45,6 @@ from .images import (
     LIVE_IMAGES_LOG,
     build_live_images_overview_msgs,
 )
-from .formatting import sanitize_tool_msg_for_logging
 from ..llm_helpers import method_to_schema, _dumps, short_id
 from .loop_config import (
     LoopConfig,
@@ -65,9 +61,6 @@ from .messages import (
 from .tools_data import ToolsData
 from .dynamic_tools_factory import DynamicToolFactory
 from . import semantic_cache as sc
-
-# Single per-run LLM I/O debug directory path (set on first use)
-_LLM_IO_FILE_PATH: str | None = None
 
 if TYPE_CHECKING:
     from ...image_manager.types.image_refs import ImageRefs
@@ -329,8 +322,6 @@ async def async_tool_loop_inner(
             setattr(outer_handle_container[0], "_log_label", cfg.label)
     logger = LoopLogger(cfg, log_steps)
     _token = TOOL_LOOP_LINEAGE.set(cfg.lineage)
-    # Independent, centrally-configured LLM I/O logging flag
-    llm_io_debug = bool(LLM_IO_DEBUG)
 
     # ── Model family detection (centralized) ──────────────────────────────────────
     _model_name = str(getattr(client, "model", "") or "")
@@ -368,102 +359,6 @@ async def async_tool_loop_inner(
                 effective_preprocess = claude_wrapper
 
         return effective_preprocess
-
-    # File sink for LLM I/O: per-run directory under hidden folder, named by SESSION_ID
-    _llm_io_dir: str | None = None
-    if llm_io_debug:
-        with suppress(Exception):
-            global _LLM_IO_FILE_PATH
-            if _LLM_IO_FILE_PATH is None:
-                root = Path(os.getcwd())
-                logs_dir = root / ".llm_io_debug"
-                logs_dir.mkdir(parents=True, exist_ok=True)
-                # Sanitize SESSION_ID for filesystem safety
-                try:
-                    session_safe = re.sub(r"[^0-9A-Za-z._-]", "-", SESSION_ID)
-                except Exception:
-                    session_safe = (
-                        SESSION_ID.replace(":", "-").replace("+", "-").replace("/", "-")
-                    )
-                # Use the prior "filename" as a directory name for this run
-                session_dir = logs_dir / f"{session_safe}"
-                session_dir.mkdir(parents=True, exist_ok=True)
-                _LLM_IO_FILE_PATH = str(session_dir)
-            _llm_io_dir = _LLM_IO_FILE_PATH
-
-    def _llm_io_write(header: str, body: str) -> None:
-        if not llm_io_debug or _llm_io_dir is None:
-            return
-        try:
-            # Resolve a unique filename inside the per-run directory using the current time
-            from datetime import datetime, timezone as _tz
-            import time as _time
-
-            _dir = Path(_llm_io_dir)
-            # Time-of-day without date, with nanosecond precision
-            _now = datetime.now(_tz.utc)
-            _hhmmss = _now.strftime("%H%M%S")
-            _ns = _time.time_ns() % 1_000_000_000
-            _base = f"{_hhmmss}_{_ns:09d}"
-            _path = _dir / f"{_base}.txt"
-            if _path.exists():
-                _i = 1
-                while True:
-                    _candidate = _dir / f"{_base}_{_i}.txt"
-                    if not _candidate.exists():
-                        _path = _candidate
-                        break
-                    _i += 1
-
-            with open(_path, "w", encoding="utf-8") as _f:
-                _f.write(f"🔄 [{logger.log_label}] {header}\n")
-                _f.write(body.rstrip())
-                _f.write("\n")
-            # Emit a concise terminal notice with the destination file
-            try:
-                kind = "request" if "request" in header.lower() else "response"
-                logger.info(f"LLM {kind} written to {_path}", prefix="📝")
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-    # Late-stage request logger used by generate_with_preprocess
-    def _log_llm_request(patched_msgs, gen_kwargs, system_message):
-        with suppress(Exception):
-            try:
-                from .utils import try_parse_json as _try_parse_json
-            except Exception:
-                _try_parse_json = lambda v: v
-
-            _msgs_pretty = []
-            for _m in patched_msgs:
-                _mm = copy.deepcopy(_m)
-                try:
-                    if _mm.get("role") == "assistant":
-                        for _tc in _mm.get("tool_calls") or []:
-                            _fn = _tc.get("function", {})
-                            _fn["arguments"] = _try_parse_json(_fn.get("arguments"))
-                    if _mm.get("role") == "tool":
-                        _mm = sanitize_tool_msg_for_logging(_mm)
-                except Exception:
-                    pass
-                _msgs_pretty.append(_mm)
-
-            _req_payload = {
-                "model": getattr(client, "model", None),
-                "messages": _msgs_pretty,
-            }
-            for _k, _v in gen_kwargs.items():
-                _req_payload[_k] = _v
-
-            _sys_block = (
-                f"System message:\n{system_message}\n\n" if system_message else ""
-            )
-            _llm_io_write(
-                "LLM request ➡️:",
-                f"{_sys_block}{_dumps(_req_payload, indent=4)}",
-            )
 
     _img_token = None
     _imglog_token = None
@@ -2476,7 +2371,6 @@ async def async_tool_loop_inner(
                     generate_with_preprocess(
                         client,
                         _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
-                        debug_log=_log_llm_request,
                         **_gen_kwargs,
                     ),
                     name="LLMGenerate",
@@ -2657,15 +2551,6 @@ async def async_tool_loop_inner(
                             await _handle_notification(notif_waiters2[pw], pw.result())
                         llm_turn_required = True
 
-                # If the LLM completed successfully, log the raw response object
-                if llm_io_debug and not llm_task.exception():
-                    with suppress(Exception):
-                        _raw_resp = llm_task.result()
-                        _llm_io_write(
-                            "LLM response ⬅️:",
-                            _dumps(_raw_resp, indent=4),
-                        )
-
             else:
                 # ––––– legacy *blocking* mode ––––––––––––––––––––––––––––
                 try:
@@ -2681,16 +2566,8 @@ async def async_tool_loop_inner(
                     _result = await generate_with_preprocess(
                         client,
                         _apply_reasoning_model_compat(_gen_kwargs, tool_choice_mode),
-                        debug_log=_log_llm_request,
                         **_gen_kwargs,
                     )
-
-                    if llm_io_debug:
-                        with suppress(Exception):
-                            _llm_io_write(
-                                "LLM response ⬅️:",
-                                _dumps(_result, indent=4),
-                            )
                 except Exception:
                     raise Exception(
                         f"LLM call failed. Messages at the time:\n{json.dumps(client.messages, indent=4)}",
