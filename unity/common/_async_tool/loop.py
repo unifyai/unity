@@ -31,7 +31,6 @@ from .messages import (
     generate_with_preprocess,
     acknowledge_helper_call,
     transform_non_thinking_turns_to_context,
-    transform_tool_calls_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -691,15 +690,12 @@ async def async_tool_loop_inner(
                 for m in message
             ]
 
-        # ── Reasoning model workaround (Claude) ──────────────────────────────────
-        # Claude models with extended thinking require special metadata on
-        # assistant messages containing tool_calls. Transform seeded tool_calls
-        # into a descriptive system message to avoid missing signature errors.
-        if _is_claude:
-            seeded_batch = transform_tool_calls_to_context(
-                seeded_batch,
-                marker_key="_claude_seeded_context",
-            )
+        # NOTE: Claude models with extended thinking require special metadata on
+        # assistant messages containing tool_calls. We handle this via LAZY
+        # transformation in _apply_reasoning_model_compat → claude_wrapper,
+        # which transforms non-thinking assistant turns in the copy sent to
+        # the API, NOT in client.messages. This allows backfill to find and
+        # execute seeded tool_calls before transformation occurs.
 
         await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
         # Emit concise one-time banner and replay logs for seeded history (if requested)
