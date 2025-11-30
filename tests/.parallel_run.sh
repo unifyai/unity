@@ -24,23 +24,18 @@ WAIT_FOR_COMPLETION=0
 # Optional filename match (glob-like, e.g., "*_tool_docstring*")
 NAME_PATTERN=""
 
-# Project mode: default is shared project (RANDOM_PROJECTS=0)
-# With --random-projects: each tmux session gets its own isolated project
-RANDOM_PROJECTS=0
-
 # Test category filters (symbolic ↔ eval spectrum)
 # With --eval-only: run only tests marked with pytest.mark.eval
 # With --symbolic-only: run only tests NOT marked with pytest.mark.eval
 EVAL_ONLY=0
 SYMBOLIC_ONLY=0
 
-# Cache control
-# With --no-cache: disable LLM response caching (UNIFY_CACHE=false)
-NO_CACHE=0
-
 # Repeat count for statistical sampling
-# With --repeat N: run each test N times (useful for eval tests with --no-cache)
+# With --repeat N: run each test N times (useful for eval tests)
 REPEAT_COUNT=1
+
+# Environment variable overrides (accumulated via --env KEY=VALUE)
+declare -a ENV_OVERRIDES=()
 
 # Resolve repo root (parent of this script's directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -67,9 +62,14 @@ while (( "$#" )); do
         exit 2
       fi
       ;;
-    --random-projects)
-      RANDOM_PROJECTS=1
-      shift
+    -e|--env)
+      if [[ -n "${2-}" && "$2" == *=* ]]; then
+        ENV_OVERRIDES+=( "$2" )
+        shift 2
+      else
+        echo "Error: -e|--env requires KEY=VALUE argument (e.g., --env UNIFY_CACHE=false)." >&2
+        exit 2
+      fi
       ;;
     --eval-only)
       EVAL_ONLY=1
@@ -77,10 +77,6 @@ while (( "$#" )); do
       ;;
     --symbolic-only)
       SYMBOLIC_ONLY=1
-      shift
-      ;;
-    --no-cache)
-      NO_CACHE=1
       shift
       ;;
     --repeat)
@@ -112,6 +108,31 @@ if (( EVAL_ONLY )); then
 elif (( SYMBOLIC_ONLY )); then
   MARKER_FILTER="-m 'not eval'"
 fi
+
+# ---------------------------------------------------------------------------
+# Helper: check if random projects mode is enabled via --env
+# ---------------------------------------------------------------------------
+is_random_projects_mode() {
+  for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
+    case "$kv" in
+      UNIFY_TESTS_RAND_PROJ=true|UNIFY_TESTS_RAND_PROJ=True|UNIFY_TESTS_RAND_PROJ=1)
+        return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Helper: build environment exports string from --env overrides
+# ---------------------------------------------------------------------------
+build_env_exports() {
+  local exports=""
+  for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
+    exports="$exports $kv"
+  done
+  echo "$exports"
+}
+
 # Reset positional parameters safely under nounset (only expand if set)
 set -- ${POSITIONAL_ARGS[@]+"${POSITIONAL_ARGS[@]}"}
 
@@ -121,7 +142,9 @@ cd "$REPO_ROOT"
 # ---------------------------------------------------------------------------
 # Prepare the shared project (unless using random projects mode)
 # ---------------------------------------------------------------------------
-if (( ! RANDOM_PROJECTS )); then
+if is_random_projects_mode; then
+  echo "Random projects mode detected; skipping shared project preparation..."
+else
   echo "Preparing shared UnityTests project..."
   # Activate virtualenv if available, then run the prepare script
   if [[ -f "$REPO_ROOT/.venv/bin/activate" ]]; then
@@ -133,7 +156,7 @@ if (( ! RANDOM_PROJECTS )); then
   else
     echo "Warning: _prepare_shared_project.py not found." >&2
     echo "Falling back to random projects mode." >&2
-    RANDOM_PROJECTS=1
+    ENV_OVERRIDES+=( "UNIFY_TESTS_RAND_PROJ=True" "UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True" )
   fi
 fi
 
@@ -145,16 +168,18 @@ run_cmd() {
   # Build the inner script first with safe %q for path/target, then quote the whole script with %q
   local inner
   local env_exports
-  if (( RANDOM_PROJECTS )); then
-    # Legacy mode: each session gets its own random project
+  if is_random_projects_mode; then
+    # Random projects mode: each session gets its own project
     env_exports='export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True'
   else
     # Shared project mode: skip session setup (already done by prepare script)
     env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
   fi
-  # Add cache control if --no-cache was specified
-  if (( NO_CACHE )); then
-    env_exports="$env_exports UNIFY_CACHE=false"
+  # Append user-provided --env overrides
+  local user_overrides
+  user_overrides="$(build_env_exports)"
+  if [[ -n "$user_overrides" ]]; then
+    env_exports="$env_exports$user_overrides"
   fi
   # Build pytest command with optional marker filter
   local pytest_cmd
@@ -317,14 +342,16 @@ collect_nodes_for_target() {
   local marker_arg="$2"  # optional marker filter
   local cmd
   local env_exports
-  if (( RANDOM_PROJECTS )); then
+  if is_random_projects_mode; then
     env_exports='export UNIFY_TESTS_RAND_PROJ=True UNIFY_TESTS_DELETE_PROJ_ON_EXIT=True'
   else
     env_exports='export UNIFY_SKIP_SESSION_SETUP=True'
   fi
-  # Add cache control if --no-cache was specified
-  if (( NO_CACHE )); then
-    env_exports="$env_exports UNIFY_CACHE=false"
+  # Append user-provided --env overrides
+  local user_overrides
+  user_overrides="$(build_env_exports)"
+  if [[ -n "$user_overrides" ]]; then
+    env_exports="$env_exports$user_overrides"
   fi
   # Build collection command with optional marker filter
   if [[ -n "$marker_arg" ]]; then
@@ -468,11 +495,11 @@ echo "  • Specific files:                        ./.parallel_run.sh tests/test
 echo "  • Specific tests:                        ./.parallel_run.sh tests/test_foo.py::TestA::test_x tests/test_bar.py::test_y"
 echo "  • Per-test (dirs/files):                 ./.parallel_run.sh -t tests tests/test_foo.py"
 echo "  • Per-test (everything here):            ./.parallel_run.sh -t"
-echo "  • Use isolated random projects:          ./.parallel_run.sh --random-projects tests"
+echo "  • Set environment variables:             ./.parallel_run.sh --env UNIFY_CACHE=false tests"
+echo "  • Multiple env vars:                     ./.parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests"
 echo "  • Run only eval tests:                   ./.parallel_run.sh --eval-only tests"
 echo "  • Run only symbolic tests:               ./.parallel_run.sh --symbolic-only tests"
-echo "  • Disable LLM caching:                   ./.parallel_run.sh --no-cache tests"
-echo "  • Repeat tests for sampling:             ./.parallel_run.sh --no-cache --repeat 5 --eval-only tests"
+echo "  • Repeat tests for sampling:             ./.parallel_run.sh --repeat 5 --eval-only tests"
 echo
 echo "Observe:"
 echo "  • Watch sessions: watch -n 0.5 'tmux ls'"
