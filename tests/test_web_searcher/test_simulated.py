@@ -255,7 +255,6 @@ async def test_ask_with_response_format():
     assert isinstance(parsed.summary, str) and parsed.summary.strip() != ""
 
 
-@pytest.mark.unit
 @_handle_project
 def test_clear_reinitialises():
     """

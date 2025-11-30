@@ -1,4 +1,3 @@
-import pytest
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.schedule import Schedule
@@ -7,7 +6,6 @@ from unity.task_scheduler.types.status import Status
 
 
 @_handle_project
-@pytest.mark.unit
 def test_get_queue_and_reorder():
     ts = TaskScheduler()
 
@@ -40,7 +38,6 @@ def test_get_queue_and_reorder():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_insert_into_queue():
     ts = TaskScheduler()
 
@@ -65,7 +62,6 @@ def test_insert_into_queue():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_insert_primed_task_downgrades_to_queued():
     """A primed task inserted *behind* the head must be downgraded to queued."""
 
@@ -119,7 +115,6 @@ def _assert_head_owns_timestamp(queue):
 
 
 @_handle_project
-@pytest.mark.unit
 def test_start_time_moves_with_front_swap():
     """
     Queue = [A(start_at), B, C] → reorder to [C(start_at), A, B].
@@ -155,7 +150,6 @@ def test_start_time_moves_with_front_swap():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_start_time_inherited_on_new_front_insert():
     """
     Insert a *brand-new* task at the front – it must inherit (and be the only
@@ -190,7 +184,6 @@ def test_start_time_inherited_on_new_front_insert():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_start_time_after_multiple_reorders():
     """
     After *any series* of re-orders there must be exactly one `start_at`
@@ -235,7 +228,6 @@ def test_start_time_after_multiple_reorders():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_list_and_get_queues_basic():
     ts = TaskScheduler()
 
@@ -273,7 +265,6 @@ def test_list_and_get_queues_basic():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_reorder_queue_preserves_head_start_at():
     ts = TaskScheduler()
 
@@ -303,7 +294,6 @@ def test_reorder_queue_preserves_head_start_at():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_move_tasks_to_new_queue():
     ts = TaskScheduler()
 
@@ -352,7 +342,6 @@ def test_move_tasks_to_new_queue():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_partition_queue_split_with_dates():
     ts = TaskScheduler()
 
@@ -404,7 +393,6 @@ def test_partition_queue_split_with_dates():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_move_tasks_to_existing_queue_front_and_back():
     ts = TaskScheduler()
 

@@ -6,7 +6,6 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 from tests.helpers import _handle_project, capture_events
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_managermethod_events_for_ask():
@@ -34,7 +33,6 @@ async def test_managermethod_events_for_ask():
     assert outgoing
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_managermethod_events_for_update():
@@ -62,7 +60,6 @@ async def test_managermethod_events_for_update():
     assert outgoing
 
 
-@pytest.mark.unit
 @pytest.mark.asyncio
 @_handle_project
 async def test_managermethod_events_for_execute():

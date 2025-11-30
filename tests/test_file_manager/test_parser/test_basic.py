@@ -13,7 +13,6 @@ from unity.file_manager.parser import DoclingParser
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_initialization():
     """Test parser initializes with correct defaults."""
@@ -31,7 +30,6 @@ async def test_initialization():
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_custom_initialization():
     """Test parser with custom parameters."""
@@ -59,7 +57,6 @@ async def test_custom_initialization():
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_simple_text(parser, supported_format_files):
     """Test parsing a simple text file."""
@@ -86,7 +83,6 @@ async def test_simple_text(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_multi_paragraph(parser, supported_format_files):
     """Test parsing text with multiple paragraphs."""
@@ -114,7 +110,6 @@ async def test_multi_paragraph(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_empty_file(parser, supported_format_files):
     """Test parsing an empty file."""
@@ -136,7 +131,6 @@ async def test_empty_file(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_special_characters(parser, supported_format_files):
     """Test parsing text with special characters."""
@@ -153,7 +147,6 @@ async def test_special_characters(parser, supported_format_files):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_nonexistent_file(parser):
     """Test parsing a non-existent file."""
@@ -162,7 +155,6 @@ async def test_nonexistent_file(parser):
 
 
 @pytest.mark.asyncio
-@pytest.mark.unit
 @_handle_project
 async def test_flat_records(parser, supported_format_files):
     """Test conversion to flat records format."""

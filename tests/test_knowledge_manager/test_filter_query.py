@@ -1,9 +1,7 @@
 from tests.helpers import _handle_project
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-import pytest
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_no_expr():
     knowledge_manager = KnowledgeManager()
@@ -22,7 +20,6 @@ def test_filter_no_expr():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_basic_expr():
     knowledge_manager = KnowledgeManager()
@@ -40,7 +37,6 @@ def test_filter_basic_expr():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_specific_tables():
     knowledge_manager = KnowledgeManager()
@@ -76,7 +72,6 @@ def test_filter_specific_tables():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_multi_expr():
     knowledge_manager = KnowledgeManager()

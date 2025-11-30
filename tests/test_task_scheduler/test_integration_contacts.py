@@ -9,7 +9,6 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.unit
 @_handle_project
 def test_tools_expose_contact_ask():
     """TaskScheduler should surface ContactManager.ask inside its tool dictionaries."""

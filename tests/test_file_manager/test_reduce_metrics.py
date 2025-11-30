@@ -9,7 +9,6 @@ from unity.file_manager.managers.local import LocalFileManager
 from unity.file_manager.types.config import FilePipelineConfig
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_path):

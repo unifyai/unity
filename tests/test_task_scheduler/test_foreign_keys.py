@@ -16,7 +16,6 @@ Note: schedule.next_task and schedule.prev_task FKs are not yet implemented,
 
 from __future__ import annotations
 
-import pytest
 import unify
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
@@ -29,7 +28,6 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 
 
 @_handle_project
-@pytest.mark.unit
 def test_entrypoint_valid_reference():
     """Test that tasks can reference valid function IDs as entrypoint."""
     fm = FunctionManager()
@@ -61,7 +59,6 @@ def test_entrypoint_valid_reference():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_entrypoint_set_null_on_delete():
     """Test SET NULL: Task survives function deletion with entrypoint becoming null."""
     fm = FunctionManager()
@@ -101,7 +98,6 @@ def test_entrypoint_set_null_on_delete():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_entrypoint_null_does_not_break_scheduler_init():
     """Test that tasks with null entrypoint (after FK SET NULL) load without errors."""
     fm = FunctionManager()
@@ -157,7 +153,6 @@ def test_entrypoint_null_does_not_break_scheduler_init():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_entrypoint_explicit_none_on_create():
     """Test that tasks can be created with entrypoint=None explicitly."""
     ts = TaskScheduler()
@@ -187,7 +182,6 @@ def test_entrypoint_explicit_none_on_create():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_entrypoint_clone_after_set_null():
     """Test that cloning a task after its entrypoint is nulled works correctly."""
     fm = FunctionManager()

@@ -14,13 +14,14 @@ def _reset_ensured_cache():
     TableStore._ENSURED.clear()
 
 
-@pytest.mark.unit
 def test_ensure_creates_and_idempotent(monkeypatch):
     # Arrange: stable project and call counters
     monkeypatch.setattr(unify, "active_project", lambda: "proj-ctx")
+
     # Simulate 404 so ensure_context proceeds to creation
     def _fail_get(*args, **kwargs):
         raise Exception("Context not found")
+
     monkeypatch.setattr(unify, "get_context", _fail_get)
 
     calls = {"create_context": 0, "create_fields": 0}
@@ -60,11 +61,12 @@ def test_ensure_creates_and_idempotent(monkeypatch):
     assert calls == {"create_context": 1, "create_fields": 1}
 
 
-@pytest.mark.unit
 def test_ensure_tolerates_create_exception(monkeypatch):
     monkeypatch.setattr(unify, "active_project", lambda: "proj-A")
+
     def _fail_get(*args, **kwargs):
         raise Exception("Context not found")
+
     monkeypatch.setattr(unify, "get_context", _fail_get)
 
     calls = {"create_context": 0, "create_fields": 0}
@@ -100,7 +102,6 @@ def test_ensure_tolerates_create_exception(monkeypatch):
     assert calls["create_fields"] == 1
 
 
-@pytest.mark.unit
 def test_get_columns_transforms(monkeypatch):
     # Arrange stable project and capture parameters
     monkeypatch.setattr(unify, "active_project", lambda: "proj-Z")

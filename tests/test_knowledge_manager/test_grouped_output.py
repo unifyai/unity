@@ -4,7 +4,6 @@ from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_filter_orders_and_early_stop():
@@ -60,7 +59,6 @@ def test_filter_orders_and_early_stop():
     assert isinstance(city_groups["London"], list) and len(city_groups["London"]) == 2
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_groups_on_low_cardinality_field():
@@ -89,7 +87,6 @@ def test_search_groups_on_low_cardinality_field():
     assert set(groups.keys()) == {"A", "B"}
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_filter_join_nested_structure():
@@ -137,7 +134,6 @@ def test_filter_join_nested_structure():
     assert isinstance(groups["Y"], list) and len(groups["Y"]) == 1
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_filter_multi_join_chained():
@@ -188,7 +184,6 @@ def test_filter_multi_join_chained():
     assert isinstance(groups["X"], list) and len(groups["X"]) == 2
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_join_groups():

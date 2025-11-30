@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 
 from tests.helpers import _handle_project
 from unity.function_manager.simulated import SimulatedFunctionManager
@@ -36,7 +35,6 @@ def test_docstrings_match_base():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_add_functions_accepts_single_and_multiple():
     fm = SimulatedFunctionManager()
 
@@ -62,7 +60,6 @@ def test_add_functions_accepts_single_and_multiple():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_list_functions_with_and_without_implementations():
     fm = SimulatedFunctionManager()
 
@@ -88,7 +85,6 @@ def test_list_functions_with_and_without_implementations():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_get_precondition_returns_none():
     fm = SimulatedFunctionManager()
     assert fm.get_precondition(function_name="does_not_matter") is None
@@ -100,7 +96,6 @@ def test_get_precondition_returns_none():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_delete_function_acknowledges():
     fm = SimulatedFunctionManager()
     ack = fm.delete_function(function_id=42, delete_dependents=True)
@@ -116,7 +111,6 @@ def test_delete_function_acknowledges():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_search_functions_returns_list_of_dicts():
     fm = SimulatedFunctionManager()
     hits = fm.search_functions(filter="'price' in docstring")
@@ -133,7 +127,6 @@ def test_search_functions_returns_list_of_dicts():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_search_functions_by_similarity_bounds_and_shape():
     fm = SimulatedFunctionManager()
     n = 2
@@ -151,7 +144,6 @@ def test_search_functions_by_similarity_bounds_and_shape():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_clear_sync():
     """
     SimulatedFunctionManager.clear should reset the manager (hard-coded completion)

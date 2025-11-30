@@ -13,7 +13,6 @@ def _get_user_contact(cm: ContactManager):
     return users[0]
 
 
-@pytest.mark.unit
 @_handle_project
 def test_email_only():
     cm = ContactManager()
@@ -48,7 +47,6 @@ def test_email_only():
     assert len(remaining_users) == 0
 
 
-@pytest.mark.unit
 @_handle_project
 def test_phone_only():
     cm = ContactManager()
@@ -82,7 +80,6 @@ def test_phone_only():
     assert len(remaining_users) == 0
 
 
-@pytest.mark.unit
 @_handle_project
 def test_whatsapp_and_email():
     cm = ContactManager()
@@ -117,7 +114,6 @@ def test_whatsapp_and_email():
     assert len(remaining_users) == 0
 
 
-@pytest.mark.unit
 @_handle_project
 def test_no_details():
     cm = ContactManager()
@@ -138,7 +134,6 @@ def test_no_details():
     assert len(remaining_users) == 0
 
 
-@pytest.mark.unit
 @_handle_project
 def test_idempotent():
     cm = ContactManager()

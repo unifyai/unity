@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import pytest
 
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
@@ -13,7 +12,6 @@ from unity.image_manager.image_manager import ImageManager
 PNG_1x1_GREEN = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAusB9r4/ARcAAAAASUVORK5CYII="
 
 
-@pytest.mark.unit
 @_handle_project
 def test_fetch_guidance_for_function_and_limits():
     # Seed functions
@@ -48,7 +46,6 @@ def test_fetch_guidance_for_function_and_limits():
     assert len(both) == 1
 
 
-@pytest.mark.unit
 @_handle_project
 def test_image_handles_and_attachment():
     # Seed one image

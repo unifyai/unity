@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 
 from tests.helpers import _handle_project
 from unity.contact_manager.types.contact import Contact
@@ -33,7 +32,6 @@ _EXPECTED_KEYS_ORDER = [
 ]
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_return_shape(tm_manager_scenario):
     tm, _ = tm_manager_scenario
@@ -54,7 +52,6 @@ def test_filter_return_shape(tm_manager_scenario):
     assert isinstance(out["messages"], list)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_search_return_shape(tm_manager_scenario):
     tm, _ = tm_manager_scenario

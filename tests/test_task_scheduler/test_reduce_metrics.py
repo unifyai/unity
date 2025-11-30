@@ -6,7 +6,6 @@ from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_task_scheduler_reduce_param_shapes():

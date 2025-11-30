@@ -14,7 +14,6 @@ from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, Annotated
 PNG_1x1_BLUE = make_solid_png_base64(8, 8, (0, 0, 255))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_schema_roundtrip():
     tm = TranscriptManager()
@@ -63,7 +62,6 @@ def test_schema_roundtrip():
     assert isinstance(ann, str) and "modal" in ann.lower()
 
 
-@pytest.mark.unit
 @_handle_project
 def test_accepts_annotated_refs_only():
     refs = AnnotatedImageRefs.model_validate(
@@ -83,7 +81,6 @@ def test_accepts_annotated_refs_only():
     assert len(root) == 2 and hasattr(root[1], "annotation")
 
 
-@pytest.mark.unit
 @_handle_project
 def test_roundtrip_annotated_only():
     m = Message(
@@ -105,7 +102,6 @@ def test_roundtrip_annotated_only():
     assert isinstance(m.images, AnnotatedImageRefs)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_images_field_schema_enforced():
     tm = TranscriptManager()

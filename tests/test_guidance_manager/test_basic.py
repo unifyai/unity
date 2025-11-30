@@ -8,7 +8,6 @@ from unity.image_manager.types import AnnotatedImageRef
 from pydantic import ValidationError
 
 
-@pytest.mark.unit
 @_handle_project
 def test_create():
     gm = GuidanceManager()
@@ -28,7 +27,6 @@ def test_create():
     assert isinstance(items, list) and len(items) == 0
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update():
     gm = GuidanceManager()
@@ -56,7 +54,6 @@ def test_update():
     assert int(first.raw_image_ref.image_id) == 12
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete():
     gm = GuidanceManager()
@@ -72,7 +69,6 @@ def test_delete():
     assert len(gm._filter(filter=f"guidance_id == {gid}")) == 0
 
 
-@pytest.mark.unit
 @_handle_project
 def test_list_columns_and_filter():
     gm = GuidanceManager()
@@ -88,7 +84,6 @@ def test_list_columns_and_filter():
     assert rows and rows[0].title == "Comms"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_images_validation():
     gm = GuidanceManager()
@@ -102,7 +97,6 @@ def test_update_images_validation():
         gm._update_guidance(guidance_id=gid, images={"bad": 1})
 
 
-@pytest.mark.unit
 @_handle_project
 def test_clear():
     gm = GuidanceManager()

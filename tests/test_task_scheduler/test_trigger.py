@@ -20,7 +20,6 @@ from unity.task_scheduler.types.trigger import Trigger, Medium
 
 
 @_handle_project
-@pytest.mark.unit
 def test_create_triggerable_task():
     ts = TaskScheduler()
 
@@ -51,7 +50,6 @@ def test_create_triggerable_task():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_schedule_and_trigger_mutually_exclusive():
     ts = TaskScheduler()
 
@@ -73,7 +71,6 @@ def test_schedule_and_trigger_mutually_exclusive():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_trigger_on_scheduled_task_raises():
     ts = TaskScheduler()
 
@@ -98,7 +95,6 @@ def test_update_trigger_on_scheduled_task_raises():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_clear_trigger_transitions_status():
     ts = TaskScheduler()
     trig = Trigger(medium=Medium.PHONE_CALL, interrupt=True)
@@ -122,7 +118,6 @@ def test_clear_trigger_transitions_status():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_start_at_on_trigger_task_raises():
     ts = TaskScheduler()
     trig = Trigger(medium=Medium.WHATSAPP_CALL)
@@ -146,7 +141,6 @@ def test_start_at_on_trigger_task_raises():
 
 
 @_handle_project
-@pytest.mark.unit
 def test_update_queue_rejects_trigger_tasks():
     ts = TaskScheduler()
 

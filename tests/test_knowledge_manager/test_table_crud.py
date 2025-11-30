@@ -1,9 +1,7 @@
 from tests.helpers import _handle_project
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-import pytest
 
 
-@pytest.mark.unit
 @_handle_project
 def test_create_table():
     knowledge_manager = KnowledgeManager()
@@ -13,7 +11,6 @@ def test_create_table():
     assert set(tables.keys()) == {"Contacts", "MyTable"}
 
 
-@pytest.mark.unit
 @_handle_project
 def test_create_table_w_cols():
     knowledge_manager = KnowledgeManager()
@@ -35,7 +32,6 @@ def test_create_table_w_cols():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_create_table_w_desc():
     knowledge_manager = KnowledgeManager()
@@ -48,7 +44,6 @@ def test_create_table_w_desc():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_list_tables():
     knowledge_manager = KnowledgeManager()
@@ -66,7 +61,6 @@ def test_list_tables():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete_tables():
     knowledge_manager = KnowledgeManager()
@@ -84,7 +78,6 @@ def test_delete_tables():
     assert set(tables.keys()) == {"Contacts"}
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete_multiple_tables():
     """Explicitly delete several tables in a single call."""
@@ -108,7 +101,6 @@ def test_delete_multiple_tables():
     assert set(tabs.keys()) == {"Contacts", "TableB"}
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete_tables_with_startswith():
     """Bulk-delete tables sharing a prefix via the *startswith* parameter."""
@@ -130,7 +122,6 @@ def test_delete_tables_with_startswith():
     assert set(tabs.keys()) == {"Contacts", "Public"}
 
 
-@pytest.mark.unit
 @_handle_project
 def test_delete_tables_mixed_explicit_and_startswith():
     """
@@ -155,7 +146,6 @@ def test_delete_tables_mixed_explicit_and_startswith():
     assert set(tabs.keys()) == {"Contacts", "KeepMe"}
 
 
-@pytest.mark.unit
 @_handle_project
 def test_rename_table():
     knowledge_manager = KnowledgeManager()
@@ -173,7 +163,6 @@ def test_rename_table():
     assert "MyNewTable" in tables
 
 
-@pytest.mark.unit
 @_handle_project
 def test_clear():
     km = KnowledgeManager()

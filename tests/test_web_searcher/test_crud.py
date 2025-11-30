@@ -6,7 +6,6 @@ from tests.helpers import _handle_project
 from unity.web_searcher.web_searcher import WebSearcher
 
 
-@pytest.mark.unit
 @_handle_project
 def test_websites_create_filter_search_delete():
     ws = WebSearcher()
@@ -40,7 +39,6 @@ def test_websites_create_filter_search_delete():
     assert ws._filter_websites(filter="host == 'nytimes.com'") == []
 
 
-@pytest.mark.unit
 @_handle_project
 def test_clear_resets_websites():
     ws = WebSearcher()
@@ -62,7 +60,6 @@ def test_clear_resets_websites():
     assert all(w.host != "example.com" for w in after)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_website_by_id_host_and_name():
     ws = WebSearcher()
@@ -118,7 +115,6 @@ def test_update_website_by_id_host_and_name():
     assert final_row.gated is False
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_website_enforces_uniqueness():
     ws = WebSearcher()
@@ -147,7 +143,6 @@ def test_update_website_enforces_uniqueness():
         ws._update_website(match_host="gitlab.com", name="GitHub")
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_website_edge_cases():
     ws = WebSearcher()

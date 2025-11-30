@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from tests.helpers import _handle_project
 from unity.file_manager.types import FilePipelineConfig
 
 
-@pytest.mark.unit
 @_handle_project
 def test_unified_mode_rename_preserves_unified_content(file_manager, tmp_path: Path):
     fm = file_manager
@@ -37,7 +35,6 @@ def test_unified_mode_rename_preserves_unified_content(file_manager, tmp_path: P
     assert "UnifiedDocs" in ov_after and "Content" in ov_after["UnifiedDocs"]
 
 
-@pytest.mark.unit
 @_handle_project
 def test_per_file_mode_move_updates_content_root(file_manager, tmp_path: Path):
     fm = file_manager

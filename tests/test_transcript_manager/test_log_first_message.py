@@ -9,7 +9,6 @@ from tests.helpers import _handle_project
 import unify
 
 
-@pytest.mark.unit
 @_handle_project
 def test_rejects_explicit_id_dict():
     tm = TranscriptManager()
@@ -31,7 +30,6 @@ def test_rejects_explicit_id_dict():
     assert "log_messages" in msg
 
 
-@pytest.mark.unit
 @_handle_project
 def test_rejects_explicit_id_model():
     tm = TranscriptManager()
@@ -53,7 +51,6 @@ def test_rejects_explicit_id_model():
     assert "log_messages" in msg
 
 
-@pytest.mark.unit
 @_handle_project
 def test_creates_exchange_returns_id():
     tm = TranscriptManager()
@@ -89,7 +86,6 @@ def test_creates_exchange_returns_id():
     assert rows_m and rows_m[0].entries.get("exchange_id") == exid
 
 
-@pytest.mark.unit
 @_handle_project
 def test_sets_initial_metadata():
     tm = TranscriptManager()

@@ -19,7 +19,6 @@ from tests.helpers import _handle_project
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  Create a custom column                                                #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
 @_handle_project
 def test_create_custom_column():
     cm = ContactManager()
@@ -38,7 +37,6 @@ def test_create_custom_column():
 # ────────────────────────────────────────────────────────────────────────────
 # 2.  Refuse to recreate a required column                                  #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
 @_handle_project
 def test_create_required_column_raises():
     cm = ContactManager()
@@ -50,7 +48,6 @@ def test_create_required_column_raises():
 # ────────────────────────────────────────────────────────────────────────────
 # 3.  Delete a custom column                                                #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
 @_handle_project
 def test_delete_custom_column():
     cm = ContactManager()
@@ -65,7 +62,6 @@ def test_delete_custom_column():
 # ────────────────────────────────────────────────────────────────────────────
 # 4.  Refuse to delete a required column                                    #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
 @_handle_project
 def test_delete_required_column_raises():
     cm = ContactManager()
@@ -77,7 +73,6 @@ def test_delete_required_column_raises():
 # ────────────────────────────────────────────────────────────────────────────
 # 5.  Create a contact that uses a custom field                             #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
 @_handle_project
 def test_create_with_custom_field():
     cm = ContactManager()
@@ -97,7 +92,6 @@ def test_create_with_custom_field():
 # ────────────────────────────────────────────────────────────────────────────
 # 6.  Update an existing custom field                                       #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
 @_handle_project
 def test_update_custom_field():
     cm = ContactManager()

@@ -3,7 +3,6 @@ from unity.function_manager.function_manager import FunctionManager
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_embedding_and_similarity_search():

@@ -3,7 +3,6 @@ from __future__ import annotations
 import tempfile
 import pathlib
 
-import pytest
 
 from unity.secret_manager.secret_manager import SecretManager
 
@@ -16,7 +15,6 @@ def _read(path: str) -> str:
         return ""
 
 
-@pytest.mark.unit
 def test_created_and_backfilled_on_init(monkeypatch, secret_manager_context):
     with tempfile.TemporaryDirectory() as td:
         dotenv_path = str(pathlib.Path(td) / ".env")
@@ -34,7 +32,6 @@ def test_created_and_backfilled_on_init(monkeypatch, secret_manager_context):
         assert "db_password=abc123" in content
 
 
-@pytest.mark.unit
 def test_updates_on_create_update_delete(monkeypatch, secret_manager_context):
     with tempfile.TemporaryDirectory() as td:
         dotenv_path = str(pathlib.Path(td) / ".env")

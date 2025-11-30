@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, UTC
 import unify
-import pytest
 
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.transcript_manager.types.exchange import Exchange
@@ -10,7 +9,6 @@ from unity.transcript_manager.types.message import Message
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @_handle_project
 def test_row_created_explicit_id():
     tm = TranscriptManager()
@@ -38,7 +36,6 @@ def test_row_created_explicit_id():
     assert rows[0].entries.get("medium") == "email"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_get_metadata_returns_model():
     tm = TranscriptManager()
@@ -63,7 +60,6 @@ def test_get_metadata_returns_model():
     assert isinstance(ex.metadata, dict)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_metadata_updates_row():
     tm = TranscriptManager()
@@ -94,7 +90,6 @@ def test_update_metadata_updates_row():
     assert fetched.metadata == new_meta
 
 
-@pytest.mark.unit
 @_handle_project
 def test_update_metadata_upserts():
     tm = TranscriptManager()
@@ -110,7 +105,6 @@ def test_update_metadata_upserts():
     assert upserted.medium == ""
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_by_metadata():
     tm = TranscriptManager()
@@ -151,7 +145,6 @@ def test_filter_by_metadata():
     assert exchanges[0].metadata.get("topic") == "billing"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_filter_by_nested_metadata():
     tm = TranscriptManager()

@@ -8,7 +8,6 @@ import random
 from unity.contact_manager.contact_manager import ContactManager
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project

@@ -13,7 +13,6 @@ from tests.test_screen_share_manager.conftest import (
 )
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_should_noop_for_empty_event_list(mocked_manager):
@@ -27,7 +26,6 @@ async def test_should_noop_for_empty_event_list(mocked_manager):
     mocks["annotate"].generate.assert_not_called()
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_prompt_combines_all_contexts(mocked_manager):
@@ -68,7 +66,6 @@ async def test_prompt_combines_all_contexts(mocked_manager):
     assert "A previous key event." in prompt
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_successful_trigger_summary_update(mocked_manager):
@@ -98,7 +95,6 @@ async def test_successful_trigger_summary_update(mocked_manager):
         )
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_handles_empty_llm_response_gracefully(mocked_manager):
@@ -129,7 +125,6 @@ async def test_handles_empty_llm_response_gracefully(mocked_manager):
     assert getattr(h2, "annotation", None) is None
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_added_to_recent_key_events_for_next_turn(mocked_manager):

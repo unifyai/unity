@@ -12,7 +12,6 @@ from tests.helpers import _handle_project
 from tests.test_screen_share_manager.conftest import PNG_RED_B64
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_core_flow_detects_and_annotates(mocked_manager):
@@ -52,7 +51,6 @@ async def test_core_flow_detects_and_annotates(mocked_manager):
     assert annotated_handles[0].annotation == "This is the rich annotation."
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_silent_events_stored_and_processed_next_turn(
@@ -81,7 +79,6 @@ async def test_silent_events_stored_and_processed_next_turn(
     assert 2.5 in timestamps
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_collects_multiple_speech_events(mocked_manager):
@@ -101,7 +98,6 @@ async def test_collects_multiple_speech_events(mocked_manager):
     assert "second part" in system_prompt
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_push_speech_ignored_when_no_turn_active(manager, caplog):
@@ -110,7 +106,6 @@ async def test_push_speech_ignored_when_no_turn_active(manager, caplog):
     assert "no turn is in progress" in caplog.text.lower()
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_safe_with_overlapping_starts(mocked_manager):
@@ -122,7 +117,6 @@ async def test_safe_with_overlapping_starts(mocked_manager):
     await task
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_inactivity_flush_triggers_for_silent_visual_events(mocked_manager):
@@ -158,7 +152,6 @@ async def test_inactivity_flush_triggers_for_silent_visual_events(mocked_manager
         mock_detect.assert_called_once()
 
 
-@pytest.mark.unit
 @_handle_project
 @pytest.mark.asyncio
 async def test_concurrency_stable_under_load(manager):

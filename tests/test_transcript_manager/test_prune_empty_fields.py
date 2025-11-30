@@ -8,7 +8,6 @@ from unity.image_manager.types import AnnotatedImageRefs, RawImageRef, Annotated
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @_handle_project
 def test_json_omits_empty_fields():
     """

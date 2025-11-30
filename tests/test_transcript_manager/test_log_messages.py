@@ -27,7 +27,6 @@ def _base_message(seed: int) -> dict:
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_basic_logging_explicit_id():
     tm = TranscriptManager()
@@ -58,7 +57,6 @@ def test_basic_logging_explicit_id():
     tm.join_published()
 
 
-@pytest.mark.unit
 @_handle_project
 def test_missing_id_raises_error():
     tm = TranscriptManager()

@@ -3,7 +3,6 @@ from unity.task_scheduler.task_scheduler import TaskScheduler
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_tasklist_embedding_search():

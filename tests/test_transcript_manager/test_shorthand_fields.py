@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import pytest
 from datetime import datetime, UTC
 
 from unity.transcript_manager.types.message import Message
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @_handle_project
 def test_json_shorthand_no_prune():
     msg = Message(
@@ -41,7 +39,6 @@ def test_json_shorthand_no_prune():
     assert "imgs" in dumped and isinstance(dumped["imgs"], list)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_json_shorthand_prune_images():
     msg = Message(

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import pytest
 
 from unity.secret_manager.secret_manager import SecretManager
 
 
-@pytest.mark.unit
 def test_create_secret(secret_manager_context):
     sm = SecretManager()
     out = sm._create_secret(
@@ -24,7 +22,6 @@ def test_create_secret(secret_manager_context):
     assert isinstance(rows[0].secret_id, int) and rows[0].secret_id >= 0
 
 
-@pytest.mark.unit
 def test_update_secret(secret_manager_context):
     sm = SecretManager()
     sm._create_secret(name="db_password", value="abc", description="db pass")
@@ -40,7 +37,6 @@ def test_update_secret(secret_manager_context):
     assert rows[0].secret_id == before_id
 
 
-@pytest.mark.unit
 def test_delete_secret(secret_manager_context):
     sm = SecretManager()
     sm._create_secret(name="temp_token", value="t123")
@@ -50,7 +46,6 @@ def test_delete_secret(secret_manager_context):
     assert len(rows) == 0
 
 
-@pytest.mark.unit
 def test_from_placeholder_public_method(secret_manager_context):
     sm = SecretManager()
     sm._create_secret(name="page_username", value="user123")
@@ -61,7 +56,6 @@ def test_from_placeholder_public_method(secret_manager_context):
     assert "user123" in resolved and "pass456" in resolved
 
 
-@pytest.mark.unit
 def test_to_placeholder_public_method(secret_manager_context):
     sm = SecretManager()
     sm._create_secret(name="api_key", value="sk-live-abc", description="api")
@@ -72,7 +66,6 @@ def test_to_placeholder_public_method(secret_manager_context):
     assert "${api_key}" in out and "${db_password}" in out
 
 
-@pytest.mark.unit
 def test_clear(secret_manager_context):
     sm = SecretManager()
 

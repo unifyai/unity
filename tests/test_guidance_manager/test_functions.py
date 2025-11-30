@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import pytest
 
 from tests.helpers import _handle_project
 from unity.function_manager.function_manager import FunctionManager
 from unity.guidance_manager.guidance_manager import GuidanceManager
 
 
-@pytest.mark.unit
 @_handle_project
 def test_function_ids_roundtrip_and_fetch():
     # Seed two functions
@@ -55,7 +53,6 @@ def test_function_ids_roundtrip_and_fetch():
     assert any("implementation" in f for f in funcs_with_impl)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_attach_functions_limit_and_update():
     # Seed two functions
@@ -94,7 +91,6 @@ def test_attach_functions_limit_and_update():
     assert len(funcs_after) == 1 and funcs_after[0]["function_id"] == inc_id
 
 
-@pytest.mark.unit
 @_handle_project
 def test_columns_include_function_ids():
     gm = GuidanceManager()

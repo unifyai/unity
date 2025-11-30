@@ -14,7 +14,6 @@ from unity.contact_manager.contact_manager import ContactManager
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_embedding_and_search():

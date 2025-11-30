@@ -11,7 +11,6 @@ from pathlib import Path
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_create_basic(file_manager, tmp_path: Path):
@@ -30,7 +29,6 @@ def test_create_basic(file_manager, tmp_path: Path):
     assert rows and any(r.get("file_path", name) == name for r in rows)
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_create_with_error(file_manager, tmp_path: Path):
@@ -46,7 +44,6 @@ def test_create_with_error(file_manager, tmp_path: Path):
     assert _item["status"] in ("success", "error")
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_single_reference_basic(file_manager, tmp_path: Path):
@@ -89,7 +86,6 @@ def test_search_single_reference_basic(file_manager, tmp_path: Path):
     assert "_summary_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_multi_columns(file_manager, tmp_path: Path):
@@ -125,7 +121,6 @@ def test_search_multi_columns(file_manager, tmp_path: Path):
     assert "_file_path_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
@@ -172,7 +167,6 @@ def test_search_ranking_precision_k1(file_manager, tmp_path: Path):
     assert results
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_ranking_precision_k3(file_manager, tmp_path: Path):
@@ -227,7 +221,6 @@ def test_search_ranking_precision_k3(file_manager, tmp_path: Path):
     assert "unrelated.docx" not in top_3_filenames
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_exact_match_beats_partial(file_manager, tmp_path: Path):
@@ -263,7 +256,6 @@ def test_search_exact_match_beats_partial(file_manager, tmp_path: Path):
     assert any(r.get("file_path", "").endswith("exact_match.pdf") for r in results)
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_multiple_reference_columns(file_manager, tmp_path: Path):
@@ -299,7 +291,6 @@ def test_search_multiple_reference_columns(file_manager, tmp_path: Path):
     assert "_file_path_emb" in cols
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
@@ -354,7 +345,6 @@ def test_search_domain_specific_ranking(file_manager, tmp_path: Path):
     )
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_filter_basic(file_manager, tmp_path: Path):
@@ -382,7 +372,6 @@ def test_filter_basic(file_manager, tmp_path: Path):
     assert all(f.get("file_path", "").endswith(".pdf") for f in pdf_files)
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_filter_metadata(file_manager, tmp_path: Path):
@@ -405,7 +394,6 @@ def test_filter_metadata(file_manager, tmp_path: Path):
     assert str(large_files[0].get("file_path", "")).endswith("large_file.pdf")
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_search_no_results_backfill(file_manager, tmp_path: Path):
@@ -428,7 +416,6 @@ def test_search_no_results_backfill(file_manager, tmp_path: Path):
     assert any(r.get("file_path", "").endswith("random_doc.txt") for r in results)
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_list_columns(file_manager, tmp_path: Path):

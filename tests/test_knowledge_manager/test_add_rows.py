@@ -1,9 +1,7 @@
 from tests.helpers import _handle_project
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
-import pytest
 
 
-@pytest.mark.unit
 @_handle_project
 def test_add_data():
     knowledge_manager = KnowledgeManager()
@@ -22,7 +20,6 @@ def test_add_data():
     }
 
 
-@pytest.mark.unit
 @_handle_project
 def test_add_more_data():
     knowledge_manager = KnowledgeManager()

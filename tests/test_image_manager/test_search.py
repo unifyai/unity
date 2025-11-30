@@ -8,7 +8,6 @@ from unity.image_manager.image_manager import ImageManager
 from tests.helpers import _handle_project
 
 
-@pytest.mark.unit
 @pytest.mark.requires_real_unify
 @_handle_project
 def test_by_caption_semantics():

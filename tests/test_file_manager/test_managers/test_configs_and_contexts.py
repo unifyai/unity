@@ -23,7 +23,6 @@ from unity.file_manager.types import (
 )
 
 
-@pytest.mark.unit
 @_handle_project
 def test_per_file_contexts_created(file_manager, tmp_path: Path):
     fm = file_manager
@@ -51,7 +50,6 @@ def test_per_file_contexts_created(file_manager, tmp_path: Path):
     assert "/Content" in str(content_meta.get("context", ""))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_unified_mode_context_created(file_manager, tmp_path: Path):
     fm = file_manager
@@ -105,7 +103,6 @@ async def test_parse_async_batching_and_kwargs(file_manager, tmp_path: Path):
     assert any(r.get("status") == "success" for r in results)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_embedding_specs_smoke(file_manager, tmp_path: Path):
     fm = file_manager
@@ -143,7 +140,6 @@ def test_embedding_specs_smoke(file_manager, tmp_path: Path):
     assert "file_path" in cols and "status" in cols
 
 
-@pytest.mark.unit
 @_handle_project
 def test_table_ingest_toggle_off_skips_tables_contexts(file_manager, tmp_path: Path):
     fm = file_manager
@@ -169,7 +165,6 @@ def test_table_ingest_toggle_off_skips_tables_contexts(file_manager, tmp_path: P
 # ==================== Comprehensive Config Testing ====================
 
 
-@pytest.mark.unit
 def test_file_pipeline_config_defaults():
     """Test FilePipelineConfig default instantiation and values."""
     cfg = FilePipelineConfig()
@@ -186,7 +181,6 @@ def test_file_pipeline_config_defaults():
     assert cfg.diagnostics.enable_progress is False
 
 
-@pytest.mark.unit
 def test_table_embedding_spec():
     """Test TableEmbeddingSpec creation and validation."""
     table_spec = TableEmbeddingSpec(
@@ -199,7 +193,6 @@ def test_table_embedding_spec():
     assert len(table_spec.target_columns) == 2
 
 
-@pytest.mark.unit
 def test_file_embedding_spec():
     """Test FileEmbeddingSpec creation and validation."""
     table_spec1 = TableEmbeddingSpec(
@@ -224,7 +217,6 @@ def test_file_embedding_spec():
     assert file_spec.tables[1].table == "Table2"
 
 
-@pytest.mark.unit
 def test_table_embedding_spec_validation():
     """Test that TableEmbeddingSpec validates column list lengths match."""
     with pytest.raises(ValueError, match="must have the same length"):
@@ -235,7 +227,6 @@ def test_table_embedding_spec_validation():
         )
 
 
-@pytest.mark.unit
 def test_file_embedding_spec_validation():
     """Test that FileEmbeddingSpec validates tables list is not empty."""
     # Pydantic validation happens first, so we check for the Pydantic error message
@@ -247,7 +238,6 @@ def test_file_embedding_spec_validation():
         )
 
 
-@pytest.mark.unit
 def test_table_business_context_spec():
     """Test TableBusinessContextSpec creation and validation."""
     table_spec = TableBusinessContextSpec(
@@ -260,7 +250,6 @@ def test_table_business_context_spec():
     assert table_spec.table_description == "Table description"
 
 
-@pytest.mark.unit
 def test_business_context_spec():
     """Test BusinessContextSpec creation and validation with multiple tables."""
     table_spec1 = TableBusinessContextSpec(
@@ -283,7 +272,6 @@ def test_business_context_spec():
     assert bc.tables[1].table == "Sheet2"
 
 
-@pytest.mark.unit
 def test_config_from_file_empty(tmp_path: Path):
     """Test loading an empty config file (all defaults)."""
 
@@ -296,7 +284,6 @@ def test_config_from_file_empty(tmp_path: Path):
     assert cfg.ingest.mode == "per_file"
 
 
-@pytest.mark.unit
 def test_config_from_file_partial(tmp_path: Path):
     """Test loading config with only some sections."""
     import json
@@ -316,7 +303,6 @@ def test_config_from_file_partial(tmp_path: Path):
     assert cfg.embed.strategy == "auto"
 
 
-@pytest.mark.unit
 def test_config_from_file_business_contexts(tmp_path: Path):
     """Test loading config with business contexts."""
     import json
@@ -354,7 +340,6 @@ def test_config_from_file_business_contexts(tmp_path: Path):
     assert table_spec.table_description == "Table description"
 
 
-@pytest.mark.unit
 def test_config_from_file_embed_specs(tmp_path: Path):
     """Test loading config with embedding specs."""
     import json
@@ -382,7 +367,6 @@ def test_config_from_file_embed_specs(tmp_path: Path):
     assert len(cfg.embed.file_specs) == 0
 
 
-@pytest.mark.unit
 def test_config_from_file_multiple_specs(tmp_path: Path):
     """Test loading config with multiple embedding specs (legacy format)."""
     import json
@@ -413,7 +397,6 @@ def test_config_from_file_multiple_specs(tmp_path: Path):
     assert len(cfg.embed.file_specs) == 0
 
 
-@pytest.mark.unit
 def test_config_from_file_file_specs(tmp_path: Path):
     """Test loading config with new file_specs format."""
     import json
@@ -465,7 +448,6 @@ def test_config_from_file_file_specs(tmp_path: Path):
     assert cfg.embed.file_specs[1].context == "per_file"
 
 
-@pytest.mark.unit
 def test_config_from_file_full(tmp_path: Path):
     """Test loading a full config with all sections."""
     import json
@@ -524,7 +506,6 @@ def test_config_from_file_full(tmp_path: Path):
     assert len(cfg.embed.file_specs) == 1
 
 
-@pytest.mark.unit
 def test_config_from_file_nonexistent(tmp_path: Path):
     """Test that from_file raises FileNotFoundError for nonexistent file."""
     nonexistent = tmp_path / "nonexistent.json"
@@ -532,7 +513,6 @@ def test_config_from_file_nonexistent(tmp_path: Path):
         FilePipelineConfig.from_file(str(nonexistent))
 
 
-@pytest.mark.unit
 def test_config_from_file_invalid_json(tmp_path: Path):
     """Test that from_file raises ValueError for invalid JSON."""
     invalid_file = tmp_path / "invalid.json"
@@ -541,7 +521,6 @@ def test_config_from_file_invalid_json(tmp_path: Path):
         FilePipelineConfig.from_file(str(invalid_file))
 
 
-@pytest.mark.unit
 def test_config_from_file_invalid_spec(tmp_path: Path):
     """Test that from_file validates embedding spec structure."""
     import json
@@ -570,7 +549,6 @@ def test_config_from_file_invalid_spec(tmp_path: Path):
         FilePipelineConfig.from_file(str(config_file))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_business_context_applied_during_ingestion(file_manager, tmp_path: Path):
     """Test that business context is applied during table ingestion."""
@@ -609,7 +587,6 @@ def test_business_context_applied_during_ingestion(file_manager, tmp_path: Path)
     assert cfg.ingest.business_contexts[0].tables[0].table == "Sheet1"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_embedding_specs_with_multiple_columns_per_table(file_manager, tmp_path: Path):
     """Test embedding specs with multiple columns per table work correctly."""
@@ -676,7 +653,6 @@ def test_embedding_specs_with_multiple_columns_per_table(file_manager, tmp_path:
     assert len(cfg.embed.file_specs[0].tables[0].target_columns) == 3
 
 
-@pytest.mark.unit
 def test_config_programmatic_vs_file_equivalence(tmp_path: Path):
     """Test that programmatic config and file config produce equivalent results."""
     import json
@@ -741,7 +717,6 @@ def test_config_programmatic_vs_file_equivalence(tmp_path: Path):
     )
 
 
-@pytest.mark.unit
 def test_config_all_sections_populated(tmp_path: Path):
     """Test config file with all possible sections populated."""
     import json
@@ -843,7 +818,6 @@ def test_config_all_sections_populated(tmp_path: Path):
     assert cfg.diagnostics.enable_progress is True
 
 
-@pytest.mark.unit
 @_handle_project
 def test_complete_pipeline_with_business_context_and_consolidated_embeddings(
     file_manager,
@@ -945,7 +919,6 @@ def test_complete_pipeline_with_business_context_and_consolidated_embeddings(
     assert _item["status"] == "success"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_excel_with_business_context_and_multiple_column_embeddings(
     file_manager,
@@ -1053,7 +1026,6 @@ def test_excel_with_business_context_and_multiple_column_embeddings(
     assert _item["status"] == "success"
 
 
-@pytest.mark.unit
 @_handle_project
 def test_multiple_tables_per_file_business_context(file_manager, tmp_path: Path):
     """Test BusinessContextSpec with multiple tables per file."""

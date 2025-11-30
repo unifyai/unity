@@ -20,7 +20,6 @@ from unity.image_manager.types import (
 )
 
 
-@pytest.mark.unit
 @_handle_project
 def test_annotated_ref_basic():
     ann = AnnotatedImageRef(
@@ -32,7 +31,6 @@ def test_annotated_ref_basic():
     assert ann.annotation.startswith("training set example")
 
 
-@pytest.mark.unit
 @_handle_project
 def test_container_mixed_types():
     base1_ref = RawImageRef(image_id=1)
@@ -50,7 +48,6 @@ def test_container_mixed_types():
     assert isinstance(images.root[2], RawImageRef)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_raw_refs_accepts_only_raw():
     r1 = RawImageRef(image_id=10)
@@ -62,7 +59,6 @@ def test_raw_refs_accepts_only_raw():
     assert all(isinstance(x, RawImageRef) for x in refs.root)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_raw_refs_rejects_annotated():
     ann = AnnotatedImageRef(
@@ -74,7 +70,6 @@ def test_raw_refs_rejects_annotated():
         RawImageRefs.model_validate([ann])
 
 
-@pytest.mark.unit
 @_handle_project
 def test_annotated_refs_accepts_only_annotated():
     ann1 = AnnotatedImageRef(
@@ -92,7 +87,6 @@ def test_annotated_refs_accepts_only_annotated():
     assert all(isinstance(x, AnnotatedImageRef) for x in refs.root)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_annotated_refs_rejects_raw():
     raw = RawImageRef(image_id=99)
@@ -110,7 +104,6 @@ class _RowIdModel(BaseModel):
     row_id: int = Field(default=-1, ge=-1)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_backend_schema_raw_ref_field_enforced():
     class _RawRefRow(_RowIdModel):
@@ -145,7 +138,6 @@ def test_backend_schema_raw_ref_field_enforced():
         unify.log(context=ctx, **invalid, new=True, mutable=True)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_backend_schema_annotated_ref_field_enforced():
     class _AnnRefRow(_RowIdModel):
@@ -187,7 +179,6 @@ def test_backend_schema_annotated_ref_field_enforced():
         unify.log(context=ctx, **bad_type, new=True, mutable=True)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_backend_schema_refs_field_enforced():
     class _ImageRefsRow(_RowIdModel):
@@ -227,7 +218,6 @@ def test_backend_schema_refs_field_enforced():
         unify.log(context=ctx, **bad, new=True, mutable=True)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_backend_schema_raw_refs_field_enforced():
     class _RawImageRefsRow(_RowIdModel):
@@ -262,7 +252,6 @@ def test_backend_schema_raw_refs_field_enforced():
         unify.log(context=ctx, **bad, new=True, mutable=True)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_backend_schema_annotated_refs_field_enforced():
     class _AnnotatedImageRefsRow(_RowIdModel):
@@ -301,7 +290,6 @@ def test_backend_schema_annotated_refs_field_enforced():
         unify.log(context=ctx, **bad, new=True, mutable=True)
 
 
-@pytest.mark.unit
 @_handle_project
 def test_backend_schema_image_field_enforced():
     class _ImageRow(_RowIdModel):

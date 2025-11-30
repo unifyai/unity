@@ -16,7 +16,6 @@ from unity.contact_manager.types.contact import Contact
 PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 
 
-@pytest.mark.unit
 @_handle_project
 def test_get_images_returns_metadata_only():
     tm = TranscriptManager()
@@ -72,7 +71,6 @@ def test_get_images_returns_metadata_only():
     assert "image" not in entry
 
 
-@pytest.mark.unit
 @_handle_project
 def test_attach_image_promotes_block():
     tm = TranscriptManager()

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import uuid
-import pytest
 import unify
 
 
-@pytest.mark.unit
 def test_count_matches_rows_and_resets():
     """
     Fundamental reproduction for metric count inconsistency on auto-increment fields.
@@ -87,7 +85,6 @@ def test_count_matches_rows_and_resets():
             pass
 
 
-@pytest.mark.unit
 def test_max_matches_row_ids_and_resets():
     """
     Fundamental check for the "max" metric on an auto-increment field.
