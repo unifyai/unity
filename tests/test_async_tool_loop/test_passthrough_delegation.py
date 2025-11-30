@@ -1223,7 +1223,7 @@ async def test_adoption_syncs_pause_state_when_paused(model, monkeypatch):
     ), "resume() should not be applied at adoption when outer remains paused"
 
     # Let the outer loop finish cleanly – paused outer cannot complete without resume
-    outer.resume()
+    await outer.resume()
     await outer.result()
 
 
