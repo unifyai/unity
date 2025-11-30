@@ -12,7 +12,6 @@ It supports:
 from __future__ import annotations
 
 # ─────────────────────────────── stdlib / vendored ──────────────────────────
-import os
 import asyncio
 import logging
 import sys
@@ -623,8 +622,6 @@ async def _main_async() -> None:
 
     args = parser.parse_args()
 
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
-
     # ─────────────────── Unify context ────────────────────
     activate_project(args.project_name, args.overwrite)
 
@@ -653,8 +650,6 @@ async def _main_async() -> None:
     LG.setLevel(logging.INFO)
 
     ts = TaskScheduler(actor=SimulatedActor(log_mode="print"))
-    if args.traced:
-        ts = unify.traced(ts)
 
     # ─────────────────── command helper output ────────────────────
     _COMMANDS_HELP = (

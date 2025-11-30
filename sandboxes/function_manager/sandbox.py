@@ -12,7 +12,6 @@ from __future__ import annotations
 import ast
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import List
@@ -124,7 +123,6 @@ async def _main_async() -> None:
     # Use shared utilities to parse args, activate Unify, and configure logs
     parser = build_cli_parser("FunctionManager Sandbox")
     args = parser.parse_args()
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
     activate_project(args.project_name, args.overwrite)
     configure_sandbox_logging(

@@ -175,7 +175,6 @@ def _llm_assert_correct(
     judge = unify.Unify(
         "o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
     )
 
     if _is_summary_q(question):
@@ -431,7 +430,6 @@ async def test_clarification_request(
         clarifier = unify.Unify(
             "o4-mini@openai",
             cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
         )
         clarifier.set_system_message(
             "You are a helpful assistant that answers clarification questions succinctly. "
@@ -503,7 +501,6 @@ async def test_clarification_request(
     judge = unify.Unify(
         "o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
     )
     judge.set_system_message(
         'Answer strictly with JSON: {"correct": true|false} – '

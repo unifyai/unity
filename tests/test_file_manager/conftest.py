@@ -78,7 +78,6 @@ Your response:"""
         client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=SETTINGS.UNIFY_CACHE,
-            traced=SETTINGS.UNIFY_TRACED,
         )
         client.set_system_message(system_prompt)
         result = await client.generate(user_prompt)

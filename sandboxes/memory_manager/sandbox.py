@@ -200,12 +200,6 @@ async def _main_async() -> None:
         help="verbose tool logs (reasoning steps)",
     )
     parser.add_argument(
-        "--traced",
-        "-t",
-        action="store_true",
-        help="wrap MemoryManager calls in Unify tracing",
-    )
-    parser.add_argument(
         "--project_name",
         "-p",
         default="Sandbox",
@@ -265,9 +259,6 @@ async def _main_async() -> None:
 
     # Unify context
     activate_project(args.project_name, args.overwrite)
-    if args.traced:
-        LG.info("[trace] Unify tracing enabled")
-        os.environ["UNIFY_TRACED"] = "true"
 
     # ─────────────────── project version handling ────────────────────
     if args.project_version != -1:

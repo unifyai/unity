@@ -671,7 +671,6 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
 
     • ``--voice / -v``        – enable voice capture & TTS
     • ``--debug / -d``        – verbose tool logs (reasoning steps)
-    • ``--traced / -t``       – wrap manager calls in Unify tracing
     • ``--project_name / -p`` – Unify *project / context* name (default: "Sandbox")
     • ``--overwrite / -o``    – delete any existing data for *project_name*
                                  before seeding
@@ -690,12 +689,6 @@ def build_cli_parser(description: str) -> argparse.ArgumentParser:
         "-d",
         action="store_true",
         help="verbose tool logs (reasoning steps)",
-    )
-    parser.add_argument(
-        "--traced",
-        "-t",
-        action="store_true",
-        help="include Unify tracing",
     )
     parser.add_argument(
         "--project_name",

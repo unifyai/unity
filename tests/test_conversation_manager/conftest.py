@@ -215,7 +215,6 @@ async def conversation_manager_process(redis_server):
     test_env.update(
         {
             "JOB_NAME": "test_job",
-            "UNIFY_TRACED": "true",
             "UNIFY_CACHE": "true",
             "TEST": "true",
         },

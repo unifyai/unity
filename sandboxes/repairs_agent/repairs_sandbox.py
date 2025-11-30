@@ -92,7 +92,6 @@ async def _main_async() -> None:
     parser = build_cli_parser("RepairsAgent sandbox")
     args = parser.parse_args()
 
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
     # Activate project per requirement
     activate_project("Repairs", overwrite=False)
 
@@ -121,8 +120,6 @@ async def _main_async() -> None:
 
     # Agent in sandbox mode (returns handle)
     agent = RepairsAgent(sandbox_mode=True)
-    if args.traced:
-        agent = unify.traced(agent)  # type: ignore
 
     if args.voice:
         _speak(

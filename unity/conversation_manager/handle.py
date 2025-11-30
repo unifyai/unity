@@ -6,7 +6,6 @@ import uuid
 import time
 import inspect
 from typing import Optional, Type, TypeVar, TYPE_CHECKING
-import os
 import redis.asyncio as redis
 from pydantic import BaseModel
 from enum import Enum
@@ -498,7 +497,6 @@ class ConversationManagerHandle(BaseConversationManagerHandle):
         llm = unify.AsyncUnify(
             "gemini-2.5-flash@vertex-ai",
             cache=get_cache_setting(),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             return_full_completion=False,
         )
         inner_handle = start_async_tool_loop(

@@ -24,7 +24,6 @@ async def test_act_tool_loop():
         MODEL_NAME,
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message("Feel free to call multiple tools per turn.")
 
@@ -64,7 +63,6 @@ async def test_observe_tool_loop():
         MODEL_NAME,
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message("Feel free to call multiple tools per turn.")
 
@@ -97,7 +95,6 @@ async def test_complex_tool_loop():
         MODEL_NAME,
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message("Feel free to call multiple tools per turn.")
 

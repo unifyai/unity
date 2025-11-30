@@ -15,7 +15,6 @@ Features
 from __future__ import annotations
 
 # ─────────────────────────────── stdlib / vendored ──────────────────────────
-import os
 import asyncio
 import logging
 import sys
@@ -137,8 +136,6 @@ async def _main_async() -> None:
     parser = build_cli_parser("TranscriptManager sandbox")
     args = parser.parse_args()
 
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
-
     activate_project(args.project_name, args.overwrite)
 
     # ─────────────────── project version handling ────────────────────
@@ -166,8 +163,6 @@ async def _main_async() -> None:
     LG.setLevel(logging.INFO)
 
     tm: TranscriptManager = TranscriptManager()
-    if args.traced:
-        tm = unify.traced(tm)
 
     # ─────────────────── optional initial seeding ─────────────────────────
     # No automatic seeding – users can invoke 'us' / 'usv' commands to populate transcripts when desired.

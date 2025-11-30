@@ -146,7 +146,6 @@ The sandbox uses the common helper in `sandboxes/utils.py`, so it shares a stand
 **Debugging & Logging:**
 ```
 --debug / -d        Show full reasoning steps of every tool-loop
---traced / -t       Wrap manager calls with unify.traced for detailed logs
 --log_in_terminal   Stream logs to the terminal in addition to writing file logs
 --log_tcp_port      Serve main logs over TCP on localhost:PORT (-1 auto-picks; 0 off)
 --http_log_tcp_port Serve HTTP request logs over TCP on localhost:PORT
@@ -280,6 +279,5 @@ The actor sandbox supports full project lifecycle management through Unify's ver
 * Check the main Unity documentation for actor-specific configuration
 * Review `.logs_actor_sandbox.txt` for detailed error traces
 * Use `--debug` mode to see full reasoning steps
-* Try `--traced` mode for detailed Unify API interaction logs
 
 Happy experimenting! 🎉

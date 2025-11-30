@@ -18,7 +18,6 @@ def make_client(system_message: str):
     client = unify.AsyncUnify(
         os.environ.get("UNIFY_MODEL", "gpt-4o@openai"),
         cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
     )
     client.set_system_message(system_message)
     return client

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Dict, List
@@ -119,7 +118,6 @@ async def _main_async() -> None:
         help="Enable persistent, long-running sessions that wait for interjections.",
     )
     args = parser.parse_args()
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
 
     activate_project(args.project_name, args.overwrite)
 
