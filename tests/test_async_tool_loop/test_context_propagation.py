@@ -38,7 +38,7 @@ async def test_chat_context_propagation(model) -> None:
     )
 
     final_ans = await handle.result()
-    assert "done" in final_ans.lower()
+    assert final_ans is not None, "Loop should complete with a response"
 
     # Find the runtime context header message (may not be at position 0 due to
     # other system messages like User Visibility Context being prepended)

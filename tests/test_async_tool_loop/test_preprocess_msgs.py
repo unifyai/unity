@@ -98,6 +98,4 @@ async def test_preprocess_msgs_dynamic_placeholder(model, monkeypatch):
     ), "Original placeholder should remain in persistent transcript."
 
     # 3️⃣  Loop completes and returns assistant reply.
-    assert (
-        "all done" in final.lower() or final.strip()
-    ), "Loop did not finish correctly."
+    assert isinstance(final, str) and final.strip(), "Loop did not finish correctly."
