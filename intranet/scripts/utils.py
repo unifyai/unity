@@ -125,9 +125,9 @@ def _parse_unify_cache(value: str) -> bool | str:
     Returns True/False for boolean strings, otherwise passes through as string.
     """
     lower = value.lower()
-    if lower == "true":
+    if lower in ("true", "yes", "1"):
         return True
-    if lower == "false":
+    if lower in ("false", "no", "0"):
         return False
     return value
 

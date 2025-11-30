@@ -16,8 +16,8 @@ def get_cache_setting(default: bool | str = True) -> bool | str:
     Parse the UNIFY_CACHE environment variable.
 
     Returns:
-        - True if the value is "true" (case-insensitive) or not set (uses default)
-        - False if the value is "false" (case-insensitive)
+        - True if the value is "true", "yes", or "1" (case-insensitive) or not set
+        - False if the value is "false", "no", or "0" (case-insensitive)
         - The string value as-is for any other cache mode (e.g., "read", "write",
           "read-only", "both", and their "-closest" variants)
     """
@@ -25,9 +25,9 @@ def get_cache_setting(default: bool | str = True) -> bool | str:
     if raw is None:
         return default
     lower = raw.lower()
-    if lower == "true":
+    if lower in ("true", "yes", "1"):
         return True
-    if lower == "false":
+    if lower in ("false", "no", "0"):
         return False
     return raw
 
