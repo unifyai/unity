@@ -1,39 +1,21 @@
 from __future__ import annotations
 
-
-import os
 from typing import Any
 
 import unify
 
+from unity.settings import SETTINGS
 
-DEFAULT_MODEL = "gpt-5.1@openai"
-
-
-def get_model() -> str:
-    """Return the LLM model to use, reading from UNIFY_MODEL env var if set."""
-    return os.environ.get("UNIFY_MODEL", DEFAULT_MODEL)
+# Backward-compatible constant (now sourced from settings)
+DEFAULT_MODEL = SETTINGS.UNIFY_MODEL
 
 
-def get_cache_setting(default: bool | str = True) -> bool | str:
+def get_cache_setting() -> bool | str:
+    """Return the cache setting from SETTINGS.
+
+    Backward-compatible wrapper. New code should use SETTINGS.UNIFY_CACHE directly.
     """
-    Parse the UNIFY_CACHE environment variable.
-
-    Returns:
-        - True if the value is "true", "yes", or "1" (case-insensitive) or not set
-        - False if the value is "false", "no", or "0" (case-insensitive)
-        - The string value as-is for any other cache mode (e.g., "read", "write",
-          "read-only", "both", and their "-closest" variants)
-    """
-    raw = os.environ.get("UNIFY_CACHE")
-    if raw is None:
-        return default
-    lower = raw.lower()
-    if lower in ("true", "yes", "1"):
-        return True
-    if lower in ("false", "no", "0"):
-        return False
-    return raw
+    return SETTINGS.UNIFY_CACHE
 
 
 def new_llm_client(
@@ -46,16 +28,16 @@ def new_llm_client(
     """
     Create a configured Unify client.
 
-    If model is not specified, reads from UNIFY_MODEL env var (default: gpt-5.1@openai).
-    Defaults to high reasoning_effort and priority service_tier where applicable (otherwise dropped).
+    If model is not specified, uses UNIFY_MODEL from settings (default: gpt-5.1@openai).
+    Defaults to high reasoning_effort and priority service_tier where applicable.
     Returns an AsyncUnify client by default, or a synchronous Unify client when
     async_client=False.
     """
     if model is None:
-        model = get_model()
+        model = SETTINGS.UNIFY_MODEL
 
     config = {
-        "cache": get_cache_setting(),
+        "cache": SETTINGS.UNIFY_CACHE,
         "reasoning_effort": "high",
         "service_tier": "priority",
         "stateful": stateful,

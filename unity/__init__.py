@@ -36,28 +36,18 @@ unify.set_client_direct_mode(True)
 # Default logging hygiene
 # ---------------------------------------------------------------------------
 
-
-def _truthy(env: str, default: bool = True) -> bool:
-    v = os.getenv(env)
-    if v is None:
-        return default
-    return str(v).strip().lower() in {"1", "true", "yes", "on"}
+from unity.settings import SETTINGS as _SETTINGS
 
 
 def _configure_default_logging() -> None:
     """Apply safe, idempotent default logging rules.
 
-    Defaults:
-      - Show `unity` logs at INFO.
-      - Hide noisy third-party HTTP clients (httpx/urllib3/openai) unless opted-in.
-      - By default, include-only project logs (unity*) unless overridden via env.
-
-    Env flags (all optional):
-      - UNITY_SILENCE_HTTPX=true|false (default true)
-      - UNITY_SILENCE_URLLIB3=true|false (default true)
-      - UNITY_SILENCE_OPENAI=true|false (default true)
-      - UNITY_LOG_ONLY_PROJECT=true|false (default true)
-      - UNITY_LOG_INCLUDE_PREFIXES="unity,unify_requests" (used when UNITY_LOG_ONLY_PROJECT=true)
+    Settings are sourced from unity.settings.ProductionSettings:
+      - UNITY_SILENCE_HTTPX (default true)
+      - UNITY_SILENCE_URLLIB3 (default true)
+      - UNITY_SILENCE_OPENAI (default true)
+      - UNITY_LOG_ONLY_PROJECT (default true)
+      - UNITY_LOG_INCLUDE_PREFIXES (default "unity")
     """
     if getattr(_configure_default_logging, "_done", False):
         return
@@ -69,16 +59,16 @@ def _configure_default_logging() -> None:
         logging.getLogger("unity").setLevel(logging.INFO)
 
         # 2) Mute common HTTP client libraries by default
-        if _truthy("UNITY_SILENCE_HTTPX", True):
+        if _SETTINGS.UNITY_SILENCE_HTTPX:
             logging.getLogger("httpx").setLevel(logging.WARNING)
-        if _truthy("UNITY_SILENCE_URLLIB3", True):
+        if _SETTINGS.UNITY_SILENCE_URLLIB3:
             logging.getLogger("urllib3").setLevel(logging.WARNING)
-        if _truthy("UNITY_SILENCE_OPENAI", True):
+        if _SETTINGS.UNITY_SILENCE_OPENAI:
             logging.getLogger("openai").setLevel(logging.WARNING)
 
         # 3) Optional include-only filter (default: enabled per request)
-        if _truthy("UNITY_LOG_ONLY_PROJECT", True):
-            allow_raw = os.getenv("UNITY_LOG_INCLUDE_PREFIXES", "unity")
+        if _SETTINGS.UNITY_LOG_ONLY_PROJECT:
+            allow_raw = _SETTINGS.UNITY_LOG_INCLUDE_PREFIXES
             allow = tuple(s.strip() for s in allow_raw.split(",") if s.strip())
 
             class _OnlyProject(logging.Filter):
