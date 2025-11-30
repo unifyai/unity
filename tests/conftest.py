@@ -345,6 +345,7 @@ def pytest_sessionstart(session):
                     "tags": {"type": "list", "mutable": True},
                     "duration": {"type": "float", "mutable": True},
                     "llm_io": {"type": "list", "mutable": True},
+                    "settings": {"type": "dict", "mutable": True},
                 },
             )
         except Exception:
