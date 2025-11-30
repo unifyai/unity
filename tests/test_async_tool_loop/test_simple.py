@@ -595,24 +595,9 @@ async def test_seeded_messages_then_final_tool_call(model):
     tool_names = [m.get("name") for m in client.messages if m.get("role") == "tool"]
     assert "add" in tool_names
 
-    # Verify the seeded fast_tool context is present:
-    # - For most models: appears as a formal tool message
-    # - For Claude: transformed into a system context message
-    #   (to avoid extended thinking requirements)
-    model_base = model.split("@")[0]
-    is_claude = model_base.startswith("claude")
-    if is_claude:
-        # Check for the context system message describing the seeded tool call
-        has_seeded_context = any(
-            m.get("role") == "system"
-            and m.get("_claude_seeded_context")
-            and "fast_tool" in str(m.get("content", ""))
-            for m in client.messages
-        )
-        assert (
-            has_seeded_context
-        ), "Claude should have a seeded context system message for fast_tool"
-    else:
-        assert (
-            "fast_tool" in tool_names
-        ), "Non-Claude models should have fast_tool as a formal tool message"
+    # Verify the seeded fast_tool context is preserved in client.messages.
+    # With lazy transformation (for Claude), the canonical messages retain
+    # the original structure; transformation only applies to API requests.
+    assert (
+        "fast_tool" in tool_names
+    ), "Seeded fast_tool should appear as a formal tool message in client.messages"
