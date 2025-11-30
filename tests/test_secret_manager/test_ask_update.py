@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from unity.secret_manager.secret_manager import SecretManager
 
 

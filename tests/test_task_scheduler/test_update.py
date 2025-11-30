@@ -1,4 +1,7 @@
 import pytest
+
+pytestmark = pytest.mark.eval
+
 from tests.helpers import _handle_project
 from unity.task_scheduler.task_scheduler import TaskScheduler
 from unity.task_scheduler.types.status import Status

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from unity.conductor.simulated import SimulatedConductor
 from unity.transcript_manager.transcript_manager import TranscriptManager
 from unity.contact_manager.contact_manager import ContactManager

@@ -1,5 +1,7 @@
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from tests.helpers import _handle_project
 from unity.web_searcher.web_searcher import WebSearcher
 

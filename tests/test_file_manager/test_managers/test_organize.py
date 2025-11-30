@@ -7,6 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
+pytestmark = pytest.mark.eval
 from tests.helpers import _handle_project
 from tests.test_file_manager.helpers import ask_judge
 

@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from typing import List
 import pytest
 
+pytestmark = pytest.mark.eval
+
 import pytest
 import asyncio
 import unify

@@ -4,6 +4,8 @@ import asyncio
 import functools
 import textwrap
 import pytest
+
+pytestmark = pytest.mark.eval
 from unittest.mock import AsyncMock, MagicMock
 
 from unity.conductor.simulated import SimulatedConductor

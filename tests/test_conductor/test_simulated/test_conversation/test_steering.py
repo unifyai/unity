@@ -3,6 +3,8 @@ import asyncio
 from unittest.mock import patch, AsyncMock
 import pytest
 
+pytestmark = pytest.mark.eval
+
 from unity.conductor.simulated import SimulatedConductor
 from tests.helpers import _handle_project
 from tests.test_conductor.utils import (
