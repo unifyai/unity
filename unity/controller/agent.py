@@ -19,12 +19,13 @@ from .sys_msgs import (
     PRIMITIVE_TO_BROWSER_ACTION_SIMPLE,
 )
 from ..constants import LOGGER
+from ..common.llm_client import get_cache_setting
 
 import unify
 import json
 
 client = unify.Unify(
-    cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+    cache=get_cache_setting(),
     traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
 )
 client.set_system_message(PRIMITIVE_TO_BROWSER_ACTION_CANDIDATES)

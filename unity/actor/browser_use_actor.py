@@ -19,6 +19,7 @@ from ..task_scheduler.base import BaseActiveTask
 from .base import BaseActor, BaseActorHandle
 from unify import AsyncUnify
 import unify
+from unity.common.llm_client import get_cache_setting
 
 __all__ = ["BrowserUseActor"]
 
@@ -80,13 +81,13 @@ class BrowserUsePlan(BaseActiveTask, BaseActorHandle):
 
         self._plan_client = AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            cache=get_cache_setting(),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         self._ask_client = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            cache=get_cache_setting(),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
@@ -501,7 +502,7 @@ class BrowserUseActor(BaseActor):
 
         self._extraction_llm = unify.AsyncUnify(
             "o4-mini@openai",
-            cache=json.loads(os.environ.get("UNIFY_CACHE", "true")),
+            cache=get_cache_setting(),
             traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
         self._tools_cache: Optional[Dict[str, Callable[..., Awaitable[Any]]]] = None
