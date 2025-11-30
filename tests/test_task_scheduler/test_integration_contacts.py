@@ -35,11 +35,9 @@ import functools
 from unity.contact_manager.contact_manager import ContactManager
 
 
-# We keep these as *slow* eval-style tests because they spin up an LLM loop.
-# Mark with `pytest.mark.eval` so CI can skip or run them selectively.
+# Slow eval-style tests that spin up real LLM loops.
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_ask_calls_contact_manager_ask(monkeypatch):
@@ -105,7 +103,6 @@ async def test_ask_calls_contact_manager_ask(monkeypatch):
     ), "ContactManager.ask should be called exactly once during TaskScheduler.ask"
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_update_calls_contact_manager_ask(monkeypatch):

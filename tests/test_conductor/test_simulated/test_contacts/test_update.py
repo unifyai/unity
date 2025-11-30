@@ -41,7 +41,6 @@ CONTACT_UPDATE_REQUESTS: list[str] = [
 ]
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("request_text", CONTACT_UPDATE_REQUESTS)
 @_handle_project

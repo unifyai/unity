@@ -200,7 +200,6 @@ def ts_scenario(
     return ScenarioBuilder().ts
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", QUESTIONS)
 @pytest.mark.timeout(300)
@@ -220,7 +219,6 @@ async def test_ask_semantic_with_llm_judgement(
         raise exc
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
@@ -260,7 +258,6 @@ async def test_ask_with_interjection(ts_scenario: TaskScheduler) -> None:
         raise exc
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
@@ -280,7 +277,6 @@ async def test_ask_stop(ts_scenario: TaskScheduler) -> None:
         raise exc
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 async def test_ask_uses_reduce_for_numeric_aggregation(

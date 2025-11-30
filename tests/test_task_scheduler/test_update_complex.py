@@ -23,7 +23,6 @@ from unity.task_scheduler.types.status import Status
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(500)
 async def test_update_reorder_queue(basic_task_scenario):
@@ -59,7 +58,6 @@ async def test_update_reorder_queue(basic_task_scenario):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(500)
 async def test_update_cancel_email_tasks(basic_task_scenario):  # FIXME
@@ -88,7 +86,6 @@ def _next_weekday(dt: datetime, weekday: int) -> datetime:
     return dt + timedelta(days=days_ahead)
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(500)
 async def test_update_lower_priority_for_future_date(basic_task_scenario):
@@ -126,7 +123,6 @@ async def test_update_lower_priority_for_future_date(basic_task_scenario):
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(500)
 async def test_update_bulk_description_replace(basic_task_scenario):

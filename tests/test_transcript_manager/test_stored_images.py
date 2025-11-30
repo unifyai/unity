@@ -93,7 +93,6 @@ def test_attach_image_promotes_block():
     base64.b64decode(payload["image"])  # will raise if invalid
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
@@ -173,7 +172,6 @@ async def test_ask_uses_images_for_color():
     assert "data:image" not in answer and "image_url" not in answer
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
@@ -264,7 +262,6 @@ async def test_ask_boot_option():
     ), "Expected image-aware reasoning to be used"
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project

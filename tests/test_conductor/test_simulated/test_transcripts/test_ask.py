@@ -39,7 +39,6 @@ TRANSCRIPT_QUESTIONS: list[str] = [
 ]
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", TRANSCRIPT_QUESTIONS)
 @_handle_project

@@ -202,7 +202,6 @@ async def test_ask_image_dynamic_helper_executes_and_returns(
     assert any("BLUE" in (m.get("content") or "") for m in tool_msgs)
 
 
-@pytest.mark.eval
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project

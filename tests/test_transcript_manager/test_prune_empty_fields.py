@@ -55,7 +55,6 @@ def test_json_omits_empty_fields():
     assert "screen_share" not in dumped_with_image
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_ask_search_tool_omits_empty():

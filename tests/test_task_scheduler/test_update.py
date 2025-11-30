@@ -6,7 +6,6 @@ from unity.task_scheduler.types.priority import Priority
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_create_task_via_text():
     ts = TaskScheduler()
@@ -34,7 +33,6 @@ async def test_update_create_task_via_text():
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_update_delete_task_via_text():
     ts = TaskScheduler()

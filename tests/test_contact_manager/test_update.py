@@ -104,7 +104,6 @@ async def test_selects_move_to_blacklist(identify_by: str):
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_create_new(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -134,7 +133,6 @@ async def test_create_new(
 
 @_handle_project
 @pytest.mark.slow
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_existing_details(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -171,7 +169,6 @@ async def test_existing_details(
 
 @_handle_project
 @pytest.mark.slow
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_with_parent_context(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -214,7 +211,6 @@ async def test_with_parent_context(
 
 @_handle_project
 @pytest.mark.slow
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_with_clarification(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -302,7 +298,6 @@ async def test_with_clarification(
 
 @_handle_project
 @pytest.mark.slow
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_interjection(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -325,7 +320,6 @@ async def test_interjection(
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_stop(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -351,7 +345,6 @@ async def test_stop(
 
 @_handle_project
 @pytest.mark.slow
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_add_bio(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -381,7 +374,6 @@ async def test_add_bio(
 
 @_handle_project
 @pytest.mark.slow
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_set_timezone_hint(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],

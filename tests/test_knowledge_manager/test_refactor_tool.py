@@ -34,7 +34,6 @@ from tests.helpers import _handle_project
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @pytest.mark.requires_real_unify

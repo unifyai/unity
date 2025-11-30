@@ -103,7 +103,6 @@ def test_file_manager_reduce_param_shapes(file_manager: LocalFileManager, tmp_pa
     assert isinstance(filtered_multi, dict)
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project

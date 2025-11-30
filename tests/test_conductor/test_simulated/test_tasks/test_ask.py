@@ -23,7 +23,6 @@ TASK_QUESTIONS: list[str] = [
 ]
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", TASK_QUESTIONS)
 @_handle_project

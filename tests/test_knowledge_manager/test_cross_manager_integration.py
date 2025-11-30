@@ -2,8 +2,7 @@
 Integration tests: the LLM running inside *KnowledgeManager* must be able to
 call the embedded *ContactManager.ask* and *ContactManager.update* tools.
 
-The tests are `@pytest.mark.eval` and `@pytest.mark.requires_real_unify`
-because they execute a real tool-use reasoning loop.
+These tests execute a real tool-use reasoning loop.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from tests.helpers import _handle_project
 # ────────────────────────────────────────────────────────────────────────────
 # 1.  KM.retrieve → CM.ask → KM internal knowledge                           #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
@@ -58,7 +56,6 @@ async def test_ask_joins_contact_and_company():
 # ────────────────────────────────────────────────────────────────────────────
 # 2.  KM.store → CM.update                                                   #
 # ────────────────────────────────────────────────────────────────────────────
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project

@@ -140,7 +140,6 @@ def test_updates_transcripts():
 # 2.  Natural-language merge via update()                                      #
 # ─────────────────────────────────────────────────────────────────────────────
 @pytest.mark.slow
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_via_update():

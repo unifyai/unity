@@ -14,7 +14,6 @@ from tests.helpers import _handle_project
 PNG_BLUE_B64 = make_solid_png_base64(8, 8, (0, 0, 255))
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
@@ -73,7 +72,6 @@ async def test_persistent_image_context_then_reason():
     ), f"Answer does not reference blue-ish color: {ans2!r}"
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project
@@ -159,7 +157,6 @@ async def test_boot_option_and_fourth_item():
     assert "data:image" not in answer and "image_url" not in answer
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.requires_real_unify
 @_handle_project

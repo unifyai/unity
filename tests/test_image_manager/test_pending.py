@@ -422,7 +422,6 @@ def test_multiple_pending_updates_coalesce_and_persist_only_last(monkeypatch):
     assert backend_caption == "v3"
 
 
-@pytest.mark.eval
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project

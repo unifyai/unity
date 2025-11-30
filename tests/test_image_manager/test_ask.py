@@ -13,7 +13,6 @@ from tests.helpers import _handle_project
 ASSET_LOCAL = Path(__file__).parent / "assets" / "google.jpeg"
 
 
-@pytest.mark.eval
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
@@ -41,7 +40,6 @@ async def test_ask_returns_text_only():
     assert "data:image" not in answer and "image_url" not in answer
 
 
-@pytest.mark.eval
 @pytest.mark.requires_real_unify
 @pytest.mark.asyncio
 @_handle_project
