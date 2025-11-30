@@ -2984,9 +2984,6 @@ async def async_tool_loop_inner(
                                 client,
                                 _msg_dispatcher,
                             )
-                            tools_data.info[tgt_task].clarify_placeholder = (
-                                tool_reply_msg
-                            )
                             continue  # handled clarify helper for live target
 
                     elif lname_cf.startswith("interject_"):

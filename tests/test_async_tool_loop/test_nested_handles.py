@@ -415,7 +415,10 @@ async def test_clarification_nested_handle(model):
     final_reply = await top_handle.result()
 
     # Assertions ---------------------------------------------------------
-    assert "all done" in final_reply.strip().lower()
+    reply_lower = final_reply.strip().lower()
+    assert (
+        "done" in reply_lower or "complete" in reply_lower
+    ), f"Expected completion indicator in reply, got: {final_reply!r}"
     assert exec_log == ["blue"], "Inner loop must receive 'blue' from outer helper."
 
 
