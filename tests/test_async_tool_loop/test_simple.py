@@ -28,7 +28,7 @@ import asyncio
 import time
 from tests.helpers import _handle_project
 from tests.settings import SETTINGS
-from unity.common.llm_client import new_llm_client, DEFAULT_MODEL
+from unity.common.llm_client import new_llm_client
 from tests.test_async_tool_loop.async_helpers import _wait_for_tool_request
 
 import pytest
@@ -71,20 +71,6 @@ async def slow_tool(res: str = "slow") -> str:
     return res
 
 
-# --------------------------------------------------------------------------- #
-#  HELPERS                                                                    #
-# --------------------------------------------------------------------------- #
-@unify.traced
-def new_client(model: str = DEFAULT_MODEL) -> unify.AsyncUnify:
-    """
-    Return a fresh client *with its own conversation state* so that tests do
-    not interfere with one another.
-    """
-    return new_llm_client(model=model).set_system_message(
-        "Feel free to call multiple *different* tools per turn if appropriate.",
-    )
-
-
 @unify.traced
 def count_tool_messages(client: unify.AsyncUnify) -> int:
     return sum(1 for m in client.messages if m["role"] == "tool")
@@ -96,7 +82,7 @@ def count_tool_messages(client: unify.AsyncUnify) -> int:
 @pytest.mark.asyncio
 @_handle_project
 async def test_happy_path_single_sync_tool(model):
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     answer = await start_async_tool_loop(
         client,
@@ -190,7 +176,7 @@ async def test_concurrent_tools_waits_for_all_results(model):
 @pytest.mark.asyncio
 @_handle_project
 async def test_recovers_after_failure(model):
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     answer = await start_async_tool_loop(
         client,
@@ -217,7 +203,7 @@ async def test_recovers_after_failure(model):
 @pytest.mark.asyncio
 @_handle_project
 async def test_aborts_after_too_many_failures(model):
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     with pytest.raises(RuntimeError):
         await start_async_tool_loop(
@@ -235,7 +221,7 @@ async def test_aborts_after_too_many_failures(model):
 @pytest.mark.asyncio
 @_handle_project
 async def test_mixed_sync_async_tools(model):
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     answer = await start_async_tool_loop(
         client,
@@ -263,7 +249,7 @@ def emit_json() -> str:
 @pytest.mark.asyncio
 @_handle_project
 async def test_pretty_prints_json_string_tool_result(model):
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     # Ask the model to call the tool once, then reply. Result should be pretty‑printed in the transcript.
     _ = await start_async_tool_loop(
@@ -343,7 +329,7 @@ async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noq
     # 1️⃣  duplicates SHOULD be executed when pruning is disabled
     # ------------------------------------------------------------------ #
     log.clear()
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     await start_async_tool_loop(
         client=client,
         message=seeded,
@@ -367,7 +353,7 @@ async def test_duplicate_tool_calls_are_optionally_pruned(model) -> None:  # noq
     # 2️⃣  duplicates SHOULD be pruned when pruning is enabled
     # ------------------------------------------------------------------ #
     log.clear()
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
     await start_async_tool_loop(
         client=client,
         message=seeded,
@@ -409,7 +395,7 @@ async def test_no_tools_with_system_message(model) -> None:
 
         system → user → assistant
     """
-    client = new_client(model=model)  # ← already includes the system message
+    client = new_llm_client(model=model)
 
     answer = await start_async_tool_loop(
         client,
@@ -482,7 +468,7 @@ async def test_max_concurrent_limit_is_obeyed(model) -> None:  # noqa: D401
 
     tools = {"limited": ToolSpec(fn=limited, max_concurrent=1)}
 
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     # Kick off the interactive loop *without* awaiting the final result yet so
     # that we can synchronise on the **first** tool request and ensure all
@@ -551,7 +537,7 @@ async def test_seeded_messages_then_final_tool_call(model):
     The loop should then perform the final (real) tool call `add(2, 3)` and
     return the result.
     """
-    client = new_client(model=model)
+    client = new_llm_client(model=model)
 
     call_id = "seeded_fast_1"
     seeded = [
