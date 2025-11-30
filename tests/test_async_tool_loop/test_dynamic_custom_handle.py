@@ -6,7 +6,6 @@ import inspect
 from typing import Any, Dict, List, Optional
 
 import pytest
-import unify
 
 from unity.common.async_tool_loop import (
     SteerableToolHandle,
@@ -105,7 +104,6 @@ class CustomArgsHandle(SteerableToolHandle):
         return None
 
 
-@unify.traced
 async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
     """Return a CustomArgsHandle to exercise dynamic helper schemas/args."""
     return CustomArgsHandle()
@@ -336,7 +334,6 @@ async def test_dynamic_helpers_use_base_docstrings(client):
         async def answer_clarification(self, call_id: str, answer: str) -> None:
             return None
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         return BaseLikeHandle()
 
@@ -445,7 +442,6 @@ async def test_dynamic_helpers_use_overridden_docstrings(client):
         async def answer_clarification(self, call_id: str, answer: str) -> None:
             return None
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         return OverrideDocHandle()
 
@@ -544,7 +540,6 @@ async def test_dynamic_helpers_adopt_custom_method_docstring(client):
             """Escalate override doc: raise escalation to the specified level."""
             return f"escalated:{level}"
 
-    @unify.traced
     async def spawn_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
         return CustomMethodHandle()
 
@@ -587,7 +582,6 @@ async def test_dynamic_helpers_adopt_custom_method_docstring(client):
     assert found, "expected an escalate_* helper to be registered"
 
 
-@unify.traced
 async def spawn_custom_handle() -> SteerableToolHandle:  # type: ignore[name-defined]
     """Return a CustomArgsHandle to exercise dynamic helper schemas/args."""
     return CustomArgsHandle()

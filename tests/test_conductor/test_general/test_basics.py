@@ -213,7 +213,6 @@ async def test_supports_clarification_channels():
                 reasoning_effort="high",
                 service_tier="priority",
                 cache=True,
-                traced=False,
             )
             client.set_system_message(
                 "You answer clarification questions concisely and specifically. "

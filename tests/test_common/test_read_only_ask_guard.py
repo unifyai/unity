@@ -57,7 +57,6 @@ async def test_guard_blocks_mutation(monkeypatch):
     monkeypatch.setattr(unify.AsyncUnify, "generate", _stub_generate, raising=True)
 
     # Define a long-running tool so the loop would otherwise wait
-    @unify.traced
     async def long_job(seconds: int) -> str:  # noqa: D401
         await asyncio.sleep(float(seconds))
         return "done"

@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 import re
 import pytest
-import unify
 
 from unity.common.async_tool_loop import (
     start_async_tool_loop,
@@ -121,7 +120,6 @@ async def test_single_loop_logging_hierarchy_label(model):
     - no event exists with hierarchy beginning ["Solo", ...] (i.e., nested)
     """
 
-    @unify.traced
     def noop_tool() -> str:  # noqa: D401
         return "ok"
 

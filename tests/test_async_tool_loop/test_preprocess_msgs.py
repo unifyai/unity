@@ -3,7 +3,6 @@ import copy
 from typing import List
 
 import pytest
-import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from tests.helpers import _handle_project
@@ -68,7 +67,6 @@ async def test_preprocess_msgs_dynamic_placeholder(model, monkeypatch):
     # turns (request tool → result → final answer).                       #
     # ------------------------------------------------------------------ #
 
-    @unify.traced  # no-op decorator from real library
     async def dummy_tool():  # noqa: D401
         await asyncio.sleep(0.01)
         return "OK"

@@ -33,7 +33,6 @@ def make_llm(
 # ──────────────────────────────────────────────────────────────────────────
 # 1.  DUMMY TOOLS – send_email emits notifications
 # ──────────────────────────────────────────────────────────────────────────
-@unify.traced
 async def send_email(
     address: str,
     description: str,
@@ -50,7 +49,6 @@ async def send_email(
     return "Email sent!"
 
 
-@unify.traced
 async def send_text(
     number: str,
     description: str,
@@ -63,7 +61,6 @@ async def send_text(
 
 
 # Helper tool the assistant can choose to call to actively surface progress upward
-@unify.traced
 async def notify_parent(
     message: str,
     *,
@@ -89,7 +86,6 @@ async def test_notification_bubbles_up_two_tiers() -> None:
     # Deterministic ordering gates – ensure notify_parent is called while send_email is running
     notify_called_gate = asyncio.Event()
 
-    @unify.traced
     async def send_email(
         address: str,
         description: str,
@@ -107,7 +103,6 @@ async def test_notification_bubbles_up_two_tiers() -> None:
         await _notification_up_q.put({"message": "Sending email…"})
         return "Email sent!"
 
-    @unify.traced
     async def send_text(
         number: str,
         description: str,
@@ -117,7 +112,6 @@ async def test_notification_bubbles_up_two_tiers() -> None:
         return "Text queued!"
 
     # Helper tool the assistant must call to surface progress upward
-    @unify.traced
     async def notify_parent(
         message: str,
         *,

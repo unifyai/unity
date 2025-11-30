@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import unify
 import asyncio
 
 import pytest
@@ -22,7 +21,6 @@ from tests.helpers import _handle_project, capture_events
 from unity.common.llm_client import new_llm_client
 
 
-@unify.traced
 async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
     # Avoid time-based sleeping; just return immediately
     return text.upper()

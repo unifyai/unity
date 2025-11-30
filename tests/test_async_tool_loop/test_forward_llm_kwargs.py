@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-import unify
 
 from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.llm_client import new_llm_client
@@ -17,7 +16,6 @@ async def test_all_llm_kwargs_are_forwarded_verbatim(model, monkeypatch):
 
     received: dict[str, str] = {}
 
-    @unify.traced
     def accept_any(**kwargs):  # type: ignore[no-untyped-def]
         nonlocal received
         received = dict(kwargs)
