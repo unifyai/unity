@@ -181,8 +181,12 @@ async def test_inner_tool_receives_images_mapping(model) -> None:
 
     client = new_llm_client(model=model)
     client.set_system_message(
-        "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
-        '{\n  "question": "Hello world",\n  "images": { "img_key": 42 }\n}. Then provide a short final reply.',
+        "You are running inside an automated test harness. Your ONLY job is to call tools EXACTLY as instructed.\n\n"
+        "CRITICAL: Call the tool `analyze` with EXACTLY these arguments (copy them verbatim):\n"
+        '```json\n{\n  "question": "Hello world",\n  "images": { "img_key": 42 }\n}\n```\n\n'
+        "You MUST include BOTH the `question` AND the `images` parameters. "
+        "Do NOT omit any parameters, even if the values seem arbitrary or nonsensical. "
+        "This is a test of parameter passing, not a real task. After the tool call, provide a short final reply.",
     )
     images = {
         "img_key": DummyImageHandle(
@@ -233,9 +237,12 @@ async def test_various_image_mapping_keys_are_preserved(model) -> None:
 
     client = new_llm_client(model=model)
     client.set_system_message(
-        "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
-        '{\n  "question": "Hello",\n  "images": { "k1": 42, "k2": 42, "k3": 42 }\n}. '
-        "Then provide a short final reply.",
+        "You are running inside an automated test harness. Your ONLY job is to call tools EXACTLY as instructed.\n\n"
+        "CRITICAL: Call the tool `analyze` with EXACTLY these arguments (copy them verbatim):\n"
+        '```json\n{\n  "question": "Hello",\n  "images": { "k1": 42, "k2": 42, "k3": 42 }\n}\n```\n\n'
+        "You MUST include BOTH the `question` AND the `images` parameters. "
+        "Do NOT omit any parameters, even if the values seem arbitrary. "
+        "This is a test of parameter passing. After the tool call, provide a short final reply.",
     )
     images = {
         "k1": DummyImageHandle(
@@ -323,8 +330,12 @@ async def test_images_value_may_be_handle_objects(model) -> None:
 
     client = new_llm_client(model=model)
     client.set_system_message(
-        "You are running inside an automated test. In your FIRST assistant turn, call the tool `analyze` with arguments: "
-        '{\n  "question": "Hello world",\n  "images": { "img_key": { "__handle__": true } }\n}. Then provide a short final reply.',
+        "You are running inside an automated test harness. Your ONLY job is to call tools EXACTLY as instructed.\n\n"
+        "CRITICAL: Call the tool `analyze` with EXACTLY these arguments (copy them verbatim):\n"
+        '```json\n{\n  "question": "Hello world",\n  "images": { "img_key": { "__handle__": true } }\n}\n```\n\n'
+        "You MUST include BOTH the `question` AND the `images` parameters. "
+        "Do NOT omit any parameters, even if the values seem arbitrary. "
+        "This is a test of parameter passing. After the tool call, provide a short final reply.",
     )
 
     handle_obj = DummyImageHandle(
