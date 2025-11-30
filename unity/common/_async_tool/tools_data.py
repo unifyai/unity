@@ -661,7 +661,29 @@ class ToolsData:
                         child_handle,
                         "pause",
                     ):
-                        await child_handle.pause()  # type: ignore[attr-defined]
+                        # Check if pause was already forwarded via _synthesize_mirrored_helper_calls
+                        # to avoid duplicate dispatch
+                        already_forwarded = False
+                        try:
+                            for rec in reversed(_log):
+                                if rec.get("method", "").lower().strip() == "pause":
+                                    if str(info.call_id) in rec.get("forwarded_to", []):
+                                        already_forwarded = True
+                                    break  # Only check the most recent pause event
+                        except Exception:
+                            pass
+                        if not already_forwarded:
+                            await child_handle.pause()  # type: ignore[attr-defined]
+                            # Mark as forwarded so we don't dispatch again
+                            try:
+                                for rec in reversed(_log):
+                                    if rec.get("method", "").lower().strip() == "pause":
+                                        rec.setdefault("forwarded_to", []).append(
+                                            str(info.call_id),
+                                        )
+                                        break
+                            except Exception:
+                                pass
                 except Exception:
                     pass
                 try:
@@ -669,9 +691,30 @@ class ToolsData:
                         child_handle,
                         "stop",
                     ):
-                        maybe = child_handle.stop()  # type: ignore[attr-defined]
-                        if asyncio.iscoroutine(maybe):
-                            asyncio.create_task(maybe)
+                        # Check if stop was already forwarded via _synthesize_mirrored_helper_calls
+                        already_forwarded = False
+                        try:
+                            for rec in reversed(_log):
+                                if rec.get("method", "").lower().strip() == "stop":
+                                    if str(info.call_id) in rec.get("forwarded_to", []):
+                                        already_forwarded = True
+                                    break
+                        except Exception:
+                            pass
+                        if not already_forwarded:
+                            maybe = child_handle.stop()  # type: ignore[attr-defined]
+                            if asyncio.iscoroutine(maybe):
+                                asyncio.create_task(maybe)
+                            # Mark as forwarded
+                            try:
+                                for rec in reversed(_log):
+                                    if rec.get("method", "").lower().strip() == "stop":
+                                        rec.setdefault("forwarded_to", []).append(
+                                            str(info.call_id),
+                                        )
+                                        break
+                            except Exception:
+                                pass
                 except Exception:
                     pass
         except Exception:
