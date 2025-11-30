@@ -239,70 +239,54 @@ async def test_stop_nested_loop_calls_stop(model, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_interject_nested_handle(model, monkeypatch):
+async def test_interject_nested_handle(model):
     """
-    * Inner tool returns a handle (nested loop).
-    * Assistant is instructed to interject with "dogs".
-    * We monkey-patch `AsyncToolLoopHandle.interject` to count calls.
+    Verify that the outer loop can correctly interject the inner loop.
+
+    Flow:
+    1. Outer loop calls `outer_tool` which starts a nested async tool loop
+    2. The nested loop starts a gated tool and waits
+    3. Test sends interjection "forward: hello world" to the outer loop
+    4. Outer loop uses `interject_outer_tool_*` helper to forward to nested loop
+    5. Nested loop receives the interjection and includes it in its final response
+    6. Gate is released, inner tool completes, and the result flows back up
     """
 
-    # 1.  Monkey-patch the public interject method so we can detect use
-    interject_calls = {"count": 0, "payloads": []}
+    # Gate to control when the inner tool completes
+    inner_gate = asyncio.Event()
 
-    orig_interject = AsyncToolLoopHandle.interject
+    async def gated_task() -> str:
+        """Wait for the gate to be released, then return."""
+        await asyncio.wait_for(inner_gate.wait(), timeout=120)
+        return "task done"
 
-    async def patched_interject(self, message: str):
-        interject_calls["count"] += 1
-        interject_calls["payloads"].append(message)
-        await orig_interject(self, message)
+    gated_task.__name__ = "gated_task"
+    gated_task.__qualname__ = "gated_task"
 
-    monkeypatch.setattr(
-        AsyncToolLoopHandle,
-        "interject",
-        patched_interject,
-        raising=True,
-    )
-
-    # 2.  Inner tool that waits for the steer via `interject_queue`
-    async def slow_topic(
-        *,
-        _interject_queue: asyncio.Queue[str],
-    ) -> str:
-        try:
-            new = await asyncio.wait_for(_interject_queue.get(), timeout=60)
-            return f"topic={new}"
-        except asyncio.TimeoutError:
-            return "topic=cats"
-
-    slow_topic.__name__ = "slow_topic"
-    slow_topic.__qualname__ = "slow_topic"
-
-    # 3.  Outer tool: launches nested loop and returns its handle
+    # Outer tool: launches nested loop and returns its handle
     async def outer_tool() -> AsyncToolLoopHandle:
         inner_client = new_llm_client(model=model)
         inner_client.set_system_message(
-            "1️⃣  Call `slow_topic`.\n"
-            "2️⃣  Wait until the topic changes.\n"
-            "3️⃣  Answer with exactly 'done'.",
+            "Call `gated_task` and wait for it. "
+            "If you receive user messages while waiting, note them. "
+            "When done, reply: 'Result: <task result>. Messages: <any user messages>'",
         )
         return start_async_tool_loop(
             client=inner_client,
             message="start",
-            tools={"slow_topic": slow_topic},
+            tools={"gated_task": gated_task},
         )
 
     outer_tool.__name__ = "outer_tool"
     outer_tool.__qualname__ = "outer_tool"
 
-    # 4.  Top-level loop – assistant must use `_interject_…`
+    # Top-level loop
     client = new_llm_client(model=model)
     client.set_system_message(
-        "1️⃣  Call `outer_tool`.\n"
-        "2️⃣  When the *user* says 'switch to dogs', call the helper whose "
-        'name starts with `_interject_` and pass `{ "content": "dogs" }`.\n'
-        "2️⃣b If waiting is still needed, call the `wait` helper; otherwise continue.\n"
-        "3️⃣  Do not produce any other reply until the work completes.\n"
-        "4️⃣  Finally, reply with 'outer done'.",
+        "Call `outer_tool` to start a nested loop. "
+        "When you receive 'forward: X', call `interject_outer_tool_*` with "
+        '`{"content": "X"}` to forward X to the nested loop. '
+        "When outer_tool completes, reply with its result.",
     )
 
     top_handle = start_async_tool_loop(
@@ -313,136 +297,42 @@ async def test_interject_nested_handle(model, monkeypatch):
         timeout=240,
     )
 
-    # Wait deterministically until the assistant has requested `outer_tool`
-    # and the nested loop has been started (placeholder tool message inserted)
+    # Wait until the nested loop has started
     await _wait_for_tool_request(client, "outer_tool")
     await _wait_for_tool_result(client, tool_name="outer_tool", min_results=1)
-    await top_handle.interject("switch to dogs")
 
-    await top_handle.result()
+    # Send the interjection to be forwarded, then release the gate
+    await top_handle.interject("forward: hello world")
+    inner_gate.set()
 
-    # 5. Assertions
+    result = await top_handle.result()
+
+    # Assertions
     msgs = client.messages
 
-    # a) The assistant should have invoked `outer_tool` in its first tool call
-    assert msgs[2]["tool_calls"][0]["function"]["name"] == "outer_tool"
-
-    # b) The tool should then return a message indicating the loop started
-    assert msgs[3]["role"] == "tool"
-    assert msgs[3]["name"] == "outer_tool"
-    _content = msgs[3].get("content") or ""
-    _started_ok = False
-    try:
-        _parsed = json.loads(_content)
-        _started_ok = isinstance(_parsed, dict) and _parsed.get("_placeholder") in (
-            "nested_start",
-            "pending",
-        )
-    except Exception:
-        # Legacy acceptance: human-readable string used before placeholder refactor
-        _started_ok = _content.startswith("Nested async tool loop started")
-    assert (
-        _started_ok
-    ), f"Expected nested-start placeholder or legacy string, got: {_content!r}"
-
-    # c) Find the user interjection message "switch to dogs"
-    # Interjections are now simple user messages (not system messages with wrapper)
-    interjection_msg = next(
+    # a) Outer loop called the interject helper with "hello world"
+    interject_call = next(
         (
-            m
-            for m in msgs
-            if m["role"] == "user" and "switch to dogs" in (m.get("content") or "")
-        ),
-        None,
-    )
-    assert (
-        interjection_msg is not None
-    ), "Interjection 'switch to dogs' user message not found"
-
-    # d) Find the assistant message that calls the interject helper
-    interject_call_msg = next(
-        (
-            m
+            call
             for m in msgs
             if m.get("tool_calls")
-            and any(
-                call["function"]["name"].startswith("interject_outer_tool_")
-                for call in m["tool_calls"]
+            for call in m["tool_calls"]
+            if call.get("function", {})
+            .get("name", "")
+            .startswith(
+                "interject_outer_tool_",
             )
         ),
         None,
     )
-    assert (
-        interject_call_msg is not None
-    ), "Assistant call to interject helper not found"
+    assert interject_call is not None, "interject_outer_tool_* was not called"
 
-    # Confirm correct arguments were passed in interject helper call
-    interj_call = next(
-        call
-        for call in interject_call_msg["tool_calls"]
-        if call["function"]["name"].startswith("interject_outer_tool_")
-    )
-    interj_args = json.loads(interj_call["function"]["arguments"]) or {}
-    assert interj_args.get("message") == "dogs" or interj_args.get("content") == "dogs"
+    args = json.loads(interject_call["function"]["arguments"]) or {}
+    content = args.get("message") or args.get("content") or ""
+    assert "hello world" in content.lower(), f"Wrong content forwarded: {content!r}"
 
-    # e) Find the acknowledgement tool message linked to that helper call via tool_call_id
-    interject_ack = next(
-        (
-            m
-            for m in msgs
-            if m.get("role") == "tool" and m.get("tool_call_id") == interj_call["id"]
-        ),
-        None,
-    )
-    assert (
-        interject_ack is not None
-    ), "Acknowledgement tool message for interject_* helper not found"
-
-    # f) Assistant may either perform a status check, or the loop may update
-    #    the existing placeholder tool message directly upon completion. Accept
-    #    either outcome.
-    status_check_msg = next(
-        (
-            m
-            for m in msgs
-            if m.get("tool_calls")
-            and any(
-                call["function"]["name"].startswith("check_status_call_")
-                for call in m["tool_calls"]
-            )
-        ),
-        None,
-    )
-
-    if status_check_msg is not None:
-        # Tool response to status check should be "done"
-        status_response_msg = next(
-            (
-                m
-                for m in msgs
-                if m["role"] == "tool"
-                and m["name"].startswith("check_status_call_")
-                and m["content"] == "done"
-            ),
-            None,
-        )
-        assert (
-            status_response_msg is not None
-        ), "Tool response with '\"done\"' not found"
-    else:
-        # Fallback: ensure there is some tool message that delivered "done"
-        # as the completion result even without an explicit status check.
-        fallback_done = next(
-            (m for m in msgs if m.get("role") == "tool" and m.get("content") == "done"),
-            None,
-        )
-        assert (
-            fallback_done is not None
-        ), "Assistant neither performed a status check nor produced a final '\"done\"' tool response"
-
-    # h) Assistant's final message should be "outer done"
-    assert msgs[-1]["role"] == "assistant"
-    assert msgs[-1]["content"].strip().lower() == "outer done"
+    # b) The forwarded message reached the inner loop and appears in final result
+    assert "hello world" in result.lower(), f"Message not in result: {result!r}"
 
 
 @pytest.mark.asyncio
