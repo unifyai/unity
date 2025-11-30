@@ -52,7 +52,6 @@ CASES: list[dict[str, str]] = [
 ]
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", CASES, ids=[c["question"] for c in CASES])
 @_handle_project

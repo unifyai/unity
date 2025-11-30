@@ -242,7 +242,6 @@ def _llm_assert_correct(
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", QUESTIONS)
 async def test_ask_semantic_judgement(
@@ -261,7 +260,6 @@ async def test_ask_semantic_judgement(
 
 
 @pytest.mark.asyncio
-@pytest.mark.eval
 async def test_interjection(
     tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ):
@@ -292,7 +290,6 @@ async def test_interjection(
 
 @_handle_project
 @pytest.mark.asyncio
-@pytest.mark.eval
 async def test_stop():
     tm = TranscriptManager()
     handle = await tm.ask(
@@ -304,7 +301,6 @@ async def test_stop():
 
 
 @pytest.mark.asyncio
-@pytest.mark.eval
 async def test_parent_context(
     tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],
 ):
@@ -528,7 +524,6 @@ async def test_clarification_request(
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_uses_reduce_for_numeric_aggregation(
     tm_manager_scenario: tuple[TranscriptManager, dict[str, int]],

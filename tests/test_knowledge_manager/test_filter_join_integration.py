@@ -39,7 +39,6 @@ def _contains(text: str, *needles: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.timeout(300)
 @_handle_project

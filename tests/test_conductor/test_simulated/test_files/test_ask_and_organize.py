@@ -16,7 +16,6 @@ from tests.test_conductor.utils import (
 MANAGER = "GlobalFileManager"
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_ask_then_organize_separate(tmp_path):

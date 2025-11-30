@@ -7,7 +7,6 @@ from unity.secret_manager.secret_manager import SecretManager
 
 
 @pytest.mark.asyncio
-@pytest.mark.eval
 async def test_ask_and_update_flow(secret_manager_context):
     sm = SecretManager()
 
@@ -61,7 +60,6 @@ async def test_ask_with_clarification(secret_manager_context):
 
 
 @pytest.mark.asyncio
-@pytest.mark.eval
 async def test_update_creates_two_secrets(secret_manager_context):
     sm = SecretManager()
 

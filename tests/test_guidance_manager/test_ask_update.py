@@ -6,7 +6,6 @@ from unity.guidance_manager.guidance_manager import GuidanceManager
 from tests.helpers import _handle_project
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_ask_semantic_search_text_only():
@@ -22,7 +21,6 @@ async def test_ask_semantic_search_text_only():
     assert "onboard" in answer.lower() or "onboarding" in answer.lower()
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_update_then_ask():
@@ -40,7 +38,6 @@ async def test_update_then_ask():
     assert "checklist" in ans.lower()
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_update_modify_then_filter():

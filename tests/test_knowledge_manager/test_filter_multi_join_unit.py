@@ -14,7 +14,6 @@ from __future__ import annotations
 import re
 import functools
 
-import pytest
 
 from unity.knowledge_manager.knowledge_manager import KnowledgeManager
 from tests.helpers import _handle_project
@@ -38,7 +37,6 @@ def _tmp_ctx_survivors(km: KnowledgeManager) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.eval
 @_handle_project
 def test_filter_multi_join(monkeypatch):
     """

@@ -16,7 +16,6 @@ from tests.test_conductor.utils import (
 MANAGER = "GlobalFileManager"
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_organize_runs_on_request(tmp_path):

@@ -156,7 +156,6 @@ QUESTIONS_CONTACT_ASK = [
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question, expected_fragment", QUESTIONS_CONTACT_ASK)
 async def test_ask_semantic(
@@ -188,7 +187,6 @@ async def test_ask_semantic(
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_parent_context(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -228,7 +226,6 @@ async def test_ask_parent_context(
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_time_check(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -275,7 +272,6 @@ async def test_ask_time_check(
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_clarification(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -322,7 +318,6 @@ async def test_ask_clarification(
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_interject(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -363,7 +358,6 @@ async def test_ask_interject(
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_stop(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],
@@ -380,7 +374,6 @@ async def test_ask_stop(
 
 
 @_handle_project
-@pytest.mark.eval
 @pytest.mark.asyncio
 async def test_ask_uses_reduce_for_numeric_aggregation(
     contact_manager_scenario: tuple[ContactManager, Dict[str, int]],

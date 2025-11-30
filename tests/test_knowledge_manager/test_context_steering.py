@@ -21,7 +21,6 @@ def _contains(text: str, *needles: str) -> bool:
 # 1.  Parent-context test                                                     #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
-@pytest.mark.eval
 @pytest.mark.timeout(300)
 @_handle_project
 async def test_update_uses_parent_context():
@@ -65,7 +64,6 @@ async def test_update_uses_parent_context():
 # 2.  Clarification-bubble test                                               #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
-@pytest.mark.eval
 @pytest.mark.timeout(300)
 @_handle_project
 async def test_update_requests_clarification():
@@ -109,7 +107,6 @@ async def test_update_requests_clarification():
 # 3.  Retrieve – parent-context disambiguation                                #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
-@pytest.mark.eval
 @pytest.mark.timeout(300)
 @_handle_project
 async def test_ask_uses_parent_context():
@@ -153,7 +150,6 @@ async def test_ask_uses_parent_context():
 # 4.  Retrieve – clarification bubble-up                                      #
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
-@pytest.mark.eval
 @pytest.mark.timeout(300)
 @_handle_project
 async def test_ask_requests_clarification():

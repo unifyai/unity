@@ -34,7 +34,6 @@ COMBINED_REQUESTS: list[str] = [
 ]
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("request_text", COMBINED_REQUESTS)
 @_handle_project

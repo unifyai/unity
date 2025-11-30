@@ -38,7 +38,6 @@ CONTACT_QUESTIONS: list[str] = [
 ]
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @pytest.mark.parametrize("question", CONTACT_QUESTIONS)
 @_handle_project

@@ -16,7 +16,6 @@ from unity.guidance_manager.simulated import SimulatedGuidanceManager
 MANAGER = "GuidanceManager"
 
 
-@pytest.mark.eval
 @pytest.mark.asyncio
 @_handle_project
 async def test_ask_calls_manager():
