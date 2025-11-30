@@ -1024,7 +1024,14 @@ class GuidanceManager(BaseGuidanceManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        if step_index < 1 and "search" in current_tools:
+        """Require search on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
+            and step_index < 1
+            and "search" in current_tools
+        ):
             return ("required", {"search": current_tools["search"]})
         return ("auto", current_tools)
 

@@ -2672,8 +2672,14 @@ class FileManager(BaseFileManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """Require search_files on the first step; auto thereafter."""
-        if step_index < 1 and "search_files" in current_tools:
+        """Require search_files on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_ASK_TOOL_IS_SEARCH
+            and step_index < 1
+            and "search_files" in current_tools
+        ):
             return (
                 "required",
                 {"search_files": current_tools["search_files"]},
