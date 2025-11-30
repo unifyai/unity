@@ -1040,6 +1040,13 @@ class GuidanceManager(BaseGuidanceManager):
         step_index: int,
         current_tools: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        if step_index < 1 and "ask" in current_tools:
+        """Require ask on the first step (if enabled); auto thereafter."""
+        from unity.settings import SETTINGS
+
+        if (
+            SETTINGS.FIRST_MUTATION_TOOL_IS_ASK
+            and step_index < 1
+            and "ask" in current_tools
+        ):
             return ("required", {"ask": current_tools["ask"]})
         return ("auto", current_tools)

@@ -64,6 +64,7 @@ class ProductionSettings(BaseSettings):
     UNITY_SEMANTIC_CACHE: bool = False
     UNITY_READONLY_ASK_GUARD: bool = True
     FIRST_ASK_TOOL_IS_SEARCH: bool = True
+    FIRST_MUTATION_TOOL_IS_ASK: bool = True
 
     # ─────────────────────────────────────────────────────────────────────────
     # Logging Control
@@ -90,6 +91,7 @@ class ProductionSettings(BaseSettings):
         "UNITY_SEMANTIC_CACHE",
         "UNITY_READONLY_ASK_GUARD",
         "FIRST_ASK_TOOL_IS_SEARCH",
+        "FIRST_MUTATION_TOOL_IS_ASK",
         "UNITY_SILENCE_HTTPX",
         "UNITY_SILENCE_URLLIB3",
         "UNITY_SILENCE_OPENAI",

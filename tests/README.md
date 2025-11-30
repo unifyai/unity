@@ -351,6 +351,7 @@ The `--env` approach is intentionally generic. Any variable from either class is
 | `UNITY_SEMANTIC_CACHE` | bool | `false` | Enable semantic cache mode |
 | `UNITY_READONLY_ASK_GUARD` | bool | `true` | Enable read-only ask guard (mutation-intent classifier) |
 | `FIRST_ASK_TOOL_IS_SEARCH` | bool | `true` | Force semantic search tool on first step of `ask` methods |
+| `FIRST_MUTATION_TOOL_IS_ASK` | bool | `true` | Force `ask` tool on first step of mutation methods (`update`, `refactor`, `organize`) |
 | `UNITY_SILENCE_HTTPX` | bool | `true` | Silence httpx library logging |
 | `UNITY_SILENCE_URLLIB3` | bool | `true` | Silence urllib3 library logging |
 | `UNITY_SILENCE_OPENAI` | bool | `true` | Silence openai library logging |
