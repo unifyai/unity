@@ -1,10 +1,91 @@
-## Run Python tests in parallel with tmux
+# Tests
 
-This helper script launches one tmux session per Python file it finds (or per targeted test when a node id is provided, or when per-test mode is enabled) and runs `pytest` in its own window. It searches recursively and can also be restricted to specific folders, files, or specific tests.
+This directory contains the test suite for Unity. Before diving into how to run tests, it's important to understand the philosophy behind how tests are structured.
 
-### Why not pytest-xdist?
+## Test Philosophy: Symbolic ↔ Eval Spectrum
 
-pytest-xdist is installed in this project and works fine for basic parallel execution. However, `.parallel_run.sh` exists because it provides a significantly better **debugging experience** for our LLM-heavy async tests:
+Tests in this codebase fall on a spectrum between two paradigms:
+
+### Symbolic Tests
+
+At one end of the spectrum, **symbolic tests** use the LLM purely as a stub. The LLM receives minimal "dummy" instructions designed to trigger specific code paths, allowing us to verify that core async logic, tools, and state management work correctly.
+
+**Key characteristics:**
+- LLM behavior is deterministic and predictable
+- Focus is on testing the *infrastructure*: async tool loops, steering, pausing/resuming, state mutations
+- The LLM's "intelligence" is irrelevant—we just need it to call the right tools in the right order
+- Failures indicate regressions in our symbolic/programmatic logic
+
+### Eval Tests
+
+At the other end, **eval tests** exercise the system end-to-end. We ask a high-level question or give a directive, then verify the outcome—regardless of how many internal tool calls or LLM steps occurred.
+
+**Key characteristics:**
+- Focus is on *capability*: "Did the assistant correctly answer the question?" or "Did it complete the task?"
+- Internal implementation details (tool call order, number of steps) don't matter
+- Tests the LLM's reasoning and decision-making in realistic scenarios
+- Failures may indicate prompt issues, tool design problems, or genuine capability gaps
+
+### The Spectrum (Not Binary)
+
+Most tests sit somewhere between these extremes. A test might:
+- Use realistic prompts but only verify specific tool calls were made
+- Test end-to-end behavior but with constrained, predictable inputs
+- Combine symbolic infrastructure checks with high-level outcome assertions
+
+Think of each test as having a "slider" between symbolic and eval—not a binary classification.
+
+### Caching and Determinism (`UNIFY_CACHE`)
+
+When `UNIFY_CACHE="true"` (the default), all LLM responses are cached in `.cache.ndjson` files:
+
+1. **First run**: The LLM executes normally; responses are stored in the cache
+2. **Subsequent runs**: Cached responses are replayed—no actual LLM calls occur
+
+This means:
+- **Symbolic tests** behave identically on every run (cache acts as a deterministic stub)
+- **Eval tests** *also* become deterministic after the first run—they replay the same LLM "thinking" that produced the original passing result
+- Both test types effectively verify that *symbolic logic has not regressed* once the cache is populated
+- Tests run fast on CI (milliseconds vs seconds/minutes for real LLM calls)
+- To re-evaluate LLM behavior, delete the relevant `.cache.ndjson` or set `UNIFY_CACHE="false"`
+
+---
+
+## Running Tests
+
+### Quick Start
+
+```bash
+# Run all tests sequentially
+pytest tests/
+
+# Run a specific test file
+pytest tests/test_contact_manager/test_create_contact.py
+
+# Run a specific test
+pytest tests/test_contact_manager/test_create_contact.py::test_create_single_contact
+```
+
+### Parallel Execution
+
+For faster runs, use either:
+
+1. **pytest-xdist** (simple, built-in):
+   ```bash
+   pytest -n auto tests/
+   ```
+
+2. **`.parallel_run.sh`** (better debugging experience—see below)
+
+---
+
+## Parallel Test Runner (`.parallel_run.sh`)
+
+This helper script launches one tmux session per test file (or per test function with `-t`) and runs `pytest` in its own window. It searches recursively and can be restricted to specific folders, files, or tests.
+
+### Why not just pytest-xdist?
+
+pytest-xdist works fine for basic parallel execution. However, `.parallel_run.sh` provides a significantly better **debugging experience** for our LLM-heavy async tests:
 
 | Feature | `.parallel_run.sh` | pytest-xdist |
 |---------|-------------------|--------------|
@@ -53,28 +134,27 @@ source ~/unity/.venv/bin/activate
 pytest <target>
 ```
 
-## Live status and auto-close
+### Live Status and Auto-Close
 
-- Status prefix: each tmux session name is prefixed with a typeable marker and emoji: `? ⏳` while the test runs, `o ✅` on success, or `x ❌` on failure. This makes it easy to tab-complete names in shells like zsh.
-- Auto-close on success: sessions that pass are automatically killed about 10 seconds after completion. Failing sessions remain open for inspection.
+- **Status prefix**: Each tmux session name is prefixed with a typeable marker and emoji: `? ⏳` while the test runs, `o ✅` on success, or `x ❌` on failure. This makes it easy to tab-complete names in shells like zsh.
+- **Auto-close on success**: Sessions that pass are automatically killed about 10 seconds after completion. Failing sessions remain open for inspection.
 - You can still attach before auto-close; you'll see the final message (e.g., `pytest exited with code: 0`) and a short notice that auto-close is scheduled.
 
-## Install
+### Installation
 
 Save the script at the repository root as a hidden file and make it executable:
 
 ```bash
-curl -o .parallel_run.sh <paste-your-script-here-or-save-manually>
 chmod +x .parallel_run.sh
 ```
 
-## Requirements
+### Requirements
 
 - **tmux** and **pytest** must be installed (e.g., `brew install tmux`).
 - **Virtualenv** is assumed to live at `~/unity/.venv/`. If yours differs, update the `source ~/unity/.venv/bin/activate` line inside the script.
 - Optional: create an `.env` file at the repository root (i.e., `~/unity/.env`). Both helper scripts will auto-load it if present via `tests/../.env`.
 
-## Basic usage
+### Basic Usage
 
 From the repository root, run:
 
@@ -98,7 +178,7 @@ tmux attach -t <session-name>          # attach to a session
 tmux switch-client -t <session-name>   # switch sessions (when already inside tmux)
 ```
 
-## Targeting specific folders/files/tests
+### Targeting Specific Folders/Files/Tests
 
 Limit the search by passing directories and/or `.py` files. Examples:
 
@@ -140,7 +220,7 @@ How it interprets arguments:
   - When you do not specify individual tests, the script creates one session per file.
   - With `-t/--per-test`, the script collects node ids via `pytest --collect-only` and creates one session per test for every directory/file you pass (plus any explicit node ids).
 
-## Wait Mode and Logs (`--wait`)
+### Wait Mode and Logs (`--wait`)
 
 Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipelines or automated agents.
 
@@ -155,7 +235,7 @@ Use `-w/--wait` to block until all tests finish. This is useful for CI/CD pipeli
 - **Logs**: Each session writes its full pytest output to a file in `.pytest_logs/` named after the session (e.g., `.pytest_logs/unit-test_math.txt`).
 - **Debugging**: When running with `--wait`, inspect these log files to diagnose failures instead of attaching to tmux sessions (though sessions remain open for inspection if they fail).
 
-## Match tests by filename (glob-style)
+### Match Tests by Filename (Glob-Style)
 
 Use `-m/--match` to run tests whose basenames match a simple glob pattern. The pattern is matched against the filename only (not the full path). Quote the pattern to prevent your shell from expanding it.
 
@@ -184,7 +264,7 @@ Notes:
 - `*` means "anything before/after" in the filename. You can combine it with other characters (e.g., `test_*_tool_docstring*.py`).
 - When using `-m/--match`, the default behavior still applies: one tmux session per matching test file.
 
-## Command-line Options
+### Command-Line Options
 
 | Option | Description |
 |--------|-------------|
@@ -193,7 +273,7 @@ Notes:
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
 | `--random-projects` | Use isolated random project names (legacy mode) |
 
-## Defaults & conventions
+### Defaults & Conventions
 
 - **Environment**:
   - If `../.env` exists relative to the `tests` directory (i.e., `~/unity/.env`), it will be sourced automatically so you can define `UNIFY_KEY`, `UNIFY_BASE_URL`, or other variables once.
@@ -207,7 +287,7 @@ Notes:
   - Window: `<filename-without-.py>`.
   - If a session name already exists, the script appends `-2`, `-3`, … to avoid collisions.
 
-## Tips
+### Tips
 
 - **Watch session statuses live**:
 
@@ -233,7 +313,7 @@ Notes:
 
 - **See test output later**: just `tmux attach -t <session-name>` — pytest output stays in the window buffer.
 
-## Troubleshooting
+### Troubleshooting
 
 - **"tmux: command not found"**
   - Install tmux (e.g., `brew install tmux`, `apt-get install tmux`).
@@ -255,7 +335,7 @@ Notes:
     chmod +x .parallel_run.sh
     ```
 
-## Customization
+### Customization
 
 Open `.parallel_run.sh` and tweak as needed:
 
@@ -263,7 +343,7 @@ Open `.parallel_run.sh` and tweak as needed:
 - **`run_cmd()`** — change the command chain (e.g., add flags: `pytest -q -x`).
 - **Session naming** — adjust `session_basename_for()` to your taste.
 
-## Quick reference (tmux)
+### Quick Reference (tmux)
 
 - Next/prev session (inside tmux):
   - Open the command prompt: `Ctrl-b :`
@@ -275,7 +355,9 @@ Open `.parallel_run.sh` and tweak as needed:
 
 That's it! Run it, list sessions, and jump into whichever test you want to watch.
 
-## Cleanup Unify test projects
+---
+
+## Cleanup Unify Test Projects
 
 Use the cleanup helper to delete test projects from the Unify backend. By default, it deletes **both** the shared `UnityTests` project and any random `UnityTests_*` projects:
 
