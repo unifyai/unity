@@ -658,6 +658,173 @@ By default, test contexts persist across runs (useful for debugging). To auto-de
 
 ---
 
+## Grid Search (`.grid_search.sh`)
+
+Run tests across all combinations of settings values. This is useful for:
+
+- **Model comparisons**: Compare behavior across different LLMs
+- **Feature flag ablations**: Test with settings enabled/disabled
+- **Configuration sweeps**: Find optimal settings combinations
+
+### Basic Usage
+
+```bash
+# Make executable (first time only)
+chmod +x tests/.grid_search.sh
+
+# Grid search across models
+./.grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" tests/test_contact_manager/
+
+# Grid search across models AND cache settings (2×2 = 4 combinations)
+./.grid_search.sh --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" --env UNIFY_CACHE="true|false" tests/
+```
+
+### How It Works
+
+1. **Parse grid variables**: Settings with `|` separators define the search space
+2. **Generate combinations**: Full Cartesian product of all values
+3. **Launch runs**: Each combination spawns a separate `.parallel_run.sh` invocation
+4. **Log results**: Each run logs its settings dict to `Combined` for post-hoc filtering
+
+### Syntax
+
+```bash
+./.grid_search.sh [options] --env KEY=val1|val2|val3 [--env KEY2=a|b] [targets...]
+```
+
+- **Pipe (`|`)**: Separates values to grid over
+- **No pipe**: Single value passed through to all runs
+- **Targets**: Test files/directories (same as `.parallel_run.sh`)
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--env KEY=val1\|val2` | Grid variable (multiple values, pipe-separated) |
+| `--env KEY=value` | Pass-through variable (single value for all runs) |
+| `-n`, `--dry-run` | Show generated commands without executing |
+| `--wait-all` | Run combinations sequentially (with `--wait` per run) |
+| `-h`, `--help` | Show help |
+
+All other options are passed through to `.parallel_run.sh`.
+
+### Examples
+
+**Model comparison with eval tests:**
+
+```bash
+./.grid_search.sh \
+  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic|gemini-2.5-pro@google" \
+  --env UNIFY_CACHE="false" \
+  --eval-only \
+  tests/test_contact_manager/
+```
+
+This generates 3 runs (one per model), each with fresh LLM calls.
+
+**Feature flag ablation:**
+
+```bash
+./.grid_search.sh \
+  --env FIRST_ASK_TOOL_IS_SEARCH="true|false" \
+  --env FIRST_MUTATION_TOOL_IS_ASK="true|false" \
+  tests/test_conductor/
+```
+
+This generates 4 runs (2×2 grid) testing all combinations of these two feature flags.
+
+**Dry run to preview:**
+
+```bash
+./.grid_search.sh -n \
+  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
+  --env UNIFY_CACHE="true|false" \
+  tests/
+```
+
+Output:
+
+```
+Grid Search Configuration
+=========================
+Grid variables:
+  UNIFY_MODEL: gpt-4o@openai | claude-sonnet-4-20250514@anthropic
+  UNIFY_CACHE: true | false
+
+Total combinations: 4
+
+Generated runs:
+  [1/4] UNIFY_MODEL=gpt-4o@openai UNIFY_CACHE=true
+  [2/4] UNIFY_MODEL=gpt-4o@openai UNIFY_CACHE=false
+  [3/4] UNIFY_MODEL=claude-sonnet-4-20250514@anthropic UNIFY_CACHE=true
+  [4/4] UNIFY_MODEL=claude-sonnet-4-20250514@anthropic UNIFY_CACHE=false
+
+Dry run - commands that would be executed:
+
+  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=true tests/
+  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=false tests/
+  ...
+```
+
+**Tag runs for filtering:**
+
+```bash
+./.grid_search.sh \
+  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
+  --env UNIFY_TEST_TAGS="grid-exp-2025-06" \
+  tests/test_contact_manager/
+```
+
+All runs share the same tag, making it easy to query results later.
+
+**Sequential execution (resource-constrained):**
+
+```bash
+./.grid_search.sh --wait-all \
+  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
+  tests/
+```
+
+Runs combinations one at a time instead of all concurrently.
+
+### Analyzing Results
+
+After a grid search, query the `Combined` context to compare results:
+
+```python
+import unify
+
+unify.activate("UnityTests")
+logs = unify.get_logs(context="Combined")
+
+# Filter by settings
+for log in logs:
+    settings = log.get("settings", {})
+    model = settings.get("UNIFY_MODEL", "unknown")
+    duration = log.get("duration", 0)
+    print(f"{model}: {duration:.2f}s")
+```
+
+Or use the Unify dashboard to filter by `settings.UNIFY_MODEL`, `settings.UNIFY_CACHE`, etc.
+
+### Combining with Other Features
+
+Grid search composes with all `.parallel_run.sh` features:
+
+```bash
+# Grid + eval-only + repeat for statistical sampling
+./.grid_search.sh \
+  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
+  --env UNIFY_CACHE="false" \
+  --eval-only \
+  --repeat 5 \
+  tests/test_contact_manager/test_ask.py
+```
+
+This generates 2 models × 5 repeats = 10 runs, useful for comparing pass rates across models.
+
+---
+
 ## Cleanup Unify Test Projects
 
 Use the cleanup helper to delete test projects from the Unify backend. By default, it deletes **both** the shared `UnityTests` project and any random `UnityTests_*` projects:
