@@ -222,7 +222,6 @@ async def start_api_server(
         "UNIFY_CACHE",
         str(cache_val).lower() if isinstance(cache_val, bool) else cache_val,
     )
-    os.environ.setdefault("UNIFY_TRACED", str(config["unify_traced"]).lower())
 
     # Set log level if specified
     if config["log_level"]:

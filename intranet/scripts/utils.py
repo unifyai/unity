@@ -136,7 +136,6 @@ def get_config_values() -> Dict[str, Any]:
     """Get configuration values from environment variables."""
     return {
         "unify_cache": _parse_unify_cache(get_env_var("UNIFY_CACHE", "true")),
-        "unify_traced": get_env_var("UNIFY_TRACED", "true").lower() == "true",
         "log_level": get_env_var("LOG_LEVEL", "INFO"),
         "documents_path": get_env_var("DOCUMENTS_PATH", "intranet/policies"),
         "api_host": get_env_var("API_HOST", "0.0.0.0"),

@@ -1,5 +1,3 @@
-import os
-import json
 from pydantic import BaseModel, Field
 import unify
 from unity.common.llm_client import get_cache_setting
@@ -95,7 +93,6 @@ class ProactiveSpeech:
             client = unify.AsyncUnify(
                 self.model,
                 cache=get_cache_setting(),
-                traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
             )
             client.set_response_format(ProactiveDecision)
 

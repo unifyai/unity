@@ -10,7 +10,6 @@ This script can be run as a CLI with the following arguments:
 import asyncio
 import signal
 import time
-import os
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -169,9 +168,6 @@ async def main():
     args = parser.parse_args()
 
     if args.start_local:
-        # tracing flag
-        os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
-
         activate_project(args.project_name, args.overwrite)
 
         # ─────────────────── project version handling ────────────────────

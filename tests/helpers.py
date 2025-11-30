@@ -49,7 +49,6 @@ def _parse_cache_value(v: Any) -> bool | str:
 
 # Settings for the testing environment
 class TestingSettings(BaseSettings):
-    UNIFY_TRACED: bool = False
     UNIFY_CACHE: bool | str = True
     UNIFY_DELETE_CONTEXT_ON_EXIT: bool = False
     UNIFY_OVERWRITE_PROJECT: bool = False
@@ -180,10 +179,7 @@ def _handle_project(
 
     async def _call(fn: Callable, *a: Any, **kw: Any):
         """Call *fn* and await it if it returns an awaitable."""
-        if SETTINGS.UNIFY_TRACED:
-            result = unify.traced(fn)(*a, **kw)
-        else:
-            result = fn(*a, **kw)
+        result = fn(*a, **kw)
         if inspect.isawaitable(result):
             return await result
         return result
@@ -227,8 +223,6 @@ def _handle_project(
 
                     _unity_mod.init("UnityTests")
                     EVENT_BUS.clear()
-                if SETTINGS.UNIFY_TRACED:
-                    unify.set_trace_context("Traces")
                 await _call(test_fn, *args, **kwargs)
 
             except Exception:
@@ -284,11 +278,7 @@ def _handle_project(
 
                     _unity_mod.init("UnityTests")
                     EVENT_BUS.clear()
-                if SETTINGS.UNIFY_TRACED:
-                    unify.set_trace_context("Traces")
-                    unify.traced(test_fn)(*args, **kwargs)
-                else:
-                    test_fn(*args, **kwargs)
+                test_fn(*args, **kwargs)
 
             except Exception:
                 exc_type, exc_value, exc_tb = sys.exc_info()

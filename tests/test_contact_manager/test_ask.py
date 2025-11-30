@@ -30,7 +30,6 @@ def _llm_judge_contact_retrieval(
     judge = unify.Unify(
         "o4-mini@openai",
         cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
     )
     system_prompt = (
         "You are a meticulous but fair unit-test judge for contact information retrieval. "

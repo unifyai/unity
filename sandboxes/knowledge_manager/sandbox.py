@@ -12,7 +12,6 @@ It supports:
 from __future__ import annotations
 
 # ─────────────────────────────── stdlib / vendored ──────────────────────────
-import os
 import asyncio
 import logging
 import sys
@@ -221,8 +220,6 @@ async def _main_async() -> None:
     parser = build_cli_parser("KnowledgeManager sandbox")
     args = parser.parse_args()
 
-    os.environ["UNIFY_TRACED"] = "true" if args.traced else "false"
-
     activate_project(args.project_name, args.overwrite)
 
     # ─────────────────── project version handling ────────────────────
@@ -249,8 +246,6 @@ async def _main_async() -> None:
     LG.setLevel(logging.INFO)
 
     km = KnowledgeManager()
-    if args.traced:
-        km = unify.traced(km)
 
     _COMMANDS_HELP = (
         "\nKnowledgeManager sandbox – type commands below (press ↵ with an empty "

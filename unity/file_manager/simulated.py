@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import functools
 import threading
 from typing import List, Dict, Any, Optional, Union
@@ -1015,7 +1014,6 @@ class SimulatedGlobalFileManager(BaseGlobalFileManager):
         self._llm = unify.AsyncUnify(
             "gpt-4o@openai",
             cache=get_cache_setting(),
-            traced=json.loads(os.getenv("UNIFY_TRACED", "true")),
             stateful=True,
         )
 

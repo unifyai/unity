@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 
-import json
 import os
 from typing import Any
 
@@ -48,7 +47,6 @@ def new_llm_client(
     """
     config = {
         "cache": get_cache_setting(),
-        "traced": json.loads(os.environ.get("UNIFY_TRACED", "false")),
         "reasoning_effort": "high",
         "service_tier": "priority",
         "stateful": stateful,

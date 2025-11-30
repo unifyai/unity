@@ -3,7 +3,6 @@ import enum
 import logging
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 import functools
-import os
 import json
 import copy
 import uuid
@@ -82,13 +81,11 @@ class BrowserUsePlan(BaseActiveTask, BaseActorHandle):
         self._plan_client = AsyncUnify(
             "o4-mini@openai",
             cache=get_cache_setting(),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         self._ask_client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=get_cache_setting(),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         if not self._main_event_loop:
@@ -503,7 +500,6 @@ class BrowserUseActor(BaseActor):
         self._extraction_llm = unify.AsyncUnify(
             "o4-mini@openai",
             cache=get_cache_setting(),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
         self._tools_cache: Optional[Dict[str, Callable[..., Awaitable[Any]]]] = None
         try:

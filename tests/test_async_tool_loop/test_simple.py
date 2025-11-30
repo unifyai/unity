@@ -151,9 +151,7 @@ async def test_concurrent_tools_waits_for_all_results(model):
         reasoning_effort="high",
         service_tier="priority",
         cache=SETTINGS.UNIFY_CACHE,
-        traced=SETTINGS.UNIFY_TRACED,
     )
-    client.set_traced(True)
 
     _ = await start_async_tool_loop(
         client,

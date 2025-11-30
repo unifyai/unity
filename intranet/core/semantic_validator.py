@@ -7,7 +7,6 @@ with extensible prompts and detailed reasoning for validation decisions.
 """
 
 import json
-import os
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 import unify
@@ -84,7 +83,6 @@ class SemanticValidator:
         self.client = unify.AsyncUnify(
             model_name,
             cache=get_cache_setting(),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
         # Set up extensible prompt system

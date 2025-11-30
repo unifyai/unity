@@ -12,7 +12,6 @@ User-friendly interface for interacting with the RAG system, featuring:
 """
 
 import json
-import os
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
@@ -83,7 +82,6 @@ class ResponseEnhancer:
         self.llm_client = unify.AsyncUnify(
             "o4-mini@openai",
             cache=get_cache_setting(),
-            traced=json.loads(os.environ.get("UNIFY_TRACED", "false")),
         )
 
     async def enhance_response(

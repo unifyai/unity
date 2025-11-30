@@ -531,8 +531,6 @@ def pytest_collection_finish(session):
             ctx = _get_context_name_for_item(item)
             contexts.add(ctx)
             contexts.add(f"{ctx}/Events/_callbacks/")
-            if SETTINGS.UNIFY_TRACED:
-                contexts.add(f"{ctx}/Traces/")
 
         # TODO: Should delete contexts before creating them
         # But this is mostly fine now for CI purpose, as we create
