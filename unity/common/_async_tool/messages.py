@@ -298,35 +298,9 @@ def find_unreplied_assistant_entries(client: unify.AsyncUnify) -> list[dict]:
 async def generate_with_preprocess(
     client: unify.AsyncUnify,
     preprocess_msgs: Optional[Callable[[list[dict]], list[dict]]],
-    *,
-    debug_log: Callable[[list[dict], dict, str], None],
     **gen_kwargs,
 ):
     if preprocess_msgs is None:
-        # Even without a preprocessing hook, emit exactly what will be sent
-        # to the LLM so LLM I/O debug captures requests as well as responses.
-        original_msgs = client.messages  # reference to canonical log
-        msgs_copy = copy.deepcopy(original_msgs)
-
-        # Remove a raw leading system prompt (used only for generation) to
-        # match the behaviour of the preprocessed path
-        try:
-            if msgs_copy and isinstance(msgs_copy[0], dict):
-                top_p = msgs_copy[0]
-                if top_p.get("role") == "system" and not top_p.get("_ctx_header"):
-                    msgs_copy.pop(0)
-        except Exception:
-            pass
-
-        # Capture the system message
-        sys_txt = getattr(client, "system_message", "") or ""
-
-        # Late-stage request log: emit exactly what will be sent to the LLM
-        try:
-            debug_log(msgs_copy, gen_kwargs, sys_txt)
-        except Exception:
-            pass
-
         return await maybe_await(client.generate(**gen_kwargs))
 
     original_msgs = client.messages  # reference to canonical log
@@ -349,15 +323,9 @@ async def generate_with_preprocess(
     except Exception:
         pass
 
-    # Capture the system message
+    # Capture the system message for potential patching
     sys_txt = getattr(client, "system_message", "") or ""
     sys_patched = sys_txt
-
-    # Late-stage debug log: emit exactly what will be sent to the LLM
-    try:
-        debug_log(patched, gen_kwargs, sys_patched)
-    except Exception:
-        pass
 
     start_len = len(patched)
 

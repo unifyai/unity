@@ -263,92 +263,16 @@ def maybe_tool_log_completed(
         pass
 
 
-class SimulatedLLMIO:
-    """Shared file writer for LLM request/response debugging."""
-
-    _DIR: "str | None" = None
-
-    @staticmethod
-    def ensure_dir() -> "str | None":
-        from pathlib import Path  # noqa: WPS433
-
-        try:
-            from unity.constants import SESSION_ID  # noqa: WPS433
-        except Exception:
-            return None
-        try:
-            if SimulatedLLMIO._DIR is None:
-                root = Path(".llm_io_debug")
-                root.mkdir(parents=True, exist_ok=True)
-                safe = str(SESSION_ID).replace(":", "-").replace("/", "-")
-                d = root / safe
-                d.mkdir(parents=True, exist_ok=True)
-                SimulatedLLMIO._DIR = str(d)
-        except Exception:
-            SimulatedLLMIO._DIR = None
-        return SimulatedLLMIO._DIR
-
-    @staticmethod
-    def write(label: str, header: str, body: Any) -> None:
-        """Best-effort write of a single debug artifact to the per-run folder."""
-        try:
-            from unity.constants import LLM_IO_DEBUG  # noqa: WPS433
-        except Exception:
-            return
-        if not bool(LLM_IO_DEBUG):
-            return
-
-        from datetime import datetime, timezone  # noqa: WPS433
-        from pathlib import Path  # noqa: WPS433
-        import time as _time  # noqa: WPS433
-
-        d = SimulatedLLMIO.ensure_dir()
-        if d is None:
-            return
-        try:
-            now = datetime.now(timezone.utc)
-            base = f"{now.strftime('%H%M%S')}_{_time.time_ns() % 1_000_000_000:09d}"
-            path = Path(d) / f"{base}.txt"
-            i = 1
-            while path.exists():
-                cand = Path(d) / f"{base}_{i}.txt"
-                if not cand.exists():
-                    path = cand
-                    break
-                i += 1
-            # Normalise body to string
-            if not isinstance(body, str):
-                try:
-                    import json as _json  # noqa: WPS433
-
-                    body = _json.dumps(body, indent=4)
-                except Exception:
-                    body = str(body)
-            with path.open("w", encoding="utf-8") as f:
-                f.write(f"🔄 [{label}] {header}\n")
-                f.write(body.rstrip())
-                f.write("\n")
-            try:
-                from unity.constants import LOGGER  # noqa: WPS433
-
-                kind = "request" if "request" in header.lower() else "response"
-                LOGGER.info(f"📝 LLM {kind} written to {path}")
-            except Exception:
-                pass
-        except Exception:
-            # Silent best-effort
-            pass
-
-
 async def simulated_llm_roundtrip(
     llm: Any,
     *,
     label: str,
     prompt: str,
-    sys_for_dump: "str | None" = None,
-    request_dump_body: Any | None = None,
 ) -> str:
-    """Unified 'LLM simulating' roundtrip with gated response logging and optional dumps."""
+    """Unified 'LLM simulating' roundtrip with console logging.
+
+    LLM I/O debugging is now handled by hooks installed on the unify client.
+    """
     try:
         from unity.constants import LOGGER  # noqa: WPS433
     except Exception:
@@ -363,31 +287,6 @@ async def simulated_llm_roundtrip(
         pass
     t0 = _time.perf_counter()
 
-    # Optional request dump
-    try:
-        if sys_for_dump is None:
-            try:
-                sys_for_dump = getattr(llm, "system_message", None)
-            except Exception:
-                sys_for_dump = None
-        if request_dump_body is None:
-            request_dump_body = {
-                "model": getattr(llm, "model", None),
-                "messages": [{"role": "user", "content": prompt}],
-            }
-        if sys_for_dump:
-            request_dump_body = {
-                "system_message": sys_for_dump,
-                **(
-                    request_dump_body
-                    if isinstance(request_dump_body, dict)
-                    else {"request": request_dump_body}
-                ),
-            }
-        SimulatedLLMIO.write(label, "LLM request ➡️:", request_dump_body)
-    except Exception:
-        pass
-
     answer = await llm.generate(prompt)
     dt_ms = int((_time.perf_counter() - t0) * 1000)
 
@@ -400,12 +299,6 @@ async def simulated_llm_roundtrip(
                 if len(_ans_preview) > 800:
                     _ans_preview = _ans_preview[:800] + "…"
                 LOGGER.info(f"✅ [{label}] LLM replied in {dt_ms} ms:\n{_ans_preview}")
-    except Exception:
-        pass
-
-    # Optional response dump
-    try:
-        SimulatedLLMIO.write(label, "LLM response ⬅️:", str(answer))
     except Exception:
         pass
 
