@@ -206,7 +206,7 @@ async def test_notification_payload_appends_images(model) -> None:
     assert isinstance(event.get("message"), str)
 
     # Ensure the notify tool completes deterministically before awaiting the final answer
-    await _wait_for_tool_message_prefix(client, "check_status_")
+    await _wait_for_tool_message_prefix(client, "notify")
 
     final = await h.result()
     assert final.strip().lower().endswith("done")
