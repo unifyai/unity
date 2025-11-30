@@ -31,6 +31,17 @@ async def echo(text: str) -> str:  # noqa: D401 – simple echo tool
 # --------------------------------------------------------------------------- #
 #                         Integration-level expectations                       #
 # --------------------------------------------------------------------------- #
+
+
+def _filter_runtime_context(events: list) -> list:
+    """Filter out internal runtime context events (user visibility guidance, etc.)."""
+    return [
+        evt
+        for evt in events
+        if not evt.payload.get("message", {}).get("_runtime_context")
+    ]
+
+
 @pytest.mark.asyncio
 @_handle_project
 async def test_basic_event_flow(model) -> None:
@@ -61,9 +72,9 @@ async def test_basic_event_flow(model) -> None:
             prune_tool_duplicates=True,
         )
 
-    # Exactly four events should have been published for the run.
+    # Filter out internal runtime context events and check conversation flow.
     # Captured events are already in chronological order (oldest first).
-    events = captured_events
+    events = _filter_runtime_context(captured_events)
     assert len(events) == 4
 
     roles = [evt.payload["message"]["role"] for evt in events]
@@ -120,7 +131,8 @@ async def test_interjection_publishes_user_event(model) -> None:
     # as different models have varying instruction-following fidelity.
     assert "pineapple" in final.lower()
 
-    events = captured_events
+    # Filter out internal runtime context events
+    events = _filter_runtime_context(captured_events)
     roles = [evt.payload["message"]["role"] for evt in events]
     assert "user" in roles  # initial user
     # Interjection is now published as a simple user message (not system message)
