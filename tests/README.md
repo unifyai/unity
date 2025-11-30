@@ -2,6 +2,24 @@
 
 This helper script launches one tmux session per Python file it finds (or per targeted test when a node id is provided, or when per-test mode is enabled) and runs `pytest` in its own window. It searches recursively and can also be restricted to specific folders, files, or specific tests.
 
+### Why not pytest-xdist?
+
+pytest-xdist is installed in this project and works fine for basic parallel execution. However, `.parallel_run.sh` exists because it provides a significantly better **debugging experience** for our LLM-heavy async tests:
+
+| Feature | `.parallel_run.sh` | pytest-xdist |
+|---------|-------------------|--------------|
+| **Interactive debugging** | `tmux attach -t <session>` to any running/failed test | Output multiplexed across workers; hard to isolate |
+| **Post-failure inspection** | Failed sessions stay open with full scrollback | Just a failure message in terminal |
+| **Visual status** | Real-time `? ⏳` / `o ✅` / `x ❌` per test file | Single progress bar |
+| **Log isolation** | Per-session files in `.pytest_logs/` | Merged output (requires extra config) |
+| **Load balancing** | Static (1 session = 1 target) | Dynamic redistribution |
+
+**When tmux shines:** Our tests involve complex async LLM tool loops with steering, pausing, resuming, and interjections. When something fails, you need the complete context—the LLM I/O, the async flow, the interleaved logs. Being able to `tmux attach` to a failing test, scroll through its full history, and even interact with it is invaluable.
+
+**When to use xdist instead:** For quick parallel runs where you don't need debugging (`pytest -n auto`), or when dynamic load balancing matters (tests with highly variable durations).
+
+**TL;DR:** This script prioritizes **developer experience** over raw parallelization efficiency. Both approaches achieve parallelism; this one makes debugging failures much easier.
+
 ### Shared Project Mode (Default)
 
 By default, `.parallel_run.sh` uses a **shared project mode** where all parallel test sessions log to the same `UnityTests` project. This enables:
