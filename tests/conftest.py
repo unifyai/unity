@@ -34,8 +34,8 @@ _root_logger_early = logging.getLogger()
 if not _root_logger_early.handlers:
     _root_logger_early.addHandler(logging.NullHandler())
 
+from tests.settings import SETTINGS
 from tests.helpers import (
-    SETTINGS,
     PRECREATED_CONTEXTS,
     set_session_tags,
 )

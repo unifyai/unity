@@ -10,7 +10,8 @@ import unify
 from unity.contact_manager.contact_manager import ContactManager
 from unity.contact_manager.types.contact import Contact
 from tests.assertion_helpers import assertion_failed
-from tests.helpers import _handle_project, SETTINGS
+from tests.helpers import _handle_project
+from tests.settings import SETTINGS
 
 # All tests in this file exercise end-to-end LLM reasoning for contact retrieval
 pytestmark = pytest.mark.eval

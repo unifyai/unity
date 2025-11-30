@@ -310,7 +310,7 @@ async def test_async_tool_loop_calls_append_helper():
     import unify  # type: ignore
     from unity.common.async_tool_loop import start_async_tool_loop
     from unity.common.llm_client import new_llm_client
-    from tests.helpers import SETTINGS  # reuse cache/tracing settings
+    from tests.settings import SETTINGS  # reuse cache/tracing settings
     from tests.test_async_tool_loop.async_helpers import (  # wait helpers
         _wait_for_tool_request,
         _wait_for_assistant_call_prefix,

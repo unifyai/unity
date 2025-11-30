@@ -27,7 +27,7 @@ from unity.task_scheduler.types.schedule import Schedule
 from unity.task_scheduler.types.status import Status
 from unity.common.llm_helpers import _dumps
 from tests.assertion_helpers import assertion_failed
-from tests.helpers import SETTINGS
+from tests.settings import SETTINGS
 
 
 class ScenarioBuilder:
