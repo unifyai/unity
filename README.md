@@ -18,29 +18,29 @@ Unity is an AI Assistant framework implemented as a heavily distributed multi-no
 Unity's architecture resembles a "back office" where specialized managers handle distinct aspects of the assistant's intelligence:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        ConversationManager                              │
-│                   (Live chat orchestration)                             │
-└─────────────────────────────────────┬───────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            Conductor                                     │
-│              (Top-level cross-domain orchestrator)                       │
-│                                                                          │
-│   ask (read-only) ──────────────────────── request (mutations)           │
-└───────┬─────────────────────────────────────────────────────┬───────────┘
-        │                                                     │
-        ▼                                                     ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                         State Managers                                 │
-│                                                                        │
-│  ContactManager    KnowledgeManager    TaskScheduler    SecretManager  │
-│  TranscriptManager GuidanceManager     WebSearcher      SkillManager   │
-│  FileManager       FunctionManager     ImageManager     MemoryManager  │
-│                                                                        │
-│                              Actor                                      │
-│                    (Browser/UI automation)                              │
+│                       ConversationManager                             │
+│                    (Live chat orchestration)                          │
+└───────────────────────────────┬───────────────────────────────────────┘
+                                │
+                                ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                            Conductor                                  │
+│              (Top-level cross-domain orchestrator)                    │
+│                                                                       │
+│   ask (read-only) ─────────────────────── request (mutations)         │
+└───────┬───────────────────────────────────────────────────┬───────────┘
+        │                                                   │
+        ▼                                                   ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                         State Managers                                │
+│                                                                       │
+│  ContactManager    KnowledgeManager   TaskScheduler   SecretManager   │
+│  TranscriptManager GuidanceManager    WebSearcher     SkillManager    │
+│  FileManager       FunctionManager    ImageManager    MemoryManager   │
+│                                                                       │
+│                             Actor                                     │
+│                   (Browser/UI automation)                             │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
