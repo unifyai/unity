@@ -191,26 +191,27 @@ def transform_tool_calls_to_context(
 
         if role == "user":
             transformed.append(m)
-            # Insert context after the first user message
-            if not context_inserted and tool_call_descriptions:
-                context_msg = {
-                    "role": "system",
-                    "content": (
-                        context_header
-                        + "\n"
-                        + "\n".join(tool_call_descriptions)
-                        + "\n"
-                        + context_footer
-                    ),
-                    marker_key: True,
-                }
-                transformed.append(context_msg)
-                context_inserted = True
 
         elif role == "assistant":
             if predicate(m):
-                # Skip - replaced by context message
-                continue
+                # Insert context AT THIS POSITION (where the transformed turn was)
+                # This maintains chronological order so Claude sees preserved turns
+                # before the synthetic summary of non-thinking turns.
+                if not context_inserted and tool_call_descriptions:
+                    context_msg = {
+                        "role": "system",
+                        "content": (
+                            context_header
+                            + "\n"
+                            + "\n".join(tool_call_descriptions)
+                            + "\n"
+                            + context_footer
+                        ),
+                        marker_key: True,
+                    }
+                    transformed.append(context_msg)
+                    context_inserted = True
+                # Skip the assistant message itself - replaced by context
             else:
                 transformed.append(m)
 
