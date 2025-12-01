@@ -459,7 +459,9 @@ async def _(event: SummarizeContext, cm: "ConversationManager", *args, **kwargs)
             for cid, c in cm.contact_index.active_conversations.items()
         ]
         tasks = [
-            cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid)
+            asyncio.create_task(
+                cm.memory_manager.update_contact_rolling_summary(t, contact_id=cid)
+            )
             for cid, t in res
         ]
         try:
