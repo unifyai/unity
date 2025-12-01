@@ -66,11 +66,12 @@ async def test_wait_called_and_pruned_when_other_tool_is_very_slow(
     """
 
     system_prompt = (
-        "You can call two tools: 'fast_task' and 'very_slow_task'. "
-        "Always call *both* in the same assistant turn. "
-        "If you receive only one result, think aloud and say you are still "
-        "waiting for the other. After you have both results give a final answer."
-        " Important: while at least one requested tool call is still running and not all results are available, you must call ONLY the helper tool named `wait` immediately and nothing else; do not produce any assistant text on that turn. Once all requested tool results have arrived, produce the final assistant reply."
+        "You have two tools: 'fast_task' and 'very_slow_task'. "
+        "When asked to run them, always call BOTH tools in a single assistant turn.\n\n"
+        "CRITICAL RULE: After calling tools, if any tool is still pending (shows '_placeholder': 'pending'), "
+        "you MUST call the `wait` tool and produce NO other output. Do not explain, do not ask questions, "
+        "do not produce any text - just call `wait`. Only after ALL tool results are available "
+        "(no pending placeholders remain) should you produce your final text response summarizing the results."
     )
 
     client = new_llm_client(
