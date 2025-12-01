@@ -27,6 +27,7 @@ from .messages import (
     chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
+    transform_tool_calls_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -332,6 +333,9 @@ async def async_tool_loop_inner(
     # - Claude: extended thinking incompatible with tool_choice="required"; we
     #   disable thinking on forced-tool turns and transform those messages later.
     _claude_thinking_disabled = False
+    # Track seeded message count - messages at indices < this need transformation
+    # for Claude because they lack thinking blocks (manually constructed).
+    _seeded_msg_count = 0
 
     def _apply_reasoning_model_compat(gen_kwargs: dict, tool_choice: str) -> Callable:
         """Handle reasoning model compatibility. Returns effective preprocess."""
@@ -344,11 +348,42 @@ async def async_tool_loop_inner(
             if tool_choice == "required":
                 gen_kwargs["thinking"] = {"type": "disabled"}
                 _claude_thinking_disabled = True
-            # NOTE: We no longer automatically transform non-thinking turns.
-            # The transformation was causing infinite loops because Claude
-            # couldn't understand that the synthetic context meant "task done".
-            # If Claude's API rejects messages without thinking blocks, we'll
-            # handle that explicitly. For now, pass messages through as-is.
+            elif _seeded_msg_count > 0:
+                # Transform ONLY seeded messages (those lacking thinking blocks
+                # that were passed in initially). Loop-generated messages should
+                # be passed through as-is - Claude's API accepts them fine and
+                # transforming them caused infinite loops where Claude couldn't
+                # understand that the synthetic context meant "task done".
+                outer_preprocess = effective_preprocess
+
+                def claude_wrapper(msgs):
+                    # Build index lookup for efficiency
+                    msg_indices = {id(m): i for i, m in enumerate(msgs)}
+
+                    def is_seeded_without_thinking(m: dict) -> bool:
+                        idx = msg_indices.get(id(m), 999999)
+                        if idx >= _seeded_msg_count:
+                            return False  # Not a seeded message
+                        if not isinstance(m, dict):
+                            return False
+                        if m.get("role") != "assistant":
+                            return False
+                        if not m.get("tool_calls"):
+                            return False
+                        provider_fields = m.get("provider_specific_fields") or {}
+                        thinking_blocks = provider_fields.get("thinking_blocks")
+                        return thinking_blocks is None
+
+                    msgs = transform_tool_calls_to_context(
+                        msgs,
+                        marker_key="_claude_seeded_context",
+                        context_header="[Prior tool execution context from seeded transcript]",
+                        context_footer="[Continue from here]",
+                        predicate=is_seeded_without_thinking,
+                    )
+                    return outer_preprocess(msgs) if outer_preprocess else msgs
+
+                effective_preprocess = claude_wrapper
 
         return effective_preprocess
 
@@ -585,6 +620,10 @@ async def async_tool_loop_inner(
         # execute seeded tool_calls before transformation occurs.
 
         await _msg_dispatcher.append_msgs(seeded_batch, origin=replay_origin)
+
+        # Track seeded message count for Claude transformation (must only
+        # transform seeded messages, not loop-generated ones)
+        _seeded_msg_count = len(client.messages)
         # Emit concise one-time banner and replay logs for seeded history (if requested)
         if replay_origin:
             try:
