@@ -2775,23 +2775,55 @@ async def async_tool_loop_inner(
                     lname_cf = lname.casefold()
 
                     if lname_cf == "wait":
-                        # Log the no-op and prune it from the transcript to avoid clutter.
+                        # When there ARE pending tools, prune the wait call to avoid
+                        # transcript clutter - the loop will naturally wait for them.
+                        if tools_data.pending:
+                            try:
+                                logger.info(
+                                    "Assistant chose `wait` – no-op; not persisting to transcript.",
+                                    prefix="🕒",
+                                )
+                            except Exception:
+                                pass
+
+                            # Prune the `wait` tool call using a shared helper
+                            with suppress(Exception):
+                                from .messages import (
+                                    prune_wait_tool_call as _prune_wait,
+                                )
+
+                                _prune_wait(msg, call["id"], client=client)
+
+                            # After acknowledging a wait, do NOT grant an immediate LLM turn.
+                            # The loop should now wait for any pending tools or interjections.
+                            continue
+
+                        # When there are NO pending tools, pruning would cause an
+                        # infinite cache loop (same conversation → same cached response).
+                        # Instead, insert a factual tool response. This:
+                        # 1. Changes the conversation state (breaks cache)
+                        # 2. Is purely informational (no prescriptive instructions)
+                        # 3. Remains accurate even if interjections arrive later
                         try:
                             logger.info(
-                                "Assistant chose `wait` – no-op; not persisting to transcript.",
+                                "Assistant called `wait` with no pending tools.",
                                 prefix="🕒",
                             )
                         except Exception:
                             pass
 
-                        # Prune the `wait` tool call using a shared helper
-                        with suppress(Exception):
-                            from .messages import prune_wait_tool_call as _prune_wait
-
-                            _prune_wait(msg, call["id"], client=client)
-
-                        # After acknowledging a wait, do NOT grant an immediate LLM turn.
-                        # The loop should now wait for any pending tools or interjections.
+                        tool_msg = create_tool_call_message(
+                            name="wait",
+                            call_id=call["id"],
+                            content="No tasks are currently running.",
+                        )
+                        await insert_tool_message_after_assistant(
+                            assistant_meta,
+                            msg,
+                            tool_msg,
+                            client,
+                            _msg_dispatcher,
+                        )
                         continue
 
                     elif lname_cf.startswith("stop_") and not lname_cf.startswith(
