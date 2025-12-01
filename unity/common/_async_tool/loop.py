@@ -27,7 +27,6 @@ from .messages import (
     chat_context_repr,
     generate_with_preprocess,
     acknowledge_helper_call,
-    transform_non_thinking_turns_to_context,
 )
 from .message_dispatcher import LoopMessageDispatcher
 from .tools_utils import (
@@ -345,18 +344,11 @@ async def async_tool_loop_inner(
             if tool_choice == "required":
                 gen_kwargs["thinking"] = {"type": "disabled"}
                 _claude_thinking_disabled = True
-            else:
-                # Always transform non-thinking assistant turns when Claude's
-                # extended thinking is active. This handles synthetic tool_calls
-                # (e.g., live_images_overview) and seeded transcripts that lack
-                # the required thinking blocks. The transformation is idempotent.
-                outer_preprocess = effective_preprocess
-
-                def claude_wrapper(msgs):
-                    msgs = transform_non_thinking_turns_to_context(msgs)
-                    return outer_preprocess(msgs) if outer_preprocess else msgs
-
-                effective_preprocess = claude_wrapper
+            # NOTE: We no longer automatically transform non-thinking turns.
+            # The transformation was causing infinite loops because Claude
+            # couldn't understand that the synthetic context meant "task done".
+            # If Claude's API rejects messages without thinking blocks, we'll
+            # handle that explicitly. For now, pass messages through as-is.
 
         return effective_preprocess
 
