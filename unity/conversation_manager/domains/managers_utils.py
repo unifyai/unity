@@ -328,8 +328,8 @@ async def init_conv_manager(cm: "ConversationManager"):
                 close_predicate=lambda e: e.payload.get("role", "") == "tool_use end",
                 key_fn=lambda e: e.payload.get("handle_id", ""),
             )
-            bus_events_task = asyncio.create_task(get_bus_events())
-            EVENT_BUS.clear()
+            # bus_events_task = asyncio.create_task(get_bus_events())
+            # EVENT_BUS.clear()
             print("[ManagersWorker] EventBus configured")
 
             # 2. Initialize ContactManager and get contacts
@@ -338,7 +338,7 @@ async def init_conv_manager(cm: "ConversationManager"):
 
             # contacts_task = asyncio.create_task(get_contacts())
             # await asyncio.gather(bus_events_task, contacts_task)
-            await bus_events_task
+            # await bus_events_task
             print("[ManagersWorker] ContactManager initialized")
 
             # 3. Initialize TranscriptManager with ContactManager
