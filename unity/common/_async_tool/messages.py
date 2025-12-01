@@ -314,15 +314,6 @@ async def generate_with_preprocess(
         )
         patched = msgs_copy
 
-    # Also remove a raw leading system prompt from the patched messages (used only for generation)
-    try:
-        if patched and isinstance(patched[0], dict):
-            top_p = patched[0]
-            if top_p.get("role") == "system" and not top_p.get("_ctx_header"):
-                patched.pop(0)
-    except Exception:
-        pass
-
     # Capture the system message for potential patching
     sys_txt = getattr(client, "system_message", "") or ""
     sys_patched = sys_txt
