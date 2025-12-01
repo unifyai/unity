@@ -40,7 +40,7 @@ Unity's architecture resembles a "back office" where specialized managers handle
 │  FileManager       FunctionManager    ImageManager    MemoryManager   │
 │                                                                       │
 │                             Actor                                     │
-│                   (Browser/UI automation)                             │
+│                   (Real-time action executor)                         │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,7 +80,7 @@ Each manager owns a specific domain. The Conductor routes requests to the approp
 
 | Manager | Role |
 |---------|------|
-| **Actor** | Ephemeral, real-time actions (browser/UI control). Returns a live steerable handle. |
+| **Actor** | Ephemeral, real-time action executor. Can invoke functions, control browsers, read files, or use any available capability. Returns a live steerable handle. |
 | **TaskScheduler** | Durable task management and execution. Use `execute` to start work, not `update`. |
 | **FunctionManager** | Catalogue of user-supplied Python functions. |
 | **SkillManager** | Human-friendly catalogue of assistant capabilities. Read-only discovery. |
