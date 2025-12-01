@@ -88,7 +88,7 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
 
         cm.notifications_bar.push_notif("Comms", notif_content, event.timestamp)
         cm.contact_index.push_message(
-            event.contact,
+            contact,
             "phone",
             message_content=message_content,
             role=(
@@ -274,7 +274,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
             role = "user"
 
     cm.contact_index.push_message(
-        event.contact,
+        contact,
         thread,
         message_content=message_content,
         subject=subject,
