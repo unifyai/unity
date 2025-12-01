@@ -252,6 +252,10 @@ Limit the search by passing directories and/or `.py` files. Examples:
 # Repeat tests for statistical sampling (see below)
 ./.parallel_run.sh --env UNIFY_CACHE=false --repeat 10 --eval-only tests/test_contact_manager
 
+# Tag test runs for filtering (logged to Combined context)
+./.parallel_run.sh --tags "experiment-1" tests
+./.parallel_run.sh --tags "model-compare,gpt-4o" tests
+
 # Combine with other options
 ./.parallel_run.sh --eval-only --wait tests/test_contact_manager
 ./.parallel_run.sh --env UNIFY_CACHE=false --eval-only tests/test_contact_manager
@@ -370,7 +374,7 @@ The `--env` approach is intentionally generic. Any variable from either class is
 | `UNIFY_TESTS_DELETE_PROJ_ON_EXIT` | bool | `false` | Delete random project when session exits |
 | `UNIFY_CACHE_BENCHMARK` | bool | `false` | Enable cache hit/miss benchmarking |
 | `UNIFY_PRETEST_CONTEXT_CREATE` | bool | `false` | Pre-create contexts before tests |
-| `UNIFY_TEST_TAGS` | str | `""` | Comma-separated tags for duration logging |
+| `UNIFY_TEST_TAGS` | str | `""` | Comma-separated tags for duration logging (use `--tags` shorthand) |
 | `UNIFY_SKIP_SESSION_SETUP` | bool | `false` | Skip project/context creation (pre-done) |
 
 ### Command-Line Options
@@ -381,6 +385,7 @@ The `--env` approach is intentionally generic. Any variable from either class is
 | `-t`, `--per-test` | Create one session per test function instead of per file |
 | `-m PATTERN`, `--match PATTERN` | Only run files matching the glob pattern |
 | `-e KEY=VALUE`, `--env KEY=VALUE` | Set environment variable for all sessions (repeatable) |
+| `--tags TAG` | Tag test runs for filtering (shorthand for `--env UNIFY_TEST_TAGS=...`; repeatable, comma-separated) |
 | `--eval-only` | Run only tests marked with `pytest.mark.eval` (end-to-end LLM tests) |
 | `--symbolic-only` | Run only tests NOT marked with `pytest.mark.eval` (infrastructure tests) |
 | `--repeat N` | Run each test N times; useful for statistical sampling (see below) |
@@ -512,7 +517,7 @@ Every test logs a summary record to the shared `Combined` context within the `Un
 | Field | Type | Description |
 |-------|------|-------------|
 | `test_fpath` | `str` | Test path: `folder/file.py::test_name` |
-| `tags` | `list` | Session-level tags (via `--test-tags` or `UNIFY_TEST_TAGS`) |
+| `tags` | `list` | Session-level tags (via `--tags`, `--test-tags`, or `UNIFY_TEST_TAGS`) |
 | `duration` | `float` | Wall-clock time in seconds |
 | `llm_io` | `list` | Full LLM request/response logs (from `.llm_io_debug/` files) |
 | `settings` | `dict` | Complete settings snapshot (production + test-only) |
@@ -771,7 +776,7 @@ Dry run - commands that would be executed:
 ```bash
 ./.grid_search.sh \
   --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
-  --env UNIFY_TEST_TAGS="grid-exp-2025-06" \
+  --tags "grid-exp-2025-06" \
   tests/test_contact_manager/
 ```
 
