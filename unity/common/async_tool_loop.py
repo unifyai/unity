@@ -836,6 +836,18 @@ class AsyncToolLoopHandle(SteerableToolHandle):
         _label = getattr(self, "_log_label", None) or self._loop_id
         LOGGER.info(f"⏸️ [{_label}] Pause requested")
 
+        # Auto-pause base tools that are currently running
+        with suppress(Exception):
+            task_info = getattr(self._task, "task_info", {})
+            items = task_info.items() if isinstance(task_info, dict) else []
+            for _t, _inf in items:
+                h = getattr(_inf, "handle", None)
+                if h is None:
+                    ev = getattr(_inf, "pause_event", None)
+                    if ev is not None and hasattr(ev, "clear"):
+                        with suppress(Exception):
+                            ev.clear()
+
         self._pause_event.clear()
         # Record steer event (best-effort, async). Functional forwarding happens via mirror path.
         try:
