@@ -1,54 +1,362 @@
-# unity
+# Unity
 
-## Setup
+Unity is an AI Assistant framework implemented as a heavily distributed multi-node system. Each node communicates via English-language APIs, with the assistant's intelligence emerging from specialized **state managers** that handle different aspects of cognition, memory, and action.
 
-### Setup the environment
+## Table of Contents
+
+- [Architecture Overview](#architecture-overview)
+- [State Managers](#state-managers)
+- [Getting Started](#getting-started)
+- [Local Development](#local-development)
+- [Testing](#testing)
+- [Deployment](#deployment)
+
+---
+
+## Architecture Overview
+
+Unity's architecture resembles a "back office" where specialized managers handle distinct aspects of the assistant's intelligence:
+
 ```
-cd ~/unity (wherever you cloned it)
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        ConversationManager                              │
+│                   (Live chat orchestration)                             │
+└─────────────────────────────────────┬───────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            Conductor                                     │
+│              (Top-level cross-domain orchestrator)                       │
+│                                                                          │
+│   ask (read-only) ──────────────────────── request (mutations)           │
+└───────┬─────────────────────────────────────────────────────┬───────────┘
+        │                                                     │
+        ▼                                                     ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                         State Managers                                 │
+│                                                                        │
+│  ContactManager    KnowledgeManager    TaskScheduler    SecretManager  │
+│  TranscriptManager GuidanceManager     WebSearcher      SkillManager   │
+│  FileManager       FunctionManager     ImageManager     MemoryManager  │
+│                                                                        │
+│                              Actor                                      │
+│                    (Browser/UI automation)                              │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Concepts
+
+**Asynchronous Tool Loops**: Most manager methods are implemented as async tool loops where an LLM orchestrates lower-level tools that read and mutate backend resources via the Unify Python client.
+
+**Dynamic Steering**: Manager methods expose handles for mid-flight control—pausing, resuming, interjecting, and stopping operations. These can be nested arbitrarily deep.
+
+**Passthrough Steering**: In-flight tools can mark themselves as "passthrough," allowing steering commands to bypass intermediate LLM reasoning and reach inner tools immediately. This enables real-time user control of the assistant's actions.
+
+---
+
+## State Managers
+
+Each manager owns a specific domain. The Conductor routes requests to the appropriate manager based on the user's intent.
+
+### Core Orchestration
+
+| Manager | Role |
+|---------|------|
+| **ConversationManager** | Live chat orchestrator. Wires steering (pause/resume/interject/stop) during conversations via the Conductor. |
+| **Conductor** | Top-level orchestrator unifying all managers. Two entry points: `ask` (read-only) and `request` (mutations). |
+
+### Data & Knowledge
+
+| Manager | Role |
+|---------|------|
+| **ContactManager** | Source of truth for people/contact records. |
+| **KnowledgeManager** | Source of truth for domain knowledge. Supports `ask`, `update`, and `refactor` operations. |
+| **TranscriptManager** | Store and retrieval for message transcripts. Read-only via `ask`. |
+| **FileManager** | Read-only registry and parsing for received/downloaded files. |
+| **SecretManager** | Secure storage for secrets. Returns metadata only—never raw values. |
+| **GuidanceManager** | Internal guidance, policies, and instructions. |
+
+### Execution & Action
+
+| Manager | Role |
+|---------|------|
+| **Actor** | Ephemeral, real-time actions (browser/UI control). Returns a live steerable handle. |
+| **TaskScheduler** | Durable task management and execution. Use `execute` to start work, not `update`. |
+| **FunctionManager** | Catalogue of user-supplied Python functions. |
+| **SkillManager** | Human-friendly catalogue of assistant capabilities. Read-only discovery. |
+
+### Perception & Communication
+
+| Manager | Role |
+|---------|------|
+| **ImageManager** | Low-level image store/retrieval. Managers use `ImageHandle` to work with images. |
+| **ScreenShareManager** | Continuous screen-share perception. Emits annotated screenshots during screen sharing. |
+| **WebSearcher** | External/web research orchestration. |
+
+### Background Processes
+
+| Manager | Role |
+|---------|------|
+| **MemoryManager** | Offline memory maintenance (non-interactive). Distills transcripts into contacts/knowledge. |
+| **EventBus** | Cross-cutting pub/sub backbone for telemetry and coordination. |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv) (Python package manager)
+- Node.js 22+ (for agent-service)
+- Redis (for local development)
+
+### Installation
+
+```bash
+# Clone the repository
+git clone git@github.com:unifyai/unity.git
+cd unity
+
+# Install dependencies using uv
 uv sync
+
+# Activate the virtual environment
 source .venv/bin/activate
 ```
 
 ### Environment Variables
 
-Populate an `.env` file in the same root directory (ie `~/unity/.env`), based on these newly generated keys, and also create some of your own for assistant customization (name, age etc.):
+Create a `.env` file in the project root:
+
+```bash
+# Required
+UNIFY_KEY=<your-unify-api-key>
+UNIFY_BASE_URL=https://api.unify.ai/v0
+
+# LLM Providers
+OPENAI_API_KEY=<your-openai-key>
+ANTHROPIC_API_KEY=<your-anthropic-key>
+
+# Voice/Audio (optional, for voice features)
+DEEPGRAM_API_KEY=<your-deepgram-key>
+CARTESIA_API_KEY=<your-cartesia-key>
+LIVEKIT_URL=<your-livekit-url>
+LIVEKIT_API_KEY=<your-livekit-key>
+LIVEKIT_API_SECRET=<your-livekit-secret>
+
+# Assistant Configuration
+ASSISTANT_ID=<id>
+ASSISTANT_NAME=<name>
 ```
-UNIFY_KEY={value}
-UNIFY_BASE_URL={value}
-# OFF_THE_SHELF=true # uncomment for using browser_use
-OPENAI_API_KEY={value}
-FIRST_NAME={value}
-AGENT_FIRST={value}
-AGENT_LAST={value}
-AGENT_AGE={value}
-DEEPGRAM_API_KEY={value}
-CARTESIA_API_KEY={value}
-LIVEKIT_URL={value}
-LIVEKIT_API_KEY={value}
-LIVEKIT_API_SECRET={value}
 
-# CodeSandbox SDK
-CODESANDBOX_API_TOKEN={value}
-CODESANDBOX_TEMPLATE_ID={value}
-CODESANDBOX_SERVICE_PORT=3100
+### Local Unify Development (Optional)
+
+If you're developing features in the [unify](https://github.com/unifyai/unify) package alongside Unity, you can bind your `.venv` to a local clone:
+
+```bash
+# Install local unify in editable mode (overrides the remote source)
+uv pip install -e /path/to/local/unify
+
+# To revert to the upstream version
+uv sync
 ```
 
-### Logging
+This is useful when debugging new features that haven't been pushed upstream. The default `uv sync` always pulls from the main branch of the GitHub repo.
 
-Check out various logs in the "Assistants" project in the [Unity Interface](https://console.unify.ai/interfaces?project=Unity).
+---
 
-### Controller Mode
+## Local Development
 
-**Browser Mode**
+### Python Interpreter
 
-1. Install the required dependencies through `node/npm`, then start the Magnitude server.
+Always use the project's virtual environment:
 
-`npx ts-node agent-service/src/index.ts`
+```bash
+source .venv/bin/activate
+# Or use .venv/bin/python directly
+```
 
-2. Use the actor in browser mode, i.e., `agent_mode="browser"`. This is the default mode.
+### Running the Conversation Manager
 
-**Desktop Mode**
+```bash
+python start.py
+```
 
-1. Follow the guide in `desktop/README.md` for starting the virtual desktop and Magnitude server through Docker.
+### Browser Automation (Controller Mode)
 
-2. Use the actor in desktop mode, i.e., `agent_mode="desktop"`.
+**Browser Mode** (default):
+
+```bash
+# Start the agent service
+npx ts-node agent-service/src/index.ts
+
+# The Actor will use browser mode by default (agent_mode="browser")
+```
+
+**Desktop Mode** (for full desktop automation):
+
+```bash
+# See desktop/README.md for Docker-based virtual desktop setup
+# Then use agent_mode="desktop" in the Actor
+```
+
+### Pre-commit Hooks
+
+Run before committing to ensure code quality:
+
+```bash
+.venv/bin/python -m pre_commit run --all-files
+```
+
+### Dependencies
+
+This project uses `uv` for dependency management:
+
+- Configuration: `pyproject.toml`
+- Lock file: `uv.lock` (do not edit manually)
+
+---
+
+## Testing
+
+Tests are central to Unity's development. They fall on a spectrum between **symbolic tests** (infrastructure-focused) and **eval tests** (capability-focused).
+
+### Quick Start
+
+```bash
+# Run all tests
+pytest tests/
+
+# Run a specific test file
+pytest tests/test_contact_manager/test_create_contact.py
+
+# Run a specific test
+pytest tests/test_contact_manager/test_create_contact.py::test_create_single_contact
+```
+
+### Parallel Execution
+
+For faster runs, use the parallel test runner:
+
+```bash
+# Run all tests in parallel (one tmux session per file)
+tests/.parallel_run.sh tests/
+
+# Wait for completion and capture logs
+tests/.parallel_run.sh --wait tests/
+
+# Run only eval tests
+tests/.parallel_run.sh --eval-only tests/
+
+# Run only symbolic tests
+tests/.parallel_run.sh --symbolic-only tests/
+```
+
+### LLM Response Caching
+
+By default (`UNIFY_CACHE=true`), LLM responses are cached in `.cache.ndjson`:
+
+- **First run**: Real LLM calls, responses cached
+- **Subsequent runs**: Cached responses replayed (fast, deterministic)
+
+To force fresh LLM calls:
+
+```bash
+tests/.parallel_run.sh --env UNIFY_CACHE=false tests/
+```
+
+### Detailed Documentation
+
+See [tests/README.md](tests/README.md) for comprehensive testing documentation including:
+
+- Test philosophy (symbolic vs eval spectrum)
+- Parallel runner options and tmux debugging
+- Grid search for model comparisons
+- Test data logging and analysis
+
+---
+
+## Deployment
+
+### Docker
+
+Build and run with Docker:
+
+```bash
+docker build -t unity .
+docker run -p 8000:8000 -p 6080:6080 unity
+```
+
+The container includes:
+- Redis server
+- Virtual desktop (X11/VNC)
+- PipeWire audio
+- Agent service (Node.js)
+- CodeSandbox service
+
+### Cloud Deployment
+
+Unity uses Google Cloud Build for CI/CD:
+
+- `cloudbuild.yaml` — Production deployment
+- `cloudbuild-staging.yaml` — Staging deployment
+
+See [INFRA.md](INFRA.md) for detailed infrastructure documentation including:
+
+- GKE architecture and idle container system
+- Pub/Sub notification routing
+- Webhook system for external services
+- Multi-channel communication setup
+
+---
+
+## Project Structure
+
+```
+unity/
+├── unity/                    # Main package
+│   ├── actor/               # Browser/UI automation
+│   ├── conductor/           # Top-level orchestrator
+│   ├── contact_manager/     # Contact records
+│   ├── conversation_manager/ # Live chat orchestration
+│   ├── controller/          # Browser control layer
+│   ├── events/              # EventBus pub/sub
+│   ├── file_manager/        # File parsing/registry
+│   ├── function_manager/    # User functions
+│   ├── guidance_manager/    # Policies/instructions
+│   ├── image_manager/       # Image storage
+│   ├── knowledge_manager/   # Domain knowledge
+│   ├── memory_manager/      # Offline maintenance
+│   ├── screen_share_manager/ # Screen perception
+│   ├── secret_manager/      # Secrets storage
+│   ├── skill_manager/       # Capability catalogue
+│   ├── task_scheduler/      # Task execution
+│   ├── transcript_manager/  # Message transcripts
+│   ├── web_searcher/        # Web research
+│   └── common/              # Shared utilities
+│       └── _async_tool/     # Async tool loop infrastructure
+├── tests/                   # Test suite
+├── agent-service/           # Node.js browser agent
+├── codesandbox-service/     # CodeSandbox integration
+├── desktop/                 # Virtual desktop setup
+├── scripts/                 # Utility scripts
+└── sandboxes/               # Interactive development sandboxes
+```
+
+---
+
+## Contributing
+
+1. Create a feature branch
+2. Make your changes
+3. Run pre-commit hooks: `.venv/bin/python -m pre_commit run --all-files`
+4. Run relevant tests: `tests/.parallel_run.sh --wait tests/test_<manager>/`
+5. Submit a pull request
+
+### Code Style
+
+- Python: Formatted with Black, imports cleaned with autoflake
+- No defensive coding—fail loud and fast
+- No temporal comments ("NEW:", "Updated:")
+- All LLM behavior adjustments via prompts/docstrings, not heuristics
