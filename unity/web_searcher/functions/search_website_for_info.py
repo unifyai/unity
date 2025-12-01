@@ -71,97 +71,98 @@ async def search_website_for_info(
 
     # Step 1: Find and use the site's search functionality
     await action_provider.act(
-        f"Search for: '{search_query}', navigate to news, articles, insights, or research sections. "
-        "Then, open the first article that appears in the search results.",
+        f"Look for a search box or search icon on this page. If you find one, use it to search for: '{search_query}'. "
+        "Use plain words only — do not use special syntax, operators, or quotes. Modify query if no results found. "
+        "Only if no search functionality exists, navigate to a news, articles, insights, or research section instead.",
     )
 
-    # Step 2: Review search results and identify relevant content
-    # await action_provider.act(
-    #     f"Review the search results or listings. Identify 2-3 articles or pages most relevant to '{search_query}'. "
-    #     "Note their titles and URLs. Click on the most relevant one to open it. "
-    #     "Use medium scrolls (at least 25px at a time) — be efficient.",
-    # )
+    # Step 2: Get all links from the search results page
+    print("[WS] Extracting links from search results...")
+    links_result = await action_provider.get_links(same_domain=True)
+    links = links_result.get("links", [])
+    print(f"[WS] Found {len(links)} links")
 
-    # Step 3: Scroll through the first article to load content
-    await action_provider.act(
-        "Scroll through this article/page from top to bottom in large increments (full viewport at a time) to load all content. "
-        "Do NOT use tiny scrolls — be efficient.",
-    )
-
-    # Step 4: Get the URL directly from browser state (reliable, no LLM)
-    first_url = await action_provider.browser.get_current_url()
-
-    # Step 5: Extract structured content using observe() with schema
+    # Step 3: Extract content from top N articles using raw content extraction
+    n = 3
     content_parts = []
-    try:
-        first_extract = await action_provider.observe(
-            f"Extract the article content relevant to the query: '{search_query}'. "
-            "Get the title, key points that answer the query, and any statistics or data mentioned.",
-            response_format=ArticleExtract,
-        )
-        content_parts.append(
-            f"**{first_extract.title}** ({first_url})\n"
-            + "\n".join(f"- {p}" for p in first_extract.key_points),
-        )
-        if first_extract.statistics:
-            content_parts[-1] += "\nStats: " + "; ".join(first_extract.statistics)
-    except Exception:
-        # Fallback to unstructured extraction if schema fails
-        first_extract = await action_provider.observe(
-            f"Summarize the key points of this article relevant to: '{search_query}'",
-        )
-        content_parts.append(f"({first_url})\n{first_extract}")
+    visited_urls = set()
 
-    # Step 6: Loop through additional articles (up to 2 more)
-    visited_urls = {first_url}
-    # for i in range(3):
-    #     await action_provider.act(
-    #         "Go back to the search results or listings. Open the next relevant article that hasn't been read yet. "
-    #         f"Visited articles are: {visited_urls}. "
-    #         "Use medium scrolls (at least 25px at a time) — be efficient.",
-    #     )
+    # Skip common non-content URL patterns
+    skip_patterns = [
+        "login",
+        "signin",
+        "signup",
+        "register",
+        "search?",
+        "newsletter",
+        "account",
+        "subscribe",
+        "/category/",
+        "/author/",
+        "/page/",
+        "#",
+        "javascript:",
+        "mailto:",
+    ]
 
-    #     current_url = await action_provider.browser.get_current_url()
-    #     if not current_url or current_url in visited_urls:
-    #         continue  # No new article found, stop looping
+    i = 0
+    for link in links[:100]:
+        if i >= n:
+            break
 
-    #     visited_urls.add(current_url)
+        href = link.get("href", "")
+        link_text = link.get("text", "")
 
-    #     # Scroll through article to load content
-    #     await action_provider.act(
-    #         "Scroll through this article in large increments (full viewport at a time) to load all content. "
-    #         "Do NOT use tiny scrolls — be efficient.",
-    #     )
+        # Skip empty, visited, or obviously non-article links
+        if not href or href in visited_urls:
+            continue
+        if any(skip in href.lower() for skip in skip_patterns):
+            continue
+        if href.endswith("/"):
+            continue
 
-    #     try:
-    #         extract = await action_provider.observe(
-    #             f"Extract the article content relevant to the query: '{search_query}'. "
-    #             "Get the title, key points, and any statistics.",
-    #             response_format=ArticleExtract,
-    #         )
-    #         content_parts.append(
-    #             f"**{extract.title}** ({current_url})\n"
-    #             + "\n".join(f"- {p}" for p in extract.key_points),
-    #         )
-    #         if extract.statistics:
-    #             content_parts[-1] += "\nStats: " + "; ".join(extract.statistics)
-    #     except Exception:
-    #         extract = await action_provider.observe(
-    #             f"Summarize the key points of this article relevant to: '{search_query}'",
-    #         )
-    #         content_parts.append(f"({current_url})\n{extract}")
+        visited_urls.add(href)
+        i += 1
+
+        try:
+            print(f"[WS] Navigating to: {href[:80]}...")
+            await action_provider.navigate(href)
+
+            # Check for and solve any captcha if present
+            await action_provider.act(
+                "If you see a CAPTCHA, cookie consent, or access verification prompt, solve or dismiss it. "
+                "Otherwise, do nothing and confirm the page content is visible.",
+            )
+
+            # Get raw content in markdown format (no LLM overhead)
+            content_result = await action_provider.get_content(format="markdown")
+            url = content_result.get("url", href)
+            title = content_result.get("title", "") or link_text
+            raw_content = content_result.get("content", "")
+
+            # Truncate content for LLM context window
+            truncated = raw_content[:4000] if len(raw_content) > 4000 else raw_content
+
+            if truncated.strip():
+                content_parts.append(f"**{title}** ({url})\n{truncated}")
+                print(f"[WS] Extracted content from: {title[:50]}...")
+
+        except Exception as e:
+            print(f"[WS] Failed to extract from {href[:50]}: {e}")
+            continue
 
     # Step 8: Synthesize findings (direct LLM call - bypasses heavy context injection)
     import unify
 
     combined = "\n\n".join(content_parts)
 
-    summarize_client = unify.AsyncUnify("gpt-5@openai")
+    summarize_client = unify.AsyncUnify("gemini-2.5-pro@vertex-ai")
     summarize_client.set_system_message(
         "You are a concise summarization assistant. Synthesize content into clear, factual summaries with citations.",
     )
+    print("[WS] Summarising...")
     summary = await summarize_client.generate(
-        f"Synthesize the following extracted content into a concise summary (3-5 sentences) answering the query: '{search_query}'. "
+        f"Synthesize the following extracted content into a concise summary answering the query: '{search_query}'. "
         f"The source URLs are already included — preserve them as citations.\n\n{combined}",
     )
 
@@ -185,4 +186,5 @@ async def search_website_for_info(
         except Exception:
             return str(summary)
 
+    print("[WS] Returning...")
     return str(summary)
