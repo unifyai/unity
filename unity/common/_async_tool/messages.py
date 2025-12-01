@@ -319,6 +319,26 @@ async def generate_with_preprocess(
     sys_txt = getattr(client, "system_message", "") or ""
     sys_patched = sys_txt
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Fix: Ensure the original system message is always at the front of
+    # patched messages. The Unify client's generate() checks if ANY system
+    # message exists in messages[], and if so, doesn't prepend system_message.
+    # This means if preprocessing adds a system message (like Claude's
+    # thinking-block context), the original system prompt gets dropped.
+    #
+    # We explicitly prepend the original system_message to patched messages
+    # if it's not already there, ensuring it's always sent to the LLM.
+    # ──────────────────────────────────────────────────────────────────────
+    if sys_txt:
+        # Check if the first message is already the original system message
+        first_is_original_system = (
+            patched
+            and patched[0].get("role") == "system"
+            and patched[0].get("content") == sys_txt
+        )
+        if not first_is_original_system:
+            patched = [{"role": "system", "content": sys_txt}] + patched
+
     start_len = len(patched)
 
     # ------------------------------------------------------------------
