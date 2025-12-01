@@ -124,7 +124,11 @@ class WebSearcher(BaseWebSearcher):
 
             fn_path = Path(__file__).parent / "functions" / "search_website_for_info.py"
             source = fn_path.read_text(encoding="utf-8")
-            fm.add_functions(implementations=[source], overwrite=False)
+            fm.add_functions(
+                implementations=[source],
+                overwrite=True,
+                verify={"search_website_for_info": False},
+            )
             # Re-check presence and set id if now present
             check = fm.search_functions(
                 filter="name == 'search_website_for_info'",
@@ -205,7 +209,7 @@ class WebSearcher(BaseWebSearcher):
             handle_cls=(
                 ReadOnlyAskGuardHandle if is_readonly_ask_guard_enabled() else None
             ),
-            timeout=500,
+            timeout=900,
         )
 
         # If the caller requests reasoning steps, wrap the handle's result
@@ -371,6 +375,7 @@ class WebSearcher(BaseWebSearcher):
             parent_chat_context=_parent_chat_context,
             response_format=response_format,
             tool_policy=self._default_update_tool_policy,
+            timeout=900,
         )
 
         if _return_reasoning_steps:
