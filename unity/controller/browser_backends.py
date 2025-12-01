@@ -55,6 +55,19 @@ class BrowserBackend(ABC):
         """Navigate the browser to a specific URL."""
 
     @abstractmethod
+    async def get_links(
+        self,
+        same_domain: bool = True,
+        selector: str = None,
+        **kwargs,
+    ) -> dict:
+        """Extract all links from the current page."""
+
+    @abstractmethod
+    async def get_content(self, format: str = "markdown", **kwargs) -> dict:
+        """Get raw page content without LLM processing."""
+
+    @abstractmethod
     def stop(self):
         """Cleanly shut down the backend."""
 
@@ -157,6 +170,27 @@ class LegacyBrowserBackend(BrowserBackend):
         return await self.controller.act(
             f"Navigate to {url}",
             expectation=f"The browser is on the page with URL '{url}'",
+        )
+
+    async def get_links(
+        self,
+        same_domain: bool = True,
+        selector: str = None,
+        **kwargs,
+    ) -> dict:
+        """
+        Extract all links from the current page (not supported in LegacyBrowserBackend).
+        """
+        raise NotImplementedError(
+            "get_links is not supported by LegacyBrowserBackend. Use MagnitudeBrowserBackend instead.",
+        )
+
+    async def get_content(self, format: str = "markdown", **kwargs) -> dict:
+        """
+        Get raw page content (not supported in LegacyBrowserBackend).
+        """
+        raise NotImplementedError(
+            "get_content is not supported by LegacyBrowserBackend. Use MagnitudeBrowserBackend instead.",
         )
 
     def stop(self):
@@ -1060,6 +1094,49 @@ class MagnitudeBrowserBackend(BrowserBackend):
             return response.get("url", "")
         except Exception as e:
             return ""
+
+    async def get_links(
+        self,
+        same_domain: bool = True,
+        selector: str = None,
+        **kwargs,
+    ) -> dict:
+        """
+        Extract all links from the current page.
+
+        Args:
+            same_domain: If True, only return links from the same domain.
+            selector: Optional CSS selector (default: 'a[href]').
+
+        Returns:
+            dict with keys:
+            - base_url: Origin of current page
+            - current_url: Full URL of current page
+            - links: List of {href, text} objects
+            - total: Number of links found
+        """
+        await self._ensure_async_initialized()
+        payload = {"sameDomain": same_domain}
+        if selector:
+            payload["selector"] = selector
+        return await self._request("POST", "/links", payload)
+
+    async def get_content(self, format: str = "markdown", **kwargs) -> dict:
+        """
+        Get raw page content without LLM processing.
+
+        Args:
+            format: 'markdown' (default), 'text', or 'html'
+
+        Returns:
+            dict with keys:
+            - url: Current page URL
+            - title: Page title
+            - content: Extracted content in requested format
+            - format: The format used
+        """
+        await self._ensure_async_initialized()
+        return await self._request("POST", "/content", {"format": format})
 
     async def navigate(self, url: str, wait: bool = True, context: dict = None) -> str:
         """Navigates the browser to a given URL."""
