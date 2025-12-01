@@ -386,7 +386,9 @@ async def test_no_tools_with_system_message(model) -> None:
 
         system → user → assistant
     """
-    client = new_llm_client(model=model)
+    client = new_llm_client(model=model).set_system_message(
+        "You are a helpful assistant.",
+    )
 
     answer = await start_async_tool_loop(
         client,
