@@ -82,7 +82,7 @@ Each manager owns a specific domain. The Conductor routes requests to the approp
 |---------|------|
 | **Actor** | Ephemeral, real-time action executor. Can invoke functions, control browsers, read files, or use any available capability. Returns a live steerable handle. |
 | **TaskScheduler** | Durable task management and execution. Use `execute` to start work, not `update`. |
-| **FunctionManager** | Catalogue of user-supplied Python functions. |
+| **FunctionManager** | Catalogue of reusable Python functions (created by the Actor or provided by the user). |
 | **SkillManager** | Human-friendly catalogue of assistant capabilities. Read-only discovery. |
 
 ### Perception & Communication
