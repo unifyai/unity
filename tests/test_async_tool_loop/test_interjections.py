@@ -834,3 +834,91 @@ async def test_backfills_prior_assistant_reply(model) -> None:
     handle.stop()
     final2 = await handle.result()
     assert final2 == "processed stopped early, no result"
+
+
+# --------------------------------------------------------------------------- #
+#  SYSTEM MESSAGE PRESERVATION WITH INTERJECTIONS                             #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+@_handle_project
+async def test_system_message_preserved_with_runtime_interjections(model) -> None:
+    """
+    Verify that the original system message is preserved and followed when
+    runtime system messages (e.g., visibility_guidance) are inserted between
+    user messages due to interjections.
+
+    This tests the scenario: user -> system(runtime) -> user
+
+    The model should still see and follow the original system instructions
+    despite the interleaved runtime system messages. This was a regression
+    where the system message was being dropped for Claude models when
+    preprocess_msgs was active.
+    """
+    # Use a very specific, verifiable instruction
+    SYSTEM_INSTRUCTION = (
+        "IMPORTANT: You must respond with EXACTLY the format 'ECHO: X' "
+        "where X is the user's most recent message. No other text allowed."
+    )
+
+    client = new_llm_client(model=model)
+    client.set_system_message(SYSTEM_INSTRUCTION)
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="first",
+        tools={},
+        max_consecutive_failures=1,
+    )
+
+    # Interject to create the user -> system(runtime) -> user pattern.
+    # The visibility_guidance system message gets inserted between user messages.
+    await handle.interject("second")
+
+    final = await handle.result()
+
+    # Verify the model followed the system instructions (saw the ECHO format requirement).
+    # This would fail if the system message was dropped.
+    assert (
+        "ECHO" in final.upper()
+    ), f"Model should follow system instruction to use ECHO format. Got: {final!r}"
+    # The most recent message should be echoed
+    assert (
+        "second" in final.lower()
+    ), f"Model should echo the interjected message 'second'. Got: {final!r}"
+
+
+@pytest.mark.asyncio
+@_handle_project
+async def test_multiple_interjections_preserve_system_message(model) -> None:
+    """
+    Verify system message preservation with multiple rapid interjections.
+
+    Tests: user -> system(runtime) -> user -> user (multiple interjections)
+
+    The model should still see the original system instructions after
+    multiple interjections create a complex message interleaving pattern.
+    """
+    SYSTEM_INSTRUCTION = (
+        "Count how many user messages you received and respond with ONLY "
+        "a single digit number. No other text, punctuation, or explanation."
+    )
+
+    client = new_llm_client(model=model)
+    client.set_system_message(SYSTEM_INSTRUCTION)
+
+    handle = start_async_tool_loop(
+        client=client,
+        message="one",
+        tools={},
+        max_consecutive_failures=1,
+    )
+
+    await handle.interject("two")
+    await handle.interject("three")
+
+    final = await handle.result()
+
+    # Model should count 3 messages if it sees the system instruction
+    assert (
+        "3" in final
+    ), f"Model should count 3 user messages per system instruction. Got: {final!r}"
