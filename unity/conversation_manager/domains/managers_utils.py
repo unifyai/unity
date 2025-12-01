@@ -316,18 +316,18 @@ async def init_conv_manager(cm: "ConversationManager"):
 
             # 1. Configure EventBus
             print("[ManagersWorker] Configuring EventBus...")
-            if api_key:
-                EVENT_BUS._get_logger().session.headers[
-                    "Authorization"
-                ] = f"Bearer {api_key}"
+            # if api_key:
+            #     EVENT_BUS._get_logger().session.headers[
+            #         "Authorization"
+            #     ] = f"Bearer {api_key}"
             # event_bus auto-pinning registration
-            EVENT_BUS.set_window("Comms", 50)
-            EVENT_BUS.register_auto_pin(
-                event_type="Comms",
-                open_predicate=lambda e: e.payload.get("role", "") == "tool_use start",
-                close_predicate=lambda e: e.payload.get("role", "") == "tool_use end",
-                key_fn=lambda e: e.payload.get("handle_id", ""),
-            )
+            # EVENT_BUS.set_window("Comms", 50)
+            # EVENT_BUS.register_auto_pin(
+            #     event_type="Comms",
+            #     open_predicate=lambda e: e.payload.get("role", "") == "tool_use start",
+            #     close_predicate=lambda e: e.payload.get("role", "") == "tool_use end",
+            #     key_fn=lambda e: e.payload.get("handle_id", ""),
+            # )
             # bus_events_task = asyncio.create_task(get_bus_events())
             # EVENT_BUS.clear()
             print("[ManagersWorker] EventBus configured")
