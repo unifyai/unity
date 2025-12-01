@@ -37,6 +37,9 @@ REPEAT_COUNT=1
 # Environment variable overrides (accumulated via --env KEY=VALUE)
 declare -a ENV_OVERRIDES=()
 
+# Tags (accumulated via --tags, shorthand for UNIFY_TEST_TAGS)
+declare -a TAGS=()
+
 # Resolve repo root (parent of this script's directory)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -88,6 +91,19 @@ while (( "$#" )); do
         exit 2
       fi
       ;;
+    --tags)
+      if [[ -n "${2-}" ]]; then
+        # Split on comma and add each tag to TAGS array
+        IFS=',' read -ra tag_parts <<< "$2"
+        for tag in "${tag_parts[@]}"; do
+          [[ -n "$tag" ]] && TAGS+=( "$tag" )
+        done
+        shift 2
+      else
+        echo "Error: --tags requires a value (e.g., --tags experiment-1 or --tags \"foo,bar\")." >&2
+        exit 2
+      fi
+      ;;
     *)
       POSITIONAL_ARGS+=( "$1" )
       shift
@@ -123,13 +139,19 @@ is_random_projects_mode() {
 }
 
 # ---------------------------------------------------------------------------
-# Helper: build environment exports string from --env overrides
+# Helper: build environment exports string from --env overrides and --tags
 # ---------------------------------------------------------------------------
 build_env_exports() {
   local exports=""
   for kv in "${ENV_OVERRIDES[@]+"${ENV_OVERRIDES[@]}"}"; do
     exports="$exports $kv"
   done
+  # Append UNIFY_TEST_TAGS if any tags were specified via --tags
+  if (( ${#TAGS[@]} > 0 )); then
+    local joined_tags
+    joined_tags=$(IFS=','; echo "${TAGS[*]}")
+    exports="$exports UNIFY_TEST_TAGS=$joined_tags"
+  fi
   echo "$exports"
 }
 
@@ -497,6 +519,8 @@ echo "  • Per-test (dirs/files):                 ./.parallel_run.sh -t tests t
 echo "  • Per-test (everything here):            ./.parallel_run.sh -t"
 echo "  • Set environment variables:             ./.parallel_run.sh --env UNIFY_CACHE=false tests"
 echo "  • Multiple env vars:                     ./.parallel_run.sh -e UNIFY_CACHE=false -e UNIFY_DELETE_CONTEXT_ON_EXIT=true tests"
+echo "  • Tag test runs:                         ./.parallel_run.sh --tags experiment-1 tests"
+echo "  • Multiple tags:                         ./.parallel_run.sh --tags \"model-compare,gpt-4o\" tests"
 echo "  • Run only eval tests:                   ./.parallel_run.sh --eval-only tests"
 echo "  • Run only symbolic tests:               ./.parallel_run.sh --symbolic-only tests"
 echo "  • Repeat tests for sampling:             ./.parallel_run.sh --repeat 5 --eval-only tests"
