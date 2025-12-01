@@ -266,6 +266,7 @@ async def init_conv_manager(cm: "ConversationManager"):
         try:
             # 0. Initialize unity
             print("[ManagersWorker] Initializing unity...")
+            local_start_time = perf_counter()
             payload = {
                 "agent_id": cm.assistant_id,
                 "first_name": cm.assistant_name,
@@ -307,7 +308,10 @@ async def init_conv_manager(cm: "ConversationManager"):
                         or None,
                     },
                 )
-            print("[ManagersWorker] Unity initialized")
+            print(
+                "[ManagersWorker] Unity initialized in "
+                f"{perf_counter() - local_start_time:.2f} seconds"
+            )
             # print("Clearing all events for clean testing")
             # EVENT_BUS.reset()
 
@@ -316,12 +320,13 @@ async def init_conv_manager(cm: "ConversationManager"):
 
             # 1. Configure EventBus
             print("[ManagersWorker] Configuring EventBus...")
-            # if api_key:
-            #     EVENT_BUS._get_logger().session.headers[
-            #         "Authorization"
-            #     ] = f"Bearer {api_key}"
+            local_start_time = perf_counter()
+            if api_key:
+                EVENT_BUS._get_logger().session.headers[
+                    "Authorization"
+                ] = f"Bearer {api_key}"
             # event_bus auto-pinning registration
-            # EVENT_BUS.set_window("Comms", 50)
+            EVENT_BUS.set_window("Comms", 50)
             # EVENT_BUS.register_auto_pin(
             #     event_type="Comms",
             #     open_predicate=lambda e: e.payload.get("role", "") == "tool_use start",
@@ -330,41 +335,61 @@ async def init_conv_manager(cm: "ConversationManager"):
             # )
             # bus_events_task = asyncio.create_task(get_bus_events())
             # EVENT_BUS.clear()
-            print("[ManagersWorker] EventBus configured")
+            print(
+                "[ManagersWorker] EventBus configured in "
+                f"{perf_counter() - local_start_time:.2f} seconds"
+            )
 
             # 2. Initialize ContactManager and get contacts
             print("[ManagersWorker] Initializing ContactManager...")
+            local_start_time = perf_counter()
             cm.contact_manager = ContactManager()
 
             # contacts_task = asyncio.create_task(get_contacts())
             # await asyncio.gather(bus_events_task, contacts_task)
             # await bus_events_task
-            print("[ManagersWorker] ContactManager initialized")
+            print(
+                "[ManagersWorker] ContactManager initialized in "
+                f"{perf_counter() - local_start_time:.2f} seconds"
+            )
 
             # 3. Initialize TranscriptManager with ContactManager
             print("[ManagersWorker] Initializing TranscriptManager...")
+            local_start_time = perf_counter()
             cm.transcript_manager = TranscriptManager(
                 contact_manager=cm.contact_manager,
             )
-            print("[ManagersWorker] TranscriptManager initialized")
+            print(
+                "[ManagersWorker] TranscriptManager initialized in "
+                f"{perf_counter() - local_start_time:.2f} seconds"
+            )
 
             # 4. Configure TranscriptManager logger with auth header
+            local_start_time = perf_counter()
             if api_key:
                 cm.transcript_manager._get_logger().session.headers[
                     "Authorization"
                 ] = f"Bearer {api_key}"
-                print("[ManagersWorker] TranscriptManager logger configured")
+                print(
+                    "[ManagersWorker] TranscriptManager logger configured in "
+                    f"{perf_counter() - local_start_time:.2f} seconds"
+                )
 
             # TODO: Initialize other managers (Conductor, etc.) here
             print("[ManagersWorker] Initializing MemoryManager...")
+            local_start_time = perf_counter()
             cm.memory_manager = MemoryManager(
                 transcript_manager=cm.transcript_manager,
                 contact_manager=cm.contact_manager,
             )
-            print("[ManagersWorker] MemoryManager initialized")
+            print(
+                "[ManagersWorker] MemoryManager initialized in "
+                f"{perf_counter() - local_start_time:.2f} seconds"
+            )
 
             # 5. Initialize ConversationManager
             print("[ManagersWorker] Initializing ConversationManagerHandle...")
+            local_start_time = perf_counter()
             conversation_manager_handle = ConversationManagerHandle(
                 event_broker=cm.event_broker,
                 conversation_id=os.getenv("ASSISTANT_ID", "default-assistant"),
@@ -372,17 +397,23 @@ async def init_conv_manager(cm: "ConversationManager"):
                 transcript_manager=cm.transcript_manager,
                 conversation_manager=cm,
             )
-            print("[ManagersWorker] ConversationManagerHandle initialized")
+            print(
+                "[ManagersWorker] ConversationManagerHandle initialized in "
+                f"{perf_counter() - local_start_time:.2f} seconds"
+            )
 
             # 6. Initialize Conductor with existing managers
             print("[ManagersWorker] Initializing Conductor...")
             try:
+                local_start_time = perf_counter()
                 cm.conductor = Conductor(
                     contact_manager=cm.contact_manager,
                     transcript_manager=cm.transcript_manager,
                     conversation_manager=conversation_manager_handle,
                 )
-                print("[ManagersWorker] Conductor initialized")
+                print(
+                    f"[ManagersWorker] Conductor initialized in {perf_counter() - local_start_time:.2f} seconds"
+                )
             except Exception as e:
                 print(f"[ManagersWorker] Error initializing Conductor: {e}")
 
