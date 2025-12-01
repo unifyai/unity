@@ -344,9 +344,18 @@ async def async_tool_loop_inner(
         effective_preprocess = preprocess_msgs
 
         # Claude: Handle thinking/tool_choice incompatibility
+        # Anthropic's API prohibits extended thinking with tool_choice="required".
+        # LiteLLM converts reasoning_effort to thinking for Claude models, so we
+        # must prevent reasoning_effort from being sent. We temporarily clear the
+        # client's _reasoning_effort so the generate call won't enable thinking.
         if _is_claude:
             if tool_choice == "required":
-                gen_kwargs["thinking"] = {"type": "disabled"}
+                # Clear reasoning_effort on the client to prevent thinking
+                if hasattr(client, "_reasoning_effort"):
+                    client._reasoning_effort = None
+                # Also remove from gen_kwargs in case it was explicitly set
+                gen_kwargs.pop("reasoning_effort", None)
+                gen_kwargs.pop("thinking", None)
                 _claude_thinking_disabled = True
             elif _seeded_msg_count > 0:
                 # Transform ONLY seeded messages (those lacking thinking blocks
