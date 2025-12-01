@@ -6,6 +6,7 @@ import WebSocket from 'ws';
 import util from 'util';
 import { startBrowserAgent, BrowserAgent, BrowserConnector, AgentError, BrowserOptions } from 'magnitude-core';
 import { z, ZodTypeAny, ZodAny, ZodType } from 'zod';
+import { partitionHtml, serializeToMarkdown, PartitionOptions, MarkdownSerializerOptions } from 'magnitude-extract';
 import dotenv from 'dotenv';
 dotenv.config();
 import os from 'os';
@@ -387,6 +388,7 @@ const startDesktop = async (): Promise<BrowserAgent> => {
       prompt: "You're controlling a noVNC virtual desktop page. Do not navigate to other page and use mouse and keyboard to control the browser and apps within the virtual desktop. There may be a terminal (xterm) app launched in the desktop for use.",
       narrate: true,
     });
+    agent.context.setDefaultNavigationTimeout(60000);
     console.log("✅ Desktop BrowserAgent started successfully.");
     return agent;
   } catch (err) {
@@ -402,6 +404,7 @@ const startBrowser = async (headless: boolean): Promise<BrowserAgent> => {
       browser: getLaunchOptions(headless, defaultBrowserPaths.downloadsPath, defaultBrowserPaths.tracesDir),
       narrate: true,
     });
+    agent.context.setDefaultNavigationTimeout(60000);
     console.log("✅ BrowserAgent started successfully.");
     return agent;
   } catch (err) {
@@ -544,6 +547,141 @@ app.post('/state', isAgentReady, async (req: Request, res: Response) => {
     res.json({ url, title });
   } catch (err) {
     handleAgentError(err, res, 'state_failed');
+  }
+});
+
+// --- Helper: Get full page content with iframe expansion ---
+async function getFullPageContentForExtraction(page: any): Promise<string> {
+  // Get all iframe element handles
+  const iframeHandles = await page.locator('iframe').elementHandles();
+
+  // Iterate through each iframe handle and expand inline
+  for (const iframeHandle of iframeHandles) {
+    const frame = await iframeHandle.contentFrame();
+    if (frame) {
+      const iframeContent = await frame.content();
+      await iframeHandle.evaluate((iframeNode: HTMLIFrameElement, { content }: { content: string }) => {
+        const div = document.createElement('div');
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(content, 'text/html');
+        while (doc.body.firstChild) {
+          div.appendChild(doc.body.firstChild);
+        }
+        const headElements = doc.head.querySelectorAll('style, link[rel="stylesheet"]');
+        headElements.forEach(el => div.appendChild(el.cloneNode(true)));
+        div.dataset.expandedFromIframe = 'true';
+        div.dataset.iframeSrc = iframeNode.getAttribute('src') || '';
+        iframeNode.parentNode?.replaceChild(div, iframeNode);
+      }, { content: iframeContent });
+    }
+  }
+
+  return page.content();
+}
+
+// --- /links endpoint: Extract all links from current page ---
+app.post('/links', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId, sameDomain, selector } = req.body;
+  try {
+    const session = activeSessions.get(sessionId)!;
+    const page = session.agent.page;
+    const currentUrl = page.url();
+    const currentHostname = new URL(currentUrl).hostname;
+
+    // Extract all links via page.evaluate()
+    const linkSelector = selector || 'a[href]';
+    const links: Array<{ href: string; text: string }> = await page.evaluate((sel: string) => {
+      return Array.from(document.querySelectorAll(sel))
+        .map(a => ({
+          href: (a as HTMLAnchorElement).href,
+          text: (a as HTMLAnchorElement).innerText.trim().slice(0, 200)
+        }))
+        .filter(l => l.href && l.href.startsWith('http'));
+    }, linkSelector);
+
+    // Deduplicate by href
+    const seen = new Set<string>();
+    const uniqueLinks = links.filter(l => {
+      if (seen.has(l.href)) return false;
+      seen.add(l.href);
+      return true;
+    });
+
+    // Optional: filter to same domain
+    const filtered = sameDomain === true
+      ? uniqueLinks.filter(l => {
+          try {
+            return new URL(l.href).hostname === currentHostname;
+          } catch {
+            return false;
+          }
+        })
+      : uniqueLinks;
+
+    res.json({
+      base_url: new URL(currentUrl).origin,
+      current_url: currentUrl,
+      links: filtered,
+      total: filtered.length
+    });
+  } catch (err) {
+    handleAgentError(err, res, 'links_failed');
+  }
+});
+
+// --- /content endpoint: Get raw page content (no LLM) ---
+app.post('/content', isAgentReady, async (req: Request, res: Response) => {
+  const { sessionId, format } = req.body;
+  // format: 'html' | 'text' | 'markdown' (default: 'markdown')
+  const outputFormat = format || 'markdown';
+
+  try {
+    const session = activeSessions.get(sessionId)!;
+    const page = session.agent.page;
+    const url = page.url();
+    const title = await page.title();
+
+    let content: string;
+
+    if (outputFormat === 'text') {
+      // Plain text extraction
+      content = await page.innerText('body');
+    } else if (outputFormat === 'html') {
+      // Raw HTML with iframe expansion
+      content = await getFullPageContentForExtraction(page);
+    } else {
+      // Markdown (default) - use magnitude-extract
+      const htmlContent = await getFullPageContentForExtraction(page);
+
+      const partitionOptions: PartitionOptions = {
+        extractImages: true,
+        extractForms: true,
+        extractLinks: true,
+        skipNavigation: false,
+        minTextLength: 3,
+        includeOriginalHtml: false,
+        includeMetadata: true
+      };
+
+      const result = partitionHtml(htmlContent, partitionOptions);
+
+      const markdownOptions: MarkdownSerializerOptions = {
+        includeMetadata: false,
+        includePageNumbers: false,
+        includeElementIds: false,
+        includeCoordinates: false,
+        preserveHierarchy: true,
+        escapeSpecialChars: true,
+        includeFormFields: true,
+        includeImageMetadata: true
+      };
+
+      content = serializeToMarkdown(result, markdownOptions);
+    }
+
+    res.json({ url, title, content, format: outputFormat });
+  } catch (err) {
+    handleAgentError(err, res, 'content_failed');
   }
 });
 
