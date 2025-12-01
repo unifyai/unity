@@ -689,7 +689,51 @@ chmod +x tests/.grid_search.sh
 1. **Parse grid variables**: Settings with `|` separators define the search space
 2. **Generate combinations**: Full Cartesian product of all values
 3. **Launch runs**: Each combination spawns a separate `.parallel_run.sh` invocation
-4. **Log results**: Each run logs its settings dict to `Combined` for post-hoc filtering
+4. **Auto-tag**: Each run is automatically tagged with its `--env` values for easy filtering
+5. **Log results**: Each run logs both tags and full settings dict to `Combined`
+
+### Auto-Tagging
+
+Each run is **automatically tagged** with all `--env` values passed to `.grid_search.sh`. This makes post-hoc analysis trivial—you can filter results by the exact configuration used for each run.
+
+**How it works:**
+
+- Tags are formatted as `KEY1=val1,KEY2=val2,...` (comma-separated)
+- **Grid variables** (with `|`): The specific value selected for that run is tagged
+- **Constant variables** (no `|`): Included in tags for all runs
+- **Background variables** (from `.env` file): NOT included in tags
+
+**Why this design?**
+
+When running a grid search, you want to filter results by the variables you're actively experimenting with. Variables from `.env` or other sources are held constant across all runs and don't help distinguish between grid cells. They still appear in the full `settings` dict for completeness, but the `tags` field contains only what you passed on the command line.
+
+**Example:**
+
+```bash
+./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env UNIFY_CACHE="true|false" tests/
+```
+
+Generates 4 runs with these auto-tags:
+
+| Run | Tags |
+|-----|------|
+| 1 | `UNIFY_MODEL=gpt-4o,UNIFY_CACHE=true` |
+| 2 | `UNIFY_MODEL=gpt-4o,UNIFY_CACHE=false` |
+| 3 | `UNIFY_MODEL=claude-3,UNIFY_CACHE=true` |
+| 4 | `UNIFY_MODEL=claude-3,UNIFY_CACHE=false` |
+
+With a constant variable:
+
+```bash
+./.grid_search.sh --env UNIFY_MODEL="gpt-4o|claude-3" --env EXPERIMENT_ID="exp-42" tests/
+```
+
+Generates 2 runs:
+
+| Run | Tags |
+|-----|------|
+| 1 | `UNIFY_MODEL=gpt-4o,EXPERIMENT_ID=exp-42` |
+| 2 | `UNIFY_MODEL=claude-3,EXPERIMENT_ID=exp-42` |
 
 ### Syntax
 
@@ -705,9 +749,9 @@ chmod +x tests/.grid_search.sh
 
 | Option | Description |
 |--------|-------------|
-| `--env KEY=val1\|val2` | Grid variable (multiple values, pipe-separated) |
-| `--env KEY=value` | Pass-through variable (single value for all runs) |
-| `-n`, `--dry-run` | Show generated commands without executing |
+| `--env KEY=val1\|val2` | Grid variable (multiple values, pipe-separated); each value becomes a separate run |
+| `--env KEY=value` | Constant variable (single value for all runs, included in auto-tags) |
+| `-n`, `--dry-run` | Show generated commands without executing (including auto-tags) |
 | `--wait-all` | Run combinations sequentially (with `--wait` per run) |
 | `-h`, `--help` | Show help |
 
@@ -766,21 +810,12 @@ Generated runs:
 
 Dry run - commands that would be executed:
 
-  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=true tests/
-  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=false tests/
+  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=true --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=true tests/
+  tests/.parallel_run.sh --env UNIFY_MODEL=gpt-4o@openai --env UNIFY_CACHE=false --tags UNIFY_MODEL=gpt-4o@openai,UNIFY_CACHE=false tests/
   ...
 ```
 
-**Tag runs for filtering:**
-
-```bash
-./.grid_search.sh \
-  --env UNIFY_MODEL="gpt-4o@openai|claude-sonnet-4-20250514@anthropic" \
-  --tags "grid-exp-2025-06" \
-  tests/test_contact_manager/
-```
-
-All runs share the same tag, making it easy to query results later.
+Note that each run includes `--tags` with the specific configuration values—this happens automatically.
 
 **Sequential execution (resource-constrained):**
 
@@ -794,7 +829,7 @@ Runs combinations one at a time instead of all concurrently.
 
 ### Analyzing Results
 
-After a grid search, query the `Combined` context to compare results:
+After a grid search, query the `Combined` context to compare results. The auto-generated tags make filtering straightforward:
 
 ```python
 import unify
@@ -802,15 +837,20 @@ import unify
 unify.activate("UnityTests")
 logs = unify.get_logs(context="Combined")
 
-# Filter by settings
+# Filter by tags (contains the exact --env values from the grid search)
 for log in logs:
-    settings = log.get("settings", {})
-    model = settings.get("UNIFY_MODEL", "unknown")
+    tags = log.get("tags", [])
     duration = log.get("duration", 0)
-    print(f"{model}: {duration:.2f}s")
+    # Tags are like ["UNIFY_MODEL=gpt-4o", "UNIFY_CACHE=true"]
+    print(f"{tags}: {duration:.2f}s")
+
+# Or filter by specific tag values
+gpt4_runs = [log for log in logs if "UNIFY_MODEL=gpt-4o" in log.get("tags", [])]
 ```
 
-Or use the Unify dashboard to filter by `settings.UNIFY_MODEL`, `settings.UNIFY_CACHE`, etc.
+The full `settings` dict is also available for variables not passed via `--env` (e.g., values from `.env` files).
+
+Or use the Unify dashboard to filter by `tags` (exact match) or `settings.UNIFY_MODEL` (for all values).
 
 ### Combining with Other Features
 
