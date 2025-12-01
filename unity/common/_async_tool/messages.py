@@ -698,7 +698,13 @@ async def ensure_placeholders_for_pending(
     msg_dispatcher,
 ) -> list[str]:
     created: list[str] = []
-    for task in list(tools_data.pending):
+    # Sort by call_idx to ensure deterministic placeholder ordering matching
+    # the original tool_calls array order. This makes the "at tail" check in
+    # process_completed_task behave consistently regardless of set iteration.
+    for task in sorted(
+        list(tools_data.pending),
+        key=lambda t: getattr(tools_data.info.get(t), "call_idx", 0),
+    ):
         _inf = tools_data.info.get(task)
         if not _inf:
             continue

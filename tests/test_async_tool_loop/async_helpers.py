@@ -583,6 +583,22 @@ async def _wait_for_assistant_tool_calls(
     await asyncio.wait_for(done.wait(), timeout=timeout)
 
 
+def _is_synthetic_check_status_stub(msg: dict) -> bool:
+    """Check if this assistant message is a synthetic check_status_ stub.
+
+    Synthetic stubs are emitted by the loop to preserve chronological ordering
+    when a tool's placeholder is not at the transcript tail. They're internal
+    bookkeeping, not actual LLM responses.
+    """
+    tool_calls = msg.get("tool_calls") or []
+    if not tool_calls:
+        return False
+    return all(
+        (tc.get("function", {}).get("name", "") or "").startswith("check_status_")
+        for tc in tool_calls
+    )
+
+
 async def _wait_for_next_assistant_response_event(
     *,
     timeout: float = 300.0,
@@ -595,6 +611,10 @@ async def _wait_for_next_assistant_response_event(
 
     This uses the EventBus to detect when the LLM has actually responded,
     avoiding race conditions with fixed delays.
+
+    Note: Synthetic check_status_* assistant stubs (used for chronological
+    ordering in the transcript) are skipped - this only triggers on real
+    LLM responses.
     """
     from unity.events.event_bus import EVENT_BUS
 
@@ -606,6 +626,9 @@ async def _wait_for_next_assistant_response_event(
                 payload = getattr(evt, "payload", {})
                 msg = payload.get("message") if isinstance(payload, dict) else None
                 if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                # Skip synthetic check_status_ stubs (internal bookkeeping)
+                if _is_synthetic_check_status_stub(msg):
                     continue
                 done.set()
                 return
