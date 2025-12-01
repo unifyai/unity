@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 
+from unity.contact_manager.types.contact import UNASSIGNED
 from unity.helpers import cleanup_dangling_call_processes, run_script, terminate_process
 from unity.conversation_manager.events import *
 
@@ -18,8 +19,8 @@ class CallConfig:
 class LivekitCallManager:
     def __init__(self, config: CallConfig):
         self.set_config(config=config)
-        self.call_exchange_id = None
-        self.unify_call_exchange_id = None
+        self.call_exchange_id = UNASSIGNED
+        self.unify_call_exchange_id = UNASSIGNED
         self.call_start_timestamp = None
         self.unify_call_start_timestamp = None
         self.call_contact = None

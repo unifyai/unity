@@ -80,9 +80,7 @@ class ContactIndex:
             timestamp = datetime.now()
         contact_id = contact["contact_id"]
         if contact_id not in self.active_conversations:
-            self.active_conversations[contact_id] = Contact(
-                **contact, is_boss=contact["contact_id"] == 1
-            )
+            self.active_conversations[contact_id] = Contact(**contact)
         contact = self.active_conversations[contact_id]
         if thread_name == "email":
             message = EmailMessage(
