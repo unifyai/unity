@@ -153,7 +153,14 @@ class ActionProvider:
                 wrapper.__doc__ = backend_method.__doc__
             return wrapper
 
-        for method_name in ["act", "observe", "query", "navigate"]:
+        for method_name in [
+            "act",
+            "observe",
+            "query",
+            "navigate",
+            "get_links",
+            "get_content",
+        ]:
             setattr(
                 self,
                 method_name,
