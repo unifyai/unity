@@ -29,6 +29,7 @@ from contextlib import suppress
 
 if TYPE_CHECKING:  # TODO: remove once dependencies are fixed
     from .loop import LoopLogger, _LoopToolFailureTracker
+    from .message_dispatcher import LoopMessageDispatcher
 
 
 class ToolsData:
@@ -64,6 +65,46 @@ class ToolsData:
     def _can_offer_tool(self, task_name: str) -> bool:
         limit = self.normalized[task_name].max_concurrent
         return limit is None or self.active_count(task_name) < limit
+
+    def _at_tail(self, msg: dict) -> bool:
+        """True when *msg* is the very last entry in client.messages."""
+        return bool(self._client.messages) and self._client.messages[-1] is msg
+
+    async def _emit_completion_pair(
+        self,
+        result: str,
+        call_id: str,
+        msg_dispatcher: "LoopMessageDispatcher",
+    ) -> dict:
+        """
+        Append a synthetic assistant→tool pair carrying the final result
+        at the chronologically correct position (end of messages).
+        """
+        status_call_id = f"{call_id}_completed"
+        status_tool_name = f"check_status_{call_id}"
+
+        assistant_stub = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": status_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": status_tool_name,
+                        "arguments": "{}",
+                    },
+                },
+            ],
+        }
+        tool_msg = create_tool_call_message(
+            name=status_tool_name,
+            call_id=status_call_id,
+            content=result,
+        )
+
+        await msg_dispatcher.append_msgs([assistant_stub, tool_msg])
+        return tool_msg
 
     def has_exceeded_quota_for_tool(self, task_name: str) -> bool:
         if task_name not in self.normalized:
@@ -455,13 +496,28 @@ class ToolsData:
         clarify_ph = info.clarify_placeholder
         tool_reply_msg = info.tool_reply_msg
 
-        # When a placeholder already exists for this call_id, update it in place.
-        # OpenAI requires exactly ONE tool response per tool_call_id.
+        # Placeholder handling with chronological ordering:
+        # - At tail: update in-place
+        # - Not at tail: mark as completed, emit check_status pair at end
         placeholder = clarify_ph or tool_reply_msg
 
         if placeholder is not None:
-            placeholder["content"] = result
-            tool_msg = placeholder
+            if self._at_tail(placeholder):
+                placeholder["content"] = result
+                tool_msg = placeholder
+            else:
+                placeholder["content"] = json.dumps(
+                    {
+                        "_placeholder": "completed",
+                        "status": "Tool completed. See check_status result below.",
+                        "result_call_id": f"{call_id}_completed",
+                    },
+                )
+                tool_msg = await self._emit_completion_pair(
+                    result,
+                    call_id,
+                    msg_dispatcher,
+                )
         else:
             tool_msg = create_tool_call_message(name, call_id, result)
             await insert_tool_message_after_assistant(
