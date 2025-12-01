@@ -96,48 +96,46 @@ async def test_basic_event_flow(model) -> None:
 @_handle_project
 async def test_interjection_publishes_user_event(model) -> None:
     """
-    Run the *wrapper* helper so that we can inject an extra user turn while the
-    loop is still thinking, then confirm that the event bus recorded it.
-    """
+    Verify that interjections are published to the event bus as user messages.
 
+    This test is purely about event bus mechanics, not model behavior.
+    Model response quality and instruction-following are tested separately
+    in test_interjections.py.
+    """
     client = new_llm_client(model=model)
-    client.set_system_message(
-        "CRITICAL INSTRUCTION - YOU MUST FOLLOW THIS EXACTLY:\n"
-        "Your ONLY task is to echo back the user's most recent message.\n"
-        "Response format: 'You said: X' where X is their latest message.\n"
-        "Example: If user says 'apple', respond EXACTLY: 'You said: apple'\n"
-        "Do NOT add greetings, emojis, questions, or any other text.\n"
-        "Do NOT be creative or helpful. Just echo the message.",
-    )
+    # Minimal prompt - we don't care about model's response quality here
+    client.set_system_message("Acknowledge any messages you receive.")
 
     async with capture_events("ToolLoop") as captured_events:
         handle = start_async_tool_loop(
             client=client,
-            message="greetings",
-            tools={},  # no tools needed
+            message="initial message",
+            tools={},
             max_consecutive_failures=1,
         )
 
-        # Interject with a different message (avoid sequential words like first/second
-        # which some models interpret as a counting pattern to continue).
-        await handle.interject("pineapple")
+        await handle.interject("interjected message")
 
-        final = await handle.result()
-
-    # The model should acknowledge the interjected message ("pineapple") in its response.
-    # We check for the word appearing in the response rather than a specific format,
-    # as different models have varying instruction-following fidelity.
-    assert "pineapple" in final.lower()
+        # We don't need to verify model output - just let it complete
+        await handle.result()
 
     # Filter out internal runtime context events
     events = _filter_runtime_context(captured_events)
     roles = [evt.payload["message"]["role"] for evt in events]
-    assert "user" in roles  # initial user
-    # Interjection is now published as a simple user message (not system message)
-    # for Claude/Gemini compatibility. We expect 2 user messages: initial + interjection.
-    assert roles.count("user") == 2
-    assert any(
-        evt.payload["message"]["role"] == "user"
-        and "pineapple" in (evt.payload["message"].get("content") or "")
+
+    # EVENT BUS ASSERTIONS ONLY - no model behavior checks
+    assert (
+        roles.count("user") == 2
+    ), "Event bus should record both initial and interjected user messages"
+
+    user_contents = [
+        evt.payload["message"].get("content", "")
         for evt in events
-    )
+        if evt.payload["message"]["role"] == "user"
+    ]
+    assert any(
+        "initial" in c for c in user_contents
+    ), "Initial message should be recorded"
+    assert any(
+        "interjected" in c for c in user_contents
+    ), "Interjection should be recorded"
