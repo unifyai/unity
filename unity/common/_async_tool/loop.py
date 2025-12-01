@@ -368,6 +368,15 @@ async def async_tool_loop_inner(
                 outer_preprocess = effective_preprocess
 
                 def claude_wrapper(msgs):
+                    # Skip transformation when no tools available. The check_status_
+                    # synthetic messages are internal bookkeeping for chronological
+                    # ordering. When tools are exhausted, Claude just needs to produce
+                    # a final text response. Transforming to "[Continue from here]"
+                    # confuses Claude into producing empty responses when there's
+                    # nothing left to do.
+                    if not gen_kwargs.get("tools"):
+                        return outer_preprocess(msgs) if outer_preprocess else msgs
+
                     # Build index lookup for efficiency
                     msg_indices = {id(m): i for i, m in enumerate(msgs)}
 
