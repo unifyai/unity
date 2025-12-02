@@ -114,14 +114,6 @@ class WebSearcher(BaseWebSearcher):
 
         try:
             fm = self.hierarchical_actor.function_manager
-            results = fm.search_functions(
-                filter="name == 'search_website_for_info'",
-                limit=1,
-            )
-            if results:
-                self._default_function_id = int(results[0].get("function_id"))
-                return
-
             fn_path = Path(__file__).parent / "functions" / "search_website_for_info.py"
             source = fn_path.read_text(encoding="utf-8")
             fm.add_functions(
@@ -647,7 +639,7 @@ class WebSearcher(BaseWebSearcher):
         plan = await self.hierarchical_actor.act(
             description=f"Search website for information: {query}. Start with {host}",
             entrypoint=function_id,
-            entrypoint_args=[query, host, creds, None],
+            entrypoint_args=[query, host, creds],
             persist=False,
         )
         result = await plan.result()
@@ -1016,7 +1008,3 @@ class WebSearcher(BaseWebSearcher):
             "base_url": response.get("base_url"),
             "results": response.get("results", []),
         }
-
-    # ------------------------------------------------------------------ #
-    #  Small internal helpers (LLM client + tool policies)               #
-    # ------------------------------------------------------------------ #

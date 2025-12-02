@@ -15,21 +15,6 @@ async def search_website_for_info(
     - Returns a string summary.
     """
 
-    from pydantic import BaseModel, Field
-    from typing import Optional
-
-    class ArticleExtract(BaseModel):
-        """Structured extraction of article content."""
-
-        title: str = Field(description="The article/page title")
-        key_points: list[str] = Field(
-            description="Key points relevant to the search query",
-        )
-        statistics: Optional[list[str]] = Field(
-            default=None,
-            description="Any important data or statistics mentioned",
-        )
-
     url = (website or "").strip()
     if url and not (url.startswith("http://") or url.startswith("https://")):
         url = f"https://{url}"
@@ -150,20 +135,4 @@ async def search_website_for_info(
             print(f"[WS] Failed to extract from {href[:50]}: {e}")
             continue
 
-    # Step 8: Synthesize findings (direct LLM call - bypasses heavy context injection)
-    import unify
-
-    combined = "\n\n".join(content_parts)
-
-    summarize_client = unify.AsyncUnify("gemini-2.5-pro@vertex-ai")
-    summarize_client.set_system_message(
-        "You are a concise summarization assistant. Synthesize content into clear, factual summaries with citations.",
-    )
-
-    print("[WS] Summarising...")
-    summary = await summarize_client.generate(
-        f"Synthesize the following extracted content into a concise summary answering the query: '{search_query}'. "
-        f"The source URLs are already included — preserve them as citations.\n\n{combined}",
-    )
-
-    return str(summary)
+    return str(content_parts)
