@@ -191,7 +191,12 @@ async def _(
     cm.call_manager.call_contact = None
     if isinstance(event, PhoneCallEnded):
         cm.call_manager.conference_name = None
-    contact = cm.contact_index.get_contact(phone_number=event.contact["phone_number"])
+    if isinstance(event, UnifyCallEnded):
+        contact = cm.contact_index.get_contact(contact_id=1)
+    else:
+        contact = cm.contact_index.get_contact(
+            phone_number=event.contact["phone_number"]
+        )
     cm.contact_index.active_conversations[contact["contact_id"]].on_call = False
     cm.call_manager.cleanup_call_proc()
     await cm.cancel_filler()
@@ -314,6 +319,10 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
         **cm.get_details(),
     }
     asyncio.create_task(asyncio.to_thread(debug_logger.log_job_startup, **kwargs))
+
+    # Start initialization and operations listener
+    asyncio.create_task(managers_utils.init_conv_manager(cm))
+    asyncio.create_task(managers_utils.listen_to_operations(cm))
 
 
 @EventHandler.register(GetContactsResponse)
