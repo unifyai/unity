@@ -588,19 +588,24 @@ class WebSearcher(BaseWebSearcher):
     async def _gated_website_search(
         self,
         *,
-        query: str,
+        queries: str | list[str],
         website: Dict[str, Any] | Website,
     ) -> str:
         """Search a gated website using the Actor entrypoint with Website data.
 
         Parameters
         ----------
-        query : str
-            Precise query to find on the target site.
+        queries : str | list[str]
+            One or more search queries to run on the target site.
+            Pass multiple queries to search for different topics in a single browser session.
         website : Website | dict
             Website record containing host, credentials, actor_entrypoint, notes.
         """
         print("Searching gated website:", website)
+        # Normalize queries to a list
+        if isinstance(queries, str):
+            queries = [queries]
+
         # Normalise website record
         host: str = (
             website.get("host")
@@ -636,10 +641,11 @@ class WebSearcher(BaseWebSearcher):
             return "Failed gated website search: Both actor entrypoint and default function are unavailable. Unable to resolve."
 
         # Start the actor plan with explicit entrypoint args
+        queries_desc = ", ".join(queries[:3]) + ("..." if len(queries) > 3 else "")
         plan = await self.hierarchical_actor.act(
-            description=f"Search website for information: {query}. Start with {host}",
+            description=f"Search website for information: {queries_desc}. Start with {host}",
             entrypoint=function_id,
-            entrypoint_args=[query, host, creds],
+            entrypoint_args=[queries, host, creds],
             persist=False,
             new_session=True,
         )
