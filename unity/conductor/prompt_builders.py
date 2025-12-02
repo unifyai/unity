@@ -61,13 +61,11 @@ def build_ask_prompt(
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
 
-    # Validate required tools (request_clarification and web-search are optional)
+    # Validate only foundational tools (optional managers may be disabled)
     _require_tools(
         {
             "ContactManager.ask": contact_ask_fname,
             "TranscriptManager.ask": transcript_ask_fname,
-            "KnowledgeManager.ask": knowledge_ask_fname,
-            "GuidanceManager.ask": guidance_ask_fname,
             "TaskScheduler.ask": task_ask_fname,
         },
         tools,
@@ -94,6 +92,7 @@ def build_ask_prompt(
         "You are an assistant that answers read-only questions by orchestrating high-level managers (Contacts, Transcripts, Knowledge, Tasks, WebSearch).",
         "Choose the most appropriate manager's `ask` tool per sub-question and compose the final answer.",
         "Do not explain HOW the question will be answered, which low-level tools will be used, or instruct the user how to phrase their question; that is handled entirely by the domain managers.",
+        "Note: Some managers mentioned in this guidance may not be available in your current toolset. This is expected – simply disregard any guidance that references tools you don't have access to.",
         "Use the WebSearcher.ask tool for general knowledge, external information, industry concepts, best practices or anything that would reasonably be found on the web (and not in your internal managers).",
         "For live or time-sensitive facts (e.g., questions containing 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must use WebSearcher.ask – do not rely on internal memory for these.",
         "When using WebSearcher for research or data gathering, always request citations and source URLs in your query so the user can verify the information.",
@@ -227,21 +226,17 @@ def build_request_prompt(
     # Clarification helper (optional)
     request_clar_fname = _tool_name(tools, "clarification")
 
-    # Validate required tools (web-search optional, but encouraged)
+    # Validate only foundational tools (optional managers may be disabled)
     _require_tools(
         {
-            # Read-side helpers (should always be available)
+            # Foundational read-side helpers
             "ContactManager.ask": contact_ask_fname,
             "TranscriptManager.ask": transcript_ask_fname,
-            "KnowledgeManager.ask": knowledge_ask_fname,
-            "GuidanceManager.ask": guidance_ask_fname,
             "TaskScheduler.ask": task_ask_fname,
             "ConversationManagerHandle.ask": cm_ask_fname,
             "ConversationManagerHandle.get_full_transcript": cm_transcript_fname,
-            # Write / action helpers
+            # Foundational write / action helpers
             "ContactManager.update": contact_update_fname,
-            "KnowledgeManager.update": knowledge_update_fname,
-            "GuidanceManager.update": guidance_update_fname,
             "TaskScheduler.update": task_update_fname,
             "TaskScheduler.execute": task_execute_fname,
             "ConversationManagerHandle.interject": cm_interject_fname,
@@ -267,6 +262,7 @@ def build_request_prompt(
     guidance_lines = [
         "You have read-write control over tasks, contacts, transcripts and the knowledge-base.",
         "Orchestrate by calling the appropriate managers' `ask` or `update` methods; do not describe or expose HOW the change will be implemented.",
+        "Note: Some managers mentioned in this guidance may not be available in your current toolset. This is expected – simply disregard any guidance that references tools you don't have access to.",
         "Use WebSearcher.ask for external information, market practices, definitions, or anything you would reasonably look up online.",
         "For live or time-sensitive facts (e.g., 'today', 'yesterday', 'this week', 'latest', 'current', 'now'), you must call WebSearcher.ask rather than relying on internal memory.",
         "When searching for data or research, always include 'with citations' or 'include source URLs' in your query so results are verifiable.",
