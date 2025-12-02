@@ -2,7 +2,6 @@ async def search_website_for_info(
     search_query,
     website,
     credentials,
-    response_format=None,
 ):
     """
     Log into a website if needed and extract information relevant to a query.
@@ -13,7 +12,7 @@ async def search_website_for_info(
     - If credentials are provided as secret_ids, attempts to resolve a username/password
       pair via the SecretManager and log in when a sign-in flow is detected.
     - Searches the website for the given query, opens the best match and summarizes the result.
-    - When a Pydantic response_format is provided, returns a structured object; otherwise returns a string summary.
+    - Returns a string summary.
     """
 
     from pydantic import BaseModel, Field
@@ -160,31 +159,11 @@ async def search_website_for_info(
     summarize_client.set_system_message(
         "You are a concise summarization assistant. Synthesize content into clear, factual summaries with citations.",
     )
+
     print("[WS] Summarising...")
     summary = await summarize_client.generate(
         f"Synthesize the following extracted content into a concise summary answering the query: '{search_query}'. "
         f"The source URLs are already included — preserve them as citations.\n\n{combined}",
     )
 
-    if response_format is not None:
-        try:
-            from pydantic import BaseModel
-
-            if isinstance(response_format, type) and issubclass(
-                response_format,
-                BaseModel,
-            ):
-                struct_client = unify.AsyncUnify("gpt-5@openai")
-                struct_client.set_system_message(
-                    "Transform the given content into the requested structured format. Only include fields that exist on the model.",
-                )
-                struct_client.set_response_format(response_format)
-                raw = await struct_client.generate(
-                    f"Content to transform:\n\n{summary}",
-                )
-                return response_format.model_validate_json(raw)
-        except Exception:
-            return str(summary)
-
-    print("[WS] Returning...")
     return str(summary)

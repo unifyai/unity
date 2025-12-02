@@ -105,7 +105,7 @@ k (default 5)> 3
 - id=3 name='Medium (Personal)' host='medium.com' gated=True subscribed=True
 
 Login to my Medium subscription article and summarize
-[ask] → (resolves Website and uses _search_gated_website)
+[ask] → (resolves Website and uses _gated_website_search)
 ```
 
 Logging and debugging
