@@ -40,7 +40,6 @@ from sandboxes.utils import (
 from unity.actor.base import BaseActor
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.hierarchical_actor import HierarchicalActor
-from unity.actor.tool_loop_actor import ToolLoopActor
 
 LG = logging.getLogger("actor_sandbox")
 
@@ -77,8 +76,6 @@ def _create_actor(args) -> BaseActor:
             **browser_kwargs,
             browser_mode="magnitude",
         )
-    elif actor_choice == "tooloop":
-        return ToolLoopActor(**browser_kwargs)
     elif actor_choice == "code_act":
         return CodeActActor(**browser_kwargs, browser_mode="magnitude")
     else:
@@ -93,7 +90,7 @@ async def _main_async() -> None:
         "--actor",
         "-a",
         type=str,
-        choices=["hierarchical", "tooloop", "code_act"],
+        choices=["hierarchical", "code_act"],
         default="code_act",
         help="Select the actor implementation to run.",
     )

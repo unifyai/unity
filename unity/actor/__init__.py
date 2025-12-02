@@ -1,12 +1,12 @@
 from typing import TYPE_CHECKING
 from importlib import import_module
 
-__all__ = ["ToolLoopActor", "HierarchicalActor", "CodeActActor"]
+__all__ = ["HierarchicalActor", "CodeActActor", "Plan"]
 
 _lazy_map = {
-    "ToolLoopActor": "unity.actor.tool_loop_actor",
     "HierarchicalActor": "unity.actor.hierarchical_actor",
     "CodeActActor": "unity.actor.code_act_actor",
+    "Plan": "unity.actor.plan",
 }
 
 
@@ -22,6 +22,6 @@ def __dir__():
 
 
 if TYPE_CHECKING:
-    from .tool_loop_actor import ToolLoopActor
     from .hierarchical_actor import HierarchicalActor
     from .code_act_actor import CodeActActor
+    from .plan import Plan
