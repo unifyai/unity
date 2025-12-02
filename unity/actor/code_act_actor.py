@@ -7,7 +7,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from typing import Any, Dict, Optional, Callable, Awaitable
 
 from unity.actor.base import BaseActor
-from unity.actor.plan import Plan
+from unity.actor.handle import ActorHandle
 from unity.actor.action_provider import ActionProvider
 from unity.actor.prompt_builders import _build_code_act_rules_and_examples
 from unity.image_manager.types.image_refs import ImageRefs
@@ -261,9 +261,9 @@ class CodeActActor(BaseActor):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         **kwargs,
-    ) -> Plan:
+    ) -> ActorHandle:
         """
-        Creates and starts a new Plan for the CodeAct agent.
+        Creates and starts a new ActorHandle for the CodeAct agent.
         """
         if not self._main_event_loop:
             self._main_event_loop = asyncio.get_running_loop()
@@ -277,7 +277,7 @@ class CodeActActor(BaseActor):
         system_prompt = build_code_act_system_prompt(
             self._action_provider,
         )
-        plan = Plan(
+        handle = ActorHandle(
             task_description=description or initial_prompt,
             tools=self._tools,
             parent_chat_context=_parent_chat_context,
@@ -291,7 +291,7 @@ class CodeActActor(BaseActor):
             action_provider=self._action_provider,
             images=images,
         )
-        return plan
+        return handle
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""

@@ -27,7 +27,7 @@ from .base import BaseActorHandle
 logger = logging.getLogger(__name__)
 
 
-class _PlanState(enum.Enum):
+class _HandleState(enum.Enum):
     IDLE = enum.auto()
     RUNNING = enum.auto()
     PAUSED = enum.auto()
@@ -36,9 +36,9 @@ class _PlanState(enum.Enum):
     ERROR = enum.auto()
 
 
-class Plan(BaseActiveTask, BaseActorHandle):
+class ActorHandle(BaseActiveTask, BaseActorHandle):
     """
-    A steerable execution plan that runs an LLM-driven tool loop.
+    A steerable handle for an actor's execution, running an LLM-driven tool loop.
 
     This class manages the lifecycle of an async tool loop, providing
     pause/resume/stop/interject/ask capabilities for dynamic control.
@@ -75,12 +75,12 @@ class Plan(BaseActiveTask, BaseActorHandle):
             clarification_down_q or asyncio.Queue()
         )
 
-        self._state: _PlanState = _PlanState.IDLE
+        self._state: _HandleState = _HandleState.IDLE
         self._loop_handle: Optional[SteerableToolHandle] = None
         self._result_str: Optional[str] = None
         self._error_str: Optional[str] = None
 
-        self._overall_plan_completion_event = asyncio.Event()
+        self._completion_event = asyncio.Event()
         self._resume_requested_event = asyncio.Event()
 
         self._task_id = str(uuid.uuid4())
@@ -90,7 +90,7 @@ class Plan(BaseActiveTask, BaseActorHandle):
         self._tool_policy = tool_policy
         self._action_provider = action_provider
 
-        self._plan_client = AsyncUnify(
+        self._client = AsyncUnify(
             "claude-4.5-sonnet@anthropic",
             cache=get_cache_setting(),
         )
@@ -105,19 +105,19 @@ class Plan(BaseActiveTask, BaseActorHandle):
                 self._main_event_loop = asyncio.get_running_loop()
             except RuntimeError as e:
                 logger.error(
-                    f"Plan {self._task_id}: Could not get running event loop and none was provided: {e}",
+                    f"Handle {self._task_id}: Could not get running event loop: {e}",
                     exc_info=True,
                 )
-                self._state = _PlanState.ERROR
+                self._state = _HandleState.ERROR
                 self._error_str = f"Initialization failed: no event loop. {e}"
-                self._overall_plan_completion_event.set()
+                self._completion_event.set()
                 return
 
         logger.info(
-            f"Plan {self._task_id}: Scheduling main execution manager on loop {self._main_event_loop}.",
+            f"Handle {self._task_id}: Scheduling execution on loop {self._main_event_loop}.",
         )
         asyncio.run_coroutine_threadsafe(
-            self._manage_plan_execution(),
+            self._manage_execution(),
             self._main_event_loop,
         )
 
@@ -136,12 +136,12 @@ class Plan(BaseActiveTask, BaseActorHandle):
             This tool is used to request clarification from the caller.
             """
             logger.info(
-                f"Plan {self._task_id}: LLM (internal loop) requesting clarification: '{question}'",
+                f"Handle {self._task_id}: LLM requesting clarification: '{question}'",
             )
             await self._clar_up_q_internal.put(question)
             answer = await self._clar_down_q_internal.get()
             logger.info(
-                f"Plan {self._task_id}: User (via plan) provided clarification: '{answer}'",
+                f"Handle {self._task_id}: Received clarification: '{answer}'",
             )
             return answer
 
@@ -150,41 +150,44 @@ class Plan(BaseActiveTask, BaseActorHandle):
         current_tools["request_clarification"] = request_clarification
         return current_tools
 
-    async def _manage_plan_execution(self):
+    async def _manage_execution(self):
         current_task_description = self._initial_task_description
         current_parent_chat_context = None
-        self._state = _PlanState.IDLE
+        self._state = _HandleState.IDLE
 
         try:
             while True:
-                if self._state == _PlanState.STOPPED or self._state == _PlanState.ERROR:
+                if (
+                    self._state == _HandleState.STOPPED
+                    or self._state == _HandleState.ERROR
+                ):
                     logger.info(
-                        f"Plan {self._task_id}: Execution manager exiting due to state {self._state.name}",
+                        f"Handle {self._task_id}: Exiting due to state {self._state.name}",
                     )
                     break
 
-                self._state = _PlanState.RUNNING
+                self._state = _HandleState.RUNNING
                 logger.info(
-                    f"Plan {self._task_id}: Starting/Resuming internal loop with description: '{current_task_description}'",
+                    f"Handle {self._task_id}: Starting/Resuming with: '{current_task_description}'",
                 )
 
-                self._plan_client.reset_messages()
-                self._plan_client.reset_system_message()
+                self._client.reset_messages()
+                self._client.reset_system_message()
 
                 if self._custom_system_prompt:
-                    self._plan_client.set_system_message(self._custom_system_prompt)
+                    self._client.set_system_message(self._custom_system_prompt)
 
                 if current_parent_chat_context:
-                    self._plan_client.append_messages(current_parent_chat_context)
+                    self._client.append_messages(current_parent_chat_context)
 
                 current_parent_chat_context = None
 
                 internal_tools = self._get_internal_tools()
                 self._loop_handle = start_async_tool_loop(
-                    client=self._plan_client,
+                    client=self._client,
                     message=current_task_description,
                     tools=internal_tools,
-                    loop_id=f"{self.__class__.__name__}.{self._manage_plan_execution.__name__}",
+                    loop_id=f"{self.__class__.__name__}.{self._manage_execution.__name__}",
                     propagate_chat_context=True,
                     interrupt_llm_with_interjections=True,
                     log_steps=True,
@@ -196,36 +199,36 @@ class Plan(BaseActiveTask, BaseActorHandle):
 
                 try:
                     loop_result_str = await self._loop_handle.result()
-                    if self._state == _PlanState.RUNNING:
-                        self._state = _PlanState.COMPLETED
+                    if self._state == _HandleState.RUNNING:
+                        self._state = _HandleState.COMPLETED
                         self._result_str = loop_result_str
                         logger.info(
-                            f"Plan {self._task_id}: Internal loop COMPLETED. Result: {self._result_str}",
+                            f"Handle {self._task_id}: COMPLETED. Result: {self._result_str}",
                         )
-                    elif self._state == _PlanState.PAUSED:
+                    elif self._state == _HandleState.PAUSED:
                         logger.info(
-                            f"Plan {self._task_id}: Internal loop stopped for PAUSE.",
+                            f"Handle {self._task_id}: Stopped for PAUSE.",
                         )
-                    elif self._state == _PlanState.STOPPED:
+                    elif self._state == _HandleState.STOPPED:
                         logger.info(
-                            f"Plan {self._task_id}: Internal loop stopped for STOP.",
+                            f"Handle {self._task_id}: Stopped for STOP.",
                         )
                         if self._result_str is None:
-                            self._result_str = f"Plan {self._task_id} was stopped."
+                            self._result_str = f"Handle {self._task_id} was stopped."
                 except asyncio.CancelledError:
                     logger.info(
-                        f"Plan {self._task_id}: Internal loop task was cancelled. Current state: {self._state.name}",
+                        f"Handle {self._task_id}: Cancelled. State: {self._state.name}",
                     )
-                    if self._state == _PlanState.RUNNING:
-                        self._state = _PlanState.STOPPED
+                    if self._state == _HandleState.RUNNING:
+                        self._state = _HandleState.STOPPED
                     if self._result_str is None:
-                        self._result_str = f"Plan {self._task_id} was {self._state.name.lower()} (cancelled)."
+                        self._result_str = f"Handle {self._task_id} was {self._state.name.lower()} (cancelled)."
                 except Exception as e:
                     logger.error(
-                        f"Plan {self._task_id}: Internal loop failed: {e}",
+                        f"Handle {self._task_id}: Failed: {e}",
                         exc_info=True,
                     )
-                    self._state = _PlanState.ERROR
+                    self._state = _HandleState.ERROR
                     self._error_str = str(e)
                     self._result_str = f"Task failed with error: {self._error_str}"
 
@@ -234,64 +237,62 @@ class Plan(BaseActiveTask, BaseActorHandle):
 
                 self._loop_handle = None
 
-                if self._state == _PlanState.PAUSED:
+                if self._state == _HandleState.PAUSED:
                     logger.info(
-                        f"Plan {self._task_id}: Execution PAUSED, awaiting resume signal.",
+                        f"Handle {self._task_id}: PAUSED, awaiting resume.",
                     )
                     await self._resume_requested_event.wait()
                     self._resume_requested_event.clear()
-                    if self._state == _PlanState.STOPPED:
+                    if self._state == _HandleState.STOPPED:
                         logger.info(
-                            f"Plan {self._task_id}: Stop called while paused. Terminating.",
+                            f"Handle {self._task_id}: Stop called while paused. Terminating.",
                         )
                         break
-                    logger.info(f"Plan {self._task_id}: RESUMING execution.")
+                    logger.info(f"Handle {self._task_id}: RESUMING.")
                     current_task_description = "The task was paused and is now resumed. Please review the history and continue."
                     current_parent_chat_context = self._parent_chat_context_on_pause
                     self._parent_chat_context_on_pause = None
                     continue
                 else:
                     logger.info(
-                        f"Plan {self._task_id}: Execution ended with state {self._state.name}. Finalizing.",
+                        f"Handle {self._task_id}: Ended with state {self._state.name}.",
                     )
                     break
         except Exception as e:
             logger.error(
-                f"Plan {self._task_id}: Unexpected error in _manage_plan_execution: {e}",
+                f"Handle {self._task_id}: Unexpected error: {e}",
                 exc_info=True,
             )
             if self._state not in [
-                _PlanState.ERROR,
-                _PlanState.COMPLETED,
-                _PlanState.STOPPED,
+                _HandleState.ERROR,
+                _HandleState.COMPLETED,
+                _HandleState.STOPPED,
             ]:
-                self._state = _PlanState.ERROR
+                self._state = _HandleState.ERROR
             if self._error_str is None:
                 self._error_str = str(e)
             if self._result_str is None:
-                self._result_str = (
-                    f"Plan failed with unexpected error: {self._error_str}"
-                )
+                self._result_str = f"Failed with unexpected error: {self._error_str}"
         finally:
             logger.info(
-                f"Plan {self._task_id}: Setting overall completion event. Final state: {self._state.name}",
+                f"Handle {self._task_id}: Completion event set. Final state: {self._state.name}",
             )
-            self._overall_plan_completion_event.set()
+            self._completion_event.set()
 
     @functools.wraps(BaseActiveTask.result, updated=())
     async def result(self) -> str:
-        await self._overall_plan_completion_event.wait()
+        await self._completion_event.wait()
         if self._error_str:
             return f"Error: {self._error_str}"
         return (
             self._result_str
             if self._result_str is not None
-            else f"Plan {self._task_id} concluded without a specific result (State: {self._state.name})."
+            else f"Handle {self._task_id} concluded without a result (State: {self._state.name})."
         )
 
     @functools.wraps(BaseActiveTask.done, updated=())
     def done(self) -> bool:
-        return self._overall_plan_completion_event.is_set()
+        return self._completion_event.is_set()
 
     async def next_clarification(self) -> dict:
         """Await the next clarification question from the running internal loop."""
@@ -299,7 +300,7 @@ class Plan(BaseActiveTask, BaseActorHandle):
         return {"question": question}
 
     async def next_notification(self) -> dict:
-        """Await the next notification (not supported for Plan; waits indefinitely)."""
+        """Await the next notification (not supported; waits indefinitely)."""
         await asyncio.Event().wait()
         return {}
 
@@ -313,7 +314,7 @@ class Plan(BaseActiveTask, BaseActorHandle):
 
     @property
     def clarification_up_q(self) -> asyncio.Queue[str]:
-        """Queue for this plan to send clarification questions upwards."""
+        """Queue for sending clarification questions upwards."""
         return self._clar_up_q_internal
 
     @property
@@ -323,22 +324,22 @@ class Plan(BaseActiveTask, BaseActorHandle):
     def _is_valid_method(self, name: str) -> bool:
         if name == "stop":
             return self._state in (
-                _PlanState.RUNNING,
-                _PlanState.PAUSED,
-                _PlanState.IDLE,
+                _HandleState.RUNNING,
+                _HandleState.PAUSED,
+                _HandleState.IDLE,
             )
         if name == "pause":
-            return self._state == _PlanState.RUNNING
+            return self._state == _HandleState.RUNNING
         if name == "resume":
-            return self._state == _PlanState.PAUSED
+            return self._state == _HandleState.PAUSED
         if name == "interject":
             return self._state in (
-                _PlanState.RUNNING,
-                _PlanState.PAUSED,
-                _PlanState.IDLE,
+                _HandleState.RUNNING,
+                _HandleState.PAUSED,
+                _HandleState.IDLE,
             )
         if name == "ask":
-            return self._state in (_PlanState.RUNNING, _PlanState.PAUSED)
+            return self._state in (_HandleState.RUNNING, _HandleState.PAUSED)
         return False
 
     @functools.wraps(BaseActiveTask.stop, updated=())
@@ -352,21 +353,21 @@ class Plan(BaseActiveTask, BaseActorHandle):
             if self.done():
                 return await self.result()
             raise RuntimeError(
-                f"Plan {self._task_id} cannot be stopped in state {self._state.name}.",
+                f"Handle {self._task_id} cannot be stopped in state {self._state.name}.",
             )
 
         logger.info(
-            f"Plan {self._task_id}: Stopping. Current state: {self._state.name}",
+            f"Handle {self._task_id}: Stopping. State: {self._state.name}",
         )
         previous_state = self._state
-        self._state = _PlanState.STOPPED
+        self._state = _HandleState.STOPPED
         self._result_str = (
-            f"Plan {self._task_id} was stopped."
+            f"Handle {self._task_id} was stopped."
             if not reason
-            else f"Plan {self._task_id} was stopped: {reason}"
+            else f"Handle {self._task_id} was stopped: {reason}"
         )
 
-        if previous_state == _PlanState.PAUSED:
+        if previous_state == _HandleState.PAUSED:
             self._resume_requested_event.set()
 
         if self._loop_handle and not self._loop_handle.done():
@@ -378,64 +379,63 @@ class Plan(BaseActiveTask, BaseActorHandle):
             except Exception:
                 self._loop_handle.stop(reason)
         elif (
-            previous_state == _PlanState.IDLE
-            and not self._overall_plan_completion_event.is_set()
+            previous_state == _HandleState.IDLE and not self._completion_event.is_set()
         ):
             logger.warning(
-                f"Plan {self._task_id}: Stop called in IDLE state. Forcing overall completion.",
+                f"Handle {self._task_id}: Stop called in IDLE state. Forcing completion.",
             )
-            self._overall_plan_completion_event.set()
+            self._completion_event.set()
 
-        await self._overall_plan_completion_event.wait()
+        await self._completion_event.wait()
         return self._result_str
 
     @functools.wraps(BaseActiveTask.pause, updated=())
     async def pause(self) -> str:
         if not self._is_valid_method("pause"):
             raise RuntimeError(
-                f"Plan {self._task_id} cannot be paused in state {self._state.name}.",
+                f"Handle {self._task_id} cannot be paused in state {self._state.name}.",
             )
         logger.info(
-            f"Plan {self._task_id}: Pausing. Current state: {self._state.name}",
+            f"Handle {self._task_id}: Pausing. State: {self._state.name}",
         )
-        self._state = _PlanState.PAUSED
+        self._state = _HandleState.PAUSED
 
-        if self._plan_client and self._plan_client.messages:
+        if self._client and self._client.messages:
             self._parent_chat_context_on_pause = copy.deepcopy(
-                self._plan_client.messages,
+                self._client.messages,
             )
             logger.info(
-                f"Plan {self._task_id}: Context saved on pause: {len(self._parent_chat_context_on_pause)} messages.",
+                f"Handle {self._task_id}: Context saved: {len(self._parent_chat_context_on_pause)} messages.",
             )
         else:
             self._parent_chat_context_on_pause = []
             logger.info(
-                f"Plan {self._task_id}: No active LLM context to save on pause.",
+                f"Handle {self._task_id}: No context to save on pause.",
             )
 
         if self._loop_handle and not self._loop_handle.done():
             logger.info(
-                f"Plan {self._task_id}: Requesting stop of current internal loop for pause.",
+                f"Handle {self._task_id}: Stopping internal loop for pause.",
             )
             self._loop_handle.stop()
         else:
             logger.warning(
-                f"Plan {self._task_id}: Pause called but no active internal loop_handle to stop.",
+                f"Handle {self._task_id}: Pause called but no active loop to stop.",
             )
 
-        return f"Plan {self._task_id} paused successfully. Awaiting resume."
+        return f"Handle {self._task_id} paused successfully."
 
     @functools.wraps(BaseActiveTask.resume, updated=())
     async def resume(self) -> str:
         if not self._is_valid_method("resume"):
             raise RuntimeError(
-                f"Plan {self._task_id} cannot be resumed in state {self._state.name}.",
+                f"Handle {self._task_id} cannot be resumed in state {self._state.name}.",
             )
         logger.info(
-            f"Plan {self._task_id}: Requesting resume. Current state: {self._state.name}",
+            f"Handle {self._task_id}: Resuming. State: {self._state.name}",
         )
         self._resume_requested_event.set()
-        return f"Plan {self._task_id} is resuming."
+        return f"Handle {self._task_id} is resuming."
 
     @functools.wraps(BaseActiveTask.interject, updated=())
     async def interject(
@@ -447,12 +447,12 @@ class Plan(BaseActiveTask, BaseActorHandle):
     ) -> str:
         if not self._is_valid_method("interject"):
             if self.done():
-                return f"Error: Plan {self._task_id} is already done, cannot interject."
-            return f"Error: Plan {self._task_id} is in state {self._state.name}, cannot interject."
+                return f"Error: Handle {self._task_id} is done, cannot interject."
+            return f"Error: Handle {self._task_id} is in state {self._state.name}, cannot interject."
 
         if not self._loop_handle:
             logger.info(
-                f"Plan {self._task_id}: Interject called before loop handle was created. Waiting briefly.",
+                f"Handle {self._task_id}: Interject called before loop ready. Waiting...",
             )
             for _ in range(5):
                 if self._loop_handle:
@@ -460,10 +460,10 @@ class Plan(BaseActiveTask, BaseActorHandle):
                 await asyncio.sleep(1)
 
             if not self._loop_handle:
-                return f"Error: Plan {self._task_id} did not initialize in time for interjection."
+                return f"Error: Handle {self._task_id} did not initialize in time."
 
         logger.info(
-            f"Plan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
+            f"Handle {self._task_id}: Interjecting: '{message}'",
         )
         try:
             await self._loop_handle.interject(
@@ -473,20 +473,19 @@ class Plan(BaseActiveTask, BaseActorHandle):
             )
         except TypeError:
             await self._loop_handle.interject(message)
-        return f"Interjection '{message}' sent to plan {self._task_id}."
+        return f"Interjection sent to handle {self._task_id}."
 
     @functools.wraps(BaseActiveTask.ask, updated=())
     async def ask(self, question: str) -> SteerableToolHandle:
         """
-        Asks a question about the current state of the plan by creating a new,
-        isolated tool loop that returns a handle to its result.
+        Asks a question about the current state by creating an isolated tool loop.
         """
         if not self._is_valid_method("ask"):
             raise RuntimeError(
-                f"Cannot ask question for plan {self._task_id} in state {self._state.name}.",
+                f"Cannot ask question for handle {self._task_id} in state {self._state.name}.",
             )
 
-        logger.info(f"Plan {self._task_id}: Answering query: '{question}'")
+        logger.info(f"Handle {self._task_id}: Answering query: '{question}'")
         current_context_to_share = _strip_image_keys(copy.deepcopy(self.chat_history))
         self._ask_client.reset_messages()
         self._ask_client.reset_system_message()
@@ -548,5 +547,6 @@ class Plan(BaseActiveTask, BaseActorHandle):
         )
 
 
-# Backwards compatibility alias
-ToolLoopPlan = Plan
+# Backwards compatibility aliases
+Plan = ActorHandle
+ToolLoopPlan = ActorHandle

@@ -486,7 +486,7 @@ class PreconditionDecision(BaseModel):
     )
 
 
-class _HierarchicalPlanState(enum.Enum):
+class _HierarchicalHandleState(enum.Enum):
     """Manages the detailed lifecycle state of a hierarchical plan."""
 
     IDLE = enum.auto()
@@ -624,7 +624,7 @@ class PlanSanitizer(ast.NodeTransformer):
     - Recursively applies transformations to nested functions.
     """
 
-    def __init__(self, plan: "HierarchicalPlan"):
+    def __init__(self, plan: "HierarchicalActorHandle"):
         self._plan = plan
         self._function_context: list[str] = []
         self._is_in_async_context = False
@@ -1045,7 +1045,7 @@ class _HistoryCapturingHandleProxy(SteerableToolHandle):
     def __init__(
         self,
         real_handle: SteerableToolHandle,
-        plan: "HierarchicalPlan",
+        plan: "HierarchicalActorHandle",
         call_repr: str,
         cache_key: tuple,
         meta: dict,
@@ -1188,7 +1188,7 @@ class _SteerableToolHandleProxy:
     def __init__(
         self,
         real_handle: SteerableToolHandle,
-        plan: "HierarchicalPlan",
+        plan: "HierarchicalActorHandle",
         handle_name: str,
         handle_id: str,
     ):
@@ -1421,7 +1421,11 @@ class _ActionProviderProxy:
     calls, apply idempotency caching, and log them for verification.
     """
 
-    def __init__(self, real_action_provider: ActionProvider, plan: "HierarchicalPlan"):
+    def __init__(
+        self,
+        real_action_provider: ActionProvider,
+        plan: "HierarchicalActorHandle",
+    ):
         self._real_action_provider = real_action_provider
         self._plan = plan
 
@@ -1762,7 +1766,7 @@ class _ActionProviderProxy:
         return async_wrapper if inspect.iscoroutinefunction(real_attr) else sync_wrapper
 
 
-class HierarchicalPlan(BaseActiveTask, BaseActorHandle):
+class HierarchicalActorHandle(BaseActiveTask, BaseActorHandle):
     """
     Represents and executes a single, dynamically generated hierarchical plan.
 
@@ -1831,7 +1835,7 @@ class HierarchicalPlan(BaseActiveTask, BaseActorHandle):
         self.escalation_count = 0
         self._is_complete = False
         self._execution_task: Optional[asyncio.Task] = None
-        self._state = _HierarchicalPlanState.IDLE
+        self._state = _HierarchicalHandleState.IDLE
 
         self.run_id = 0
         self.invocation_counter = 0
@@ -1943,7 +1947,7 @@ class HierarchicalPlan(BaseActiveTask, BaseActorHandle):
             self._is_complete = True
             self._completion_event.set()
 
-    def _set_state(self, new_state: _HierarchicalPlanState):
+    def _set_state(self, new_state: _HierarchicalHandleState):
         """Sets the plan state and logs the transition."""
         old_state = self._state
         if old_state == new_state:
@@ -1969,7 +1973,7 @@ class HierarchicalPlan(BaseActiveTask, BaseActorHandle):
         self.runtime.execution_mode = mode
         try:
             if not self._is_complete:
-                self._set_state(_HierarchicalPlanState.RUNNING)
+                self._set_state(_HierarchicalHandleState.RUNNING)
 
             if self.plan_source_code is None:
                 if self.entrypoint is not None:
@@ -2040,7 +2044,7 @@ async def main_plan():
             await self._start_main_execution_loop()
         except Exception as e:
             logger.error(f"Plan initialization failed: {e}", exc_info=True)
-            self._set_state(_HierarchicalPlanState.ERROR)
+            self._set_state(_HierarchicalHandleState.ERROR)
             self._set_final_result(f"ERROR: Plan initialization failed: {e}")
         finally:
             try:
@@ -2083,7 +2087,7 @@ async def main_plan():
                 break
 
             if checkpoint_waiter in done:
-                if self._state == _HierarchicalPlanState.RUNNING:
+                if self._state == _HierarchicalHandleState.RUNNING:
                     self.runtime._release_from_checkpoint()
 
         if main_task in self._child_tasks:
@@ -2099,7 +2103,7 @@ async def main_plan():
                 )
 
                 self.is_verifying_post_completion = True
-                self._set_state(_HierarchicalPlanState.PAUSED_FOR_INTERJECTION)
+                self._set_state(_HierarchicalHandleState.PAUSED_FOR_INTERJECTION)
                 if hasattr(self, "_done_events") and not self._done_events.empty():
                     try:
                         event_to_signal = self._done_events.get_nowait()
@@ -2132,7 +2136,7 @@ async def main_plan():
                     self.action_log.append("All background verifications complete.")
 
                 await self._cancel_all_background_tasks()
-                self._set_state(_HierarchicalPlanState.COMPLETED)
+                self._set_state(_HierarchicalHandleState.COMPLETED)
                 self._set_final_result(str(result))
                 return
 
@@ -2142,7 +2146,7 @@ async def main_plan():
                     f"Plan execution failed with unhandled exception: {e}",
                     exc_info=True,
                 )
-                self._set_state(_HierarchicalPlanState.ERROR)
+                self._set_state(_HierarchicalHandleState.ERROR)
                 self.action_log.append(f"ERROR: Plan execution failed: {e}")
                 self._set_final_result(f"ERROR: Plan execution failed: {e}")
 
@@ -2400,7 +2404,7 @@ async def main_plan():
             The final result string of the plan.
         """
         await self._completion_event.wait()
-        if self._state == _HierarchicalPlanState.ERROR:
+        if self._state == _HierarchicalHandleState.ERROR:
             import traceback
 
             raise RuntimeError(f"Plan failed in state ERROR: {traceback.format_exc()}")
@@ -2722,7 +2726,7 @@ async def main_plan():
             self.action_log.append(
                 f"Post-completion verification failed for '{item.function_name}'. Re-opening plan to recover.",
             )
-            self._set_state(_HierarchicalPlanState.RUNNING)
+            self._set_state(_HierarchicalHandleState.RUNNING)
             self.is_verifying_post_completion = False
 
         async with self._verification_lock:
@@ -2928,7 +2932,7 @@ async def main_plan():
                 f"Critical error during verification recovery targeting '{target_function_name_override}': {e}",
                 exc_info=True,
             )
-            self._set_state(_HierarchicalPlanState.ERROR)
+            self._set_state(_HierarchicalHandleState.ERROR)
             self._set_final_result(
                 f"ERROR: Unrecoverable error during verification recovery targeting '{target_function_name_override}': {e}",
             )
@@ -3381,7 +3385,7 @@ async def main_plan():
                     "replace_task",
                     "clarify",
                 )
-                if self._state == _HierarchicalPlanState.PAUSED and should_resume:
+                if self._state == _HierarchicalHandleState.PAUSED and should_resume:
                     await self.resume()
 
     async def _execute_interjection_decision(
@@ -3545,8 +3549,8 @@ async def main_plan():
             self._restart_execution_loop("modify_task interjection")
 
             if self._state in (
-                _HierarchicalPlanState.PAUSED,
-                _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
+                _HierarchicalHandleState.PAUSED,
+                _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
             ):
                 self.runtime.resume()
 
@@ -3686,7 +3690,7 @@ async def main_plan():
                 self.action_log.append(
                     f"SANDBOX: Starting sub-plan for goal: '{decision.new_goal}'",
                 )
-                sandbox_plan = HierarchicalPlan(
+                sandbox_plan = HierarchicalActorHandle(
                     actor=self.actor,
                     goal=decision.new_goal,
                     parent_chat_context=self.parent_chat_context,
@@ -3864,7 +3868,7 @@ async def main_plan():
 
         if cancel is None:
             if self.persist:
-                self._set_state(_HierarchicalPlanState.COMPLETED)
+                self._set_state(_HierarchicalHandleState.COMPLETED)
                 self._set_final_result(result_str)
                 try:
                     if hasattr(self, "_done_events") and not self._done_events.empty():
@@ -3873,14 +3877,14 @@ async def main_plan():
                 except Exception:
                     pass
             else:
-                self._set_state(_HierarchicalPlanState.STOPPED)
+                self._set_state(_HierarchicalHandleState.STOPPED)
                 if self._execution_task and not self._execution_task.done():
                     self._execution_task.cancel()
                 self._set_final_result(result_str)
         else:
             if cancel is False:
 
-                self._set_state(_HierarchicalPlanState.COMPLETED)
+                self._set_state(_HierarchicalHandleState.COMPLETED)
                 self._set_final_result(result_str)
                 try:
                     if hasattr(self, "_done_events") and not self._done_events.empty():
@@ -3890,7 +3894,7 @@ async def main_plan():
                     pass
             else:
 
-                self._set_state(_HierarchicalPlanState.STOPPED)
+                self._set_state(_HierarchicalHandleState.STOPPED)
                 if self._execution_task and not self._execution_task.done():
                     self._execution_task.cancel()
                 self._set_final_result(result_str)
@@ -3916,8 +3920,8 @@ async def main_plan():
             A status message.
         """
         if self._state in (
-            _HierarchicalPlanState.RUNNING,
-            _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
+            _HierarchicalHandleState.RUNNING,
+            _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
         ):
             if immediate:
                 action_provider = self._get_action_provider()
@@ -3928,16 +3932,16 @@ async def main_plan():
                         await backend.interrupt_current_action()
 
             self.runtime.pause()
-            self._set_state(_HierarchicalPlanState.PAUSED)
+            self._set_state(_HierarchicalHandleState.PAUSED)
             pause_type = "immediately" if immediate else "by user"
             self.action_log.append(f"Plan paused {pause_type}.")
             return "Plan paused."
 
         if self._state in (
-            _HierarchicalPlanState.PAUSED,
-            _HierarchicalPlanState.COMPLETED,
-            _HierarchicalPlanState.STOPPED,
-            _HierarchicalPlanState.ERROR,
+            _HierarchicalHandleState.PAUSED,
+            _HierarchicalHandleState.COMPLETED,
+            _HierarchicalHandleState.STOPPED,
+            _HierarchicalHandleState.ERROR,
         ):
             return f"Plan already in state {self._state.name}, no action taken."
 
@@ -3950,9 +3954,9 @@ async def main_plan():
         Returns:
             A status message.
         """
-        if self._state == _HierarchicalPlanState.PAUSED:
+        if self._state == _HierarchicalHandleState.PAUSED:
             self.runtime.resume()
-            self._set_state(_HierarchicalPlanState.RUNNING)
+            self._set_state(_HierarchicalHandleState.RUNNING)
             self.action_log.append("Plan resumed by user.")
             return "Plan resumed."
         return f"Cannot resume from state {self._state.name}."
@@ -4008,7 +4012,7 @@ async def main_plan():
     async def next_notification(self) -> dict:
         """
         Awaits the next notification from the running plan.
-        NOTE: This is not implemented for HierarchicalPlan and will wait indefinitely.
+        NOTE: This is not implemented for HierarchicalActorHandle and will wait indefinitely.
         """
         await asyncio.Event().wait()
         return {}
@@ -4034,18 +4038,18 @@ async def main_plan():
         if name == "stop":
             return not self._is_complete
         if name == "pause":
-            return self._state == _HierarchicalPlanState.RUNNING
+            return self._state == _HierarchicalHandleState.RUNNING
         if name == "resume":
-            return self._state == _HierarchicalPlanState.PAUSED
+            return self._state == _HierarchicalHandleState.PAUSED
         if name == "ask":
             return self._state not in (
-                _HierarchicalPlanState.IDLE,
-                _HierarchicalPlanState.EXPLORING,
+                _HierarchicalHandleState.IDLE,
+                _HierarchicalHandleState.EXPLORING,
             )
         if name == "interject":
             return self._state in (
-                _HierarchicalPlanState.RUNNING,
-                _HierarchicalPlanState.PAUSED_FOR_INTERJECTION,
+                _HierarchicalHandleState.RUNNING,
+                _HierarchicalHandleState.PAUSED_FOR_INTERJECTION,
             )
         return False
 
@@ -4161,7 +4165,7 @@ class HierarchicalActor(BaseActor):
 
     def _get_scoped_context_from_plan_state(
         self,
-        plan: "HierarchicalPlan",
+        plan: "HierarchicalActorHandle",
     ) -> Dict[str, Any]:
         """
         Builds a scoped context dictionary using the plan's current call stack
@@ -4278,7 +4282,7 @@ class HierarchicalActor(BaseActor):
 
         return agent_server_url
 
-    def _sanitize_code(self, code: str, plan: HierarchicalPlan) -> str:
+    def _sanitize_code(self, code: str, plan: HierarchicalActorHandle) -> str:
         """
         Parses, sanitizes, and unparses code to enforce security.
 
@@ -4311,7 +4315,7 @@ class HierarchicalActor(BaseActor):
 
     def _generate_cache_key(
         self,
-        plan: HierarchicalPlan,
+        plan: HierarchicalActorHandle,
         tool_name: str,
         args: tuple,
         kwargs: dict,
@@ -4362,9 +4366,9 @@ class HierarchicalActor(BaseActor):
         entrypoint_args: Optional[list[Any]] = None,
         entrypoint_kwargs: Optional[dict[str, Any]] = None,
         **kwargs,
-    ) -> HierarchicalPlan:
+    ) -> HierarchicalActorHandle:
         """
-        Creates and starts a new HierarchicalPlan active task.
+        Creates and starts a new HierarchicalActorHandle active task.
 
         Args:
             description: The high-level goal for the task.
@@ -4378,7 +4382,7 @@ class HierarchicalActor(BaseActor):
             new_session: If True, creates a new browser/desktop session for this plan. If False (default), reuses the actor's shared session.
 
         Returns:
-            An active handle to the running HierarchicalPlan.
+            An active handle to the running HierarchicalActorHandle.
         """
         dedicated_action_provider = None
         if new_session:
@@ -4391,7 +4395,7 @@ class HierarchicalActor(BaseActor):
                 connect_now=self._connect_now,
             )
 
-        plan_handle = HierarchicalPlan(
+        plan_handle = HierarchicalActorHandle(
             actor=self,
             goal=description,
             parent_chat_context=_parent_chat_context,
@@ -4410,7 +4414,7 @@ class HierarchicalActor(BaseActor):
         self._plan_handles.add(plan_handle)
         return plan_handle
 
-    def _load_plan_module(self, plan: HierarchicalPlan):
+    def _load_plan_module(self, plan: HierarchicalActorHandle):
         """
         Load plan source code as a module from a temporary file.
         """
@@ -4521,7 +4525,7 @@ class HierarchicalActor(BaseActor):
 
         return create_sandbox_globals()
 
-    async def _prepare_execution_environment(self, plan: HierarchicalPlan):
+    async def _prepare_execution_environment(self, plan: HierarchicalActorHandle):
         """
         Prepares the sandboxed execution environment for a plan.
         """
@@ -4597,7 +4601,7 @@ class HierarchicalActor(BaseActor):
 
     async def _verify_and_correct_state(
         self,
-        plan: HierarchicalPlan,
+        plan: HierarchicalActorHandle,
         target_precondition: dict,
         context_label: str,
     ):
@@ -4687,7 +4691,7 @@ class HierarchicalActor(BaseActor):
 
     async def _ensure_precondition(
         self,
-        plan: HierarchicalPlan,
+        plan: HierarchicalActorHandle,
         function_name: str,
     ) -> None:
         """
@@ -4713,7 +4717,7 @@ class HierarchicalActor(BaseActor):
 
     async def _run_course_correction_agent(
         self,
-        plan: HierarchicalPlan,
+        plan: HierarchicalActorHandle,
         target_screenshot: bytes,
         trajectory: list[str],
     ) -> None:
@@ -4804,7 +4808,7 @@ class HierarchicalActor(BaseActor):
         finally:
             pass
 
-    def _create_verify_decorator(self, plan: HierarchicalPlan):
+    def _create_verify_decorator(self, plan: HierarchicalActorHandle):
         """
         Creates the @verify decorator for a given plan instance.
 
@@ -5376,14 +5380,14 @@ class HierarchicalActor(BaseActor):
 
     async def _generate_initial_plan(
         self,
-        plan: HierarchicalPlan,
+        plan: HierarchicalActorHandle,
         goal: str,
     ) -> str:
         """
         Generates the initial Python script for the plan from a user goal.
 
         Args:
-            plan: The HierarchicalPlan instance to generate the initial plan for.
+            plan: The HierarchicalActorHandle instance to generate the initial plan for.
             goal: The high-level user goal.
 
         Returns:
@@ -5449,7 +5453,7 @@ class HierarchicalActor(BaseActor):
 
     async def _dynamic_implement(
         self,
-        plan: HierarchicalPlan,
+        plan: HierarchicalActorHandle,
         function_name: str,
         call_stack_snapshot: Optional[list[str]] = None,
         scoped_context_snapshot: Optional[dict] = None,
@@ -5604,7 +5608,7 @@ class HierarchicalActor(BaseActor):
 
     async def _check_state_against_goal(
         self,
-        plan: HierarchicalPlan,
+        plan: HierarchicalActorHandle,
         function_name: str,
         function_docstring: str | None,
         function_source_code: str | None,
@@ -5682,7 +5686,11 @@ class HierarchicalActor(BaseActor):
             plan.verification_client.reset_response_format()
 
     # TODO: DEPRECATED
-    async def _execute_course_correction(self, plan: HierarchicalPlan, code: str):
+    async def _execute_course_correction(
+        self,
+        plan: HierarchicalActorHandle,
+        code: str,
+    ):
         """
         Executes a dynamically generated script to correct the browser state.
         Runs under the current plan's run_id so tool calls are not blocked by the proxy.
@@ -5746,7 +5754,7 @@ class HierarchicalActor(BaseActor):
 
     async def close(self):
         """Shuts down the actor and its associated resources gracefully."""
-        plan: HierarchicalPlan = None
+        plan: HierarchicalActorHandle = None
         for plan in self._plan_handles:
             await plan.stop()
         self.action_provider.browser.stop()
