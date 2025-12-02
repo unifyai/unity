@@ -84,6 +84,8 @@ def build_ask_prompt(*, tools: Dict[str, Callable]) -> str:
             "    Example: queries=['AI trends', 'LLM fine-tuning'] searches both topics on the same site in one call.",
             "  • **Multi-site queries**: For different gated sites, call this tool exactly once per site.",
             "    Example: 'Search Medium and TDS for AI and LLM' → 1 call for Medium + 1 call for TDS = 2 total calls.",
+            "  • **Query tips**: If location is provided in user query, prefer town/city names over postcodes.",
+            "    Example: queries='care homes in Manchester' instead of 'care homes SW1A'.",
             "  • **Returns raw content**: The tool returns ALL raw page content found (not pre-summarized).",
             "    After receiving ALL results, synthesize and summarize into a coherent answer with inline citations.",
             "  • Examples:",
