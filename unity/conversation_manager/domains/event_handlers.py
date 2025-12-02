@@ -29,7 +29,7 @@ class EventHandler:
     @classmethod
     def handle_event(cls, event: Event, cm: "ConversationManager", *args, **kwargs):
         # maybe add the event bus logging thing here
-        print(f"Recieved EVENT: {event}")
+        print(f"Received EVENT: {event}")
         if event.__class__.loggable:
             asyncio.create_task(
                 managers_utils.queue_operation(managers_utils.publish_bus_events, event)
@@ -309,7 +309,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register((StartupEvent))
 async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
-    print("recieved start up event")
+    print("Received start up event")
     payload = event.to_dict()["payload"]
     cm.set_details(payload)
     cm.call_manager.set_config(cm.get_call_config())
@@ -327,7 +327,7 @@ async def _(event: StartupEvent, cm: "ConversationManager", *args, **kwargs):
 
 @EventHandler.register(GetContactsResponse)
 async def _(event: GetContactsResponse, cm: "ConversationManager", *args, **kwargs):
-    print("recieved and setting contacts")
+    print("Received and setting contacts")
     cm.contact_index.set_contacts(event.contacts)
     # print(cm.contact_index.contacts)
 
@@ -388,7 +388,7 @@ async def _(
 async def _(event: ConductorResult, cm: "ConversationManager", *args, **kwargs):
     cm.notifications_bar.push_notif(
         "Conductor",
-        f"Recieved result for handle_id: {event.handle_id}\nResult: {event.result}",
+        f"Received result for handle_id: {event.handle_id}\nResult: {event.result}",
         event.timestamp,
     )
     cm.conductor_handles.pop(event.handle_id, None)
@@ -402,7 +402,7 @@ async def _(
     *args,
     **kwargs,
 ):
-    print("recieved conductor pause/resume event", event.to_dict())
+    print("Received conductor pause/resume event", event.to_dict())
     action = "pause" if isinstance(event, ConductorPauseActor) else "resume"
     reason = getattr(event, "reason", "")
     affected: list[int] = []

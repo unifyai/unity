@@ -40,7 +40,7 @@ local_contact = {
 
 # Map subscription IDs to their corresponding event types
 events_map: dict[str, Event] = {
-    # "whatsapp": WhatsappMessageRecievedEvent,
+    # "whatsapp": WhatsappMessageReceivedEvent,
     "msg": SMSReceived,
     "email": EmailReceived,
     "unify_message": UnifyMessageReceived,
