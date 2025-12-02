@@ -84,7 +84,9 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
                 message_content = "<Sending Call...>"
                 notif_content = f"Call sent to {contact['first_name']}"
             case UnifyCallReceived() as e:
-                cm.call_manager.start_unify_call(e.agent_name, e.room_name, contact)
+                cm.call_manager.start_unify_call(
+                    contact, boss, e.agent_name, e.room_name
+                )
                 message_content = "<Recieving Call...>"
                 notif_content = f"Call received from {contact['first_name']}"
 

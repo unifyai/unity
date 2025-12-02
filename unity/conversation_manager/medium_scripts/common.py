@@ -139,12 +139,19 @@ def configure_from_cli(
     Returns the computed agent_name ("unity_<assistant_number>").
     """
     assistant_number = ""
+    agent_name = ""
+    room_name = ""
     print("sys.argv", sys.argv)
 
     # max index used = 5 + len(extra_env)
     required_len = 5 + len(extra_env)
     if len(sys.argv) > required_len:
         assistant_number = sys.argv[2]
+        if " " in assistant_number:
+            agent_name, room_name = assistant_number.split(" ")
+        else:
+            agent_name = f"unity_{assistant_number}"
+            room_name = agent_name
         os.environ["VOICE_PROVIDER"] = (
             sys.argv[3] if sys.argv[3] != "None" else "cartesia"
         )
@@ -172,8 +179,7 @@ def configure_from_cli(
         print("Not enough arguments provided")
         sys.exit(1)
 
-    agent_name = f"unity_{assistant_number}"
-    return agent_name
+    return agent_name, room_name
 
 
 def should_dispatch_agent() -> bool:

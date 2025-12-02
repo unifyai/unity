@@ -210,7 +210,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
 if __name__ == "__main__":
     # Shared CLI handling
-    agent_name = configure_from_cli(
+    agent_name, room_name = configure_from_cli(
         extra_env=[
             ("CONTACT", True),
             ("BOSS", True),
@@ -221,7 +221,7 @@ if __name__ == "__main__":
     # dispatch agent
     if should_dispatch_agent():
         print(f"Dispatching agent {agent_name}")
-        dispatch_agent(agent_name)
+        dispatch_agent(agent_name, room_name)
         print(f"Agent {agent_name} dispatched")
 
     agents.cli.run_app(
