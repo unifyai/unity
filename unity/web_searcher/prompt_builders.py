@@ -251,6 +251,9 @@ def build_update_prompt(*, tools: Dict[str, Callable]) -> str:
         "General Rules",
         "-------------",
         "- Treat `host` as the natural unique key for a website entry.",
+        "- **Naming**: Use a human-friendly `name` (e.g., 'Medium', 'GitHub', 'Financial Times'), NOT the host address.",
+        "  Good: name='HealthInvestor', host='healthinvestor.co.uk'",
+        "  Bad: name='healthinvestor.co.uk', host='healthinvestor.co.uk'",
         "- After any mutation (create/delete), verify results using `ask` (e.g., `_filter_websites` or `_search_websites`).",
         "- Prefer minimal, targeted tool calls; handle multiple entries comprehensively when requested.",
     ]
