@@ -76,7 +76,7 @@ class WaitForNextEvent(BaseModel):
 
 class ContactDetails(BaseModel):
     first_name: Optional[str]
-    surename: Optional[str]
+    surname: Optional[str]
 
 
 class ContactDetailsPhone(ContactDetails):
