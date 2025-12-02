@@ -31,7 +31,9 @@ class EventHandler:
         # maybe add the event bus logging thing here
         print(f"Recieved EVENT: {event}")
         if event.__class__.loggable:
-            asyncio.create_task(managers_utils.publish_bus_events(event))
+            asyncio.create_task(
+                managers_utils.queue_operation(managers_utils.publish_bus_events, event)
+            )
         print(event)
         f = cls._registry.get(event.__class__)
         if not f:
@@ -141,7 +143,7 @@ async def _(
 )
 async def _(event: Event, cm: "ConversationManager", *args, **kwargs):
     # publish transcript
-    asyncio.create_task(managers_utils.log_message(cm, event))
+    await managers_utils.queue_operation(managers_utils.log_message, cm, event)
     print("publishing utterance", event)
     contact_id = event.contact["contact_id"]
     contact = cm.contact_index.get_contact(contact_id=contact_id)
@@ -225,7 +227,7 @@ async def _(event, cm: "ConversationManager", *args, **kwargs):
     ),
 )
 async def _(event, cm: "ConversationManager", *args, **kwargs):
-    asyncio.create_task(managers_utils.log_message(cm, event))
+    await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
     # update state
     thread = None
@@ -441,7 +443,7 @@ async def _(event: LogMessageResponse, cm: "ConversationManager", *args, **kwarg
 
 @EventHandler.register(PreHireMessage)
 async def _(event: PreHireMessage, cm: "ConversationManager", *args, **kwargs):
-    asyncio.create_task(managers_utils.log_message(cm, event))
+    await managers_utils.queue_operation(managers_utils.log_message, cm, event)
 
 
 @EventHandler.register(SummarizeContext)

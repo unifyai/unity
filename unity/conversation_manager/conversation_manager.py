@@ -296,11 +296,9 @@ class ConversationManager(metaclass=SingletonABCMeta):
                 self.build_response_model()
                 # asyncio.create_task(self.publish_startup())
 
-                # this feels like it should be its own method really buts its really big
-                # so will keep that way for now
-                # also this is now fully blocking, will discuss it again with everyone what is the best
-                # way to deal with this
-                await managers_utils.init_conv_manager(self)
+                # Start initialization and operations listener
+                asyncio.create_task(managers_utils.init_conv_manager(self))
+                asyncio.create_task(managers_utils.listen_to_operations(self))
                 print("Default startup")
 
             while True:
