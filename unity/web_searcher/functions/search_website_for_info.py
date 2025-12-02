@@ -67,7 +67,7 @@ async def search_website_for_info(
     print(f"[WS] Found {len(links)} links")
 
     # Step 3: Extract content from top N articles using raw content extraction
-    n = 3
+    n = 5
     content_parts = []
     visited_urls = set()
 
@@ -135,4 +135,4 @@ async def search_website_for_info(
             print(f"[WS] Failed to extract from {href[:50]}: {e}")
             continue
 
-    return str(content_parts)
+    return "\n\n".join(content_parts)
