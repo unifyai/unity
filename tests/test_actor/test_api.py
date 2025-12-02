@@ -7,7 +7,6 @@ from unity.common.async_tool_loop import start_async_tool_loop
 from unity.common.llm_client import new_llm_client
 from unity.actor.base import BaseActor
 from unity.task_scheduler.base import BaseActiveTask
-from unity.actor.browser_use_actor import BrowserUseActor, BrowserUsePlan
 from unity.actor.tool_loop_actor import ToolLoopActor, ToolLoopPlan
 from tests.helpers import _handle_project
 
@@ -23,7 +22,6 @@ ActorFixture = Tuple[Type[BaseActor], Type[BaseActiveTask], dict]
 
 @pytest.fixture(
     params=[
-        (BrowserUseActor, BrowserUsePlan, {"headless": True}),
         (ToolLoopActor, ToolLoopPlan, {"headless": True}),
     ],
 )
