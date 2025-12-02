@@ -641,6 +641,7 @@ class WebSearcher(BaseWebSearcher):
             entrypoint=function_id,
             entrypoint_args=[query, host, creds],
             persist=False,
+            new_session=True,
         )
         result = await plan.result()
         return str(result)
