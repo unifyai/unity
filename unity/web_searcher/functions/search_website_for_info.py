@@ -85,6 +85,8 @@ async def search_website_for_info(
         "#",
         "javascript:",
         "mailto:",
+        "filter",
+        "tracker",
     ]
 
     all_content_parts = []
@@ -95,13 +97,13 @@ async def search_website_for_info(
         print(f"[WS] Searching for: {search_query}")
 
         # Navigate back to homepage for each new query
-        await action_provider.navigate(url)
+        # await action_provider.navigate(url)
 
         # Step 1: Find and use the site's search functionality
         await action_provider.act(
-            f"Look for a search box or search icon on this page. If you find one, use it to search for: '{search_query}'. "
+            f"Look for a search box or search icon. Try home page if not found. If you find one, use it to search for: '{search_query}'. "
             "Use plain words only for general searches — do not use special syntax, operators, or quotes. "
-            "If location search is involed, use town names or postcodes, and filter distance within reasonable range if applicable. "
+            "If location search is involed, use town names, and filter distance within reasonable range if applicable. "
             "If you see '0 results', 'no results found', or an error message, try a simpler/shorter query. "
             "Only if no search functionality exists, navigate to a query-relevant section (e.g., news, articles, deals, etc) instead.",
         )
