@@ -272,20 +272,24 @@ async def get_update_or_create_contact(
                 cm.contact_index.active_conversations[cid] = Contact(
                     **{**c.model_dump(), **uc, "threads": c.threads},
                 )
-        phone_number, email = details.get("phone_number"), details.get("email")
+        phone_number, email_address = details.get("phone_number"), details.get(
+            "email_address"
+        )
         contact = (
             cm.contact_index.get_contact(phone_number=phone_number)
             if phone_number
-            else cm.contact_index.get_contact(email=email)
+            else cm.contact_index.get_contact(email=email_address)
         )
         return contact
 
     # means retrieve if exists, create if not
     elif details:
-        phone, email = details.get("phone_number"), details.get("email")
+        phone_number, email_address = details.get("phone_number"), details.get(
+            "email_address"
+        )
         maybe_contact = cm.contact_index.get_contact(
-            phone_number=phone,
-        ) or cm.contact_index.get_contact(email=email)
+            phone_number=phone_number,
+        ) or cm.contact_index.get_contact(email=email_address)
         if maybe_contact:
             return maybe_contact
         tool_outcome = await asyncio.to_thread(
