@@ -9,7 +9,12 @@ import sys
 from typing import Awaitable, Callable, Iterable
 
 from unity.conversation_manager.event_broker import get_event_broker
-from unity.conversation_manager.events import PhoneCallStarted, PhoneCallEnded
+from unity.conversation_manager.events import (
+    PhoneCallStarted,
+    PhoneCallEnded,
+    UnifyCallEnded,
+    UnifyCallStarted,
+)
 
 # Shared event broker instance
 event_broker = get_event_broker()
@@ -21,21 +26,25 @@ DEFAULT_INACTIVITY_TIMEOUT = 300  # 5 minutes
 # -------- Call lifecycle helpers -------- #
 
 
-async def publish_call_started(contact: dict) -> None:
-    await event_broker.publish(
-        "app:comms:phone_call_started",
-        PhoneCallStarted(contact=contact).to_json(),
+async def publish_call_started(contact: dict, channel: str) -> None:
+    event = (
+        PhoneCallStarted(contact=contact)
+        if channel == "phone"
+        else UnifyCallStarted(contact=contact)
     )
+    await event_broker.publish(f"app:comms:{channel}_call_started", event.to_json())
 
 
-async def publish_call_ended(contact: dict) -> None:
-    await event_broker.publish(
-        "app:comms:phone_call_ended",
-        PhoneCallEnded(contact=contact).to_json(),
+async def publish_call_ended(contact: dict, channel: str) -> None:
+    event = (
+        PhoneCallEnded(contact=contact)
+        if channel == "phone"
+        else UnifyCallEnded(contact=contact)
     )
+    await event_broker.publish(f"app:comms:{channel}_call_ended", event.to_json())
 
 
-def create_end_call(contact: dict) -> Callable[[], Awaitable[None]]:
+def create_end_call(contact: dict, channel: str) -> Callable[[], Awaitable[None]]:
     """
     Returns an async function that:
       - publishes the call ended event
@@ -46,7 +55,7 @@ def create_end_call(contact: dict) -> Callable[[], Awaitable[None]]:
         print("Initiating graceful shutdown...")
 
         # Send end call event before cleaning tasks and closing connection
-        await publish_call_ended(contact)
+        await publish_call_ended(contact, channel)
         print("End call event sent")
 
         # Get all running tasks except current task
@@ -143,8 +152,8 @@ def configure_from_cli(
     room_name = ""
     print("sys.argv", sys.argv)
 
-    # max index used = 5 + len(extra_env)
-    required_len = 5 + len(extra_env)
+    # max index used = 6 + len(extra_env)
+    required_len = 6 + len(extra_env)
     if len(sys.argv) > required_len:
         assistant_number = sys.argv[2]
         if " " in assistant_number:
@@ -157,9 +166,10 @@ def configure_from_cli(
         )
         os.environ["VOICE_ID"] = sys.argv[4] if sys.argv[4] != "None" else ""
         os.environ["OUTBOUND"] = sys.argv[5]
+        os.environ["CHANNEL"] = sys.argv[6]
 
         # extra env vars
-        for idx, (env_name, is_json) in enumerate(extra_env, start=6):
+        for idx, (env_name, is_json) in enumerate(extra_env, start=7):
             value = sys.argv[idx]
             os.environ[env_name] = value
 
