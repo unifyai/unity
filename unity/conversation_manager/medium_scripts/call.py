@@ -212,7 +212,11 @@ async def entrypoint(ctx: agents.JobContext):
         global chunk_queue
 
         async with event_broker.pubsub() as pubsub:
-            await pubsub.subscribe("app:call:response_gen", "app:call:status")
+            await pubsub.subscribe(
+                "app:call:response_gen",
+                "app:unify_call:response_gen",
+                "app:call:status",
+            )
             print("waiting for events...")
             while True:
                 try:
