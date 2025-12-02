@@ -46,7 +46,7 @@
 {% if not is_boss_user %}
 <contact_details>
 First Name: {{contact_first_name}}
-Surename: {{contact_surname}}
+Surname: {{contact_surname}}
 phone_number: {{contact_phone_number}}
 email: {{contact_email}}
 </contact_details>

@@ -56,13 +56,12 @@ class LivekitCallManager:
 
     def start_unify_call(
         self,
+        contact: dict,
+        boss: dict,
         agent_name: str | None,
         room_name: str | None,
-        contact: dict,
     ):
-        target_path = (
-            Path(__file__).parent.parent.resolve() / "medium_scripts" / "unify_call.py"
-        )
+        target_path = Path(__file__).parent.parent.resolve() / "medium_scripts"
         agent_name = (
             agent_name
             if agent_name
@@ -82,12 +81,17 @@ class LivekitCallManager:
             )
         )
         args = [
-            agent_name,
-            room_name,
+            f"{agent_name} {room_name}",
             self.voice_provider,
             self.voice_id,
+            False,
             json.dumps(contact),
         ]
+        if self.realtime:
+            args += [json.dumps(boss), self.assistant_bio]
+            target_path = target_path / "realtime_call.py"
+        else:
+            target_path = target_path / "call.py"
         args = [str(arg) for arg in args]
         print(f"target_path: {target_path}, args: {args}")
         self.call_proc = run_script(str(target_path), "dev", *args)
