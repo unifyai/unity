@@ -38,7 +38,6 @@ from sandboxes.utils import (
     steering_controls_hint,
 )
 from unity.actor.base import BaseActor
-from unity.actor.browser_use_actor import BrowserUseActor
 from unity.actor.code_act_actor import CodeActActor
 from unity.actor.hierarchical_actor import HierarchicalActor
 from unity.actor.tool_loop_actor import ToolLoopActor
@@ -82,10 +81,7 @@ def _create_actor(args) -> BaseActor:
         return ToolLoopActor(**browser_kwargs)
     elif actor_choice == "code_act":
         return CodeActActor(**browser_kwargs, browser_mode="magnitude")
-    elif actor_choice == "browser_use":
-        return BrowserUseActor(headless=args.headless)
     else:
-        # This case should be prevented by argparse's `choices`
         raise ValueError(f"Unknown actor type: {actor_choice}")
 
 
@@ -97,7 +93,7 @@ async def _main_async() -> None:
         "--actor",
         "-a",
         type=str,
-        choices=["hierarchical", "tooloop", "code_act", "browser_use"],
+        choices=["hierarchical", "tooloop", "code_act"],
         default="code_act",
         help="Select the actor implementation to run.",
     )

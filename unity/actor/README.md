@@ -6,7 +6,7 @@ This directory contains different "actor" implementations, which are responsible
 
 There are two primary design philosophies represented here: **Conversational Actors** and a **Programmatic Actor**.
 
-### 1. Conversational Actors (`ToolLoopActor`, `BrowserUseActor`)
+### 1. Conversational Actor (`ToolLoopActor`)
 
 These actors operate in a reactive, turn-based loop. They maintain a chat history with an LLM and, at each step, decide which "tool" (a Python function) to call next based on the user's goal and the history of previous actions.
 
@@ -26,15 +26,15 @@ This actor takes a more proactive, code-first approach. It generates a complete,
 
 ## Key Differences
 
-| Feature                 | ToolLoopActor (TLP)                                      | BrowserUseActor (BUP)                                  | HierarchicalActor (HP)                                                                                              |
-| ----------------------- | ---------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **Planning Paradigm** | Conversational / Tool-Use                                  | Conversational / Tool-Use                                | Programmatic / Code-First                                                                                             |
-| **Underlying Controller** | `unity.controller.Controller`                              | `browser_use.controller.Service`                         | `unity.controller.Controller`                                                                                         |
-| **Action Primitives** | High-level `act(str)` and `observe(str)` primitives.       | A rich set of structured tools from the `browser_use` library (e.g., `Maps_to_url`, `click_element`). | High-level `act(str)` and `observe(str)` primitives, same as TLP.                                                   |
-| **Plan Representation** | Implicit (Chat History)                                    | Implicit (Chat History)                                  | Explicit (Executable Python Script)                                                                                   |
-| **State Management** | Implicit in conversation.                                  | Implicit in conversation.                                | Explicit via Python call stack and cached function results.                                                           |
-| **Self-Correction** | Reactive (requires user/LLM interjection).                 | Reactive (requires user/LLM interjection).               | Proactive (Built-in verification, tactical/strategic replanning, and dynamic implementation of stubbed functions). |
-| **Modifiability** | Can be steered by interjection.                            | Can be steered by interjection.                          | The entire plan source code can be surgically modified at runtime, with automated "course correction."              |
+| Feature                 | ToolLoopActor (TLP)                                      | HierarchicalActor (HP)                                                                                              |
+| ----------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Planning Paradigm** | Conversational / Tool-Use                                  | Programmatic / Code-First                                                                                             |
+| **Underlying Controller** | `unity.controller.Controller`                              | `unity.controller.Controller`                                                                                         |
+| **Action Primitives** | High-level `act(str)` and `observe(str)` primitives.       | High-level `act(str)` and `observe(str)` primitives, same as TLP.                                                   |
+| **Plan Representation** | Implicit (Chat History)                                    | Explicit (Executable Python Script)                                                                                   |
+| **State Management** | Implicit in conversation.                                  | Explicit via Python call stack and cached function results.                                                           |
+| **Self-Correction** | Reactive (requires user/LLM interjection).                 | Proactive (Built-in verification, tactical/strategic replanning, and dynamic implementation of stubbed functions). |
+| **Modifiability** | Can be steered by interjection.                            | The entire plan source code can be surgically modified at runtime, with automated "course correction."              |
 
 ## How to Run a Actor
 
@@ -127,51 +127,6 @@ async def main():
     unify.activate("tlp_demo")
 
     actor = ToolLoopActor(headless=False)
-
-    task = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
-    print(f"Executing task: {task}")
-
-    active_task = await actor.act(task)
-
-    print("\n=== FINAL RESULT ===")
-    print(await active_task.result())
-
-    await actor.close()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-### 3. Run the BrowserUseActor (BUP)
-
-Create `run_bup.py` and execute it with `python run_bup.py`.
-
-```python
-# run_bup.py
-import asyncio
-import unify
-from unity.actor.browser_use_actor import BrowserUseActor
-import logging
-import sys
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# Setup basic logging
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-if not root_logger.handlers:
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter("%(levelname)-8s [%(name)s] %(message)s"))
-    root_logger.addHandler(handler)
-
-
-async def main():
-    """Initializes and runs the BrowserUseActor for a browser task."""
-    unify.activate("bup_demo")
-
-    actor = BrowserUseActor(headless=False)
 
     task = "Go to google.com, search for 'latest news on AI agents', and return the title of the first result."
     print(f"Executing task: {task}")
