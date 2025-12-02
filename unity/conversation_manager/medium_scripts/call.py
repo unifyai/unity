@@ -200,9 +200,7 @@ async def entrypoint(ctx: agents.JobContext):
                     asyncio.create_task(
                         event_broker.publish(
                             "app:comms:interrupt",
-                            Interrupt(
-                                contact=os.environ["CALL_FROM_NUMBER"],
-                            ).to_json(),
+                            Interrupt(contact=contact).to_json(),
                         ),
                     )
         except asyncio.CancelledError:
