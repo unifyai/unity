@@ -124,8 +124,8 @@ def test_clear_initialises_and_resets_caches():
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_gated_site_routes_to_search_gated_website(monkeypatch):
-    """When a gated site is requested, the ask loop should call _search_gated_website.
+async def test_gated_site_routes_to_gated_website_search(monkeypatch):
+    """When a gated site is requested, the ask loop should call _gated_website_search.
 
     We patch the tool method to avoid invoking the real actor/browser and record calls.
     """
@@ -139,7 +139,7 @@ async def test_gated_site_routes_to_search_gated_website(monkeypatch):
     # Patch before instantiation so the tool mapping picks up the stub
     monkeypatch.setattr(
         WebSearcher,
-        "_search_gated_website",
+        "_gated_website_search",
         _stub_search_gated,
         raising=True,
     )
@@ -164,8 +164,8 @@ async def test_gated_site_routes_to_search_gated_website(monkeypatch):
 
 @pytest.mark.asyncio
 @_handle_project
-async def test_non_gated_site_does_not_call_search_gated_website(monkeypatch):
-    """When a non-gated site is requested, _search_gated_website should not be called."""
+async def test_non_gated_site_does_not_call_gated_website_search(monkeypatch):
+    """When a non-gated site is requested, _gated_website_search should not be called."""
 
     calls = {"gated_website_count": 0}
 
@@ -175,7 +175,7 @@ async def test_non_gated_site_does_not_call_search_gated_website(monkeypatch):
 
     monkeypatch.setattr(
         WebSearcher,
-        "_search_gated_website",
+        "_gated_website_search",
         _stub_search_gated,
         raising=True,
     )

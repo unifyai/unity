@@ -76,7 +76,7 @@ class WebSearcher(BaseWebSearcher):
             self._extract,
             self._crawl,
             self._map,
-            self._search_gated_website,
+            self._gated_website_search,
             self._filter_websites,
             self._search_websites,
             include_class_name=False,
@@ -593,7 +593,7 @@ class WebSearcher(BaseWebSearcher):
             for r in rows
         ]
 
-    async def _search_gated_website(
+    async def _gated_website_search(
         self,
         *,
         query: str,
