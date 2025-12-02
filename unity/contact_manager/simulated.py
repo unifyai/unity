@@ -308,11 +308,6 @@ class _SimulatedContactHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._llm,
                 label=self._log_label,
                 prompt=prompt,
-                sys_for_dump=sys_msg,
-                request_dump_body={
-                    "model": getattr(self._llm, "model", None),
-                    "messages": [{"role": "user", "content": prompt}],
-                },
             )
             self._answer = answer
             self._messages = [
@@ -656,11 +651,6 @@ class SimulatedContactManager(BaseContactManager):
                 self._llm,
                 label=label,
                 prompt=prompt,
-                sys_for_dump=sys_msg,
-                request_dump_body={
-                    "model": getattr(self._llm, "model", None),
-                    "messages": [{"role": "user", "content": prompt}],
-                },
             )
 
         try:
@@ -768,13 +758,6 @@ class SimulatedContactManager(BaseContactManager):
                 self._llm,
                 label=label,
                 prompt=f"{instruction}\n\n{user_payload}",
-                sys_for_dump=sys_msg,
-                request_dump_body={
-                    "model": getattr(self._llm, "model", None),
-                    "messages": [
-                        {"role": "user", "content": f"{instruction}\n\n{user_payload}"},
-                    ],
-                },
             )
 
         try:
@@ -894,13 +877,6 @@ class SimulatedContactManager(BaseContactManager):
                 self._llm,
                 label=label,
                 prompt=f"{instruction}\n\n{user_payload}",
-                sys_for_dump=sys_msg,
-                request_dump_body={
-                    "model": getattr(self._llm, "model", None),
-                    "messages": [
-                        {"role": "user", "content": f"{instruction}\n\n{user_payload}"},
-                    ],
-                },
             )
 
         try:
@@ -960,11 +936,6 @@ class SimulatedContactManager(BaseContactManager):
                 self._llm,
                 label=label,
                 prompt=instruction,
-                sys_for_dump=sys_msg,
-                request_dump_body={
-                    "model": getattr(self._llm, "model", None),
-                    "messages": [{"role": "user", "content": instruction}],
-                },
             )
 
         try:
@@ -1025,16 +996,6 @@ class SimulatedContactManager(BaseContactManager):
                 self._llm,
                 label=label,
                 prompt=f"{instruction}\n\n{json.dumps(payload, indent=2)}",
-                sys_for_dump=sys_msg,
-                request_dump_body={
-                    "model": getattr(self._llm, "model", None),
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": f"{instruction}\n\n{json.dumps(payload, indent=2)}",
-                        },
-                    ],
-                },
             )
 
         try:

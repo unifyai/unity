@@ -137,11 +137,6 @@ class _SimulatedWebSearcherHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._llm,
                 label=self._log_label,
                 prompt=prompt,
-                sys_for_dump=sys_msg,
-                request_dump_body={
-                    "model": getattr(self._llm, "model", None),
-                    "messages": [{"role": "user", "content": prompt}],
-                },
             )
             self._answer = answer
             self._messages = [

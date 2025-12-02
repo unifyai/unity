@@ -219,11 +219,6 @@ class SimulatedFunctionManager(BaseFunctionManager):
                     self._llm,
                     label=label,
                     prompt=prompt,
-                    sys_for_dump=sys_msg,
-                    request_dump_body={
-                        "model": getattr(self._llm, "model", None),
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
                 ),
             )
 
@@ -330,11 +325,6 @@ class SimulatedFunctionManager(BaseFunctionManager):
                     self._llm,
                     label=label,
                     prompt=prompt,
-                    sys_for_dump=sys_msg,
-                    request_dump_body={
-                        "model": getattr(self._llm, "model", None),
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
                 ),
             )
 
@@ -394,11 +384,6 @@ class SimulatedFunctionManager(BaseFunctionManager):
                     self._llm,
                     label=label,
                     prompt=prompt,
-                    sys_for_dump=sys_msg,
-                    request_dump_body={
-                        "model": getattr(self._llm, "model", None),
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
                 ),
             )
 

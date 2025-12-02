@@ -478,11 +478,6 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             self._llm,
             label=self._log_label,
             prompt=prompt,
-            sys_for_dump=_sys,
-            request_dump_body={
-                "model": getattr(self._llm, "model", None),
-                "messages": [{"role": "user", "content": content_blocks}],
-            },
         )
 
     async def pause(self) -> str:
@@ -551,11 +546,6 @@ class SimulatedActorHandle(BaseActorHandle, SimulatedHandleMixin):
             self._llm,
             label=q_label,
             prompt=prompt,
-            sys_for_dump=_sys,
-            request_dump_body={
-                "model": getattr(self._llm, "model", None),
-                "messages": [{"role": "user", "content": question}],
-            },
         )
         return answer
 

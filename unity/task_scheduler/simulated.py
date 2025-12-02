@@ -157,11 +157,6 @@ class _SimulatedTaskScheduleHandle(SteerableToolHandle, SimulatedHandleMixin):
                 self._llm,
                 label=self._log_label,
                 prompt=user_block,
-                sys_for_dump=sys_msg,
-                request_dump_body={
-                    "model": getattr(self._llm, "model", None),
-                    "messages": [{"role": "user", "content": user_block}],
-                },
             )
 
             self._answer = answer
