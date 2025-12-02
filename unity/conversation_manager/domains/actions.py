@@ -272,9 +272,10 @@ async def get_update_or_create_contact(
                 cm.contact_index.active_conversations[cid] = Contact(
                     **{**c.model_dump(), **uc, "threads": c.threads},
                 )
+        phone_number, email = details.get("phone_number"), details.get("email")
         contact = (
-            cm.contact_index.get_contact(phone_number=phone)
-            if phone
+            cm.contact_index.get_contact(phone_number=phone_number)
+            if phone_number
             else cm.contact_index.get_contact(email=email)
         )
         return contact
