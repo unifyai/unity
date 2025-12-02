@@ -96,24 +96,25 @@ class ProductionSettings(BaseSettings):
     # ConversationManager: real | simulated
     UNITY_CONVERSATION_IMPL: str = "real"
 
-    # -- Optional managers (enabled + implementation) --
+    # -- Optional managers (disabled by default for minimal initial rollout) --
+    # These will be enabled incrementally as they become stable and fully featured.
     # KnowledgeManager
-    UNITY_KNOWLEDGE_ENABLED: bool = True
+    UNITY_KNOWLEDGE_ENABLED: bool = False
     UNITY_KNOWLEDGE_IMPL: str = "real"
     # GuidanceManager
-    UNITY_GUIDANCE_ENABLED: bool = True
+    UNITY_GUIDANCE_ENABLED: bool = False
     UNITY_GUIDANCE_IMPL: str = "real"
     # SecretManager
-    UNITY_SECRETS_ENABLED: bool = True
+    UNITY_SECRETS_ENABLED: bool = False
     UNITY_SECRETS_IMPL: str = "real"
     # SkillManager
-    UNITY_SKILLS_ENABLED: bool = True
+    UNITY_SKILLS_ENABLED: bool = False
     UNITY_SKILLS_IMPL: str = "real"
     # WebSearcher
-    UNITY_WEB_SEARCH_ENABLED: bool = True
+    UNITY_WEB_SEARCH_ENABLED: bool = False
     UNITY_WEB_SEARCH_IMPL: str = "real"
     # GlobalFileManager
-    UNITY_FILES_ENABLED: bool = True
+    UNITY_FILES_ENABLED: bool = False
     UNITY_FILES_IMPL: str = "real"
 
     # ─────────────────────────────────────────────────────────────────────────
