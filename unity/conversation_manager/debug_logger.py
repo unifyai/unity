@@ -64,14 +64,14 @@ def log_job_startup(
     try:
         # Resolve liveview URL via comms infra service
         liveview_url = None
-        retries = 3
+        retries = 10  # Add retries in case sometimes service startup takes more time
         comms_url = os.environ.get("UNITY_COMMS_URL", "").rstrip("/")
         admin_key = os.environ.get("ORCHESTRA_ADMIN_KEY", "")
         if comms_url and admin_key and job_name:
             for _ in range(retries):
                 if liveview_url:
                     break
-                print(f"\n\nAttempt {_ + 1} to set up liveview URL for job {job_name}")
+                print(f"\n\nAttempt {_ + 1} to get liveview URL for job {job_name}")
                 svc = f"unity-svc-{job_name}"
                 resp = requests.get(
                     f"{comms_url}/infra/job/service/ip",
