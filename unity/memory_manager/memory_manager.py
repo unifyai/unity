@@ -131,6 +131,7 @@ class MemoryManager(BaseMemoryManager):
         knowledge_manager: Optional[KnowledgeManager] = None,
         task_scheduler: Optional[TaskScheduler] = None,
         config: Optional["MemoryManager.MemoryConfig"] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
 
         self._contact_manager = contact_manager or ContactManager()
@@ -156,7 +157,14 @@ class MemoryManager(BaseMemoryManager):
 
         if self._register_update_callbacks:
             # Fire-and-forget setup of message counter and explicit-call callbacks
-            asyncio.create_task(self._setup_message_callbacks())
+            # If loop is provided (called from a thread), schedule on main loop
+            # Otherwise use regular create_task (called from async context)
+            if loop is not None:
+                loop.call_soon_threadsafe(
+                    loop.create_task, self._setup_message_callbacks()
+                )
+            else:
+                asyncio.create_task(self._setup_message_callbacks())
 
             # 1.  Automatically pin the *calling_id* for the lifetime of any explicit
             #     tool invocation coming from ConversationManager so the related
@@ -176,7 +184,12 @@ class MemoryManager(BaseMemoryManager):
 
             # 2.  Listen to explicit ManagerMethod events so they can be included
             #     in the transcript chunk payloads passed to the LLM.
-            asyncio.create_task(self._setup_explicit_call_callbacks())
+            if loop is not None:
+                loop.call_soon_threadsafe(
+                    loop.create_task, self._setup_explicit_call_callbacks()
+                )
+            else:
+                asyncio.create_task(self._setup_explicit_call_callbacks())
 
         # If update callbacks are disabled  no-op for message processing
 

@@ -442,6 +442,8 @@ async def conductor_ask_request(
 ):
     """Start a Conductor ask/request, store handle, and publish started."""
     global _next_handle_id
+
+    await managers_utils.wait_for_initialization(cm)
     query = kwargs["query"]
     if "ask" in action_name:
         handle = await cm.conductor.ask(
@@ -498,6 +500,7 @@ async def conductor_handle_actions(
     *args,
     **kwargs,
 ):
+    await managers_utils.wait_for_initialization(cm)
     handle_id = kwargs["handle_id"]
     query = kwargs["query"]
     call_id = kwargs["call_id"]
