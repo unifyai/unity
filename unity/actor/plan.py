@@ -1,38 +1,30 @@
 import asyncio
+import base64
+import copy
 import enum
-import logging
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Type
-from pydantic import create_model, BaseModel, Field
 import functools
 import json
-import copy
+import logging
 import uuid
-import inspect
-import base64
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from unity.common.llm_helpers import (
-    _strip_image_keys,
-)
+import unify
+from unify import AsyncUnify
+
 from unity.common.async_tool_loop import (
-    start_async_tool_loop,
     SteerableToolHandle,
+    start_async_tool_loop,
 )
+from unity.common.llm_client import get_cache_setting
+from unity.common.llm_helpers import _strip_image_keys
+from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
 from unity.image_manager.types.image_refs import ImageRefs
 from unity.image_manager.types.raw_image_ref import RawImageRef
-from unity.image_manager.types.annotated_image_ref import AnnotatedImageRef
+
 from ..task_scheduler.base import BaseActiveTask
-from .base import BaseActor, BaseActorHandle
-from unity.controller.controller import Controller, ActionFailedError
-from unify import AsyncUnify
-import unify
-from unity.common.llm_client import get_cache_setting
+from .base import BaseActorHandle
 
 logger = logging.getLogger(__name__)
-if not logger.hasHandlers():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
 
 
 class _PlanState(enum.Enum):
@@ -44,148 +36,12 @@ class _PlanState(enum.Enum):
     ERROR = enum.auto()
 
 
-def create_model_from_schema(
-    schema: dict,
-    model_name: str = "DynamicModel",
-) -> Type[BaseModel]:
+class Plan(BaseActiveTask, BaseActorHandle):
     """
-    Recursively creates a Pydantic model from a JSON schema dictionary.
-    """
-    fields = {}
+    A steerable execution plan that runs an LLM-driven tool loop.
 
-    type_mapping = {
-        "string": str,
-        "number": float,
-        "integer": int,
-        "boolean": bool,
-    }
-
-    required_fields = schema.get("required", [])
-
-    for prop_name, prop_details in schema.get("properties", {}).items():
-        prop_type_str = prop_details.get("type")
-        description = prop_details.get("description")
-        is_required = prop_name in required_fields
-        field_type = Any
-
-        if prop_type_str == "object":
-            field_type = create_model_from_schema(
-                prop_details,
-                model_name=f"{model_name}_{prop_name}",
-            )
-        elif prop_type_str == "array":
-            items_schema = prop_details.get("items", {})
-            item_type_str = items_schema.get("type")
-            if item_type_str == "object":
-                item_model = create_model_from_schema(
-                    items_schema,
-                    model_name=f"{model_name}_{prop_name}Item",
-                )
-                field_type = List[item_model]
-            else:
-                primitive_item_type = type_mapping.get(item_type_str, str)
-                field_type = List[primitive_item_type]
-        else:
-            field_type = type_mapping.get(prop_type_str, str)
-
-        default_value = ... if is_required else None
-        fields[prop_name] = (
-            field_type,
-            Field(default=default_value, description=description),
-        )
-
-    return create_model(model_name, **fields)
-
-
-TOOL_LOOP_SYSTEM_PROMPT = """### Your Role
-You are an expert web automation agent. Your primary function is to achieve a user's goal by executing a precise sequence of tool calls.
-
-### Core Mission
-Break down the user's request into a series of logical steps. At each step, choose the single best tool to advance the task. Your final response should be the specific information the user asked for, not just a confirmation like "Task Complete."
-
-### Critical Rules for Operation
-1.  **Observe, Then Act**: Always use the `observe` tool to analyze the page before you attempt an action with `act`. You cannot click what you cannot see.
-2.  **Be Precise & Complete**: Your calls to tools MUST be exact and include all required arguments. For the `act` tool, both `action` and `expectation` are **always required**.
-3.  **Self-Correct**: If an action fails or you are unsure what to do, your first step is to use `get_action_history()` to review your past actions. This is your primary method for self-correction.
-4.  **Use Structured Output**: For any `observe` call where you need to extract specific information, you MUST use the `response_schema` argument, providing a valid JSON schema `dict`.
-
----
-### Tools Reference
-You can call the following functions. Adhere strictly to the signatures and argument requirements.
-
-1.  `act(action: str, expectation: str) -> str`
-    - **Description**: Performs a single, high-level action in the browser (e.g., "click the login button", "type 'hello' into the search bar").
-    - **Arguments**:
-        - `action` (str, **required**): The natural-language instruction for what to do.
-        - `expectation` (str, **required**): A clear, verifiable description of what the page should look like *after* the action is successfully completed.
-    - **Returns**: A string confirming the action was performed.
-
-2.  `observe(query: str, response_schema: dict = None) -> Any`
-    - **Description**: Asks a question about the current state of the browser page. This is a read-only operation.
-    - **Arguments**:
-        - `query` (str, **required**): The question to ask about the page (e.g., "What is the page title?", "Is there a 'Submit' button?").
-        - `response_schema` (dict, optional): A JSON schema dictionary to structure the output.
-    - **Returns**: The answer to the query, either as a string or a JSON object matching the `response_schema`.
-
-3.  `get_action_history() -> list[dict]`
-    - **Description**: Retrieves a summary of the browser actions executed so far in this session. Each item includes the command and its timestamp.
-
-4.  `get_screenshots_for_action(timestamp: float) -> dict`
-    - **Description**: Retrieves the 'before' and 'after' screenshots for a specific action, identified by its timestamp from the action history.
-
----
-### Usage Examples
-Your response must be a JSON object containing a `tool_calls` array, as shown below.
-
-**Example 1: Simple Action**
-*User Request*: "Click the 'Images' tab."
-*Your Thought*: First, I should see if the tab is visible. Then I will click it and confirm the page has changed.
-*Tool Call (Observe, then Act)*:
-```json
-{
-  "tool_calls": [
-    {
-      "name": "act",
-      "arguments": {
-        "action": "Click the 'Images' link.",
-        "expectation": "The page should now be displaying image search results, and the 'Images' tab should be highlighted."
-      }
-    }
-  ]
-}
-
-**Example 2: Structured Observation**
-*User Request*: "Find the price on the page."
-*Your Thought*: I need to find the price and extract it as a structured object. I will use observe with a response_schema.
-*Tool Call*:
-
-JSON
-
-{
-  "tool_calls": [
-    {
-      "name": "observe",
-      "arguments": {
-        "query": "What is the price of the main item on the page?",
-        "response_schema": {
-          "type": "object",
-          "properties": {
-            "price": { "type": "string", "description": "The price of the item, including currency symbol." },
-            "currency": { "type": "string", "description": "The ISO currency code, e.g., USD, EUR." }
-          },
-          "required": ["price"]
-        }
-      }
-    }
-  ]
-}
-"""
-
-
-class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
-    """
-    Represents an active plan being executed by the ToolLoopActor.
-    Inherits from SteerableToolHandle to provide a consistent interface for interaction.
+    This class manages the lifecycle of an async tool loop, providing
+    pause/resume/stop/interject/ask capabilities for dynamic control.
     """
 
     MAX_STEPS = 100
@@ -202,7 +58,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
         persist: bool = False,
         custom_system_prompt: str | None = None,
         tool_policy: Optional[Callable] = None,
-        action_provider: Optional["ActionProvider"] = None,  # type: ignore
+        action_provider: Optional[Any] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
     ):
         self._initial_task_description = task_description
@@ -249,7 +105,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                 self._main_event_loop = asyncio.get_running_loop()
             except RuntimeError as e:
                 logger.error(
-                    f"ToolLoopPlan {self._task_id}: Could not get running event loop and none was provided: {e}",
+                    f"Plan {self._task_id}: Could not get running event loop and none was provided: {e}",
                     exc_info=True,
                 )
                 self._state = _PlanState.ERROR
@@ -258,7 +114,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                 return
 
         logger.info(
-            f"ToolLoopPlan {self._task_id}: Scheduling main execution manager on loop {self._main_event_loop}.",
+            f"Plan {self._task_id}: Scheduling main execution manager on loop {self._main_event_loop}.",
         )
         asyncio.run_coroutine_threadsafe(
             self._manage_plan_execution(),
@@ -280,12 +136,12 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
             This tool is used to request clarification from the caller.
             """
             logger.info(
-                f"ToolLoopPlan {self._task_id}: LLM (internal loop) requesting clarification: '{question}'",
+                f"Plan {self._task_id}: LLM (internal loop) requesting clarification: '{question}'",
             )
             await self._clar_up_q_internal.put(question)
             answer = await self._clar_down_q_internal.get()
             logger.info(
-                f"ToolLoopPlan {self._task_id}: User (via plan) provided clarification: '{answer}'",
+                f"Plan {self._task_id}: User (via plan) provided clarification: '{answer}'",
             )
             return answer
 
@@ -303,24 +159,20 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
             while True:
                 if self._state == _PlanState.STOPPED or self._state == _PlanState.ERROR:
                     logger.info(
-                        f"ToolLoopPlan {self._task_id}: Execution manager exiting due to state {self._state.name}",
+                        f"Plan {self._task_id}: Execution manager exiting due to state {self._state.name}",
                     )
                     break
 
                 self._state = _PlanState.RUNNING
                 logger.info(
-                    f"ToolLoopPlan {self._task_id}: Starting/Resuming internal loop with description: '{current_task_description}'",
+                    f"Plan {self._task_id}: Starting/Resuming internal loop with description: '{current_task_description}'",
                 )
 
                 self._plan_client.reset_messages()
                 self._plan_client.reset_system_message()
 
-                system_prompt = (
-                    self._custom_system_prompt
-                    if self._custom_system_prompt
-                    else TOOL_LOOP_SYSTEM_PROMPT
-                )
-                self._plan_client.set_system_message(system_prompt)
+                if self._custom_system_prompt:
+                    self._plan_client.set_system_message(self._custom_system_prompt)
 
                 if current_parent_chat_context:
                     self._plan_client.append_messages(current_parent_chat_context)
@@ -348,21 +200,21 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                         self._state = _PlanState.COMPLETED
                         self._result_str = loop_result_str
                         logger.info(
-                            f"ToolLoopPlan {self._task_id}: Internal loop COMPLETED. Result: {self._result_str}",
+                            f"Plan {self._task_id}: Internal loop COMPLETED. Result: {self._result_str}",
                         )
                     elif self._state == _PlanState.PAUSED:
                         logger.info(
-                            f"ToolLoopPlan {self._task_id}: Internal loop stopped for PAUSE.",
+                            f"Plan {self._task_id}: Internal loop stopped for PAUSE.",
                         )
                     elif self._state == _PlanState.STOPPED:
                         logger.info(
-                            f"ToolLoopPlan {self._task_id}: Internal loop stopped for STOP.",
+                            f"Plan {self._task_id}: Internal loop stopped for STOP.",
                         )
                         if self._result_str is None:
                             self._result_str = f"Plan {self._task_id} was stopped."
                 except asyncio.CancelledError:
                     logger.info(
-                        f"ToolLoopPlan {self._task_id}: Internal loop task was cancelled. Current state: {self._state.name}",
+                        f"Plan {self._task_id}: Internal loop task was cancelled. Current state: {self._state.name}",
                     )
                     if self._state == _PlanState.RUNNING:
                         self._state = _PlanState.STOPPED
@@ -370,7 +222,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                         self._result_str = f"Plan {self._task_id} was {self._state.name.lower()} (cancelled)."
                 except Exception as e:
                     logger.error(
-                        f"ToolLoopPlan {self._task_id}: Internal loop failed: {e}",
+                        f"Plan {self._task_id}: Internal loop failed: {e}",
                         exc_info=True,
                     )
                     self._state = _PlanState.ERROR
@@ -384,28 +236,28 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
 
                 if self._state == _PlanState.PAUSED:
                     logger.info(
-                        f"ToolLoopPlan {self._task_id}: Execution PAUSED, awaiting resume signal.",
+                        f"Plan {self._task_id}: Execution PAUSED, awaiting resume signal.",
                     )
                     await self._resume_requested_event.wait()
                     self._resume_requested_event.clear()
                     if self._state == _PlanState.STOPPED:
                         logger.info(
-                            f"ToolLoopPlan {self._task_id}: Stop called while paused. Terminating.",
+                            f"Plan {self._task_id}: Stop called while paused. Terminating.",
                         )
                         break
-                    logger.info(f"ToolLoopPlan {self._task_id}: RESUMING execution.")
+                    logger.info(f"Plan {self._task_id}: RESUMING execution.")
                     current_task_description = "The task was paused and is now resumed. Please review the history and continue."
                     current_parent_chat_context = self._parent_chat_context_on_pause
                     self._parent_chat_context_on_pause = None
                     continue
                 else:
                     logger.info(
-                        f"ToolLoopPlan {self._task_id}: Execution ended with state {self._state.name}. Finalizing.",
+                        f"Plan {self._task_id}: Execution ended with state {self._state.name}. Finalizing.",
                     )
                     break
         except Exception as e:
             logger.error(
-                f"ToolLoopPlan {self._task_id}: Unexpected error in _manage_plan_execution: {e}",
+                f"Plan {self._task_id}: Unexpected error in _manage_plan_execution: {e}",
                 exc_info=True,
             )
             if self._state not in [
@@ -422,7 +274,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                 )
         finally:
             logger.info(
-                f"ToolLoopPlan {self._task_id}: Setting overall completion event. Final state: {self._state.name}",
+                f"Plan {self._task_id}: Setting overall completion event. Final state: {self._state.name}",
             )
             self._overall_plan_completion_event.set()
 
@@ -447,7 +299,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
         return {"question": question}
 
     async def next_notification(self) -> dict:
-        """Await the next notification (not supported for ToolLoopPlan; waits indefinitely)."""
+        """Await the next notification (not supported for Plan; waits indefinitely)."""
         await asyncio.Event().wait()
         return {}
 
@@ -504,7 +356,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
             )
 
         logger.info(
-            f"ToolLoopPlan {self._task_id}: Stopping. Current state: {self._state.name}",
+            f"Plan {self._task_id}: Stopping. Current state: {self._state.name}",
         )
         previous_state = self._state
         self._state = _PlanState.STOPPED
@@ -530,7 +382,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
             and not self._overall_plan_completion_event.is_set()
         ):
             logger.warning(
-                f"ToolLoopPlan {self._task_id}: Stop called in IDLE state. Forcing overall completion.",
+                f"Plan {self._task_id}: Stop called in IDLE state. Forcing overall completion.",
             )
             self._overall_plan_completion_event.set()
 
@@ -544,7 +396,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                 f"Plan {self._task_id} cannot be paused in state {self._state.name}.",
             )
         logger.info(
-            f"ToolLoopPlan {self._task_id}: Pausing. Current state: {self._state.name}",
+            f"Plan {self._task_id}: Pausing. Current state: {self._state.name}",
         )
         self._state = _PlanState.PAUSED
 
@@ -553,22 +405,22 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                 self._plan_client.messages,
             )
             logger.info(
-                f"ToolLoopPlan {self._task_id}: Context saved on pause: {len(self._parent_chat_context_on_pause)} messages.",
+                f"Plan {self._task_id}: Context saved on pause: {len(self._parent_chat_context_on_pause)} messages.",
             )
         else:
             self._parent_chat_context_on_pause = []
             logger.info(
-                f"ToolLoopPlan {self._task_id}: No active LLM context to save on pause.",
+                f"Plan {self._task_id}: No active LLM context to save on pause.",
             )
 
         if self._loop_handle and not self._loop_handle.done():
             logger.info(
-                f"ToolLoopPlan {self._task_id}: Requesting stop of current internal loop for pause.",
+                f"Plan {self._task_id}: Requesting stop of current internal loop for pause.",
             )
             self._loop_handle.stop()
         else:
             logger.warning(
-                f"ToolLoopPlan {self._task_id}: Pause called but no active internal loop_handle to stop.",
+                f"Plan {self._task_id}: Pause called but no active internal loop_handle to stop.",
             )
 
         return f"Plan {self._task_id} paused successfully. Awaiting resume."
@@ -580,7 +432,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                 f"Plan {self._task_id} cannot be resumed in state {self._state.name}.",
             )
         logger.info(
-            f"ToolLoopPlan {self._task_id}: Requesting resume. Current state: {self._state.name}",
+            f"Plan {self._task_id}: Requesting resume. Current state: {self._state.name}",
         )
         self._resume_requested_event.set()
         return f"Plan {self._task_id} is resuming."
@@ -600,7 +452,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
 
         if not self._loop_handle:
             logger.info(
-                f"ToolLoopPlan {self._task_id}: Interject called before loop handle was created. Waiting briefly.",
+                f"Plan {self._task_id}: Interject called before loop handle was created. Waiting briefly.",
             )
             for _ in range(5):
                 if self._loop_handle:
@@ -611,7 +463,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                 return f"Error: Plan {self._task_id} did not initialize in time for interjection."
 
         logger.info(
-            f"ToolLoopPlan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
+            f"Plan {self._task_id}: Interjecting message: '{message}' into active internal loop.",
         )
         try:
             await self._loop_handle.interject(
@@ -634,7 +486,7 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
                 f"Cannot ask question for plan {self._task_id} in state {self._state.name}.",
             )
 
-        logger.info(f"ToolLoopPlan {self._task_id}: Answering query: '{question}'")
+        logger.info(f"Plan {self._task_id}: Answering query: '{question}'")
         current_context_to_share = _strip_image_keys(copy.deepcopy(self.chat_history))
         self._ask_client.reset_messages()
         self._ask_client.reset_system_message()
@@ -696,186 +548,5 @@ class ToolLoopPlan(BaseActiveTask, BaseActorHandle):
         )
 
 
-class ToolLoopActor(BaseActor):
-    def __init__(
-        self,
-        session_connect_url: Optional[str] = None,
-        headless: bool = False,
-        controller: Controller = None,
-    ):
-        self._controller = controller or Controller(
-            session_connect_url=session_connect_url,
-            headless=headless,
-        )
-        if not self._controller.is_alive():
-            self._controller.start()
-        self._tools_cache: Optional[Dict[str, Callable[..., Awaitable[Any]]]] = None
-        self._main_event_loop: Optional[asyncio.AbstractEventLoop] = None
-        try:
-            self._main_event_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            logger.warning(
-                "ToolLoopActor initialized outside of a running asyncio event loop.",
-            )
-
-    def _get_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
-        if self._tools_cache is None:
-            self._tools_cache = self._build_tools()
-        return self._tools_cache
-
-    def _build_tools(self) -> Dict[str, Callable[..., Awaitable[Any]]]:
-        async def act(action: str, expectation: str) -> str:
-            logger.info(f"Actor: Calling Controller.act with '{action}'")
-            try:
-                result = await self._controller.act(action, expectation=expectation)
-                return result
-            except ActionFailedError as e:
-                logger.warning(
-                    f"ActionFailedError caught and handled within ToolLoopActor: {e.reason}",
-                )
-
-                error_message = (
-                    "The previous action failed because the browser state did not match the expectation.\n\n"
-                    f"**Action Attempted**: `{e.action}`\n"
-                    f"**Expected Outcome**: `{e.expectation}`\n"
-                    f"**Reason for Failure**: `{e.reason}`\n\n"
-                    "Please analyze the 'Reason for Failure' and devise a new, better action to achieve the goal."
-                )
-                return error_message
-
-        async def observe(query: str, response_schema: dict = None) -> Any:
-            """
-            Asks a question about the current state of the browser page.
-            To get a structured response, provide a valid JSON Schema in the 'response_schema' argument.
-            """
-            logger.info(f"Actor: Calling Controller.observe with query '{query}'.")
-
-            response_format = str
-            if response_schema:
-                try:
-                    response_format = create_model_from_schema(
-                        response_schema,
-                        "DynamicResponseModel",
-                    )
-                    logger.info(
-                        "Dynamically created a Pydantic model for structured observation.",
-                    )
-                except Exception as e:
-                    raise e
-
-            result = await self._controller.observe(
-                query,
-                response_format=response_format,
-            )
-
-            if isinstance(result, BaseModel):
-                return result.model_dump()
-
-            return result
-
-        async def get_action_history() -> list[dict]:
-            return await self._controller.get_action_history()
-
-        async def get_screenshots_for_action(timestamp: float) -> dict:
-            return await self._controller.get_screenshots_for_action(timestamp)
-
-        act.__doc__ = self._controller.act.__doc__
-        get_action_history.__doc__ = self._controller.get_action_history.__doc__
-        get_screenshots_for_action.__doc__ = (
-            self._controller.get_screenshots_for_action.__doc__
-        )
-
-        act.__signature__ = inspect.Signature(
-            [
-                inspect.Parameter(
-                    "action",
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    annotation=str,
-                ),
-                inspect.Parameter(
-                    "expectation",
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    annotation=str,
-                    default=None,
-                ),
-            ],
-            return_annotation=str,
-        )
-        observe.__signature__ = inspect.Signature(
-            [
-                inspect.Parameter(
-                    "query",
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    annotation=str,
-                ),
-                inspect.Parameter(
-                    "response_schema",
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    annotation=dict,
-                    default=None,
-                ),
-            ],
-            return_annotation=Any,
-        )
-
-        get_action_history.__signature__ = inspect.Signature(
-            [],
-            return_annotation=list[dict],
-        )
-
-        get_screenshots_for_action.__signature__ = inspect.Signature(
-            [
-                inspect.Parameter(
-                    "timestamp",
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    annotation=float,
-                ),
-            ],
-            return_annotation=dict,
-        )
-
-        return {
-            "act": act,
-            "observe": observe,
-            "get_action_history": get_action_history,
-            "get_screenshots_for_action": get_screenshots_for_action,
-        }
-
-    async def act(
-        self,
-        description: str,
-        *,
-        _parent_chat_context: list[dict] | None = None,
-        _clarification_up_q: Optional[asyncio.Queue[str]] = None,
-        _clarification_down_q: Optional[asyncio.Queue[str]] = None,
-        **kwargs,
-    ) -> ToolLoopPlan:
-        logger.info(f"ToolLoopActor: Starting work on: '{description}'")
-
-        if not self._main_event_loop:
-            try:
-                self._main_event_loop = asyncio.get_running_loop()
-                logger.info(
-                    f"ToolLoopActor.act captured event loop: {self._main_event_loop}",
-                )
-            except RuntimeError:
-                logger.error(
-                    "ToolLoopActor.act: No running event loop to pass to ToolLoopPlan.",
-                )
-
-        plan = ToolLoopPlan(
-            task_description=description,
-            tools=self._get_tools(),
-            parent_chat_context=_parent_chat_context,
-            clarification_up_q=_clarification_up_q,
-            clarification_down_q=_clarification_down_q,
-            main_event_loop=self._main_event_loop,
-            persist=kwargs.get("persist", False),
-            tool_policy=kwargs.get("tool_policy"),
-        )
-        return plan
-
-    async def close(self):
-        logger.info("ToolLoopActor: Closing resources...")
-        if self._controller:
-            self._controller.stop()
+# Backwards compatibility alias
+ToolLoopPlan = Plan

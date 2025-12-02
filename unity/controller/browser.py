@@ -1,8 +1,6 @@
 from typing import Any, Type
-from unity.common.async_tool_loop import (
-    SteerableToolHandle,
-)
-from unity.actor.tool_loop_actor import ToolLoopActor
+
+from unity.common.async_tool_loop import SteerableToolHandle
 from unity.secret_manager.secret_manager import SecretManager
 from .browser_backends import (
     BrowserBackend,
@@ -79,17 +77,9 @@ class Browser:
         Use this for high-level goals like "Log into my account" or "Find the latest blog post and summarize it."
         Returns a handle to the sub-agent that will execute the task.
         """
-        # This method currently only works with the legacy backend
-        if not isinstance(self.backend, LegacyBrowserBackend):
-            raise NotImplementedError(
-                "multi_step method is only supported with the legacy browser backend.",
-            )
-
-        sub_actor = ToolLoopActor(
-            controller=self.backend.controller,
+        raise NotImplementedError(
+            "multi_step method is not yet implemented. Use HierarchicalActor or CodeActActor instead.",
         )
-        active_task_handle = await sub_actor.act(description)
-        return active_task_handle
 
     async def reason(self, query: str) -> str:
         """

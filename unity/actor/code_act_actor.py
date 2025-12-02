@@ -7,7 +7,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from typing import Any, Dict, Optional, Callable, Awaitable
 
 from unity.actor.base import BaseActor
-from unity.actor.tool_loop_actor import ToolLoopPlan
+from unity.actor.plan import Plan
 from unity.actor.action_provider import ActionProvider
 from unity.actor.prompt_builders import _build_code_act_rules_and_examples
 from unity.image_manager.types.image_refs import ImageRefs
@@ -261,9 +261,9 @@ class CodeActActor(BaseActor):
         _clarification_down_q: Optional[asyncio.Queue[str]] = None,
         images: Optional[ImageRefs | list[RawImageRef | AnnotatedImageRef]] = None,
         **kwargs,
-    ) -> ToolLoopPlan:
+    ) -> Plan:
         """
-        Creates and starts a new ToolLoopPlan for the CodeAct agent.
+        Creates and starts a new Plan for the CodeAct agent.
         """
         if not self._main_event_loop:
             self._main_event_loop = asyncio.get_running_loop()
@@ -277,7 +277,7 @@ class CodeActActor(BaseActor):
         system_prompt = build_code_act_system_prompt(
             self._action_provider,
         )
-        plan = ToolLoopPlan(
+        plan = Plan(
             task_description=description or initial_prompt,
             tools=self._tools,
             parent_chat_context=_parent_chat_context,
