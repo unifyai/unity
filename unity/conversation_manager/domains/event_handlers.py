@@ -70,9 +70,12 @@ async def _(event: CallEvents, cm: "ConversationManager", *args, **kwargs):
         message_content = None
         notif_content = None
         boss = cm.contact_index.get_contact(contact_id=1)
-        contact = cm.contact_index.get_contact(
-            phone_number=event.contact["phone_number"],
-        )
+        if isinstance(event, UnifyCallReceived):
+            contact = boss
+        else:
+            contact = cm.contact_index.get_contact(
+                phone_number=event.contact["phone_number"],
+            )
         match event:
             case PhoneCallReceived() as e:
                 cm.call_manager.conference_name = e.conference_name
