@@ -43,6 +43,7 @@ class LivekitCallManager:
             self.voice_provider,
             self.voice_id,
             outbound,
+            "phone",
             json.dumps(contact),
         ]
         if self.realtime:
@@ -85,6 +86,7 @@ class LivekitCallManager:
             self.voice_provider,
             self.voice_id,
             False,
+            "unify",
             json.dumps(contact),
         ]
         if self.realtime:

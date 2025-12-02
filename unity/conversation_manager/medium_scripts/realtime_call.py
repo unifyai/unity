@@ -93,10 +93,12 @@ async def entrypoint(ctx: JobContext) -> None:
     voice_provider = os.environ.get("VOICE_PROVIDER")
     voice_id = os.environ.get("VOICE_ID")
     outbound = os.environ.get("OUTBOUND") == "True"
+    channel = os.environ.get("CHANNEL")
     assistant_bio = os.environ.get("ASSISTANT_BIO")
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
     print("outbound", outbound)
+    print("channel", channel)
 
     # contact/boss payloads passed as json env vars
     contact = json.loads(os.getenv("CONTACT", "{}"))
@@ -116,9 +118,15 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     user_is_speaking = False
+    if channel == "phone":
+        user_utterance_event = PhoneUtterance
+        assistant_utterance_event = AssistantPhoneUtterance
+    else:
+        user_utterance_event = UnifyCallUtterance
+        assistant_utterance_event = AssistantUnifyCallUtterance
 
     # NEW: shared end_call + inactivity + participant disconnect handler
-    end_call = create_end_call(contact)
+    end_call = create_end_call(contact, channel)
     touch_activity = setup_inactivity_timeout(end_call)
     setup_participant_disconnect_handler(ctx.room, end_call)
 
@@ -132,14 +140,13 @@ async def entrypoint(ctx: JobContext) -> None:
     def _on_chat_item_added(ev: "UserInputTranscribedEvent"):
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""  # reliably the final text
-
         if role == "user":
-            event = PhoneUtterance(contact, content=text)
+            event = user_utterance_event(contact, content=text)
         else:
-            event = AssistantPhoneUtterance(contact, content=text)
+            event = assistant_utterance_event(contact, content=text)
 
         asyncio.create_task(
-            event_broker.publish("app:comms:phone_utterance", event.to_json()),
+            event_broker.publish(f"app:comms:{channel}_utterance", event.to_json()),
         )
         print(role, text)
         touch_activity()
@@ -170,7 +177,7 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
     # publish call started (shared helper)
-    await publish_call_started(contact)
+    await publish_call_started(contact, channel)
     touch_activity()
 
     async def wait_for_nudges():

@@ -66,11 +66,15 @@ def prewarm(_ctx=None):
 
 
 class Assistant(Agent):
-    def __init__(self, contact: dict, outbound: bool = False) -> None:
+    def __init__(self, contact: dict, channel: str, outbound: bool = False) -> None:
         self.past_events = []
         self.new_events = []
         self.current_tasks_status = None
         self.contact = contact
+        self.channel = channel
+        self.utterance_event = (
+            PhoneUtterance if channel == "phone" else UnifyCallUtterance
+        )
         self.call_received = not outbound
 
         super().__init__(instructions="", llm=LLM)
@@ -85,8 +89,8 @@ class Assistant(Agent):
     ) -> None:
         print("sending user message...")
         await event_broker.publish(
-            "app:comms:phone_utterance",
-            PhoneUtterance(
+            f"app:comms:{self.channel}_utterance",
+            self.utterance_event(
                 contact=self.contact,
                 content=new_message.text_content,
             ).to_json(),
@@ -124,9 +128,11 @@ async def entrypoint(ctx: agents.JobContext):
     voice_provider = os.environ.get("VOICE_PROVIDER")
     voice_id = os.environ.get("VOICE_ID")
     outbound = os.environ.get("OUTBOUND") == "True"
+    channel = os.environ.get("CHANNEL")
     print("voice_provider", voice_provider)
     print("voice_id", voice_id)
     print("outbound", outbound)
+    print("channel", channel)
 
     # contact payloads passed as json env vars
     contact = json.loads(os.getenv("CONTACT", "{}"))
@@ -155,11 +161,11 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     # NEW: shared end_call + inactivity + participant disconnect handler
-    end_call = create_end_call(contact)
+    end_call = create_end_call(contact, channel)
     touch_activity = setup_inactivity_timeout(end_call)
     setup_participant_disconnect_handler(ctx.room, end_call)
 
-    assistant = Assistant(contact=contact, outbound=outbound)
+    assistant = Assistant(contact=contact, channel=channel, outbound=outbound)
 
     await session.start(
         room=ctx.room,
@@ -172,7 +178,7 @@ async def entrypoint(ctx: agents.JobContext):
     )
 
     # publish call started (shared helper)
-    await publish_call_started(contact)
+    await publish_call_started(contact, channel)
     touch_activity()
 
     async def response_task():
