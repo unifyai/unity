@@ -1,34 +1,14 @@
-"""
-Quick-start LiveKit Agents example that uses OpenAI's gpt-realtime model.
-
-Copy-paste into a file (e.g., livekit_gpt_realtime_agent.py), create a .env, and run:
-
-  pip install "livekit-agents[openai]~=1.2" python-dotenv
-  # Start a dev worker (hot-reload):
-  python livekit_gpt_realtime_agent.py dev
-  # Or connect the agent directly to a room for local testing:
-  python livekit_gpt_realtime_agent.py connect --room test-room
-
-Required environment variables (in .env or shell):
-  LIVEKIT_URL=wss://<your-livekit-host>
-  LIVEKIT_API_KEY=<your-key>
-  LIVEKIT_API_SECRET=<your-secret>
-  OPENAI_API_KEY=<your-openai-key>
-
-In a browser/mobile client, join the same LiveKit room (e.g. "test-room").
-The agent will join and converse using OpenAI Realtime with low-latency speech.
-"""
-
 from __future__ import annotations
 
 import asyncio
-import sys
 import logging
 import os
+import json
+from pathlib import Path
+from typing import AsyncIterable
+
 from dotenv import load_dotenv
-
 from jinja2 import Template
-
 
 from livekit.agents import (
     Agent,
@@ -43,15 +23,6 @@ from livekit.agents import (
 )
 from livekit import agents
 from livekit.plugins.openai import realtime as openai_realtime
-from livekit.plugins import (
-    openai,
-    cartesia,
-    deepgram,
-    elevenlabs,
-    # noise_cancellation,
-    silero,
-)
-from typing import AsyncIterable
 
 load_dotenv()
 
@@ -59,30 +30,21 @@ from unity.conversation_manager.utils import dispatch_agent
 from unity.conversation_manager.event_broker import get_event_broker
 from unity.conversation_manager.events import *
 
-from pathlib import Path
-
-
-event_broker = get_event_broker()
-
-contact_id = ""
-contact_first_name = ""
-contact_surname = ""
-contact_is_boss_user = ""
-contact_email = ""
-boss_first_name = ""
-boss_surname = ""
-boss_phone_number = ""
-boss_email = ""
-is_boss_user = ""
-assistant_bio = ""
+# NEW: shared helpers
+from unity.conversation_manager.medium_scripts.common import (
+    event_broker,
+    create_end_call,
+    setup_inactivity_timeout,
+    setup_participant_disconnect_handler,
+    publish_call_started,
+    configure_from_cli,
+    should_dispatch_agent,
+)
 
 with open(
     Path(__file__).resolve().parent.parent / "prompts" / "realtime_phone_agent.md",
 ) as f:
     SYSTEM_PROMPT = f.read()
-
-# Optional: tweak VAD/turn detection behavior using OpenAI's server VAD or semantic VAD
-# from openai.types.beta.realtime.session import TurnDetection
 
 logger = logging.getLogger("gpt-realtime-agent")
 logger.setLevel(logging.INFO)
@@ -121,11 +83,6 @@ class Assistant(Agent):
         async for chunk in super().llm_node(chat_ctx, tools, model_settings):
             yield chunk
 
-    # async def transcription_node(self, text, model_settings):
-    #     async for delta in text:
-    #         print(delta)
-    #         yield delta.replace("😘", "")
-
 
 async def entrypoint(ctx: JobContext) -> None:
     print("Connecting to room...")
@@ -145,109 +102,49 @@ async def entrypoint(ctx: JobContext) -> None:
     contact = json.loads(os.getenv("CONTACT", "{}"))
     boss = json.loads(os.getenv("BOSS", "{}"))
 
-    # configure the OpenAI Realtime model. The default model is 'gpt-realtime', so the
-    # explicit model= parameter here is optional, but shown for clarity.
-    llm = openai_realtime.RealtimeModel(
-        model=voice_provider,
-        # pick a built-in OpenAI voice; 'alloy' is the default. Try 'marin', 'verse', etc.
+    # configure the OpenAI Realtime model.
+    llm_model = openai_realtime.RealtimeModel(
+        model="gpt-realtime",
         voice=voice_id,
-        # example: run in speech-to-speech (audio) + text mode; set ["text"] to drive a separate TTS.
         modalities=["audio"],
-        # example (optional): customize server VAD / interrupt behavior
-        # turn_detection=TurnDetection(
-        #     type="server_vad",
-        #     threshold=0.5,
-        #     prefix_padding_ms=300,
-        #     silence_duration_ms=500,
-        #     create_response=True,
-        #     interrupt_response=True,
-        # ),
     )
 
     session = AgentSession(
-        llm=llm,
-        # ff you prefer a separate TTS instead of Realtime audio, set llm.modalities=["text"] above
-        # and provide a TTS here, e.g.: tts="cartesia/sonic-2"
-        # tts="cartesia/sonic-2",
+        llm=llm_model,
+        # If you prefer a separate TTS instead of Realtime audio,
+        # set llm.modalities=["text"] above and provide a TTS here.
     )
 
     user_is_speaking = False
+
+    # NEW: shared end_call + inactivity + participant disconnect handler
+    end_call = create_end_call(contact)
+    touch_activity = setup_inactivity_timeout(end_call)
+    setup_participant_disconnect_handler(ctx.room, end_call)
 
     @session.on("user_state_changed")
     def _on_user_state_changed(ev: "UserStateChangedEvent"):
         nonlocal user_is_speaking
         user_is_speaking = ev.new_state == "speaking"
+        touch_activity()
 
     @session.on("conversation_item_added")
     def _on_chat_item_added(ev: "UserInputTranscribedEvent"):
         role = ev.item.role  # "user" | "assistant"
         text = ev.item.text_content or ""  # reliably the final text
+
         if role == "user":
             event = PhoneUtterance(contact, content=text)
         else:
             event = AssistantPhoneUtterance(contact, content=text)
+
         asyncio.create_task(
             event_broker.publish("app:comms:phone_utterance", event.to_json()),
         )
         print(role, text)
+        touch_activity()
 
-    async def end_call():
-        print("Initiating graceful shutdown...")
-
-        # Send end call event before cleaning tasks and closing connection
-        await event_broker.publish(
-            "app:comms:phone_call_ended",
-            PhoneCallEnded(contact=contact).to_json(),
-        )
-        print("End call event sent")
-
-        # Get all running tasks except current task
-        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-
-        if tasks:
-            print(f"Cancelling {len(tasks)} running tasks...")
-            # Cancel all tasks
-            for task in tasks:
-                task.cancel()
-
-            # Wait for tasks to be cancelled gracefully
-            try:
-                await asyncio.gather(*tasks, return_exceptions=True)
-                print("All tasks cancelled successfully")
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                print(f"Error during task cancellation: {e}")
-
-        print("Graceful shutdown completed")
-
-    # add inactivity timeout
-    INACTIVITY_TIMEOUT = 300  # 5 minutes in seconds
-    last_activity_time = asyncio.get_event_loop().time()
-
-    async def check_inactivity():
-        nonlocal last_activity_time
-        while True:
-            await asyncio.sleep(10)  # check every 10 seconds
-            current_time = asyncio.get_event_loop().time()
-            if current_time - last_activity_time > INACTIVITY_TIMEOUT:
-                print("Inactivity timeout reached, shutting down agent...")
-                await end_call()
-                break  # exit the loop after shutdown
-
-    # start inactivity checker
-    asyncio.create_task(check_inactivity())
-
-    # create a wrapper for the room event handler since it expects a sync function
-    def on_participant_disconnected(*args, **kwargs):
-        asyncio.create_task(end_call())
-
-    ctx.room.on("participant_disconnected", on_participant_disconnected)
-
-    # lightweight audio I/O options. You can add noise cancellation, custom VAD, etc.
-    rio = RoomInputOptions(
-        # noise_cancellation=noise_cancellation.BVC(),
-    )
+    rio = RoomInputOptions()
 
     # high-level behavior for the assistant.
     system = Template(SYSTEM_PROMPT).render(
@@ -264,6 +161,7 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     print("PRINTING SYSTEM PROMPT")
     print(system)
+
     agent = Assistant(
         contact=contact,
         boss=boss,
@@ -271,10 +169,9 @@ async def entrypoint(ctx: JobContext) -> None:
         outbound=outbound,
     )
 
-    await event_broker.publish(
-        "app:comms:phone_call_started",
-        PhoneCallStarted(contact=contact).to_json(),
-    )
+    # publish call started (shared helper)
+    await publish_call_started(contact)
+    touch_activity()
 
     async def wait_for_nudges():
         print("waiting")
@@ -296,52 +193,35 @@ async def entrypoint(ctx: JobContext) -> None:
                     )
                     await rt.update_chat_ctx(chat_ctx)
                     print(rt.chat_ctx.items)
+
                     nonlocal user_is_speaking
+                    touch_activity()
+
                     if not user_is_speaking and chat_ctx.items[-1].role != "assistant":
                         await session.generate_reply(allow_interruptions=True)
+
                 await asyncio.sleep(0.1)
 
     logger.info("starting AgentSession")
     await session.start(room=ctx.room, agent=agent, room_input_options=rio)
     asyncio.create_task(wait_for_nudges())
+    await session.generate_reply(allow_interruptions=True)
 
 
 if __name__ == "__main__":
-    assistant_number = ""
-    print("sys.argv", sys.argv)
-
-    if len(sys.argv) > 8:
-        # get static config
-        assistant_number = sys.argv[2]
-        os.environ["VOICE_PROVIDER"] = (
-            sys.argv[3] if sys.argv[3] != "None" else "cartesia"
-        )
-        os.environ["VOICE_ID"] = sys.argv[4] if sys.argv[4] != "None" else ""
-        os.environ["OUTBOUND"] = sys.argv[5]
-
-        # get contact/boss payloads
-        os.environ["CONTACT"] = sys.argv[6]
-        os.environ["BOSS"] = sys.argv[7]
-        print(f"contact: {os.environ['CONTACT']}")
-        print(f"boss: {os.environ['BOSS']}")
-        if not json.loads(os.environ["CONTACT"]) or not json.loads(os.environ["BOSS"]):
-            print("Contact or boss payload is invalid")
-            sys.exit(1)
-
-        # get assistant bio
-        os.environ["ASSISTANT_BIO"] = sys.argv[8]
-
-        sys.argv = sys.argv[:2]  # keep only script name and "dev" command
-    elif sys.argv[1] != "download-files":
-        print("Not enough arguments provided")
-        sys.exit(1)
-
-    agent_name = f"unity_{assistant_number}"
+    # Shared CLI handling
+    agent_name, room_name = configure_from_cli(
+        extra_env=[
+            ("CONTACT", True),
+            ("BOSS", True),
+            ("ASSISTANT_BIO", False),
+        ],
+    )
 
     # dispatch agent
-    if sys.argv[1] != "download-files":
+    if should_dispatch_agent():
         print(f"Dispatching agent {agent_name}")
-        dispatch_agent(agent_name)
+        dispatch_agent(agent_name, room_name)
         print(f"Agent {agent_name} dispatched")
 
     agents.cli.run_app(
