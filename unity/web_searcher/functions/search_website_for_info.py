@@ -101,8 +101,7 @@ async def search_website_for_info(
         await action_provider.act(
             f"Look for a search box or search icon on this page. If you find one, use it to search for: '{search_query}'. "
             "Use plain words only for general searches — do not use special syntax, operators, or quotes. "
-            "Use postcode or town names for location searches. "
-            "A search is successful actual results (articles, links, content) are returned. "
+            "If location search is involed, use town names or postcodes, and filter distance within reasonable range if applicable. "
             "If you see '0 results', 'no results found', or an error message, try a simpler/shorter query. "
             "Only if no search functionality exists, navigate to a query-relevant section (e.g., news, articles, deals, etc) instead.",
         )
